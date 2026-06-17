@@ -116,12 +116,24 @@
                 <div class="modal-body">
                     {% if is_owner %}
                     <div class="mb-3">
-                        <label class="form-label fw-semibold">Филиал</label>
-                        <select name="branch_id" class="form-select" required>
-                            {% for b in branches %}
-                            <option value="{{ b.id }}">{{ b.name }}</option>
-                            {% endfor %}
-                        </select>
+                        <label class="form-label fw-semibold">Филиалы</label>
+                        <div class="dropdown">
+                            <button type="button" class="btn btn-outline-secondary w-100 text-start d-flex justify-content-between align-items-center"
+                                    data-bs-toggle="dropdown" data-bs-auto-close="outside">
+                                <span class="emp-branch-label" data-group="addEmp">— выберите филиал —</span>
+                                <i class="bi bi-chevron-down small"></i>
+                            </button>
+                            <div class="dropdown-menu p-2 shadow w-100" style="max-height:260px;overflow-y:auto">
+                                <input type="text" class="form-control form-control-sm mb-2 emp-branch-search" placeholder="Поиск..." autocomplete="off">
+                                {% for b in all_branches %}
+                                <div class="form-check emp-branch-item" data-group="addEmp">
+                                    <input class="form-check-input emp-branch-cb" type="checkbox" name="branch_ids"
+                                           value="{{ b.id }}" id="addEmpBr{{ b.id }}" data-group="addEmp">
+                                    <label class="form-check-label w-100" for="addEmpBr{{ b.id }}" style="cursor:pointer">{{ b.name }}</label>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
                     </div>
                     {% endif %}
                     <div class="row g-2 mb-3">
@@ -182,6 +194,33 @@
             </div>
             <form method="POST" action="{{ url_for('edit_employee', emp_id=emp.id) }}">
                 <div class="modal-body">
+
+                    <!-- Филиалы (только владелец) -->
+                    {% if is_owner %}
+                    {% set cur_bids = emp_branches_map.get(emp.id, [emp.branch_id] if emp.branch_id else []) %}
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Филиалы</label>
+                        <div class="dropdown">
+                            <button type="button" class="btn btn-outline-secondary w-100 text-start d-flex justify-content-between align-items-center"
+                                    data-bs-toggle="dropdown" data-bs-auto-close="outside">
+                                <span class="emp-branch-label" data-group="editEmp{{ emp.id }}">{% if cur_bids %}Выбрано: {{ cur_bids|length }}{% else %}— не назначен —{% endif %}</span>
+                                <i class="bi bi-chevron-down small"></i>
+                            </button>
+                            <div class="dropdown-menu p-2 shadow w-100" style="max-height:260px;overflow-y:auto">
+                                <input type="text" class="form-control form-control-sm mb-2 emp-branch-search" placeholder="Поиск..." autocomplete="off">
+                                {% for b in all_branches %}
+                                <div class="form-check emp-branch-item" data-group="editEmp{{ emp.id }}">
+                                    <input class="form-check-input emp-branch-cb" type="checkbox" name="branch_ids"
+                                           value="{{ b.id }}" id="editEmpBr{{ emp.id }}_{{ b.id }}"
+                                           data-group="editEmp{{ emp.id }}"
+                                           {% if b.id in cur_bids %}checked{% endif %}>
+                                    <label class="form-check-label w-100" for="editEmpBr{{ emp.id }}_{{ b.id }}" style="cursor:pointer">{{ b.name }}</label>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
 
                     <!-- Имя -->
                     <div class="row g-2 mb-4">
@@ -313,18 +352,44 @@ function toggleCourierFields(prefix, role) {
     });
 }
 
+// Фильтр-дропдаун для филиалов сотрудника
+document.querySelectorAll('.emp-branch-cb').forEach(function(cb) {
+    cb.addEventListener('change', function() {
+        var group = this.dataset.group;
+        var checked = document.querySelectorAll('.emp-branch-cb[data-group="' + group + '"]:checked');
+        var lbl = document.querySelector('.emp-branch-label[data-group="' + group + '"]');
+        if (!lbl) return;
+        if (checked.length === 0) {
+            lbl.textContent = '— выберите филиал —';
+        } else if (checked.length <= 3) {
+            lbl.textContent = Array.from(checked).map(function(c) {
+                return c.closest('.emp-branch-item').querySelector('label').textContent.trim();
+            }).join(', ');
+        } else {
+            lbl.textContent = 'Выбрано: ' + checked.length;
+        }
+    });
+});
+document.querySelectorAll('.emp-branch-search').forEach(function(srch) {
+    srch.addEventListener('input', function() {
+        var q = this.value.toLowerCase();
+        var menu = this.closest('.dropdown-menu');
+        menu.querySelectorAll('.emp-branch-item').forEach(function(el) {
+            el.style.display = el.querySelector('label').textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
+        });
+    });
+});
+
+// Фильтр-дропдаун для страницы (фильтр по филиалу)
 (function () {
     var cbs  = document.querySelectorAll('.branch-cb');
     var lbl  = document.getElementById('branchBtnLabel');
     var srch = document.getElementById('branchSearch');
-
     function updateLabel() {
         var n = document.querySelectorAll('.branch-cb:checked').length;
         if (lbl) lbl.textContent = n ? 'Выбрано: ' + n : 'Все филиалы';
     }
-
     cbs.forEach(function (cb) { cb.addEventListener('change', updateLabel); });
-
     if (srch) {
         srch.addEventListener('input', function () {
             var q = this.value.toLowerCase();

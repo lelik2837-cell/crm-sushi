@@ -288,10 +288,20 @@ def init_db():
                 branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
                 UNIQUE(user_id, branch_id)
             );
+            CREATE TABLE IF NOT EXISTS employee_branches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                UNIQUE(employee_id, branch_id)
+            );
         ''')
         conn.execute('''
             INSERT OR IGNORE INTO user_branches (user_id, branch_id)
             SELECT id, branch_id FROM users WHERE branch_id IS NOT NULL
+        ''')
+        conn.execute('''
+            INSERT OR IGNORE INTO employee_branches (employee_id, branch_id)
+            SELECT id, branch_id FROM employees WHERE branch_id IS NOT NULL
         ''')
 
         conn.commit()
@@ -518,7 +528,10 @@ def shift_view(shift_id):
             (shift_id,)
         ).fetchall()
         employees = conn.execute(
-            'SELECT * FROM employees WHERE branch_id=? AND is_active=1 ORDER BY role, full_name',
+            '''SELECT DISTINCT e.* FROM employees e
+               JOIN employee_branches eb ON eb.employee_id=e.id
+               WHERE eb.branch_id=? AND e.is_active=1
+               ORDER BY e.role, e.full_name''',
             (shift['branch_id'],)
         ).fetchall()
         # Current address per employee (as of shift date)
@@ -900,6 +913,13 @@ def employees():
             ''', (emp['id'],)).fetchall()
             address_history[emp['id']] = addr_hist
 
+        emp_branches_map = {}
+        for row in conn.execute('''
+            SELECT eb.employee_id, eb.branch_id
+            FROM employee_branches eb
+        ''').fetchall():
+            emp_branches_map.setdefault(row['employee_id'], []).append(row['branch_id'])
+
         all_tmpls = conn.execute(
             'SELECT * FROM rate_templates WHERE is_active=1 ORDER BY role, name'
         ).fetchall()
@@ -920,6 +940,7 @@ def employees():
     return render_template('employees.html', employees=emps, branches=branches,
                            all_branches=all_branches,
                            selected_branches=selected_branches,
+                           emp_branches_map=emp_branches_map,
                            role_labels=ROLE_LABELS, is_owner=(role == 'owner'),
                            rate_history=rate_history, address_history=address_history,
                            rate_templates=all_tmpls,
@@ -932,7 +953,12 @@ def employees():
 @login_required
 def add_employee():
     role = session.get('role')
-    branch_id = request.form.get('branch_id') if role == 'owner' else session.get('branch_id')
+    if role == 'owner':
+        branch_ids_form = [bid for bid in request.form.getlist('branch_ids') if bid.isdigit()]
+        branch_id = int(branch_ids_form[0]) if branch_ids_form else None
+    else:
+        branch_ids_form = [str(b) for b in _session_branch_ids()]
+        branch_id = session.get('branch_id')
     last_name  = request.form.get('last_name', '').strip()
     first_name = request.form.get('first_name', '').strip()
     full_name  = (last_name + (' ' + first_name if first_name else '')).strip()
@@ -954,6 +980,8 @@ def add_employee():
             'INSERT INTO employee_rate_history (employee_id, rate, rate_per_km, rate_per_order, effective_from) VALUES (?,?,?,?,?)',
             (emp_id, rate, rate_km, rate_ord, effective_from)
         )
+        for bid in branch_ids_form:
+            conn.execute('INSERT OR IGNORE INTO employee_branches (employee_id, branch_id) VALUES (?,?)', (emp_id, int(bid)))
         address = request.form.get('address', '').strip()
         if address:
             conn.execute(
@@ -1041,6 +1069,13 @@ def edit_employee(emp_id):
                 'UPDATE employees SET full_name=?, last_name=?, first_name=? WHERE id=?',
                 (full_name, last_name, first_name, emp_id)
             )
+        if session.get('role') == 'owner':
+            branch_ids_form = [bid for bid in request.form.getlist('branch_ids') if bid.isdigit()]
+            if branch_ids_form:
+                conn.execute('UPDATE employees SET branch_id=? WHERE id=?', (int(branch_ids_form[0]), emp_id))
+                conn.execute('DELETE FROM employee_branches WHERE employee_id=?', (emp_id,))
+                for bid in branch_ids_form:
+                    conn.execute('INSERT OR IGNORE INTO employee_branches (employee_id, branch_id) VALUES (?,?)', (emp_id, int(bid)))
         # Rate: save to history; update current values only if rate_from <= today
         conn.execute(
             'INSERT INTO employee_rate_history (employee_id, rate, rate_per_km, rate_per_order, effective_from) VALUES (?,?,?,?,?)',
