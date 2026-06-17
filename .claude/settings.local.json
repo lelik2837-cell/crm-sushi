@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c ' *)",
+      "Bash(mkdir -p \"/Users/aleksey/.claude/projects/-Users-aleksey-Desktop-CRM-sushi/memory\")",
+      "Bash(pkill -f \"python3 app.py\")",
+      "Bash(python3 app.py)",
+      "Bash(curl -s -c /tmp/cj.txt -b /tmp/cj.txt -X POST http://localhost:5050/login -d 'username=owner&password=admin123' -w '%{http_code}' -o /dev/null)",
+      "Bash(curl -s -c /tmp/cj.txt -b /tmp/cj.txt http://localhost:5050/dashboard -w \"%{http_code}\" -o /tmp/dash.html)",
+      "Read(//tmp/**)",
+      "Bash(curl -s -c /tmp/cj.txt -b /tmp/cj.txt -X POST http://localhost:5050/shift/open -d branch_id=1 -w '%{http_code}' -L -o /tmp/shift.html)",
+      "Bash(curl -s -c /tmp/cj2.txt -b /tmp/cj2.txt http://localhost:5050/login)",
+      "Bash(curl -s -c /tmp/cj2.txt -b /tmp/cj2.txt -X POST http://localhost:5050/login -d 'username=owner&password=admin123' -L -o /dev/null)",
+      "Bash(curl -s -c /tmp/cj2.txt -b /tmp/cj2.txt -X POST http://localhost:5050/shift/open -d branch_id=1 -w '%{http_code}' -L -o /tmp/shift.html)",
+      "Bash(curl -v http://localhost:5050/shift/open)",
+      "Bash(open \"/Users/aleksey/Desktop/CRM sushi/mockup_smena.html\")",
+      "Bash(python3 -c \"import flask, sqlite3; print\\('Flask OK'\\); print\\('Python OK'\\)\")",
+      "Bash(curl -s -c /tmp/sushi_cookie.txt -b /tmp/sushi_cookie.txt http://localhost:5050/shift/1)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" -c /tmp/sushi_cookie.txt -b /tmp/sushi_cookie.txt http://localhost:5050/shift/1)",
+      "Bash(curl -s -X POST http://localhost:5050/login -c /tmp/sushi2.txt -d \"username=owner&password=admin123\" -L -o /dev/null -w \"%{http_code}\")",
+      "Bash(curl -s -c /tmp/sushi2.txt -b /tmp/sushi2.txt http://localhost:5050/shift/1)",
+      "Bash(python -c ' *)"
+    ],
+    "additionalDirectories": [
+      "/Users/aleksey/.claude/projects/-Users-aleksey-Desktop-CRM-sushi"
+    ]
+  }
+}
