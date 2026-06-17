@@ -115,17 +115,16 @@
   .check-box:checked { background: #10b981; border-color: #10b981; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 12 12' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M2 6L5 9L10 3' stroke='white' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: center; }
 
   /* TAXI */
-  .taxi-trip-block { display:grid; grid-template-columns:1fr 140px; gap:10px; border:1px solid #e5e7eb; border-radius:8px; padding:10px 12px; margin-bottom:8px; background:#fafafa; align-items:start; }
+  .taxi-trip-block { border:1px solid #e5e7eb; border-radius:8px; padding:10px 12px; margin-bottom:8px; background:#fafafa; }
   .taxi-trip-block:last-child { margin-bottom:0; }
-  .taxi-emp-row { display:grid; grid-template-columns:auto 1fr 20px; gap:6px; align-items:center; margin-bottom:4px; }
-  .taxi-emp-name { font-size:13px; font-weight:600; white-space:nowrap; }
-  .taxi-right { display:flex; flex-direction:column; gap:6px; }
-  .taxi-right-label { font-size:10px; font-weight:700; color:#9ca3af; text-transform:uppercase; letter-spacing:.5px; }
-  .taxi-save-btn { padding:5px 8px; border-radius:6px; background:#d1fae5; color:#059669; border:1.5px solid #6ee7b7; font-size:11px; font-weight:700; cursor:pointer; width:100%; }
-  .taxi-cancel-btn { padding:5px 8px; border-radius:6px; background:#f3f4f6; color:#6b7280; border:1.5px solid #d1d5db; font-size:11px; font-weight:600; cursor:pointer; width:100%; }
-  .taxi-edit-trigger { padding:5px 8px; border-radius:6px; background:#eff6ff; color:#2563eb; border:1.5px solid #bfdbfe; font-size:11px; font-weight:600; cursor:pointer; width:100%; }
-  .taxi-right-edit, .taxi-right-view { display:flex; flex-direction:column; gap:6px; }
-  .taxi-saved-hint { font-size:11px; color:#059669; text-align:center; display:none; }
+  .taxi-emp-row { display:grid; grid-template-columns:1fr 70px 20px; gap:6px; align-items:center; margin-bottom:4px; }
+  .taxi-emp-name { font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .taxi-summary-row { display:grid; grid-template-columns:2fr 90px 90px 50px; gap:8px; align-items:center; padding-top:8px; margin-top:6px; border-top:1px solid #f3f4f6; }
+  .taxi-btn-row { display:flex; gap:6px; margin-top:6px; }
+  .taxi-save-btn { padding:5px 8px; border-radius:6px; background:#d1fae5; color:#059669; border:1.5px solid #6ee7b7; font-size:11px; font-weight:700; cursor:pointer; }
+  .taxi-cancel-btn { padding:5px 8px; border-radius:6px; background:#f3f4f6; color:#6b7280; border:1.5px solid #d1d5db; font-size:11px; font-weight:600; cursor:pointer; }
+  .taxi-edit-trigger { padding:5px 8px; border-radius:6px; background:#eff6ff; color:#2563eb; border:1.5px solid #bfdbfe; font-size:11px; font-weight:600; cursor:pointer; }
+  .taxi-saved-hint { font-size:11px; color:#059669; display:none; align-self:center; }
 
   /* BTN-ADD */
   .btn-add { background: #f3f4f6; color: #374151; border: 1.5px dashed #d1d5db; border-radius: 7px; padding: 5px 12px; font-size: 12px; font-weight: 500; width: 100%; margin-top: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px; }
@@ -344,68 +343,66 @@
           data-orig-amount="{{ t.amount|int if t.amount else '' }}"
           data-orig-pay="{{ t.payment_type or 'cash' }}"
           data-orig-gulyash="{{ '1' if t.in_gulyash else '0' }}">
-          <!-- LEFT: employees -->
-          <div>
-            {% if can_edit %}
-            <div class="taxi-left-edit" style="display:none">
-              <select class="field-select" style="font-size:12px;margin-bottom:6px;width:100%;"
-                onchange="onTaxiEmpSelect(this,{{ t.id }})">
-                <option value="">— добавить сотрудника —</option>
-                {% for emp in employees %}{% if emp.role != 'courier' %}
-                <option value="{{ emp.id }}"
-                  data-name="{{ emp.full_name }}"
-                  data-address="{{ emp_addresses.get(emp.id,'') or '' }}">{{ emp.full_name }}</option>
-                {% endif %}{% endfor %}
-              </select>
-            </div>
-            {% endif %}
-            <div class="taxi-emps" id="taxi-emps-{{ t.id }}">
-              {% for tte in taxi_trip_emps[t.id] %}
-              <div class="taxi-emp-row" data-tte-id="{{ tte.id }}" data-emp-id="{{ tte.employee_id or '' }}">
-                <span class="taxi-emp-name">{{ tte.name_snapshot }}</span>
-                {% if can_edit %}
-                <input class="mini-input" type="text" value="{{ tte.address_snapshot or '' }}" placeholder="Адрес" style="font-size:12px;">
-                <button class="row-del taxi-emp-del" style="display:none" onclick="removeTaxiEmp(this,{{ tte.id }})">✕</button>
-                {% else %}
-                <span style="font-size:11px;color:#9ca3af;">{{ tte.address_snapshot or '' }}</span>
-                <div></div>
-                {% endif %}
-              </div>
-              {% endfor %}
-            </div>
+          {% if can_edit %}
+          <div class="taxi-left-edit" style="display:none">
+            <select class="field-select" style="font-size:12px;margin-bottom:6px;width:100%;"
+              onchange="onTaxiEmpSelect(this,{{ t.id }})">
+              <option value="">— добавить сотрудника —</option>
+              {% for emp in employees %}{% if emp.role != 'courier' %}
+              <option value="{{ emp.id }}"
+                data-name="{{ emp.full_name }}"
+                data-address="{{ emp_addresses.get(emp.id,'') or '' }}">{{ emp.full_name }}</option>
+              {% endif %}{% endfor %}
+            </select>
           </div>
-          <!-- RIGHT: amount, pay, gulyash -->
-          <div class="taxi-right">
-            <div class="taxi-right-label">Сумма</div>
-            {% if can_edit %}
-            <!-- Режим редактирования (скрыт по умолчанию для существующих рейсов) -->
-            <div class="taxi-right-edit" style="display:none">
-              <input type="number" class="mini-input taxi-amount-input" placeholder="—" min="0"
-                value="{{ t.amount|int if t.amount else '' }}" style="width:100%;text-align:right;">
-              <select class="pay-type-sel taxi-pay-select">
-                <option value="cash" {% if t.payment_type != 'card' %}selected{% endif %}>Наличные</option>
-                <option value="card" {% if t.payment_type == 'card' %}selected{% endif %}>Карта</option>
-              </select>
-              <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;">
-                <input type="checkbox" class="check-box taxi-gulyash-cb" {% if t.in_gulyash %}checked{% endif %}> Гуляш
-              </label>
-              <button class="taxi-save-btn" onclick="saveTaxiUpdate(this.closest('.taxi-trip-block'))">✓ Сохранить</button>
-              <button class="taxi-cancel-btn" onclick="cancelTaxiUpdate(this.closest('.taxi-trip-block'), {{ t.id }})">↩ Отмена</button>
-              <div class="taxi-saved-hint">Сохранено</div>
+          {% endif %}
+          <div class="taxi-emps" id="taxi-emps-{{ t.id }}">
+            {% for tte in taxi_trip_emps[t.id] %}
+            <div class="taxi-emp-row" data-tte-id="{{ tte.id }}" data-emp-id="{{ tte.employee_id or '' }}">
+              <span class="taxi-emp-name">{{ tte.name_snapshot }}</span>
+              {% if can_edit %}
+              <input class="mini-input" type="text" value="{{ tte.address_snapshot or '' }}" placeholder="Адрес" style="font-size:12px;">
+              <button class="row-del taxi-emp-del" style="display:none" onclick="removeTaxiEmp(this,{{ tte.id }})">✕</button>
+              {% else %}
+              <span style="font-size:11px;color:#9ca3af;">{{ tte.address_snapshot or '' }}</span>
+              <div></div>
+              {% endif %}
             </div>
-            <!-- Режим просмотра (показан по умолчанию) -->
-            <div class="taxi-right-view">
-              <span class="taxi-amount-view" style="font-size:14px;font-weight:700;">{{ t.amount|int if t.amount else '—' }} ₽</span>
-              <span class="taxi-pay-view" style="font-size:12px;color:#6b7280;">{% if t.payment_type == 'card' %}Карта{% else %}Нал{% endif %}</span>
-              <span class="taxi-gulyash-view" style="font-size:12px;color:#10b981;">{% if t.in_gulyash %}✓ Гуляш{% endif %}</span>
-              <button class="taxi-edit-trigger" onclick="taxiEnterEdit(this.closest('.taxi-trip-block'))">✎ Редактировать</button>
-            </div>
-            {% else %}
-            <span style="font-size:14px;font-weight:700;">{{ t.amount|int }} ₽</span>
+            {% endfor %}
+          </div>
+          {% if can_edit %}
+          <div class="taxi-summary-row taxi-right-edit" style="display:none">
+            <div></div>
+            <input type="number" class="mini-input taxi-amount-input" placeholder="—" min="0"
+              value="{{ t.amount|int if t.amount else '' }}" style="width:100%;text-align:right;">
+            <select class="pay-type-sel taxi-pay-select" style="width:100%;">
+              <option value="cash" {% if t.payment_type != 'card' %}selected{% endif %}>Нал</option>
+              <option value="card" {% if t.payment_type == 'card' %}selected{% endif %}>Карта</option>
+            </select>
+            <div style="text-align:center;"><input type="checkbox" class="check-box taxi-gulyash-cb" {% if t.in_gulyash %}checked{% endif %}></div>
+          </div>
+          <div class="taxi-btn-row taxi-right-edit" style="display:none">
+            <button class="taxi-save-btn" onclick="saveTaxiUpdate(this.closest('.taxi-trip-block'))">✓ Сохранить</button>
+            <button class="taxi-cancel-btn" onclick="cancelTaxiUpdate(this.closest('.taxi-trip-block'), {{ t.id }})">↩ Отмена</button>
+            <div class="taxi-saved-hint">Сохранено</div>
+          </div>
+          <div class="taxi-summary-row taxi-right-view">
+            <div></div>
+            <span class="taxi-amount-view" style="font-size:14px;font-weight:700;text-align:right;">{{ t.amount|int if t.amount else '—' }} ₽</span>
+            <span class="taxi-pay-view" style="font-size:12px;color:#6b7280;">{% if t.payment_type == 'card' %}Карта{% else %}Нал{% endif %}</span>
+            <span class="taxi-gulyash-view" style="font-size:12px;color:#10b981;text-align:center;">{% if t.in_gulyash %}✓{% endif %}</span>
+          </div>
+          <div class="taxi-btn-row taxi-right-view">
+            <button class="taxi-edit-trigger" onclick="taxiEnterEdit(this.closest('.taxi-trip-block'))">✎ Редактировать</button>
+          </div>
+          {% else %}
+          <div class="taxi-summary-row">
+            <div></div>
+            <span style="font-size:14px;font-weight:700;text-align:right;">{{ t.amount|int }} ₽</span>
             <span style="font-size:12px;color:#6b7280;">{% if t.payment_type == 'card' %}Карта{% else %}Нал{% endif %}</span>
-            {% if t.in_gulyash %}<span style="font-size:12px;color:#10b981;">✓ Гуляш</span>{% endif %}
-            {% endif %}
+            <span style="font-size:12px;color:#10b981;text-align:center;">{% if t.in_gulyash %}✓{% endif %}</span>
           </div>
+          {% endif %}
         </div>
         {% endfor %}
       </div>
@@ -1166,30 +1163,31 @@ async function addTaxiTrip() {
   block.className = 'taxi-trip-block';
   block.dataset.tripId = tid;
   block.innerHTML =
-    '<div>' +
-      '<div class="taxi-left-edit">' +
-        '<select class="field-select" style="font-size:12px;margin-bottom:6px;width:100%;" onchange="onTaxiEmpSelect(this,' + tid + ')">' +
-          buildTaxiEmpOptions() +
-        '</select>' +
-      '</div>' +
-      '<div class="taxi-emps" id="taxi-emps-' + tid + '"></div>' +
+    '<div class="taxi-left-edit">' +
+      '<select class="field-select" style="font-size:12px;margin-bottom:6px;width:100%;" onchange="onTaxiEmpSelect(this,' + tid + ')">' +
+        buildTaxiEmpOptions() +
+      '</select>' +
     '</div>' +
-    '<div class="taxi-right">' +
-      '<div class="taxi-right-label">Сумма</div>' +
-      '<div class="taxi-right-edit">' +
-        '<input type="number" class="mini-input taxi-amount-input" placeholder="—" min="0" style="width:100%;text-align:right;">' +
-        '<select class="pay-type-sel taxi-pay-select"><option value="cash">Наличные</option><option value="card">Карта</option></select>' +
-        '<label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;"><input type="checkbox" class="check-box taxi-gulyash-cb"> Гуляш</label>' +
-        '<button class="taxi-save-btn" onclick="saveTaxiUpdate(this.closest(\'.taxi-trip-block\'))">✓ Сохранить</button>' +
-        '<button class="taxi-cancel-btn" onclick="cancelTaxiUpdate(this.closest(\'.taxi-trip-block\'),' + tid + ')">↩ Отмена</button>' +
-        '<div class="taxi-saved-hint">Сохранено</div>' +
-      '</div>' +
-      '<div class="taxi-right-view" style="display:none">' +
-        '<span class="taxi-amount-view" style="font-size:14px;font-weight:700;">— ₽</span>' +
-        '<span class="taxi-pay-view" style="font-size:12px;color:#6b7280;">Нал</span>' +
-        '<span class="taxi-gulyash-view" style="font-size:12px;color:#10b981;"></span>' +
-        '<button class="taxi-edit-trigger" onclick="taxiEnterEdit(this.closest(\'.taxi-trip-block\'))">✎ Редактировать</button>' +
-      '</div>' +
+    '<div class="taxi-emps" id="taxi-emps-' + tid + '"></div>' +
+    '<div class="taxi-summary-row taxi-right-edit">' +
+      '<div></div>' +
+      '<input type="number" class="mini-input taxi-amount-input" placeholder="—" min="0" style="width:100%;text-align:right;">' +
+      '<select class="pay-type-sel taxi-pay-select" style="width:100%;"><option value="cash">Нал</option><option value="card">Карта</option></select>' +
+      '<div style="text-align:center;"><input type="checkbox" class="check-box taxi-gulyash-cb"></div>' +
+    '</div>' +
+    '<div class="taxi-btn-row taxi-right-edit">' +
+      '<button class="taxi-save-btn" onclick="saveTaxiUpdate(this.closest(\'.taxi-trip-block\'))">✓ Сохранить</button>' +
+      '<button class="taxi-cancel-btn" onclick="cancelTaxiUpdate(this.closest(\'.taxi-trip-block\'),' + tid + ')">↩ Отмена</button>' +
+      '<div class="taxi-saved-hint">Сохранено</div>' +
+    '</div>' +
+    '<div class="taxi-summary-row taxi-right-view" style="display:none">' +
+      '<div></div>' +
+      '<span class="taxi-amount-view" style="font-size:14px;font-weight:700;text-align:right;">— ₽</span>' +
+      '<span class="taxi-pay-view" style="font-size:12px;color:#6b7280;">Нал</span>' +
+      '<span class="taxi-gulyash-view" style="font-size:12px;color:#10b981;text-align:center;"></span>' +
+    '</div>' +
+    '<div class="taxi-btn-row taxi-right-view" style="display:none">' +
+      '<button class="taxi-edit-trigger" onclick="taxiEnterEdit(this.closest(\'.taxi-trip-block\'))">✎ Редактировать</button>' +
     '</div>';
 
   document.getElementById('taxi-body').appendChild(block);
@@ -1225,7 +1223,7 @@ async function onTaxiEmpSelect(sel, tripId) {
   row.innerHTML =
     '<span class="taxi-emp-name">' + name + '</span>' +
     '<input class="mini-input" type="text" value="' + address.replace(/"/g,'&quot;') + '" placeholder="Адрес" style="font-size:12px;">' +
-    '<button class="row-del" onclick="removeTaxiEmp(this,' + json.tte_id + ')">✕</button>';
+    '<button class="row-del taxi-emp-del" onclick="removeTaxiEmp(this,' + json.tte_id + ')">✕</button>';
   container.appendChild(row);
 }
 
@@ -1241,22 +1239,22 @@ async function removeTaxiEmp(btn, tteId) {
 
 function taxiEnterEdit(block) {
   var le = block.querySelector('.taxi-left-edit');
-  var re = block.querySelector('.taxi-right-edit');
-  var rv = block.querySelector('.taxi-right-view');
   if (le) le.style.display = '';
-  if (re) re.style.display = 'flex';
-  if (rv) rv.style.display = 'none';
+  block.querySelectorAll('.taxi-right-edit').forEach(function(el){
+    el.style.display = el.classList.contains('taxi-summary-row') ? 'grid' : 'flex';
+  });
+  block.querySelectorAll('.taxi-right-view').forEach(function(el){ el.style.display = 'none'; });
   block.querySelectorAll('.taxi-emp-del').forEach(function(b){ b.style.display = ''; });
   updateTaxiSelects();
 }
 
 function taxiEnterView(block) {
   var le = block.querySelector('.taxi-left-edit');
-  var re = block.querySelector('.taxi-right-edit');
-  var rv = block.querySelector('.taxi-right-view');
   if (le) le.style.display = 'none';
-  if (re) re.style.display = 'none';
-  if (rv) rv.style.display = 'flex';
+  block.querySelectorAll('.taxi-right-edit').forEach(function(el){ el.style.display = 'none'; });
+  block.querySelectorAll('.taxi-right-view').forEach(function(el){
+    el.style.display = el.classList.contains('taxi-summary-row') ? 'grid' : 'flex';
+  });
   block.querySelectorAll('.taxi-emp-del').forEach(function(b){ b.style.display = 'none'; });
   var amount = (block.querySelector('.taxi-amount-input') || {}).value || 0;
   var payType = (block.querySelector('.taxi-pay-select') || {}).value || 'cash';
@@ -1266,7 +1264,7 @@ function taxiEnterView(block) {
   var gt = block.querySelector('.taxi-gulyash-view');
   if (at) at.textContent = (parseInt(amount) || 0) + ' ₽';
   if (pt) pt.textContent = payType === 'card' ? 'Карта' : 'Нал';
-  if (gt) gt.textContent = gulyash ? '✓ Гуляш' : '';
+  if (gt) gt.textContent = gulyash ? '✓' : '';
 }
 
 async function saveTaxiUpdate(block) {

@@ -25,7 +25,8 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5050/)",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(python3 -c \"import py_compile; py_compile.compile\\('crm/app.py', doraise=True\\)\")"
     ],
     "additionalDirectories": [
       "/Users/aleksey/.claude/projects/-Users-aleksey-Desktop-CRM-sushi"
