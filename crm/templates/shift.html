@@ -121,6 +121,9 @@
   .taxi-emp-name { font-size:13px; font-weight:600; white-space:nowrap; }
   .taxi-right { display:flex; flex-direction:column; gap:6px; }
   .taxi-right-label { font-size:10px; font-weight:700; color:#9ca3af; text-transform:uppercase; letter-spacing:.5px; }
+  .taxi-save-btn { padding:5px 8px; border-radius:6px; background:#d1fae5; color:#059669; border:1.5px solid #6ee7b7; font-size:11px; font-weight:700; cursor:pointer; width:100%; }
+  .taxi-cancel-btn { padding:5px 8px; border-radius:6px; background:#f3f4f6; color:#6b7280; border:1.5px solid #d1d5db; font-size:11px; font-weight:600; cursor:pointer; width:100%; }
+  .taxi-saved-hint { font-size:11px; color:#059669; text-align:center; display:none; }
 
   /* BTN-ADD */
   .btn-add { background: #f3f4f6; color: #374151; border: 1.5px dashed #d1d5db; border-radius: 7px; padding: 5px 12px; font-size: 12px; font-weight: 500; width: 100%; margin-top: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px; }
@@ -335,7 +338,10 @@
       <div id="taxi-body">
         {% if not taxi_trips %}<div id="taxi-empty" style="text-align:center;color:#9ca3af;padding:12px 0;font-size:13px;">Рейсов нет</div>{% endif %}
         {% for t in taxi_trips %}
-        <div class="taxi-trip-block" data-trip-id="{{ t.id }}">
+        <div class="taxi-trip-block" data-trip-id="{{ t.id }}"
+          data-orig-amount="{{ t.amount|int if t.amount else '' }}"
+          data-orig-pay="{{ t.payment_type or 'cash' }}"
+          data-orig-gulyash="{{ '1' if t.in_gulyash else '0' }}">
           <!-- LEFT: employees -->
           <div>
             {% if can_edit %}
@@ -370,18 +376,18 @@
             {% if can_edit %}
             <input type="number" class="mini-input taxi-amount-input" placeholder="—" min="0"
               value="{{ t.amount|int if t.amount else '' }}"
-              onblur="saveTaxiUpdate(this.closest('.taxi-trip-block'))"
               style="width:100%;text-align:right;">
-            <select class="pay-type-sel taxi-pay-select"
-              onchange="saveTaxiUpdate(this.closest('.taxi-trip-block'))">
+            <select class="pay-type-sel taxi-pay-select">
               <option value="cash" {% if t.payment_type != 'card' %}selected{% endif %}>Наличные</option>
               <option value="card" {% if t.payment_type == 'card' %}selected{% endif %}>Карта</option>
             </select>
             <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;">
               <input type="checkbox" class="check-box taxi-gulyash-cb"
-                {% if t.in_gulyash %}checked{% endif %}
-                onchange="saveTaxiUpdate(this.closest('.taxi-trip-block'))"> Гуляш
+                {% if t.in_gulyash %}checked{% endif %}> Гуляш
             </label>
+            <button class="taxi-save-btn" onclick="saveTaxiUpdate(this.closest('.taxi-trip-block'))">✓ Сохранить</button>
+            <button class="taxi-cancel-btn" onclick="cancelTaxiUpdate(this.closest('.taxi-trip-block'))">↩ Отмена</button>
+            <div class="taxi-saved-hint">Сохранено</div>
             <button class="row-del" style="width:100%;border-radius:5px;" onclick="deleteTaxiTrip(this,{{ t.id }})">✕ рейс</button>
             {% else %}
             <span style="font-size:14px;font-weight:700;">{{ t.amount|int }} ₽</span>
@@ -1159,13 +1165,16 @@ async function addTaxiTrip() {
     // RIGHT
     '<div class="taxi-right">' +
       '<div class="taxi-right-label">Сумма</div>' +
-      '<input type="number" class="mini-input taxi-amount-input" placeholder="—" min="0" style="width:100%;text-align:right;" onblur="saveTaxiUpdate(this.closest(\'.taxi-trip-block\'))">' +
-      '<select class="pay-type-sel taxi-pay-select" onchange="saveTaxiUpdate(this.closest(\'.taxi-trip-block\'))">' +
+      '<input type="number" class="mini-input taxi-amount-input" placeholder="—" min="0" style="width:100%;text-align:right;">' +
+      '<select class="pay-type-sel taxi-pay-select">' +
         '<option value="cash">Наличные</option><option value="card">Карта</option>' +
       '</select>' +
       '<label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;">' +
-        '<input type="checkbox" class="check-box taxi-gulyash-cb" onchange="saveTaxiUpdate(this.closest(\'.taxi-trip-block\'))"> Гуляш' +
+        '<input type="checkbox" class="check-box taxi-gulyash-cb"> Гуляш' +
       '</label>' +
+      '<button class="taxi-save-btn" onclick="saveTaxiUpdate(this.closest(\'.taxi-trip-block\'))">✓ Сохранить</button>' +
+      '<button class="taxi-cancel-btn" onclick="cancelTaxiUpdate(this.closest(\'.taxi-trip-block\'))">↩ Отмена</button>' +
+      '<div class="taxi-saved-hint">Сохранено</div>' +
       '<button class="row-del" style="width:100%;border-radius:5px;" onclick="deleteTaxiTrip(this,' + tid + ')">✕ рейс</button>' +
     '</div>';
 
@@ -1221,11 +1230,28 @@ async function saveTaxiUpdate(block) {
   var amount = (block.querySelector('.taxi-amount-input') || {}).value || 0;
   var payType = (block.querySelector('.taxi-pay-select') || {}).value || 'cash';
   var inGulyash = (block.querySelector('.taxi-gulyash-cb') || {}).checked || false;
-  await fetch('/taxi/' + tripId + '/update', {
+  var res = await fetch('/taxi/' + tripId + '/update', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ amount: parseFloat(amount) || 0, payment_type: payType, in_gulyash: inGulyash })
   });
+  var json = await res.json();
+  if (json.ok) {
+    block.dataset.origAmount = amount;
+    block.dataset.origPay = payType;
+    block.dataset.origGulyash = inGulyash ? '1' : '0';
+    var hint = block.querySelector('.taxi-saved-hint');
+    if (hint) { hint.style.display = 'block'; setTimeout(function(){ hint.style.display = 'none'; }, 1500); }
+  }
+}
+
+function cancelTaxiUpdate(block) {
+  var amtInput = block.querySelector('.taxi-amount-input');
+  var paySelect = block.querySelector('.taxi-pay-select');
+  var gulyashCb = block.querySelector('.taxi-gulyash-cb');
+  if (amtInput) amtInput.value = block.dataset.origAmount || '';
+  if (paySelect) paySelect.value = block.dataset.origPay || 'cash';
+  if (gulyashCb) gulyashCb.checked = block.dataset.origGulyash === '1';
 }
 
 async function deleteTaxiTrip(btn, tripId) {
