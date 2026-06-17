@@ -412,6 +412,7 @@
           </div>
           <div class="taxi-btn-row taxi-right-view">
             <button class="taxi-edit-trigger" onclick="taxiEnterEdit(this.closest('.taxi-trip-block'))">✎ Редактировать</button>
+            <button class="row-del" style="width:28px;height:28px;" title="Удалить рейс" onclick="deleteTaxiTrip(this, {{ t.id }})">✕</button>
           </div>
           {% else %}
           <div class="taxi-summary-row">
@@ -1343,6 +1344,12 @@ async function cancelTaxiUpdate(block, tripId) {
     var emptyEl = document.getElementById('taxi-empty');
     if (emptyEl) emptyEl.style.display = '';
   }
+}
+
+async function deleteTaxiTrip(btn, tripId) {
+  if (!confirm('Удалить рейс?')) return;
+  var block = btn.closest('.taxi-trip-block');
+  await cancelTaxiUpdate(block, tripId);
 }
 
 document.addEventListener('click', function(e) {
