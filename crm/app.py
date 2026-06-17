@@ -1836,6 +1836,70 @@ def inject_globals():
     return {'now': datetime.now}
 
 
+# ─── SHIFTS ARCHIVE ───────────────────────────────────────────────────────────
+
+@app.route('/shifts')
+@login_required
+def shifts_archive():
+    role = session.get('role')
+    today = date.today().isoformat()
+    month_start = date.today().replace(day=1).isoformat()
+
+    date_from  = request.args.get('date_from', month_start)
+    date_to    = request.args.get('date_to',   today)
+    branch_filter = request.args.get('branch_id', '')
+    status_filter = request.args.get('status', '')
+
+    with get_db() as conn:
+        branches = conn.execute(
+            'SELECT * FROM branches WHERE is_active=1 ORDER BY name'
+        ).fetchall()
+
+        query = '''
+            SELECT s.id, s.date, s.status,
+                   b.name as branch_name,
+                   COALESCE(r.total_revenue, 0)       as revenue,
+                   COALESCE(r.delivery_orders, 0) +
+                   COALESCE(r.pickup_orders, 0)        as orders,
+                   COALESCE(r.delivery_revenue, 0)     as delivery_revenue,
+                   COALESCE(r.pickup_revenue, 0)       as pickup_revenue,
+                   COALESCE(r.cash_amount, 0)          as cash_amount,
+                   COALESCE(r.card_amount, 0)          as card_amount,
+                   s.opened_at, s.closed_at,
+                   s.closed_by_name
+            FROM shifts s
+            JOIN branches b ON b.id = s.branch_id
+            LEFT JOIN shift_revenue r ON r.shift_id = s.id
+            WHERE s.date BETWEEN ? AND ?
+        '''
+        params = [date_from, date_to]
+
+        if role != 'owner':
+            branch_id = session.get('branch_id')
+            query += ' AND s.branch_id = ?'
+            params.append(branch_id)
+        elif branch_filter:
+            query += ' AND s.branch_id = ?'
+            params.append(branch_filter)
+
+        if status_filter:
+            query += ' AND s.status = ?'
+            params.append(status_filter)
+
+        query += ' ORDER BY s.date DESC, b.name'
+        shifts = conn.execute(query, params).fetchall()
+
+        total_revenue = sum(s['revenue'] for s in shifts)
+        total_orders  = sum(s['orders']  for s in shifts)
+
+    return render_template('shifts_archive.html',
+        shifts=shifts, branches=branches,
+        date_from=date_from, date_to=date_to,
+        branch_filter=branch_filter, status_filter=status_filter,
+        total_revenue=total_revenue, total_orders=total_orders,
+        is_owner=(role == 'owner'))
+
+
 if __name__ == '__main__':
     init_db()
     print('\n' + '=' * 50)

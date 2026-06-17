@@ -48,6 +48,11 @@
                         <i class="bi bi-house"></i> Главная
                     </a>
                 </li>
+                <li class="nav-item">
+                    <a class="nav-link {% if request.endpoint=='shifts_archive' %}active{% endif %}" href="{{ url_for('shifts_archive') }}">
+                        <i class="bi bi-calendar3"></i> Смены
+                    </a>
+                </li>
                 {% if session.get('role') == 'owner' %}
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle {% if request.endpoint=='reports' %}active{% endif %}"
