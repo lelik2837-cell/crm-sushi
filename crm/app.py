@@ -1893,6 +1893,82 @@ def reports():
         all_sal_emps=all_sal_emps, pivot_rows=pivot_rows, pivot_emps=pivot_emps)
 
 
+# ─── EXPENSES REPORT ──────────────────────────────────────────────────────────
+
+@app.route('/report/expenses')
+@login_required
+@owner_required
+def expenses_report():
+    today = date.today().isoformat()
+    month_start = date.today().replace(day=1).isoformat()
+    date_from  = request.args.get('date_from', month_start)
+    date_to    = request.args.get('date_to', today)
+    branch_id  = request.args.get('branch_id', '')
+    cat_filter = request.args.get('category', '')
+
+    with get_db() as conn:
+        branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        all_cats = conn.execute('SELECT * FROM expense_categories ORDER BY sort_order, label').fetchall()
+
+        conds  = ["s.date BETWEEN ? AND ?"]
+        params = [date_from, date_to]
+        if branch_id.isdigit():
+            conds.append('s.branch_id = ?')
+            params.append(int(branch_id))
+        if cat_filter:
+            conds.append('e.category = ?')
+            params.append(cat_filter)
+        where = ' AND '.join(conds)
+
+        rows = conn.execute(f'''
+            SELECT e.id, s.date, s.id as shift_id,
+                   b.name as branch_name,
+                   e.category, e.description,
+                   COALESCE(e.amount_cash,0) as amount_cash,
+                   COALESCE(e.amount_card,0) as amount_card,
+                   COALESCE(e.amount_cash,0)+COALESCE(e.amount_card,0) as total,
+                   e.is_gulash
+            FROM expenses e
+            JOIN shifts s ON s.id = e.shift_id
+            JOIN branches b ON b.id = s.branch_id
+            WHERE {where}
+            ORDER BY s.date DESC, b.name, e.id
+        ''', params).fetchall()
+
+        # Totals
+        tot = conn.execute(f'''
+            SELECT COALESCE(SUM(e.amount_cash),0) as cash,
+                   COALESCE(SUM(e.amount_card),0) as card,
+                   COALESCE(SUM(e.amount_cash+e.amount_card),0) as total
+            FROM expenses e
+            JOIN shifts s ON s.id = e.shift_id
+            WHERE {where}
+        ''', params).fetchone()
+
+        # By category
+        by_cat = conn.execute(f'''
+            SELECT e.category,
+                   COALESCE(SUM(e.amount_cash),0) as cash,
+                   COALESCE(SUM(e.amount_card),0) as card,
+                   COALESCE(SUM(e.amount_cash+e.amount_card),0) as total,
+                   COUNT(*) as cnt
+            FROM expenses e
+            JOIN shifts s ON s.id = e.shift_id
+            WHERE {where}
+            GROUP BY e.category
+            ORDER BY total DESC
+        ''', params).fetchall()
+
+    # Build code→label map
+    cat_map = {c['code']: c['label'] for c in all_cats}
+
+    return render_template('expenses_report.html',
+        rows=rows, tot=tot, by_cat=by_cat,
+        branches=branches, all_cats=all_cats, cat_map=cat_map,
+        date_from=date_from, date_to=date_to,
+        branch_id=branch_id, cat_filter=cat_filter)
+
+
 # ─── HISTORY ──────────────────────────────────────────────────────────────────
 
 @app.route('/history')
