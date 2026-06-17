@@ -280,6 +280,20 @@ def init_db():
                     (code, label, sort)
                 )
 
+        # Create user_branches table (many-to-many users ↔ branches)
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS user_branches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                UNIQUE(user_id, branch_id)
+            );
+        ''')
+        conn.execute('''
+            INSERT OR IGNORE INTO user_branches (user_id, branch_id)
+            SELECT id, branch_id FROM users WHERE branch_id IS NOT NULL
+        ''')
+
         conn.commit()
 
 
@@ -326,10 +340,18 @@ def login():
         with get_db() as conn:
             user = conn.execute('SELECT * FROM users WHERE username=?', (username,)).fetchone()
         if user and check_password_hash(user['password_hash'], password):
+            rows = conn.execute(
+                'SELECT branch_id FROM user_branches WHERE user_id=? ORDER BY branch_id',
+                (user['id'],)
+            ).fetchall()
+            branch_ids = [r['branch_id'] for r in rows]
+            if not branch_ids and user['branch_id']:
+                branch_ids = [user['branch_id']]
             session['user_id'] = user['id']
             session['role'] = user['role']
             session['full_name'] = user['full_name']
-            session['branch_id'] = user['branch_id']
+            session['branch_id'] = branch_ids[0] if branch_ids else None
+            session['branch_ids'] = branch_ids
             return redirect(url_for('dashboard'))
         flash('Неверный логин или пароль', 'danger')
     return render_template('login.html')
@@ -381,25 +403,35 @@ def dashboard():
                 branches=branches, stats=stats, weekly=weekly,
                 open_shifts=open_shifts, kpi_blocks=kpi_blocks)
         else:
-            branch_id = session.get('branch_id')
-            if not branch_id:
-                flash('У вас не назначен филиал', 'warning')
-                return render_template('dashboard_admin.html', shift=None, branch=None)
-            branch = conn.execute('SELECT * FROM branches WHERE id=?', (branch_id,)).fetchone()
             today = date.today().isoformat()
-            shift = conn.execute(
-                'SELECT s.*, u.full_name as closed_by_name FROM shifts s '
-                'LEFT JOIN users u ON u.id=s.closed_by '
-                'WHERE s.branch_id=? AND s.date=?',
-                (branch_id, today)
-            ).fetchone()
-            recent = conn.execute('''
-                SELECT s.*, COALESCE(r.total_revenue,0) as revenue
-                FROM shifts s LEFT JOIN shift_revenue r ON r.shift_id=s.id
-                WHERE s.branch_id=? ORDER BY s.date DESC LIMIT 7
-            ''', (branch_id,)).fetchall()
+            bids = _session_branch_ids()
+            if not bids:
+                flash('У вас не назначен филиал', 'warning')
+                return render_template('dashboard_admin.html', branches_shifts=[], today=today, recent=[])
+            branches_shifts = []
+            for bid in bids:
+                branch = conn.execute('SELECT * FROM branches WHERE id=?', (bid,)).fetchone()
+                if not branch:
+                    continue
+                shift = conn.execute(
+                    'SELECT s.*, u.full_name as closed_by_name FROM shifts s '
+                    'LEFT JOIN users u ON u.id=s.closed_by '
+                    'WHERE s.branch_id=? AND s.date=?',
+                    (bid, today)
+                ).fetchone()
+                branches_shifts.append({'branch': branch, 'shift': shift})
+            if bids:
+                ids_str = ','.join(str(int(b)) for b in bids)
+                recent = conn.execute(f'''
+                    SELECT s.*, b.name as branch_name, COALESCE(r.total_revenue,0) as revenue
+                    FROM shifts s JOIN branches b ON b.id=s.branch_id
+                    LEFT JOIN shift_revenue r ON r.shift_id=s.id
+                    WHERE s.branch_id IN ({ids_str}) ORDER BY s.date DESC LIMIT 10
+                ''').fetchall()
+            else:
+                recent = []
             return render_template('dashboard_admin.html',
-                shift=shift, branch=branch, today=today, recent=recent)
+                branches_shifts=branches_shifts, today=today, recent=recent)
 
 
 # ─── KPI API ──────────────────────────────────────────────────────────────────
@@ -434,10 +466,14 @@ def api_kpi_values():
 @app.route('/shift/open', methods=['POST'])
 @login_required
 def open_shift():
-    branch_id = session.get('branch_id')
     role = session.get('role')
     if role == 'owner':
-        branch_id = request.form.get('branch_id', branch_id)
+        branch_id = request.form.get('branch_id', session.get('branch_id'))
+    else:
+        branch_id = request.form.get('branch_id') or session.get('branch_id')
+        bids = _session_branch_ids()
+        if branch_id and int(branch_id) not in bids:
+            branch_id = bids[0] if bids else None
     if not branch_id:
         flash('Филиал не определён', 'danger')
         return redirect(url_for('dashboard'))
@@ -471,7 +507,7 @@ def shift_view(shift_id):
             flash('Смена не найдена', 'danger')
             return redirect(url_for('dashboard'))
         role = session.get('role')
-        if role != 'owner' and session.get('branch_id') != shift['branch_id']:
+        if role != 'owner' and shift['branch_id'] not in _session_branch_ids():
             flash('Нет доступа к этой смене', 'danger')
             return redirect(url_for('dashboard'))
 
@@ -836,14 +872,18 @@ def employees():
                 branches = all_branches
         else:
             all_branches = []
-            branch_id = session.get('branch_id')
-            emps = conn.execute(
-                'SELECT e.*, b.name as branch_name FROM employees e '
-                'LEFT JOIN branches b ON b.id=e.branch_id '
-                'WHERE e.branch_id=? ORDER BY e.role, e.full_name',
-                (branch_id,)
-            ).fetchall()
-            branches = conn.execute('SELECT * FROM branches WHERE id=?', (branch_id,)).fetchall()
+            bids = _session_branch_ids()
+            if bids:
+                ids_str = ','.join(str(int(b)) for b in bids)
+                emps = conn.execute(f'''
+                    SELECT e.*, b.name as branch_name FROM employees e
+                    LEFT JOIN branches b ON b.id=e.branch_id
+                    WHERE e.branch_id IN ({ids_str}) ORDER BY b.name, e.role, e.full_name
+                ''').fetchall()
+                branches = conn.execute(f'SELECT * FROM branches WHERE id IN ({ids_str}) ORDER BY name').fetchall()
+            else:
+                emps = []
+                branches = []
 
         # Rate history per employee
         rate_history = {}
@@ -1183,8 +1223,15 @@ def users():
             FROM users u LEFT JOIN branches b ON b.id=u.branch_id
             ORDER BY u.role, u.full_name
         ''').fetchall()
-        branches = conn.execute('SELECT * FROM branches WHERE is_active=1').fetchall()
-    return render_template('users.html', users=ulist, branches=branches)
+        branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        user_branches_map = {}
+        for row in conn.execute('''
+            SELECT ub.user_id, b.name, b.id
+            FROM user_branches ub JOIN branches b ON b.id=ub.branch_id
+            ORDER BY b.name
+        ''').fetchall():
+            user_branches_map.setdefault(row['user_id'], []).append({'id': row['id'], 'name': row['name']})
+    return render_template('users.html', users=ulist, branches=branches, user_branches_map=user_branches_map)
 
 
 @app.route('/users/add', methods=['POST'])
@@ -1195,7 +1242,8 @@ def add_user():
     password = request.form.get('password', '')
     full_name = request.form.get('full_name', '').strip()
     role = request.form.get('role', 'admin')
-    branch_id = request.form.get('branch_id') or None
+    branch_ids = [bid for bid in request.form.getlist('branch_ids') if bid.isdigit()]
+    primary_branch_id = int(branch_ids[0]) if branch_ids else None
     if not username or not password or not full_name:
         flash('Заполните все поля', 'danger')
         return redirect(url_for('users'))
@@ -1206,8 +1254,11 @@ def add_user():
             return redirect(url_for('users'))
         conn.execute(
             'INSERT INTO users (username, password_hash, role, full_name, branch_id) VALUES (?,?,?,?,?)',
-            (username, generate_password_hash(password, method='pbkdf2:sha256'), role, full_name, branch_id)
+            (username, generate_password_hash(password, method='pbkdf2:sha256'), role, full_name, primary_branch_id)
         )
+        user_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        for bid in branch_ids:
+            conn.execute('INSERT OR IGNORE INTO user_branches (user_id, branch_id) VALUES (?,?)', (user_id, int(bid)))
         conn.commit()
     flash(f'Пользователь {full_name} создан', 'success')
     return redirect(url_for('users'))
@@ -1708,6 +1759,14 @@ def api_employee(emp_id):
 
 # ─── HELPERS ──────────────────────────────────────────────────────────────────
 
+def _session_branch_ids():
+    ids = session.get('branch_ids')
+    if ids:
+        return ids
+    bid = session.get('branch_id')
+    return [bid] if bid else []
+
+
 def _can_edit_shift(shift_id):
     role = session.get('role')
     if role == 'owner':
@@ -1716,7 +1775,7 @@ def _can_edit_shift(shift_id):
         shift = conn.execute('SELECT * FROM shifts WHERE id=?', (shift_id,)).fetchone()
         if not shift:
             return False
-        return shift['status'] == 'open' and shift['branch_id'] == session.get('branch_id')
+        return shift['status'] == 'open' and shift['branch_id'] in _session_branch_ids()
 
 
 def _f(data, key):
@@ -1896,8 +1955,10 @@ def shifts_archive():
         params = [date_from, date_to]
 
         if role != 'owner':
-            query += ' AND s.branch_id = ?'
-            params.append(session.get('branch_id'))
+            bids = _session_branch_ids()
+            if bids:
+                ids_str = ','.join(str(int(b)) for b in bids)
+                query += f' AND s.branch_id IN ({ids_str})'
         elif branch_ids:
             ids_str = ','.join(str(int(bid)) for bid in branch_ids)
             query += f' AND s.branch_id IN ({ids_str})'

@@ -29,7 +29,12 @@
                     {% elif u.role == 'admin' %}<span class="badge bg-primary">Администратор</span>
                     {% else %}<span class="badge bg-secondary">Сотрудник</span>{% endif %}
                 </td>
-                <td>{{ u.branch_name or '—' }}</td>
+                <td>
+                    {% set ubs = user_branches_map.get(u.id, []) %}
+                    {% if ubs %}
+                        {{ ubs | map(attribute='name') | join(', ') }}
+                    {% else %}—{% endif %}
+                </td>
                 <td class="text-end">
                     <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#pwModal{{ u.id }}">
                         <i class="bi bi-key"></i> Пароль
@@ -72,13 +77,24 @@
                         </select>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Филиал</label>
-                        <select name="branch_id" class="form-select">
-                            <option value="">— не назначен —</option>
-                            {% for b in branches %}
-                            <option value="{{ b.id }}">{{ b.name }}</option>
-                            {% endfor %}
-                        </select>
+                        <label class="form-label">Филиалы</label>
+                        <div class="dropdown">
+                            <button type="button" class="btn btn-outline-secondary w-100 text-start d-flex justify-content-between align-items-center"
+                                    id="addUserBranchBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside">
+                                <span id="addUserBranchLabel">— не назначен —</span>
+                                <i class="bi bi-chevron-down small"></i>
+                            </button>
+                            <div class="dropdown-menu p-2 shadow w-100" style="max-height:260px;overflow-y:auto">
+                                <input type="text" class="form-control form-control-sm mb-2" placeholder="Поиск..." id="addUserBranchSearch" autocomplete="off">
+                                {% for b in branches %}
+                                <div class="form-check add-branch-item">
+                                    <input class="form-check-input add-branch-cb" type="checkbox" name="branch_ids"
+                                           value="{{ b.id }}" id="addBr{{ b.id }}">
+                                    <label class="form-check-label w-100" for="addBr{{ b.id }}" style="cursor:pointer">{{ b.name }}</label>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -112,4 +128,31 @@
     </div>
 </div>
 {% endfor %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    var cbs  = document.querySelectorAll('.add-branch-cb');
+    var lbl  = document.getElementById('addUserBranchLabel');
+    var srch = document.getElementById('addUserBranchSearch');
+
+    function updateLabel() {
+        var checked = Array.from(cbs).filter(function(c){ return c.checked; });
+        lbl.textContent = checked.length
+            ? checked.map(function(c){ return c.closest('.add-branch-item').querySelector('label').textContent.trim(); }).join(', ')
+            : '— не назначен —';
+    }
+    cbs.forEach(function(cb){ cb.addEventListener('change', updateLabel); });
+
+    if (srch) {
+        srch.addEventListener('input', function () {
+            var q = this.value.toLowerCase();
+            document.querySelectorAll('.add-branch-item').forEach(function (el) {
+                el.style.display = el.querySelector('label').textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
+            });
+        });
+    }
+})();
+</script>
 {% endblock %}
