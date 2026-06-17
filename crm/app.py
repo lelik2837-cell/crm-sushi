@@ -1843,4 +1843,5 @@ if __name__ == '__main__':
     print('Откройте браузер: http://localhost:5050')
     print('Логин: owner | Пароль: admin123')
     print('=' * 50 + '\n')
-    app.run(host='0.0.0.0', port=5050, debug=False)
+    port = int(os.environ.get('PORT', 5050))
+    app.run(host='0.0.0.0', port=port, debug=False)
