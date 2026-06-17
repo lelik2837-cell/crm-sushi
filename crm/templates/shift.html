@@ -297,8 +297,16 @@
       <div class="expense-row" data-id="{{ exp.id }}">
         {% if can_edit %}
         <select class="field-select field-input-sm exp-cat" style="font-size:12px; padding:5px 24px 5px 8px;">
-          {% for code, label in expense_categories %}
-          <option value="{{ code }}" {% if exp.category == code %}selected{% endif %}>{{ label }}</option>
+          {% for parent, children in expense_cats_groups %}
+          {% if children %}
+          <optgroup label="{{ parent.label }}">
+            {% for child in children %}
+            <option value="{{ child.code }}" {% if exp.category == child.code %}selected{% endif %}>{{ child.label }}</option>
+            {% endfor %}
+          </optgroup>
+          {% else %}
+          <option value="{{ parent.code }}" {% if exp.category == parent.code %}selected{% endif %}>{{ parent.label }}</option>
+          {% endif %}
           {% endfor %}
         </select>
         <input class="mini-input exp-amount money-field" type="text" inputmode="numeric" placeholder="0"
@@ -616,7 +624,18 @@
 <script>
 const SHIFT_ID = {{ shift.id }};
 const CAN_EDIT = {{ 'true' if can_edit else 'false' }};
-const EXPENSE_CATS = {{ expense_categories | tojson }};
+const EXPENSE_CATS_GROUPS = {{ expense_cats_groups | tojson }};
+function buildCatOptions(selectedCode) {
+  return EXPENSE_CATS_GROUPS.map(([parent, children]) => {
+    if (children.length) {
+      const opts = children.map(c =>
+        `<option value="${c.code}"${c.code===selectedCode?' selected':''}>${c.label}</option>`
+      ).join('');
+      return `<optgroup label="${parent.label}">${opts}</optgroup>`;
+    }
+    return `<option value="${parent.code}"${parent.code===selectedCode?' selected':''}>${parent.label}</option>`;
+  }).join('');
+}
 
 // ── Money field formatting ────────────────────────────────────────────────────
 function readNum(el) {
@@ -746,7 +765,7 @@ function addExpenseRow() {
   row.className = 'expense-row'; row.dataset.id = 'new';
   row.innerHTML = `
     <select class="field-select field-input-sm exp-cat" style="font-size:12px; padding:5px 24px 5px 8px;">
-      ${EXPENSE_CATS.map(([c,l]) => `<option value="${c}">${l}</option>`).join('')}
+      ${buildCatOptions(null)}
     </select>
     <input class="mini-input exp-amount money-field" type="text" inputmode="numeric" placeholder="0" value="">
     <select class="pay-type-sel exp-paytype" style="font-size:12px;">

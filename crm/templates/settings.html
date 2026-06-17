@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% set active_tab = request.args.get('tab', 'categories') %}
-{% set tab_titles = {'categories': 'Категории расходов', 'kpi': 'КПИ блоки дашборда', 'bonuses': 'Премии', 'vars': 'Переменные формул', 'rates': 'Ставки сотрудников'} %}
+{% set tab_titles = {'categories': 'Категории расходов / доходов', 'kpi': 'КПИ блоки дашборда', 'bonuses': 'Премии', 'vars': 'Переменные формул', 'rates': 'Ставки сотрудников'} %}
 {% block title %}Настройки — {{ tab_titles.get(active_tab, '') }}{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -9,20 +9,46 @@
 
 <div>
 
-    <!-- ══ EXPENSE CATEGORIES ══ -->
+    <!-- ══ EXPENSE / INCOME CATEGORIES ══ -->
     {% if active_tab == 'categories' %}<div>
         <div class="row g-4">
-            <div class="col-md-5">
-                <div class="card">
+            <!-- Форма добавления -->
+            <div class="col-md-4">
+                <div class="card mb-3">
                     <div class="card-header bg-light fw-bold">
                         <i class="bi bi-plus-circle"></i> Добавить категорию
                     </div>
                     <div class="card-body">
-                        <form method="POST" action="{{ url_for('add_expense_cat') }}">
+                        <form method="POST" action="{{ url_for('add_expense_cat') }}" id="addCatForm">
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Тип</label>
+                                <div class="d-flex gap-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="type" value="expense" id="typeExpense" checked onchange="onCatTypeChange()">
+                                        <label class="form-check-label" for="typeExpense">Расход</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="type" value="income" id="typeIncome" onchange="onCatTypeChange()">
+                                        <label class="form-check-label" for="typeIncome">Доход</label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mb-3" id="parentCatWrap">
+                                <label class="form-label fw-semibold">Родительская категория <span class="text-muted fw-normal">(необязательно)</span></label>
+                                <select name="parent_id" id="parentCatSel" class="form-select form-select-sm">
+                                    <option value="">— Без родителя (новая категория) —</option>
+                                    {% for cat in exp_cats_parents %}
+                                    {% if cat.type == 'expense' %}
+                                    <option value="{{ cat.id }}" data-type="expense">{{ cat.label }}</option>
+                                    {% endif %}
+                                    {% endfor %}
+                                </select>
+                                <div class="form-text">Выберите, если это подкатегория</div>
+                            </div>
                             <div class="mb-3">
                                 <label class="form-label fw-semibold">Название</label>
                                 <input type="text" name="label" class="form-control"
-                                    placeholder="Например: Хозтовары" required>
+                                    placeholder="Например: Ремонт кондиционеров" required>
                             </div>
                             <button type="submit" class="btn btn-primary w-100">
                                 <i class="bi bi-plus"></i> Добавить
@@ -31,44 +57,100 @@
                     </div>
                 </div>
             </div>
-            <div class="col-md-7">
-                <div class="card">
+
+            <!-- Список категорий -->
+            <div class="col-md-8">
+                <!-- Расходы -->
+                <div class="card mb-3">
                     <div class="card-header bg-light fw-bold">
-                        <i class="bi bi-list-ul"></i> Категории ({{ exp_cats|length }})
+                        <i class="bi bi-dash-circle text-danger me-1"></i> Категории расходов
                     </div>
                     <div class="card-body p-0">
-                        <table class="table table-sm mb-0">
-                            <thead class="table-light">
-                                <tr>
-                                    <th>Название</th>
-                                    <th class="text-muted small">Код</th>
-                                    <th class="text-center">Статус</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                            {% for cat in exp_cats %}
-                            <tr class="{% if not cat.is_active %}opacity-50{% endif %}">
-                                <td class="fw-semibold">{{ cat.label }}</td>
-                                <td class="text-muted small">{{ cat.code }}</td>
-                                <td class="text-center">
-                                    {% if cat.is_active %}
-                                    <span class="badge bg-success">Активна</span>
-                                    {% else %}
-                                    <span class="badge bg-secondary">Скрыта</span>
-                                    {% endif %}
-                                </td>
-                                <td class="text-end">
-                                    <form method="POST" action="{{ url_for('toggle_expense_cat', cat_id=cat.id) }}" class="d-inline">
-                                        <button class="btn btn-sm {% if cat.is_active %}btn-outline-secondary{% else %}btn-outline-success{% endif %}">
-                                            {% if cat.is_active %}<i class="bi bi-eye-slash"></i>{% else %}<i class="bi bi-eye"></i>{% endif %}
-                                        </button>
-                                    </form>
-                                </td>
-                            </tr>
-                            {% endfor %}
-                            </tbody>
-                        </table>
+                        {% set ns = namespace(found=false) %}
+                        {% for cat in exp_cats %}{% if cat.type == 'expense' and not cat.parent_id %}
+                        {% set ns.found = true %}
+                        <div class="{% if not cat.is_active %}opacity-50{% endif %}">
+                            <div class="d-flex align-items-center px-3 py-2 border-bottom bg-light">
+                                <span class="fw-semibold flex-grow-1">{{ cat.label }}</span>
+                                <span class="badge bg-secondary me-2" style="font-size:10px;">{{ cat.code }}</span>
+                                <form method="POST" action="{{ url_for('toggle_expense_cat', cat_id=cat.id) }}" class="d-inline me-1">
+                                    <button class="btn btn-sm {% if cat.is_active %}btn-outline-secondary{% else %}btn-outline-success{% endif %}" title="Показать/скрыть">
+                                        <i class="bi bi-{% if cat.is_active %}eye-slash{% else %}eye{% endif %}"></i>
+                                    </button>
+                                </form>
+                                <form method="POST" action="{{ url_for('delete_expense_cat', cat_id=cat.id) }}" class="d-inline"
+                                    onsubmit="return confirm('Удалить категорию «{{ cat.label }}»?')">
+                                    <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                                </form>
+                            </div>
+                            {% for sub in exp_cats %}{% if sub.parent_id == cat.id %}
+                            <div class="d-flex align-items-center px-3 py-1 border-bottom {% if not sub.is_active %}opacity-50{% endif %}" style="padding-left:2rem!important;">
+                                <i class="bi bi-arrow-return-right text-muted me-2" style="font-size:11px;"></i>
+                                <span class="flex-grow-1 small">{{ sub.label }}</span>
+                                <span class="badge bg-light text-muted border me-2" style="font-size:10px;">{{ sub.code }}</span>
+                                <form method="POST" action="{{ url_for('toggle_expense_cat', cat_id=sub.id) }}" class="d-inline me-1">
+                                    <button class="btn btn-sm {% if sub.is_active %}btn-outline-secondary{% else %}btn-outline-success{% endif %}">
+                                        <i class="bi bi-{% if sub.is_active %}eye-slash{% else %}eye{% endif %}"></i>
+                                    </button>
+                                </form>
+                                <form method="POST" action="{{ url_for('delete_expense_cat', cat_id=sub.id) }}" class="d-inline"
+                                    onsubmit="return confirm('Удалить подкатегорию «{{ sub.label }}»?')">
+                                    <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                                </form>
+                            </div>
+                            {% endif %}{% endfor %}
+                        </div>
+                        {% endif %}{% endfor %}
+                        {% if not ns.found %}
+                        <div class="text-muted text-center py-3 small">Нет категорий расходов</div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Доходы -->
+                <div class="card">
+                    <div class="card-header bg-light fw-bold">
+                        <i class="bi bi-plus-circle text-success me-1"></i> Категории доходов
+                    </div>
+                    <div class="card-body p-0">
+                        {% set ns2 = namespace(found=false) %}
+                        {% for cat in exp_cats %}{% if cat.type == 'income' and not cat.parent_id %}
+                        {% set ns2.found = true %}
+                        <div class="{% if not cat.is_active %}opacity-50{% endif %}">
+                            <div class="d-flex align-items-center px-3 py-2 border-bottom bg-light">
+                                <span class="fw-semibold flex-grow-1">{{ cat.label }}</span>
+                                <span class="badge bg-secondary me-2" style="font-size:10px;">{{ cat.code }}</span>
+                                <form method="POST" action="{{ url_for('toggle_expense_cat', cat_id=cat.id) }}" class="d-inline me-1">
+                                    <button class="btn btn-sm {% if cat.is_active %}btn-outline-secondary{% else %}btn-outline-success{% endif %}">
+                                        <i class="bi bi-{% if cat.is_active %}eye-slash{% else %}eye{% endif %}"></i>
+                                    </button>
+                                </form>
+                                <form method="POST" action="{{ url_for('delete_expense_cat', cat_id=cat.id) }}" class="d-inline"
+                                    onsubmit="return confirm('Удалить категорию «{{ cat.label }}»?')">
+                                    <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                                </form>
+                            </div>
+                            {% for sub in exp_cats %}{% if sub.parent_id == cat.id %}
+                            <div class="d-flex align-items-center px-3 py-1 border-bottom {% if not sub.is_active %}opacity-50{% endif %}" style="padding-left:2rem!important;">
+                                <i class="bi bi-arrow-return-right text-muted me-2" style="font-size:11px;"></i>
+                                <span class="flex-grow-1 small">{{ sub.label }}</span>
+                                <span class="badge bg-light text-muted border me-2" style="font-size:10px;">{{ sub.code }}</span>
+                                <form method="POST" action="{{ url_for('toggle_expense_cat', cat_id=sub.id) }}" class="d-inline me-1">
+                                    <button class="btn btn-sm {% if sub.is_active %}btn-outline-secondary{% else %}btn-outline-success{% endif %}">
+                                        <i class="bi bi-{% if sub.is_active %}eye-slash{% else %}eye{% endif %}"></i>
+                                    </button>
+                                </form>
+                                <form method="POST" action="{{ url_for('delete_expense_cat', cat_id=sub.id) }}" class="d-inline"
+                                    onsubmit="return confirm('Удалить подкатегорию «{{ sub.label }}»?')">
+                                    <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                                </form>
+                            </div>
+                            {% endif %}{% endfor %}
+                        </div>
+                        {% endif %}{% endfor %}
+                        {% if not ns2.found %}
+                        <div class="text-muted text-center py-3 small">Нет категорий доходов</div>
+                        {% endif %}
                     </div>
                 </div>
             </div>
@@ -652,5 +734,26 @@ function toggleRateTmplCourierFields(role) {
     const rateCol = document.getElementById('rtpl-rate-col');
     if (rateCol) rateCol.className = isCourier ? 'col-4' : 'col-12';
 }
+
+// Category form: update parent dropdown based on selected type
+const CAT_PARENTS = {{ exp_cats_parents | tojson }};
+function onCatTypeChange() {
+    const type = document.querySelector('input[name="type"]:checked')?.value || 'expense';
+    const sel = document.getElementById('parentCatSel');
+    if (!sel) return;
+    const current = sel.value;
+    sel.innerHTML = '<option value="">— Без родителя (новая категория) —</option>';
+    CAT_PARENTS.forEach(function(c) {
+        if (c.type === type) {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = c.label;
+            if (String(c.id) === current) opt.selected = true;
+            sel.appendChild(opt);
+        }
+    });
+}
+// Init on load
+onCatTypeChange();
 </script>
 {% endblock %}

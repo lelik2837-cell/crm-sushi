@@ -113,10 +113,22 @@ def get_db():
 
 
 def get_expense_categories(conn):
-    rows = conn.execute(
-        'SELECT code, label FROM expense_categories WHERE is_active=1 ORDER BY sort_order, label'
+    return conn.execute(
+        'SELECT id, code, label, type, parent_id FROM expense_categories WHERE is_active=1 ORDER BY sort_order, label'
     ).fetchall()
-    return [(r['code'], r['label']) for r in rows]
+
+
+def build_cats_groups(cats):
+    """Build grouped structure for dropdown: [(parent_dict, [child_dict, ...]), ...]."""
+    children_map = {}
+    for c in cats:
+        if c['parent_id']:
+            children_map.setdefault(c['parent_id'], []).append(dict(c))
+    groups = []
+    for c in cats:
+        if not c['parent_id']:
+            groups.append((dict(c), children_map.get(c['id'], [])))
+    return groups
 
 
 def get_kpi_values(conn, branch_id, date_from, date_to):
@@ -308,6 +320,13 @@ def init_db():
         branch_cols = [r[1] for r in conn.execute("PRAGMA table_info(branches)").fetchall()]
         if 'allowed_ip' not in branch_cols:
             conn.execute("ALTER TABLE branches ADD COLUMN allowed_ip TEXT DEFAULT NULL")
+
+        # Add type and parent_id to expense_categories if missing
+        ec_cols = [r[1] for r in conn.execute("PRAGMA table_info(expense_categories)").fetchall()]
+        if 'type' not in ec_cols:
+            conn.execute("ALTER TABLE expense_categories ADD COLUMN type TEXT DEFAULT 'expense'")
+        if 'parent_id' not in ec_cols:
+            conn.execute("ALTER TABLE expense_categories ADD COLUMN parent_id INTEGER REFERENCES expense_categories(id)")
 
         conn.commit()
 
@@ -576,13 +595,16 @@ def shift_view(shift_id):
             ).fetchall()
             taxi_trip_emps[t['id']] = tte
         expense_cats = get_expense_categories(conn)
+        expense_cats_groups = build_cats_groups(expense_cats)
+        expense_cats_flat = [(c['code'], c['label']) for c in expense_cats]
         can_edit = (role == 'owner') or (shift['status'] == 'open')
         return render_template('shift.html',
             shift=shift, revenue=revenue, expenses=expenses,
             staff=staff, employees=employees,
             emp_addresses=emp_addresses,
             taxi_trips=taxi_trips, taxi_trip_emps=taxi_trip_emps,
-            expense_categories=expense_cats,
+            expense_categories=expense_cats_flat,
+            expense_cats_groups=expense_cats_groups,
             role_labels=ROLE_LABELS,
             can_edit=can_edit,
             is_owner=(role == 'owner'))
@@ -628,7 +650,7 @@ def save_expense(shift_id):
     data = request.json or {}
     expense_id = data.get('id')
     with get_db() as conn:
-        cats = dict(get_expense_categories(conn))
+        cats = {r['code']: r['label'] for r in get_expense_categories(conn)}
         cat_label = cats.get(data.get('category', 'other'), data.get('category', 'другое'))
         amount = _f(data, 'amount_cash') + _f(data, 'amount_card')
         pay_type = 'нал' if _f(data, 'amount_cash') > 0 else 'безнал'
@@ -669,7 +691,7 @@ def delete_expense(shift_id, expense_id):
     with get_db() as conn:
         exp = conn.execute('SELECT * FROM expenses WHERE id=? AND shift_id=?', (expense_id, shift_id)).fetchone()
         if exp:
-            cats = dict(get_expense_categories(conn))
+            cats = {r['code']: r['label'] for r in get_expense_categories(conn)}
             cat_label = cats.get(exp['category'], exp['category'])
             amount = (exp['amount_cash'] or 0) + (exp['amount_card'] or 0)
             pay_type = 'нал' if (exp['amount_cash'] or 0) > 0 else 'безнал'
@@ -1368,8 +1390,9 @@ def reset_password(user_id):
 def settings():
     with get_db() as conn:
         exp_cats = conn.execute(
-            'SELECT * FROM expense_categories ORDER BY sort_order, label'
+            'SELECT * FROM expense_categories ORDER BY COALESCE(parent_id,id), sort_order, label'
         ).fetchall()
+        exp_cats_parents = [dict(c) for c in exp_cats if not c['parent_id']]
         kpi_blocks = conn.execute(
             'SELECT * FROM kpi_blocks ORDER BY sort_order, id'
         ).fetchall()
@@ -1393,7 +1416,8 @@ def settings():
         ).fetchall():
             tmpl_history.setdefault(row['template_id'], []).append(row)
     return render_template('settings.html',
-        exp_cats=exp_cats, kpi_blocks=kpi_blocks,
+        exp_cats=exp_cats, exp_cats_parents=exp_cats_parents,
+        kpi_blocks=kpi_blocks,
         bonus_rules=bonus_rules, branches=branches,
         rate_templates=rate_templates,
         tmpl_branches=tmpl_branches, tmpl_history=tmpl_history,
@@ -1406,22 +1430,33 @@ def settings():
 @owner_required
 def add_expense_cat():
     label = request.form.get('label', '').strip()
+    cat_type = request.form.get('type', 'expense')
+    parent_id = request.form.get('parent_id') or None
+    if cat_type not in ('expense', 'income'):
+        cat_type = 'expense'
     if not label:
-        flash('Введите название категории', 'danger')
+        flash('Введите название', 'danger')
         return redirect(url_for('settings'))
     code = label.lower().replace(' ', '_').replace('/', '_')[:30]
     with get_db() as conn:
-        # Make code unique
+        if parent_id:
+            parent_row = conn.execute('SELECT id, type FROM expense_categories WHERE id=?', (parent_id,)).fetchone()
+            if not parent_row:
+                flash('Родительская категория не найдена', 'danger')
+                return redirect(url_for('settings'))
+            cat_type = parent_row['type']
+            parent_id = parent_row['id']
         existing = conn.execute('SELECT id FROM expense_categories WHERE code=?', (code,)).fetchone()
         if existing:
             code = code + '_' + str(int(datetime.now().timestamp()))[-4:]
         max_sort = conn.execute('SELECT COALESCE(MAX(sort_order),0) FROM expense_categories').fetchone()[0]
         conn.execute(
-            'INSERT INTO expense_categories (code, label, sort_order) VALUES (?,?,?)',
-            (code, label, max_sort + 1)
+            'INSERT INTO expense_categories (code, label, type, parent_id, sort_order) VALUES (?,?,?,?,?)',
+            (code, label, cat_type, parent_id, max_sort + 1)
         )
         conn.commit()
-    flash(f'Категория «{label}» добавлена', 'success')
+    kind = 'Подкатегория' if parent_id else 'Категория'
+    flash(f'{kind} «{label}» добавлена', 'success')
     return redirect(url_for('settings'))
 
 
@@ -1431,7 +1466,25 @@ def add_expense_cat():
 def toggle_expense_cat(cat_id):
     with get_db() as conn:
         conn.execute('UPDATE expense_categories SET is_active=1-is_active WHERE id=?', (cat_id,))
+        # Also toggle all subcategories
+        conn.execute(
+            'UPDATE expense_categories SET is_active=(SELECT is_active FROM expense_categories WHERE id=?) WHERE parent_id=?',
+            (cat_id, cat_id)
+        )
         conn.commit()
+    return redirect(url_for('settings'))
+
+
+@app.route('/settings/expense-cat/<int:cat_id>/delete', methods=['POST'])
+@login_required
+@owner_required
+def delete_expense_cat(cat_id):
+    with get_db() as conn:
+        # Move subcategories to top-level before deleting parent
+        conn.execute('UPDATE expense_categories SET parent_id=NULL WHERE parent_id=?', (cat_id,))
+        conn.execute('DELETE FROM expense_categories WHERE id=?', (cat_id,))
+        conn.commit()
+    flash('Категория удалена', 'success')
     return redirect(url_for('settings'))
 
 
