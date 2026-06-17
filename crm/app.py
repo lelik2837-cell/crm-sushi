@@ -304,6 +304,11 @@ def init_db():
             SELECT id, branch_id FROM employees WHERE branch_id IS NOT NULL
         ''')
 
+        # Add allowed_ip to branches if missing
+        branch_cols = [r[1] for r in conn.execute("PRAGMA table_info(branches)").fetchall()]
+        if 'allowed_ip' not in branch_cols:
+            conn.execute("ALTER TABLE branches ADD COLUMN allowed_ip TEXT DEFAULT NULL")
+
         conn.commit()
 
 
@@ -333,6 +338,13 @@ def get_current_user():
         return conn.execute('SELECT * FROM users WHERE id=?', (session['user_id'],)).fetchone()
 
 
+def get_client_ip():
+    xff = request.headers.get('X-Forwarded-For', '')
+    if xff:
+        return xff.split(',')[0].strip()
+    return request.remote_addr
+
+
 # ─── AUTH ─────────────────────────────────────────────────────────────────────
 
 @app.route('/')
@@ -357,6 +369,15 @@ def login():
             branch_ids = [r['branch_id'] for r in rows]
             if not branch_ids and user['branch_id']:
                 branch_ids = [user['branch_id']]
+            # IP restriction: non-owners are limited to the branch matching their IP
+            if user['role'] != 'owner':
+                client_ip = get_client_ip()
+                ip_branch = conn.execute(
+                    "SELECT id FROM branches WHERE allowed_ip=? AND is_active=1",
+                    (client_ip,)
+                ).fetchone()
+                if ip_branch:
+                    branch_ids = [ip_branch['id']]
             session['user_id'] = user['id']
             session['role'] = user['role']
             session['full_name'] = user['full_name']
@@ -1228,7 +1249,7 @@ def update_taxi_trip(trip_id):
 def branches():
     with get_db() as conn:
         blist = conn.execute('SELECT * FROM branches ORDER BY name').fetchall()
-    return render_template('branches.html', branches=blist)
+    return render_template('branches.html', branches=blist, my_ip=get_client_ip())
 
 
 @app.route('/branches/add', methods=['POST'])
@@ -1243,6 +1264,18 @@ def add_branch():
         conn.execute('INSERT INTO branches (name) VALUES (?)', (name,))
         conn.commit()
     flash(f'Филиал {name} добавлен', 'success')
+    return redirect(url_for('branches'))
+
+
+@app.route('/branches/<int:branch_id>/edit', methods=['POST'])
+@login_required
+@owner_required
+def edit_branch(branch_id):
+    allowed_ip = request.form.get('allowed_ip', '').strip() or None
+    with get_db() as conn:
+        conn.execute('UPDATE branches SET allowed_ip=? WHERE id=?', (allowed_ip, branch_id))
+        conn.commit()
+    flash('Настройки филиала сохранены', 'success')
     return redirect(url_for('branches'))
 
 

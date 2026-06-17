@@ -7,21 +7,47 @@
         <i class="bi bi-plus"></i> Добавить филиал
     </button>
 </div>
+
+<div class="alert alert-info py-2 small mb-3">
+    <i class="bi bi-info-circle"></i>
+    Ваш текущий IP-адрес: <strong>{{ my_ip }}</strong>.
+    Если прописать IP в настройках филиала, сотрудники с этого IP смогут входить только в этот филиал.
+</div>
+
 <div class="card">
     <div class="card-body p-0">
         <table class="table table-hover mb-0">
             <thead class="table-light">
-                <tr><th>Название</th><th class="text-center">Статус</th><th>Добавлен</th></tr>
+                <tr>
+                    <th>Название</th>
+                    <th>IP-адрес</th>
+                    <th class="text-center">Статус</th>
+                    <th>Добавлен</th>
+                    <th></th>
+                </tr>
             </thead>
             <tbody>
             {% for b in branches %}
             <tr>
                 <td class="fw-semibold">{{ b.name }}</td>
+                <td>
+                    {% if b.allowed_ip %}
+                    <code class="text-success">{{ b.allowed_ip }}</code>
+                    {% else %}
+                    <span class="text-muted small">—</span>
+                    {% endif %}
+                </td>
                 <td class="text-center">
                     {% if b.is_active %}<span class="badge bg-success">Активен</span>
                     {% else %}<span class="badge bg-secondary">Неактивен</span>{% endif %}
                 </td>
                 <td class="text-muted small">{{ b.created_at }}</td>
+                <td class="text-end">
+                    <button class="btn btn-sm btn-outline-secondary"
+                            data-bs-toggle="modal" data-bs-target="#editBranchModal{{ b.id }}">
+                        <i class="bi bi-pencil"></i>
+                    </button>
+                </td>
             </tr>
             {% endfor %}
             </tbody>
@@ -29,6 +55,7 @@
     </div>
 </div>
 
+<!-- Add Branch Modal -->
 <div class="modal fade" id="addBranchModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -49,4 +76,50 @@
         </div>
     </div>
 </div>
+
+<!-- Edit Branch Modals -->
+{% for b in branches %}
+<div class="modal fade" id="editBranchModal{{ b.id }}" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-shop"></i> {{ b.name }}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('edit_branch', branch_id=b.id) }}">
+                <div class="modal-body">
+                    <label class="form-label fw-semibold">IP-адрес филиала</label>
+                    <input type="text" name="allowed_ip" class="form-control font-monospace"
+                           placeholder="Например: 192.168.1.10"
+                           value="{{ b.allowed_ip or '' }}">
+                    <div class="form-text">
+                        Сотрудники, заходящие с этого IP, будут ограничены только этим филиалом.
+                        Оставьте пустым, чтобы убрать ограничение.
+                        <br>
+                        <a href="#" class="fill-my-ip" data-ip="{{ my_ip }}">
+                            Вставить мой текущий IP ({{ my_ip }})
+                        </a>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endfor %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('.fill-my-ip').forEach(function(a) {
+    a.addEventListener('click', function(e) {
+        e.preventDefault();
+        var input = this.closest('.modal-body').querySelector('input[name="allowed_ip"]');
+        if (input) input.value = this.dataset.ip;
+    });
+});
+</script>
 {% endblock %}
