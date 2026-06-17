@@ -1905,8 +1905,9 @@ def shifts_archive():
         is_owner=(role == 'owner'))
 
 
+init_db()
+
 if __name__ == '__main__':
-    init_db()
     print('\n' + '=' * 50)
     print('CRM Суши запущена!')
     print('Откройте браузер: http://localhost:5050')
@@ -1914,9 +1915,3 @@ if __name__ == '__main__':
     print('=' * 50 + '\n')
     port = int(os.environ.get('PORT', 5050))
     app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
-
-
-def create_app():
-    """Entry point for Gunicorn."""
-    init_db()
-    return app
