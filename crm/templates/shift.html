@@ -351,7 +351,7 @@
             {% endif %}
             <div class="taxi-emps" id="taxi-emps-{{ t.id }}">
               {% for tte in taxi_trip_emps[t.id] %}
-              <div class="taxi-emp-row" data-tte-id="{{ tte.id }}">
+              <div class="taxi-emp-row" data-tte-id="{{ tte.id }}" data-emp-id="{{ tte.employee_id or '' }}">
                 <span class="taxi-emp-name">{{ tte.name_snapshot }}</span>
                 {% if can_edit %}
                 <input class="mini-input" type="text" value="{{ tte.address_snapshot or '' }}" placeholder="Адрес" style="font-size:12px;">
@@ -1115,10 +1115,26 @@ updateKassa();
 const TAXI_EMPS = [{% for emp in employees %}{% if emp.role != 'courier' %}
   {id:{{ emp.id }}, name:{{ emp.full_name|tojson }}, addr:{{ (emp_addresses.get(emp.id,'')|string)|tojson }}},{% endif %}{% endfor %}
 ];
-const TAXI_EMP_OPTIONS = '<option value="">— добавить сотрудника —</option>' +
-  TAXI_EMPS.map(function(e) {
-    return '<option value="' + e.id + '" data-name="' + e.name.replace(/"/g,'&quot;') + '" data-address="' + e.addr.replace(/"/g,'&quot;') + '">' + e.name + '</option>';
-  }).join('');
+
+var taxiUsedEmpIds = new Set([{% for t in taxi_trips %}{% for tte in taxi_trip_emps[t.id] %}{% if tte.employee_id %}{{ tte.employee_id }},{% endif %}{% endfor %}{% endfor %}]);
+
+function buildTaxiEmpOptions() {
+  return '<option value="">— добавить сотрудника —</option>' +
+    TAXI_EMPS.map(function(e) {
+      var dis = taxiUsedEmpIds.has(e.id) ? ' disabled' : '';
+      return '<option value="' + e.id + '"' + dis + ' data-name="' + e.name.replace(/"/g,'&quot;') + '" data-address="' + e.addr.replace(/"/g,'&quot;') + '">' + e.name + '</option>';
+    }).join('');
+}
+
+function updateTaxiSelects() {
+  document.querySelectorAll('.taxi-trip-block select.field-select').forEach(function(sel) {
+    sel.querySelectorAll('option[value]').forEach(function(opt) {
+      if (opt.value) opt.disabled = taxiUsedEmpIds.has(parseInt(opt.value));
+    });
+  });
+}
+
+document.addEventListener('DOMContentLoaded', updateTaxiSelects);
 
 async function addTaxiTrip() {
   var emptyEl = document.getElementById('taxi-empty');
@@ -1136,7 +1152,7 @@ async function addTaxiTrip() {
     // LEFT
     '<div>' +
       '<select class="field-select" style="font-size:12px;margin-bottom:6px;width:100%;" onchange="onTaxiEmpSelect(this,' + tid + ')">' +
-        TAXI_EMP_OPTIONS +
+        buildTaxiEmpOptions() +
       '</select>' +
       '<div class="taxi-emps" id="taxi-emps-' + tid + '"></div>' +
     '</div>' +
@@ -1170,12 +1186,19 @@ async function onTaxiEmpSelect(sel, tripId) {
     body: JSON.stringify({ employee_id: empId, name: name, address: address })
   });
   var json = await res.json();
-  if (!json.ok) { alert('Ошибка'); return; }
+  if (!json.ok) {
+    alert(json.error || 'Ошибка');
+    return;
+  }
+
+  taxiUsedEmpIds.add(empId);
+  updateTaxiSelects();
 
   var container = document.getElementById('taxi-emps-' + tripId);
   var row = document.createElement('div');
   row.className = 'taxi-emp-row';
   row.dataset.tteId = json.tte_id;
+  row.dataset.empId = empId;
   row.innerHTML =
     '<span class="taxi-emp-name">' + name + '</span>' +
     '<input class="mini-input" type="text" value="' + address.replace(/"/g,'&quot;') + '" placeholder="Адрес" style="font-size:12px;">' +
@@ -1187,7 +1210,10 @@ async function removeTaxiEmp(btn, tteId) {
   var res = await fetch('/taxi/employee/' + tteId + '/remove', { method: 'POST' });
   var json = await res.json();
   if (!json.ok) { alert('Ошибка'); return; }
-  btn.closest('.taxi-emp-row').remove();
+  var row = btn.closest('.taxi-emp-row');
+  var empId = parseInt(row.dataset.empId);
+  if (empId) { taxiUsedEmpIds.delete(empId); updateTaxiSelects(); }
+  row.remove();
 }
 
 async function saveTaxiUpdate(block) {

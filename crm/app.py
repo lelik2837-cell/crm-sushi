@@ -1195,9 +1195,18 @@ def add_taxi_employee(trip_id):
         if not trip or not _can_edit_shift(trip['shift_id']):
             return jsonify({'error': 'Нет доступа'}), 403
         data = request.json or {}
+        employee_id = data.get('employee_id') or None
+        if employee_id:
+            already = conn.execute('''
+                SELECT COUNT(*) FROM taxi_trip_employees tte
+                JOIN taxi_trips tt ON tt.id = tte.trip_id
+                WHERE tt.shift_id = ? AND tte.employee_id = ?
+            ''', (trip['shift_id'], employee_id)).fetchone()[0]
+            if already:
+                return jsonify({'error': 'Сотрудник уже добавлен в рейс этой смены', 'duplicate': True}), 400
         conn.execute(
             'INSERT INTO taxi_trip_employees (trip_id, employee_id, name_snapshot, address_snapshot) VALUES (?,?,?,?)',
-            (trip_id, data.get('employee_id') or None, data.get('name', ''), data.get('address', ''))
+            (trip_id, employee_id, data.get('name', ''), data.get('address', ''))
         )
         tte_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
         conn.commit()
