@@ -1,1 +1,1 @@
-web: cd crm && python app.py
+web: python crm/app.py
