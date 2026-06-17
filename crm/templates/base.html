@@ -48,18 +48,19 @@
                         <i class="bi bi-house"></i> Главная
                     </a>
                 </li>
-                <li class="nav-item">
-                    <a class="nav-link {% if request.endpoint=='shifts_archive' %}active{% endif %}" href="{{ url_for('shifts_archive') }}">
-                        <i class="bi bi-calendar3"></i> Смены
-                    </a>
-                </li>
-                {% if session.get('role') == 'owner' %}
+                {% set reports_active = request.endpoint in ('reports', 'shifts_archive') %}
                 <li class="nav-item dropdown">
-                    <a class="nav-link dropdown-toggle {% if request.endpoint=='reports' %}active{% endif %}"
+                    <a class="nav-link dropdown-toggle {% if reports_active %}active{% endif %}"
                        href="#" data-bs-toggle="dropdown" aria-expanded="false">
                         <i class="bi bi-bar-chart"></i> Отчёты
                     </a>
                     <ul class="dropdown-menu">
+                        <li>
+                            <a class="dropdown-item {% if request.endpoint=='shifts_archive' %}active{% endif %}" href="{{ url_for('shifts_archive') }}">
+                                <i class="bi bi-calendar3 me-2"></i>Смены
+                            </a>
+                        </li>
+                        {% if session.get('role') == 'owner' %}
                         <li>
                             <a class="dropdown-item" href="{{ url_for('reports') }}?tab=shifts">
                                 <i class="bi bi-graph-up-arrow me-2"></i>Выручка
@@ -70,9 +71,9 @@
                                 <i class="bi bi-cash-coin me-2"></i>Зарплаты
                             </a>
                         </li>
+                        {% endif %}
                     </ul>
                 </li>
-                {% endif %}
                 {% set settings_active = request.endpoint in ('settings','branches','users','employees','history') %}
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle {% if settings_active %}active{% endif %}"
