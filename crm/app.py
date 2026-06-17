@@ -11,7 +11,7 @@ app = Flask(__name__)
 app.secret_key = 'sushi-crm-secret-2024-change-in-prod'
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 
-DATABASE = os.path.join(os.path.dirname(__file__), 'crm.db')
+DATABASE = os.environ.get('DATABASE_PATH', os.path.join(os.path.dirname(__file__), 'crm.db'))
 
 ROLE_LABELS = {
     'admin': 'Администратор',
@@ -104,9 +104,11 @@ def safe_eval(formula, variables):
 
 
 def get_db():
-    conn = sqlite3.connect(DATABASE)
+    conn = sqlite3.connect(DATABASE, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA foreign_keys = ON')
+    conn.execute('PRAGMA busy_timeout = 10000')
+    conn.execute('PRAGMA journal_mode = WAL')
     return conn
 
 
@@ -1908,4 +1910,10 @@ if __name__ == '__main__':
     print('Логин: owner | Пароль: admin123')
     print('=' * 50 + '\n')
     port = int(os.environ.get('PORT', 5050))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
+
+
+def create_app():
+    """Entry point for Gunicorn."""
+    init_db()
+    return app
