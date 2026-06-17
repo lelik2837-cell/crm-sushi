@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Макет — Страница смены</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f0f2f7;
+    color: #1a1a2e;
+    font-size: 14px;
+  }
+
+  /* ---- TOPBAR ---- */
+  .topbar {
+    background: #1a1a2e;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+    height: 56px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+  }
+  .topbar-logo { font-size: 18px; font-weight: 700; letter-spacing: .5px; }
+  .topbar-logo span { color: #e94560; }
+  .topbar-nav { display: flex; gap: 6px; }
+  .topbar-nav a {
+    color: rgba(255,255,255,.7);
+    text-decoration: none;
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    transition: background .15s;
+  }
+  .topbar-nav a:hover, .topbar-nav a.active { background: rgba(255,255,255,.12); color: #fff; }
+  .topbar-user {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13px; color: rgba(255,255,255,.8);
+  }
+  .avatar {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: #e94560; color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700;
+  }
+
+  /* ---- PAGE HEADER ---- */
+  .page-header {
+    background: #fff;
+    border-bottom: 1px solid #e8eaf0;
+    padding: 16px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .breadcrumb { font-size: 12px; color: #8890a4; margin-bottom: 4px; }
+  .breadcrumb span { color: #1a1a2e; }
+  .page-title { font-size: 20px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+  .badge-status {
+    font-size: 11px; padding: 3px 10px; border-radius: 20px;
+    font-weight: 600; letter-spacing: .3px;
+  }
+  .badge-open { background: #fff3cd; color: #856404; }
+  .badge-branch {
+    background: #e8f0fe; color: #1a56db; font-size: 12px;
+    padding: 3px 10px; border-radius: 20px; font-weight: 600;
+  }
+  .header-actions { display: flex; gap: 8px; }
+  .btn {
+    border: none; border-radius: 8px; padding: 8px 18px;
+    font-size: 13px; font-weight: 600; cursor: default;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn-primary { background: #e94560; color: #fff; }
+  .btn-outline { background: #fff; color: #4b5563; border: 1.5px solid #d1d5db; }
+  .btn-ghost { background: transparent; color: #8890a4; font-size: 12px; padding: 6px 12px; }
+  .btn-sm { padding: 5px 12px; font-size: 12px; }
+  .btn-add {
+    background: #f3f4f6; color: #374151; border: 1.5px dashed #d1d5db;
+    border-radius: 7px; padding: 5px 12px; font-size: 12px; font-weight: 500;
+    width: 100%; margin-top: 8px; cursor: default; display: flex;
+    align-items: center; justify-content: center; gap: 5px;
+  }
+
+  /* ---- LAYOUT ---- */
+  .page-body { padding: 24px 28px; }
+  .grid-main {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  .col-left { display: flex; flex-direction: column; gap: 20px; }
+  .col-right { display: flex; flex-direction: column; gap: 20px; }
+
+  /* ---- CARD ---- */
+  .card {
+    background: #fff;
+    border-radius: 14px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.06), 0 4px 16px rgba(0,0,0,.04);
+    overflow: hidden;
+  }
+  .card-header {
+    padding: 14px 20px 12px;
+    border-bottom: 1px solid #f0f2f7;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .card-title {
+    font-size: 13px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .6px; color: #6b7280; display: flex; align-items: center; gap: 7px;
+  }
+  .card-title-icon {
+    width: 26px; height: 26px; border-radius: 7px;
+    display: flex; align-items: center; justify-content: center; font-size: 14px;
+  }
+  .icon-green { background: #d1fae5; }
+  .icon-blue { background: #dbeafe; }
+  .icon-orange { background: #fed7aa; }
+  .icon-purple { background: #ede9fe; }
+  .icon-pink { background: #fce7f3; }
+  .icon-teal { background: #ccfbf1; }
+  .card-body { padding: 16px 20px; }
+
+  /* ---- FORM FIELDS ---- */
+  .field-label {
+    font-size: 11px; font-weight: 600; color: #8890a4;
+    text-transform: uppercase; letter-spacing: .4px; margin-bottom: 5px;
+  }
+  .field-input {
+    width: 100%; padding: 8px 12px;
+    border: 1.5px solid #e5e7eb; border-radius: 8px;
+    font-size: 14px; color: #374151; background: #f9fafb;
+    outline: none;
+  }
+  .field-input.focus { border-color: #e94560; background: #fff; }
+  .field-input-sm { padding: 6px 10px; font-size: 13px; }
+  .field-select {
+    width: 100%; padding: 8px 12px;
+    border: 1.5px solid #e5e7eb; border-radius: 8px;
+    font-size: 13px; color: #374151; background: #f9fafb;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%236B7280' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 12px center;
+    padding-right: 28px;
+  }
+  .field-row { display: grid; gap: 12px; }
+  .field-row-2 { grid-template-columns: 1fr 1fr; }
+  .field-row-3 { grid-template-columns: 1fr 1fr 1fr; }
+  .field-group { margin-bottom: 14px; }
+  .field-group:last-child { margin-bottom: 0; }
+
+  /* ---- REVENUE BLOCK ---- */
+  .revenue-inner {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+  .revenue-fields-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 14px;
+    margin-bottom: 14px;
+  }
+  .revenue-divider {
+    border-top: 1.5px solid #f0f2f7;
+    padding-top: 14px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .sub-section {
+    background: #f9fafb;
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+  }
+  .sub-section:last-child { margin-bottom: 0; }
+  .sub-section-title {
+    font-size: 11px; font-weight: 700; color: #4b5563;
+    text-transform: uppercase; letter-spacing: .5px;
+    margin-bottom: 10px; display: flex; align-items: center; gap: 6px;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .dot-blue { background: #3b82f6; }
+  .dot-green { background: #10b981; }
+
+  /* ---- STAFF ROWS ---- */
+  .staff-header-row,
+  .staff-row {
+    display: grid;
+    grid-template-columns: 2fr 68px 68px 52px 104px 82px 90px 28px;
+    align-items: center;
+    gap: 7px;
+  }
+  .staff-header-row {
+    padding-bottom: 5px;
+    border-bottom: 1.5px solid #e5e7eb;
+    margin-bottom: 2px;
+  }
+  .staff-row {
+    padding: 7px 0;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  .staff-row:last-of-type { border-bottom: none; }
+  .field-calc {
+    width: 100%; padding: 6px 9px;
+    border: 1.5px solid #e5e7eb; border-radius: 7px;
+    font-size: 13px; background: #f0f2f7; color: #6b7280;
+    font-weight: 600; text-align: right;
+  }
+  .paid-select {
+    width: 100%; padding: 5px 28px 5px 8px; border-radius: 7px;
+    font-size: 11px; font-weight: 700; border: none; cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23666' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 8px center;
+    transition: all .15s;
+  }
+  .paid-no  { background: #fee2e2; color: #dc2626; }
+  .paid-yes { background: #d1fae5; color: #059669; }
+  .staff-del { width: 28px; height: 28px; border-radius: 6px; background: #fee2e2; color: #ef4444; border: none; font-size: 13px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; cursor: default; }
+  .bonus-toggle {
+    width: 100%; padding: 5px 6px; border-radius: 6px;
+    background: #dbeafe; color: #1d4ed8; border: 1.5px solid #bfdbfe;
+    font-size: 10px; font-weight: 700; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    letter-spacing: .2px; transition: background .15s; white-space: nowrap;
+  }
+  .bonus-cancel { padding: 4px 9px; border-radius: 6px; background: #f3f4f6; color: #6b7280; border: 1.5px solid #e5e7eb; font-size: 11px; font-weight: 600; cursor: pointer; white-space: nowrap; flex-shrink: 0; }
+  .bonus-save   { padding: 4px 9px; border-radius: 6px; background: #d1fae5; color: #059669; border: 1.5px solid #6ee7b7; font-size: 11px; font-weight: 600; cursor: pointer; white-space: nowrap; flex-shrink: 0; }
+  .bonus-summary { display: none; align-items: center; gap: 8px; padding: 3px 0 8px 10px; border-bottom: 1px solid #f3f4f6; }
+  .bonus-tag { flex: 1; padding: 5px 12px; border-radius: 7px; font-size: 12px; font-weight: 600; }
+  .bonus-tag-prem { background: #d1fae5; color: #065f46; }
+  .bonus-tag-fine { background: #fee2e2; color: #991b1b; }
+  .bonus-action { width: 22px; height: 22px; border-radius: 5px; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 12px; flex-shrink: 0; }
+  .bonus-edit-btn { background: #e0f2fe; color: #0369a1; }
+  .bonus-del-btn  { background: #fee2e2; color: #ef4444; }
+  .bonus-sel-prem { background: #d1fae5; color: #059669; font-weight: 700; border: none; }
+  .bonus-sel-fine { background: #fee2e2; color: #dc2626; font-weight: 700; border: none; }
+  .staff-bonus-row {
+    display: none; align-items: center; gap: 6px;
+    padding: 3px 0 8px 10px;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  .staff-bonus-row:last-of-type { border-bottom: none; }
+  .bonus-arrow { font-size: 10px; color: #c4c8d4; flex-shrink: 0; }
+  .bonus-select {
+    padding: 4px 22px 4px 7px; border-radius: 6px; border: 1.5px solid #e5e7eb;
+    font-size: 11px; font-weight: 600; color: #374151; background: #f9fafb;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%236B7280' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 6px center;
+    width: 82px; flex-shrink: 0;
+  }
+  .bonus-amount {
+    padding: 4px 8px; border: 1.5px solid #e5e7eb; border-radius: 6px;
+    font-size: 12px; color: #374151; background: #f9fafb;
+    width: 76px; flex-shrink: 0;
+  }
+  .bonus-comment {
+    padding: 4px 8px; border: 1.5px solid #e5e7eb; border-radius: 6px;
+    font-size: 12px; color: #374151; background: #f9fafb;
+    flex: 1; min-width: 0;
+  }
+
+  /* ---- COURIERS ---- */
+  .courier-row {
+    display: grid;
+    grid-template-columns: 2fr 58px 58px 52px 104px 72px 90px 28px;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 0;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  .courier-row:last-of-type { border-bottom: none; }
+  .courier-header-row {
+    display: grid;
+    grid-template-columns: 2fr 58px 58px 52px 104px 72px 90px 28px;
+    gap: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1.5px solid #e5e7eb;
+    margin-bottom: 2px;
+  }
+  .mini-label { font-size: 10px; color: #9ca3af; font-weight: 600; text-transform: uppercase; letter-spacing: .3px; margin-bottom: 3px; }
+  .mini-input {
+    width: 100%; padding: 6px 9px; border: 1.5px solid #e5e7eb;
+    border-radius: 7px; font-size: 13px; background: #fff; color: #374151;
+  }
+
+  /* ---- EXPENSES ---- */
+  .expense-row {
+    display: grid; align-items: center; gap: 8px;
+    grid-template-columns: 2fr 90px 90px 50px 24px;
+    padding: 8px 0; border-bottom: 1px solid #f3f4f6;
+  }
+  .expense-row:last-child { border-bottom: none; }
+  .expense-header {
+    display: grid; gap: 8px;
+    grid-template-columns: 2fr 90px 90px 50px 24px;
+    padding-bottom: 6px; border-bottom: 1.5px solid #e5e7eb;
+    margin-bottom: 2px;
+  }
+  .col-label { font-size: 10px; color: #9ca3af; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; }
+  .check-wrap { display: flex; align-items: center; gap: 4px; }
+  .check-box { width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid #d1d5db; background: #f9fafb; flex-shrink: 0; }
+  .check-label { font-size: 11px; color: #6b7280; }
+  .row-del { width: 22px; height: 22px; border-radius: 5px; background: #fee2e2; color: #ef4444; border: none; font-size: 12px; display: flex; align-items: center; justify-content: center; cursor: default; }
+
+  /* ---- TAXI ---- */
+  .taxi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+
+  /* ---- PLUS KASSA ---- */
+  .plus-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  /* ---- CLOSE BAR ---- */
+  .close-bar {
+    background: #fff;
+    border-top: 1px solid #e5e7eb;
+    padding: 14px 28px;
+    display: flex; align-items: center; justify-content: flex-end;
+    gap: 10px;
+    position: sticky; bottom: 0;
+    box-shadow: 0 -2px 12px rgba(0,0,0,.06);
+  }
+  .close-hint { font-size: 12px; color: #9ca3af; margin-right: auto; }
+  .btn-save-draft { background: #f3f4f6; color: #374151; border: 1.5px solid #e5e7eb; }
+  .btn-close-shift { background: #e94560; color: #fff; padding: 9px 24px; font-size: 14px; }
+
+  /* ---- MISC ---- */
+  .section-sep { height: 1px; background: #f0f2f7; margin: 14px 0; }
+  .text-muted { color: #9ca3af; font-size: 12px; }
+  .tag {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600;
+  }
+  .tag-blue { background: #dbeafe; color: #1d4ed8; }
+  .tag-green { background: #d1fae5; color: #065f46; }
+  .tag-orange { background: #fed7aa; color: #92400e; }
+  .watermark {
+    text-align: center; padding: 20px 0 8px;
+    font-size: 11px; color: #c4c8d4; letter-spacing: .5px;
+  }
+</style>
+</head>
+<body>
+
+<!-- TOP NAV -->
+<div class="topbar">
+  <div class="topbar-logo">CRM <span>Суши</span></div>
+  <div class="topbar-nav">
+    <a href="#" class="active">Смены</a>
+    <a href="#">Отчёты</a>
+    <a href="#">Сотрудники</a>
+    <a href="#">Филиалы</a>
+  </div>
+  <div class="topbar-user">
+    <div class="avatar">А</div>
+    Алексей (Владелец)
+  </div>
+</div>
+
+<!-- PAGE HEADER -->
+<div class="page-header">
+  <div>
+    <div class="breadcrumb">Смены / <span>12 июня 2026</span></div>
+    <div class="page-title">
+      Смена — КВАДРАТ
+      <span class="badge-status badge-open">● Открыта</span>
+      <span class="badge-branch">КВАДРАТ</span>
+    </div>
+  </div>
+  <div class="header-actions">
+    <button class="btn btn-outline">Сохранить черновик</button>
+    <button class="btn btn-primary">🔒 Закрыть смену</button>
+  </div>
+</div>
+
+<!-- MAIN GRID -->
+<div class="page-body">
+<div class="grid-main">
+
+  <!-- ====== LEFT COLUMN ====== -->
+  <div class="col-left">
+
+    <!-- BLOCK 1: ВЫРУЧКА + правый блок -->
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:stretch;">
+    <div class="card">
+      <div class="card-body">
+
+        <!-- Верхний ряд: Нал/Безнал/Онлайн слева, Общая выручка + Заказов справа -->
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+
+          <!-- Нал / Безнал / Онлайн — узкий контейнер -->
+          <div style="background:#f9fafb; border:1.5px solid #e5e7eb; border-radius:10px; padding:12px 14px;">
+            <div style="font-size:10px; color:#6b7280; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:10px;">Оплата</div>
+            <div style="margin-bottom:9px;">
+              <div class="mini-label">Наличные</div>
+              <input class="mini-input" type="text" value="18 400">
+            </div>
+            <div style="margin-bottom:9px;">
+              <div class="mini-label">Безналичные</div>
+              <input class="mini-input" type="text" value="31 200">
+            </div>
+            <div>
+              <div class="mini-label">Онлайн</div>
+              <input class="mini-input" type="text" value="9 100">
+            </div>
+          </div>
+
+          <!-- Правая часть: Общая выручка + Кол-во заказов -->
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            <div style="background:linear-gradient(135deg,#eff6ff 0%,#dbeafe 100%); border-radius:10px; padding:14px 16px; border-left:4px solid #3b82f6; flex:1;">
+              <div style="font-size:10px; color:#6b7280; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px;">общая выручка</div>
+              <div style="font-size:33px; font-weight:800; color:#1e40af; letter-spacing:-.5px; line-height:1;">58 700 ₽</div>
+            </div>
+            <div style="background:#f9fafb; border:1.5px solid #e5e7eb; border-radius:10px; padding:12px 14px;">
+              <div class="mini-label" style="margin-bottom:6px;">Кол-во заказов</div>
+              <input class="mini-input" type="text" placeholder="0" value="47">
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Доставка / Самовывоз -->
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+          <div class="sub-section">
+            <div class="sub-section-title"><span class="dot dot-blue"></span>Доставка</div>
+            <div class="field-group">
+              <div class="field-label">Выручка</div>
+              <input class="field-input field-input-sm" type="text" placeholder="0 ₽" value="38 500">
+            </div>
+            <div class="field-group" style="margin-bottom:0">
+              <div class="field-label">Заказов</div>
+              <input class="field-input field-input-sm" type="text" placeholder="0" value="31">
+            </div>
+          </div>
+          <div class="sub-section">
+            <div class="sub-section-title"><span class="dot dot-green"></span>Самовывоз</div>
+            <div class="field-group">
+              <div class="field-label">Выручка</div>
+              <input class="field-input field-input-sm" type="text" placeholder="0 ₽" value="20 200">
+            </div>
+            <div class="field-group" style="margin-bottom:0">
+              <div class="field-label">Заказов</div>
+              <input class="field-input field-input-sm" type="text" placeholder="0" value="16">
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Правый блок рядом с выручкой -->
+    <div class="card" style="display:flex; flex-direction:column; justify-content:flex-end;">
+      <div class="card-body">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          <div style="background:#fff1f2; border:1.5px solid #fecdd3; border-radius:10px; padding:14px;">
+            <div style="font-size:10px; color:#9f1239; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px;">Итого нал в кассе</div>
+            <div style="font-size:22px; font-weight:800; color:#be123c; line-height:1;">18 400 ₽</div>
+          </div>
+          <div style="background:#f0fdf4; border:1.5px solid #bbf7d0; border-radius:10px; padding:14px;">
+            <div style="font-size:10px; color:#166534; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px;">Итого безнал</div>
+            <div style="font-size:22px; font-weight:800; color:#15803d; line-height:1;">40 300 ₽</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    </div><!-- /grid выручка+правый -->
+
+    <!-- BLOCK 4: РАСХОДЫ -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <div class="card-title-icon icon-orange">🧾</div>
+          Расходы
+        </div>
+        <span class="text-muted">3 записи</span>
+      </div>
+      <div class="card-body">
+        <div class="expense-header">
+          <div class="col-label">Категория</div>
+          <div class="col-label">Сумма</div>
+          <div class="col-label">Оплата</div>
+          <div class="col-label">Гуляш</div>
+          <div></div>
+        </div>
+        <!-- row 1 -->
+        <div class="expense-row">
+          <select class="field-select field-input-sm">
+            <option selected>Магазин</option>
+            <option>Аптека</option>
+            <option>Ремонт</option>
+          </select>
+          <input class="field-input field-input-sm" type="text" value="1 240">
+          <select class="field-select field-input-sm">
+            <option selected>Наличные</option>
+            <option>Карта</option>
+          </select>
+          <div class="check-wrap" style="justify-content:center">
+            <div class="check-box" style="background:#d1fae5; border-color:#10b981; position:relative;">
+              <svg style="position:absolute;top:1px;left:1px" width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6L5 9L10 3" stroke="#10b981" stroke-width="1.8" stroke-linecap="round"/></svg>
+            </div>
+          </div>
+          <div class="row-del">✕</div>
+        </div>
+        <!-- row 2: Ремонт с подкатегорией -->
+        <div class="expense-row">
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px">
+            <select class="field-select field-input-sm">
+              <option selected>Ремонт</option>
+            </select>
+            <select class="field-select field-input-sm">
+              <option selected>Розетка</option>
+              <option>Освещение</option>
+              <option>Плитка</option>
+              <option>Вентиляция</option>
+              <option>Другое</option>
+            </select>
+          </div>
+          <input class="field-input field-input-sm" type="text" value="3 600">
+          <select class="field-select field-input-sm">
+            <option>Наличные</option>
+            <option selected>Карта</option>
+          </select>
+          <div class="check-wrap" style="justify-content:center">
+            <div class="check-box"></div>
+          </div>
+          <div class="row-del">✕</div>
+        </div>
+        <!-- row 3 -->
+        <div class="expense-row">
+          <select class="field-select field-input-sm">
+            <option>Магазин</option>
+            <option selected>Аптека</option>
+            <option>Ремонт</option>
+          </select>
+          <input class="field-input field-input-sm" type="text" value="480">
+          <select class="field-select field-input-sm">
+            <option selected>Наличные</option>
+            <option>Карта</option>
+          </select>
+          <div class="check-wrap" style="justify-content:center">
+            <div class="check-box"></div>
+          </div>
+          <div class="row-del">✕</div>
+        </div>
+        <!-- add row -->
+        <div class="btn-add" style="margin-top:12px">+ Добавить расход</div>
+      </div>
+    </div>
+
+    <!-- BLOCK 5: ТАКСИ -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <div class="card-title-icon icon-purple">🚕</div>
+          Такси
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="taxi-grid">
+          <div>
+            <div class="field-label">Сотрудник(и)</div>
+            <select class="field-select">
+              <option selected>Иванова Мария</option>
+              <option>Петрова Ольга</option>
+            </select>
+          </div>
+          <div>
+            <div class="field-label">Сумма</div>
+            <input class="field-input" type="text" placeholder="0 ₽" value="650">
+          </div>
+        </div>
+        <div class="field-row field-row-2">
+          <div>
+            <div class="field-label">Тип оплаты</div>
+            <select class="field-select">
+              <option>Наличные</option>
+              <option selected>Карта</option>
+            </select>
+          </div>
+          <div>
+            <div class="field-label">Отметка</div>
+            <div style="display:flex;align-items:center;gap:8px;padding:8px 0;">
+              <div class="check-box"></div>
+              <span class="check-label">Гуляш (занесено)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- BLOCK 6: ПЛЮСЫ В КАССУ -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <div class="card-title-icon icon-teal">➕</div>
+          Плюсы в кассу
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="plus-grid">
+          <div>
+            <div class="field-label">Категория</div>
+            <select class="field-select">
+              <option>Отработанное масло</option>
+              <option selected>За сдачу рыбы</option>
+              <option>Другое</option>
+            </select>
+          </div>
+          <div>
+            <div class="field-label">Сумма</div>
+            <input class="field-input" type="text" placeholder="0 ₽" value="2 400">
+          </div>
+        </div>
+        <!-- Поле "Другое" — скрыто, появляется при выборе -->
+        <div style="margin-top:12px; opacity:.4">
+          <div class="field-label">Описание (при выборе «Другое»)</div>
+          <input class="field-input" type="text" placeholder="Укажите причину...">
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /col-left -->
+
+  <!-- ====== RIGHT COLUMN ====== -->
+  <div class="col-right">
+
+    <!-- BLOCK 2: КУХНЯ -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <div class="card-title-icon icon-blue">👨‍🍳</div>
+          Кухня
+        </div>
+      </div>
+      <div class="card-body">
+
+        <!-- Шапка колонок (общая для всех групп) -->
+        <div class="staff-header-row" style="margin-bottom:10px">
+          <div class="col-label">Фамилия</div>
+          <div class="col-label">Приход</div>
+          <div class="col-label">Уход</div>
+          <div class="col-label">Итого ч.</div>
+          <div></div>
+          <div class="col-label">Итого ₽</div>
+          <div class="col-label">Выплачена</div>
+          <div></div>
+        </div>
+
+        <!-- Администратор -->
+        <div style="margin-bottom:14px">
+          <div style="font-size:10px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Администратор</div>
+          <div class="staff-row">
+            <select class="field-select field-input-sm">
+              <option selected>Смирнова Татьяна</option>
+              <option>Козлова Анна</option>
+            </select>
+            <select class="mini-input field-select time-sel" data-val="09:00"></select>
+            <select class="mini-input field-select time-sel" data-val="19:00"></select>
+            <div class="field-calc">10 ч</div>
+            <button class="bonus-toggle" onclick="toggleBonus(this)">+ Премия / Штраф</button>
+            <div class="field-calc">3 450 ₽</div>
+            <select class="paid-select paid-no" onchange="updatePaid(this)">
+  <option value="no" selected>Не выплачена</option>
+  <option value="yes">Выплачена</option>
+</select>
+            <div class="staff-del">✕</div>
+          </div>
+          <div class="staff-bonus-row">
+            <span class="bonus-arrow">↳</span>
+            <select class="bonus-select bonus-sel-prem" onchange="updateBonusSel(this)"><option value="prem">Премия</option><option value="fine">Штраф</option></select>
+            <input class="bonus-amount" type="text" placeholder="0">
+            <input class="bonus-comment" type="text" placeholder="Комментарий...">
+            <button class="bonus-cancel" onclick="closeBonus(this)">Отменить</button>
+            <button class="bonus-save" onclick="saveBonus(this)">Сохранить</button>
+          </div>
+          <div class="btn-add">+ Добавить администратора</div>
+        </div>
+
+        <div class="section-sep"></div>
+
+        <!-- Повара -->
+        <div style="margin-bottom:14px">
+          <div style="font-size:10px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Повара</div>
+          <div class="staff-row">
+            <select class="field-select field-input-sm">
+              <option selected>Михайлов Сергей</option>
+              <option>Андреев Дмитрий</option>
+            </select>
+            <select class="mini-input field-select time-sel" data-val="10:00"></select>
+            <select class="mini-input field-select time-sel" data-val="20:00"></select>
+            <div class="field-calc">10 ч</div>
+            <button class="bonus-toggle" onclick="toggleBonus(this)">+ Премия / Штраф</button>
+            <div class="field-calc">5 600 ₽</div>
+            <select class="paid-select paid-yes" onchange="updatePaid(this)">
+  <option value="no">Не выплачена</option>
+  <option value="yes" selected>Выплачена</option>
+</select>
+            <div class="staff-del">✕</div>
+          </div>
+          <div class="staff-bonus-row" style="display:flex">
+            <span class="bonus-arrow">↳</span>
+            <select class="bonus-select bonus-sel-prem" onchange="updateBonusSel(this)"><option value="prem" selected>Премия</option><option value="fine">Штраф</option></select>
+            <input class="bonus-amount" type="text" value="500">
+            <input class="bonus-comment" type="text" value="За переработку">
+            <button class="bonus-cancel" onclick="closeBonus(this)">Отменить</button>
+            <button class="bonus-save" onclick="saveBonus(this)">Сохранить</button>
+          </div>
+          <div class="staff-row">
+            <select class="field-select field-input-sm">
+              <option selected>Николаева Екатерина</option>
+              <option>Соколов Алексей</option>
+            </select>
+            <select class="mini-input field-select time-sel" data-val="10:00"></select>
+            <select class="mini-input field-select time-sel" data-val="20:00"></select>
+            <div class="field-calc">10 ч</div>
+            <button class="bonus-toggle" onclick="toggleBonus(this)">+ Премия / Штраф</button>
+            <div class="field-calc">4 900 ₽</div>
+            <select class="paid-select paid-no" onchange="updatePaid(this)">
+  <option value="no" selected>Не выплачена</option>
+  <option value="yes">Выплачена</option>
+</select>
+            <div class="staff-del">✕</div>
+          </div>
+          <div class="staff-bonus-row" style="display:flex">
+            <span class="bonus-arrow">↳</span>
+            <select class="bonus-select bonus-sel-fine" onchange="updateBonusSel(this)"><option value="prem">Премия</option><option value="fine" selected>Штраф</option></select>
+            <input class="bonus-amount" type="text" value="-200">
+            <input class="bonus-comment" type="text" value="Опоздание">
+            <button class="bonus-cancel" onclick="closeBonus(this)">Отменить</button>
+            <button class="bonus-save" onclick="saveBonus(this)">Сохранить</button>
+          </div>
+          <div class="btn-add">+ Добавить повара</div>
+        </div>
+
+        <div class="section-sep"></div>
+
+        <!-- Уборщица -->
+        <div>
+          <div style="font-size:10px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;">Уборщица</div>
+          <div class="staff-row">
+            <select class="field-select field-input-sm">
+              <option selected>Петрова Галина</option>
+              <option>Васильева Надежда</option>
+            </select>
+            <select class="mini-input field-select time-sel" data-val="10:00"></select>
+            <select class="mini-input field-select time-sel" data-val="14:00"></select>
+            <div class="field-calc">4 ч</div>
+            <button class="bonus-toggle" onclick="toggleBonus(this)">+ Премия / Штраф</button>
+            <div class="field-calc">600 ₽</div>
+            <select class="paid-select paid-no" onchange="updatePaid(this)">
+  <option value="no" selected>Не выплачена</option>
+  <option value="yes">Выплачена</option>
+</select>
+            <div class="staff-del">✕</div>
+          </div>
+          <div class="staff-bonus-row">
+            <span class="bonus-arrow">↳</span>
+            <select class="bonus-select bonus-sel-prem" onchange="updateBonusSel(this)"><option value="prem">Премия</option><option value="fine">Штраф</option></select>
+            <input class="bonus-amount" type="text" placeholder="0">
+            <input class="bonus-comment" type="text" placeholder="Комментарий...">
+            <button class="bonus-cancel" onclick="closeBonus(this)">Отменить</button>
+            <button class="bonus-save" onclick="saveBonus(this)">Сохранить</button>
+          </div>
+          <div class="btn-add">+ Добавить уборщицу</div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- BLOCK 3: КУРЬЕРЫ -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">
+          <div class="card-title-icon icon-pink">🛵</div>
+          Курьеры
+        </div>
+        <span class="text-muted">2 курьера</span>
+      </div>
+      <div class="card-body">
+
+        <!-- Header row -->
+        <div class="courier-header-row">
+          <div class="col-label">Фамилия</div>
+          <div class="col-label">Км</div>
+          <div class="col-label">Заказов</div>
+          <div class="col-label">Часов</div>
+          <div class="col-label">Премия/Штраф</div>
+          <div class="col-label">Итого ₽</div>
+          <div class="col-label">Выплачена</div>
+          <div></div>
+        </div>
+
+        <!-- Courier 1 -->
+        <div class="courier-row">
+          <select class="field-select field-input-sm">
+            <option selected>Захаров Иван</option>
+            <option>Соколов Пётр</option>
+          </select>
+          <input class="mini-input" type="text" value="87">
+          <input class="mini-input" type="text" value="18">
+          <input class="mini-input" type="text" value="9">
+          <button class="bonus-toggle" onclick="toggleBonus(this)">+ Премия / Штраф</button>
+          <div class="field-calc">4 350 ₽</div>
+          <select class="paid-select paid-no" onchange="updatePaid(this)">
+  <option value="no" selected>Не выплачена</option>
+  <option value="yes">Выплачена</option>
+</select>
+          <div class="row-del">✕</div>
+        </div>
+        <div class="staff-bonus-row">
+          <span class="bonus-arrow">↳</span>
+          <select class="bonus-select bonus-sel-prem" onchange="updateBonusSel(this)"><option value="prem" selected>Премия</option><option value="fine">Штраф</option></select>
+          <input class="bonus-amount" type="text" placeholder="0">
+          <input class="bonus-comment" type="text" placeholder="Комментарий...">
+          <button class="bonus-cancel" onclick="closeBonus(this)">Отменить</button>
+          <button class="bonus-save" onclick="saveBonus(this)">Сохранить</button>
+        </div>
+
+        <!-- Courier 2 -->
+        <div class="courier-row">
+          <select class="field-select field-input-sm">
+            <option selected>Соколов Пётр</option>
+            <option>Захаров Иван</option>
+          </select>
+          <input class="mini-input" type="text" value="63">
+          <input class="mini-input" type="text" value="13">
+          <input class="mini-input" type="text" value="8">
+          <button class="bonus-toggle" onclick="toggleBonus(this)">+ Премия / Штраф</button>
+          <div class="field-calc">3 900 ₽</div>
+          <select class="paid-select paid-yes" onchange="updatePaid(this)">
+  <option value="no">Не выплачена</option>
+  <option value="yes" selected>Выплачена</option>
+</select>
+          <div class="row-del">✕</div>
+        </div>
+        <div class="staff-bonus-row">
+          <span class="bonus-arrow">↳</span>
+          <select class="bonus-select bonus-sel-prem" onchange="updateBonusSel(this)"><option value="prem" selected>Премия</option><option value="fine">Штраф</option></select>
+          <input class="bonus-amount" type="text" placeholder="0">
+          <input class="bonus-comment" type="text" placeholder="Комментарий...">
+          <button class="bonus-cancel" onclick="closeBonus(this)">Отменить</button>
+          <button class="bonus-save" onclick="saveBonus(this)">Сохранить</button>
+        </div>
+
+        <div class="btn-add">+ Добавить курьера</div>
+      </div>
+    </div>
+
+  </div><!-- /col-right -->
+</div><!-- /grid-main -->
+
+<div class="watermark">⬆ МАКЕТ — не кликабельно ⬆ &nbsp;|&nbsp; CRM Суши</div>
+</div><!-- /page-body -->
+
+<!-- CLOSE BAR (sticky) -->
+<div class="close-bar">
+  <span class="close-hint">Смена открыта · КВАДРАТ · 12 июня 2026</span>
+  <button class="btn btn-save-draft">Сохранить черновик</button>
+  <button class="btn btn-primary btn-close-shift">🔒 Закрыть смену</button>
+</div>
+
+<script>
+// Генерация вариантов времени каждые 15 минут
+document.querySelectorAll('.time-sel').forEach(function(sel) {
+  var selected = sel.dataset.val;
+  for (var h = 7; h <= 24; h++) {
+    var mins = h < 24 ? [0, 15, 30, 45] : [0];
+    mins.forEach(function(m) {
+      var val = (h < 10 ? '0' : '') + h + ':' + (m === 0 ? '00' : m);
+      var opt = document.createElement('option');
+      opt.value = val;
+      opt.textContent = val;
+      if (val === selected) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  }
+});
+
+function toggleBonus(btn) {
+  var row = btn.closest('.staff-row') || btn.closest('.courier-row');
+  if (!row) return;
+  var bonusRow = row.nextElementSibling;
+  if (!bonusRow || !bonusRow.classList.contains('staff-bonus-row')) return;
+  bonusRow.style.display = 'flex';
+}
+
+function closeBonus(btn) {
+  btn.closest('.staff-bonus-row').style.display = 'none';
+}
+
+function saveBonus(btn) {
+  var bonusRow = btn.closest('.staff-bonus-row');
+  var isPrem = bonusRow.querySelector('.bonus-select').value === 'prem';
+  var amount = bonusRow.querySelector('.bonus-amount').value;
+  var comment = bonusRow.querySelector('.bonus-comment').value;
+
+  var text = isPrem ? '▲ Премия' : '▲ Штраф';
+  if (amount) text += ': ' + amount + ' ₽';
+  if (comment) text += ' — ' + comment;
+
+  var existing = bonusRow.nextElementSibling;
+  if (existing && existing.classList.contains('bonus-summary')) existing.remove();
+
+  var summary = document.createElement('div');
+  summary.className = 'bonus-summary';
+  summary.style.display = 'flex';
+  summary.innerHTML = '<span class="bonus-arrow">↳</span><div class="bonus-tag ' + (isPrem ? 'bonus-tag-prem' : 'bonus-tag-fine') + '">' + text + '</div><button class="bonus-action bonus-edit-btn" onclick="editBonus(this)" title="Редактировать">✎</button><button class="bonus-action bonus-del-btn" onclick="deleteBonus(this)" title="Удалить">✕</button>';
+  bonusRow.parentNode.insertBefore(summary, bonusRow.nextSibling);
+  bonusRow.style.display = 'none';
+}
+
+function editBonus(btn) {
+  var summary = btn.closest('.bonus-summary');
+  var bonusRow = summary.previousElementSibling;
+  bonusRow.style.display = 'flex';
+  summary.remove();
+}
+
+function deleteBonus(btn) {
+  btn.closest('.bonus-summary').remove();
+}
+
+function updateBonusSel(sel) {
+  if (sel.value === 'fine') {
+    sel.classList.replace('bonus-sel-prem', 'bonus-sel-fine');
+  } else {
+    sel.classList.replace('bonus-sel-fine', 'bonus-sel-prem');
+  }
+}
+
+function updatePaid(sel) {
+  if (sel.value === 'yes') {
+    sel.classList.replace('paid-no', 'paid-yes');
+  } else {
+    sel.classList.replace('paid-yes', 'paid-no');
+  }
+}
+</script>
+</body>
+</html>

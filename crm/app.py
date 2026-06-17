@@ -1,0 +1,1846 @@
+import ast
+import operator as _op
+import os
+from functools import wraps
+from datetime import date, datetime, timedelta
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
+from werkzeug.security import generate_password_hash, check_password_hash
+import sqlite3
+
+app = Flask(__name__)
+app.secret_key = 'sushi-crm-secret-2024-change-in-prod'
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+
+DATABASE = os.path.join(os.path.dirname(__file__), 'crm.db')
+
+ROLE_LABELS = {
+    'admin': 'Администратор',
+    'sushi': 'Сушист',
+    'packer': 'Упаковщик',
+    'courier': 'Курьер',
+    'cleaner': 'Уборщица',
+    'cook': 'Повар',
+}
+
+# Hardcoded defaults — seeded into DB on first run
+_DEFAULT_EXPENSE_CATEGORIES = [
+    ('repair_plumbing', 'Ремонт сантех.', 1),
+    ('repair_grease', 'Чистка жироуловителя', 2),
+    ('repair_electric', 'Ремонт электрика', 3),
+    ('repair_fridge', 'Ремонт холод.оборуд.', 4),
+    ('repair_other', 'Ремонт другой', 5),
+    ('shop', 'Магазин / Аптека', 6),
+    ('taxi', 'Такси', 7),
+    ('cash_plus', 'Плюсы в кассу', 8),
+    ('oil', 'За масло отработанное', 9),
+    ('fish', 'Рыба (головы, хребты)', 10),
+    ('change', 'Размен внёс Алексей', 11),
+    ('other', 'Другое', 12),
+]
+
+ACTION_LABELS = {
+    'revenue_update': ('Выручка',      'info'),
+    'expense_add':    ('Расход +',     'success'),
+    'expense_update': ('Расход ✎',     'warning'),
+    'expense_delete': ('Расход −',     'danger'),
+    'staff_add':      ('Сотрудник +',  'success'),
+    'staff_update':   ('Сотрудник ✎',  'warning'),
+    'staff_delete':   ('Сотрудник −',  'danger'),
+    'shift_close':    ('Закрытие',     'secondary'),
+    'shift_reopen':   ('Переоткрытие', 'warning'),
+    'salary_paid':    ('Выплата ЗП',   'primary'),
+}
+
+FORMULA_VARS = {
+    'revenue':        'Общая выручка',
+    'cash':           'Наличные из выручки',
+    'card':           'Безналичные',
+    'online':         'Онлайн',
+    'delivery':       'Выручка доставки',
+    'pickup':         'Выручка самовывоза',
+    'orders':         'Кол-во заказов',
+    'shifts':         'Кол-во смен',
+    'expenses_cash':  'Расходы наличными',
+    'expenses_card':  'Расходы картой',
+    'expenses_total': 'Расходы всего',
+    'pay_admin':      'ФОТ администраторов',
+    'pay_cook':       'ФОТ поваров',
+    'pay_sushi':      'ФОТ сушистов',
+    'pay_courier':    'ФОТ курьеров',
+    'pay_cleaner':    'ФОТ уборщиц',
+    'pay_packer':     'ФОТ упаковщиков',
+    'pay_total':      'Весь ФОТ',
+    'profit':         'Прибыль (выручка − расходы − ФОТ)',
+}
+
+_SAFE_OPS = {
+    ast.Add: _op.add, ast.Sub: _op.sub,
+    ast.Mult: _op.mul, ast.Div: _op.truediv,
+    ast.Pow: _op.pow, ast.Mod: _op.mod,
+    ast.USub: _op.neg, ast.UAdd: lambda x: x,
+}
+
+
+def safe_eval(formula, variables):
+    def _eval(node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        if isinstance(node, ast.Name):
+            if node.id not in variables:
+                raise ValueError(f"Unknown: {node.id}")
+            return float(variables[node.id] or 0)
+        if isinstance(node, ast.BinOp) and type(node.op) in _SAFE_OPS:
+            l, r = _eval(node.left), _eval(node.right)
+            if isinstance(node.op, ast.Div) and r == 0:
+                return 0.0
+            return _SAFE_OPS[type(node.op)](l, r)
+        if isinstance(node, ast.UnaryOp) and type(node.op) in _SAFE_OPS:
+            return _SAFE_OPS[type(node.op)](_eval(node.operand))
+        raise ValueError(f"Unsupported node: {type(node)}")
+    try:
+        return _eval(ast.parse(formula.strip(), mode='eval').body)
+    except Exception:
+        return None
+
+
+def get_db():
+    conn = sqlite3.connect(DATABASE)
+    conn.row_factory = sqlite3.Row
+    conn.execute('PRAGMA foreign_keys = ON')
+    return conn
+
+
+def get_expense_categories(conn):
+    rows = conn.execute(
+        'SELECT code, label FROM expense_categories WHERE is_active=1 ORDER BY sort_order, label'
+    ).fetchall()
+    return [(r['code'], r['label']) for r in rows]
+
+
+def get_kpi_values(conn, branch_id, date_from, date_to):
+    bf = f"AND s.branch_id={int(branch_id)}" if branch_id else ""
+    rev = conn.execute(f'''
+        SELECT COALESCE(SUM(r.total_revenue),0) as revenue,
+               COALESCE(SUM(r.cash_amount),0) as cash,
+               COALESCE(SUM(r.card_amount),0) as card,
+               COALESCE(SUM(r.online_amount),0) as online,
+               COALESCE(SUM(r.delivery_revenue),0) as delivery,
+               COALESCE(SUM(r.pickup_revenue),0) as pickup,
+               COALESCE(SUM(r.delivery_orders+r.pickup_orders),0) as orders,
+               COUNT(DISTINCT s.id) as shifts
+        FROM shifts s LEFT JOIN shift_revenue r ON r.shift_id=s.id
+        WHERE s.date BETWEEN ? AND ? {bf}
+    ''', (date_from, date_to)).fetchone()
+
+    exp = conn.execute(f'''
+        SELECT COALESCE(SUM(e.amount_cash),0) as expenses_cash,
+               COALESCE(SUM(e.amount_card),0) as expenses_card
+        FROM expenses e JOIN shifts s ON s.id=e.shift_id
+        WHERE s.date BETWEEN ? AND ? {bf}
+    ''', (date_from, date_to)).fetchone()
+
+    pay_rows = conn.execute(f'''
+        SELECT es.role_snapshot, COALESCE(SUM(es.total_amount),0) as total
+        FROM employee_shifts es JOIN shifts s ON s.id=es.shift_id
+        WHERE s.date BETWEEN ? AND ? {bf}
+        GROUP BY es.role_snapshot
+    ''', (date_from, date_to)).fetchall()
+
+    pay_by_role = {r['role_snapshot']: r['total'] for r in pay_rows}
+    pay_total = sum(pay_by_role.values())
+
+    vals = dict(rev)
+    vals.update({
+        'expenses_cash':  exp['expenses_cash'],
+        'expenses_card':  exp['expenses_card'],
+        'expenses_total': exp['expenses_cash'] + exp['expenses_card'],
+        'pay_admin':      pay_by_role.get('admin', 0),
+        'pay_cook':       pay_by_role.get('cook', 0),
+        'pay_sushi':      pay_by_role.get('sushi', 0),
+        'pay_courier':    pay_by_role.get('courier', 0),
+        'pay_cleaner':    pay_by_role.get('cleaner', 0),
+        'pay_packer':     pay_by_role.get('packer', 0),
+        'pay_total':      pay_total,
+        'profit':         vals['revenue'] - exp['expenses_cash'] - exp['expenses_card'] - pay_total,
+    })
+    return vals
+
+
+def init_db():
+    with open(os.path.join(os.path.dirname(__file__), 'schema.sql')) as f:
+        with get_db() as conn:
+            conn.executescript(f.read())
+    with get_db() as conn:
+        # Seed owner user
+        owner = conn.execute("SELECT id FROM users WHERE role='owner'").fetchone()
+        if not owner:
+            conn.execute(
+                "INSERT INTO users (username, password_hash, role, full_name) VALUES (?,?,?,?)",
+                ('owner', generate_password_hash('admin123', method='pbkdf2:sha256'), 'owner', 'Владелец')
+            )
+            conn.execute("INSERT INTO branches (name) VALUES (?)", ('КВАДРАТ',))
+
+        # Add auto_bonus column if missing (migration for existing DBs)
+        existing_cols = [r[1] for r in conn.execute("PRAGMA table_info(employee_shifts)").fetchall()]
+        if 'auto_bonus' not in existing_cols:
+            conn.execute("ALTER TABLE employee_shifts ADD COLUMN auto_bonus REAL DEFAULT 0")
+
+        # Add branch_id to bonus_rules if missing
+        br_cols = [r[1] for r in conn.execute("PRAGMA table_info(bonus_rules)").fetchall()]
+        if 'branch_id' not in br_cols:
+            conn.execute("ALTER TABLE bonus_rules ADD COLUMN branch_id INTEGER REFERENCES branches(id)")
+
+        # Add first_name / last_name to employees if missing
+        emp_cols = [r[1] for r in conn.execute("PRAGMA table_info(employees)").fetchall()]
+        if 'last_name' not in emp_cols:
+            conn.execute("ALTER TABLE employees ADD COLUMN last_name TEXT DEFAULT ''")
+        if 'first_name' not in emp_cols:
+            conn.execute("ALTER TABLE employees ADD COLUMN first_name TEXT DEFAULT ''")
+        # Migrate existing full_name → last_name + first_name
+        conn.execute("""
+            UPDATE employees SET
+                last_name = CASE WHEN INSTR(full_name,' ')>0
+                    THEN TRIM(SUBSTR(full_name,1,INSTR(full_name,' ')-1))
+                    ELSE full_name END,
+                first_name = CASE WHEN INSTR(full_name,' ')>0
+                    THEN TRIM(SUBSTR(full_name,INSTR(full_name,' ')+1))
+                    ELSE '' END
+            WHERE last_name = '' OR last_name IS NULL
+        """)
+
+        # Create rate_templates and related tables if missing
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS rate_templates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                role TEXT NOT NULL,
+                name TEXT NOT NULL,
+                rate REAL DEFAULT 0,
+                rate_per_km REAL DEFAULT 10,
+                rate_per_order REAL DEFAULT 100,
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS rate_template_branches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                template_id INTEGER NOT NULL REFERENCES rate_templates(id) ON DELETE CASCADE,
+                branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                UNIQUE(template_id, branch_id)
+            );
+            CREATE TABLE IF NOT EXISTS rate_template_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                template_id INTEGER NOT NULL REFERENCES rate_templates(id) ON DELETE CASCADE,
+                rate REAL DEFAULT 0,
+                rate_per_km REAL DEFAULT 10,
+                rate_per_order REAL DEFAULT 100,
+                valid_from DATE NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        ''')
+
+        # Create taxi and address tables (safe no-ops if already exist — handled by schema IF NOT EXISTS)
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS employee_address_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                employee_id INTEGER NOT NULL REFERENCES employees(id),
+                address TEXT NOT NULL,
+                valid_from DATE NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS taxi_trips (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                shift_id INTEGER NOT NULL REFERENCES shifts(id),
+                amount REAL DEFAULT 0,
+                payment_type TEXT DEFAULT 'cash',
+                in_gulyash INTEGER DEFAULT 0,
+                note TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS taxi_trip_employees (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trip_id INTEGER NOT NULL REFERENCES taxi_trips(id) ON DELETE CASCADE,
+                employee_id INTEGER REFERENCES employees(id),
+                name_snapshot TEXT NOT NULL,
+                address_snapshot TEXT
+            );
+        ''')
+
+        # Seed default bonus rules for cooks
+        if conn.execute("SELECT COUNT(*) FROM bonus_rules").fetchone()[0] == 0:
+            conn.execute("INSERT INTO bonus_rules (role,threshold_pct,bonus_pct) VALUES ('cook',8.0,1.5)")
+            conn.execute("INSERT INTO bonus_rules (role,threshold_pct,bonus_pct) VALUES ('cook',10.0,1.0)")
+
+        # Seed expense categories
+        existing = conn.execute("SELECT COUNT(*) FROM expense_categories").fetchone()[0]
+        if existing == 0:
+            for code, label, sort in _DEFAULT_EXPENSE_CATEGORIES:
+                conn.execute(
+                    "INSERT OR IGNORE INTO expense_categories (code, label, sort_order) VALUES (?,?,?)",
+                    (code, label, sort)
+                )
+
+        conn.commit()
+
+
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if 'user_id' not in session:
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def owner_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if session.get('role') != 'owner':
+            flash('Доступ только для владельца', 'danger')
+            return redirect(url_for('dashboard'))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def get_current_user():
+    if 'user_id' not in session:
+        return None
+    with get_db() as conn:
+        return conn.execute('SELECT * FROM users WHERE id=?', (session['user_id'],)).fetchone()
+
+
+# ─── AUTH ─────────────────────────────────────────────────────────────────────
+
+@app.route('/')
+def index():
+    if 'user_id' in session:
+        return redirect(url_for('dashboard'))
+    return redirect(url_for('login'))
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username'].strip()
+        password = request.form['password']
+        with get_db() as conn:
+            user = conn.execute('SELECT * FROM users WHERE username=?', (username,)).fetchone()
+        if user and check_password_hash(user['password_hash'], password):
+            session['user_id'] = user['id']
+            session['role'] = user['role']
+            session['full_name'] = user['full_name']
+            session['branch_id'] = user['branch_id']
+            return redirect(url_for('dashboard'))
+        flash('Неверный логин или пароль', 'danger')
+    return render_template('login.html')
+
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
+
+
+# ─── DASHBOARD ────────────────────────────────────────────────────────────────
+
+@app.route('/dashboard')
+@login_required
+def dashboard():
+    role = session.get('role')
+    with get_db() as conn:
+        if role == 'owner':
+            branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+            stats = conn.execute('''
+                SELECT b.name, s.date, COALESCE(r.total_revenue,0) as revenue,
+                       COALESCE(r.delivery_orders,0)+COALESCE(r.pickup_orders,0) as orders,
+                       s.status, s.id as shift_id
+                FROM branches b
+                LEFT JOIN shifts s ON s.branch_id=b.id AND s.date >= date('now','-7 days')
+                LEFT JOIN shift_revenue r ON r.shift_id=s.id
+                WHERE b.is_active=1
+                ORDER BY s.date DESC, b.name
+            ''').fetchall()
+            weekly = conn.execute('''
+                SELECT COALESCE(SUM(r.total_revenue),0) as total,
+                       COALESCE(SUM(r.delivery_revenue),0) as delivery,
+                       COALESCE(SUM(r.pickup_revenue),0) as pickup,
+                       COALESCE(SUM(r.delivery_orders+r.pickup_orders),0) as orders
+                FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id
+                WHERE s.date >= date('now','weekday 0','-7 days')
+            ''').fetchone()
+            open_shifts = conn.execute('''
+                SELECT s.*, b.name as branch_name
+                FROM shifts s JOIN branches b ON b.id=s.branch_id
+                WHERE s.date=date('now') AND s.status='open'
+            ''').fetchall()
+            # KPI blocks
+            kpi_blocks = conn.execute(
+                'SELECT * FROM kpi_blocks WHERE is_active=1 ORDER BY sort_order, id'
+            ).fetchall()
+            return render_template('dashboard_owner.html',
+                branches=branches, stats=stats, weekly=weekly,
+                open_shifts=open_shifts, kpi_blocks=kpi_blocks)
+        else:
+            branch_id = session.get('branch_id')
+            if not branch_id:
+                flash('У вас не назначен филиал', 'warning')
+                return render_template('dashboard_admin.html', shift=None, branch=None)
+            branch = conn.execute('SELECT * FROM branches WHERE id=?', (branch_id,)).fetchone()
+            today = date.today().isoformat()
+            shift = conn.execute(
+                'SELECT s.*, u.full_name as closed_by_name FROM shifts s '
+                'LEFT JOIN users u ON u.id=s.closed_by '
+                'WHERE s.branch_id=? AND s.date=?',
+                (branch_id, today)
+            ).fetchone()
+            recent = conn.execute('''
+                SELECT s.*, COALESCE(r.total_revenue,0) as revenue
+                FROM shifts s LEFT JOIN shift_revenue r ON r.shift_id=s.id
+                WHERE s.branch_id=? ORDER BY s.date DESC LIMIT 7
+            ''', (branch_id,)).fetchall()
+            return render_template('dashboard_admin.html',
+                shift=shift, branch=branch, today=today, recent=recent)
+
+
+# ─── KPI API ──────────────────────────────────────────────────────────────────
+
+@app.route('/api/kpi-values')
+@login_required
+@owner_required
+def api_kpi_values():
+    branch_id = request.args.get('branch_id', '')
+    date_from = request.args.get('date_from', date.today().isoformat())
+    date_to = request.args.get('date_to', date.today().isoformat())
+    with get_db() as conn:
+        vals = get_kpi_values(conn, branch_id, date_from, date_to)
+        blocks = conn.execute(
+            'SELECT * FROM kpi_blocks WHERE is_active=1 ORDER BY sort_order, id'
+        ).fetchall()
+        results = []
+        for b in blocks:
+            value = safe_eval(b['formula'], vals)
+            results.append({
+                'id': b['id'],
+                'title': b['title'],
+                'value': round(value, 2) if value is not None else None,
+                'color': b['color'],
+                'unit': b['unit'],
+            })
+    return jsonify({'ok': True, 'blocks': results, 'vars': {k: round(v, 2) for k, v in vals.items()}})
+
+
+# ─── SHIFTS ───────────────────────────────────────────────────────────────────
+
+@app.route('/shift/open', methods=['POST'])
+@login_required
+def open_shift():
+    branch_id = session.get('branch_id')
+    role = session.get('role')
+    if role == 'owner':
+        branch_id = request.form.get('branch_id', branch_id)
+    if not branch_id:
+        flash('Филиал не определён', 'danger')
+        return redirect(url_for('dashboard'))
+    today = date.today().isoformat()
+    with get_db() as conn:
+        existing = conn.execute(
+            'SELECT id FROM shifts WHERE branch_id=? AND date=?', (branch_id, today)
+        ).fetchone()
+        if existing:
+            return redirect(url_for('shift_view', shift_id=existing['id']))
+        conn.execute(
+            'INSERT INTO shifts (branch_id, date, opened_by) VALUES (?,?,?)',
+            (branch_id, today, session['user_id'])
+        )
+        shift_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        conn.execute('INSERT INTO shift_revenue (shift_id) VALUES (?)', (shift_id,))
+        conn.commit()
+    return redirect(url_for('shift_view', shift_id=shift_id))
+
+
+@app.route('/shift/<int:shift_id>')
+@login_required
+def shift_view(shift_id):
+    with get_db() as conn:
+        shift = conn.execute('''
+            SELECT s.*, b.name as branch_name
+            FROM shifts s JOIN branches b ON b.id=s.branch_id
+            WHERE s.id=?
+        ''', (shift_id,)).fetchone()
+        if not shift:
+            flash('Смена не найдена', 'danger')
+            return redirect(url_for('dashboard'))
+        role = session.get('role')
+        if role != 'owner' and session.get('branch_id') != shift['branch_id']:
+            flash('Нет доступа к этой смене', 'danger')
+            return redirect(url_for('dashboard'))
+
+        revenue = conn.execute('SELECT * FROM shift_revenue WHERE shift_id=?', (shift_id,)).fetchone()
+        expenses = conn.execute('SELECT * FROM expenses WHERE shift_id=? ORDER BY id', (shift_id,)).fetchall()
+        staff = conn.execute(
+            'SELECT * FROM employee_shifts WHERE shift_id=? ORDER BY role_snapshot, full_name_snapshot',
+            (shift_id,)
+        ).fetchall()
+        employees = conn.execute(
+            'SELECT * FROM employees WHERE branch_id=? AND is_active=1 ORDER BY role, full_name',
+            (shift['branch_id'],)
+        ).fetchall()
+        # Current address per employee (as of shift date)
+        emp_addresses = {}
+        for emp in employees:
+            addr = conn.execute(
+                'SELECT address FROM employee_address_history WHERE employee_id=? AND valid_from<=? ORDER BY valid_from DESC LIMIT 1',
+                (emp['id'], shift['date'])
+            ).fetchone()
+            emp_addresses[emp['id']] = addr['address'] if addr else ''
+        # Taxi trips for this shift
+        taxi_trips = conn.execute(
+            'SELECT * FROM taxi_trips WHERE shift_id=? ORDER BY id',
+            (shift_id,)
+        ).fetchall()
+        taxi_trip_emps = {}
+        for t in taxi_trips:
+            tte = conn.execute(
+                'SELECT * FROM taxi_trip_employees WHERE trip_id=? ORDER BY id',
+                (t['id'],)
+            ).fetchall()
+            taxi_trip_emps[t['id']] = tte
+        expense_cats = get_expense_categories(conn)
+        can_edit = (role == 'owner') or (shift['status'] == 'open')
+        return render_template('shift.html',
+            shift=shift, revenue=revenue, expenses=expenses,
+            staff=staff, employees=employees,
+            emp_addresses=emp_addresses,
+            taxi_trips=taxi_trips, taxi_trip_emps=taxi_trip_emps,
+            expense_categories=expense_cats,
+            role_labels=ROLE_LABELS,
+            can_edit=can_edit,
+            is_owner=(role == 'owner'))
+
+
+@app.route('/shift/<int:shift_id>/save-revenue', methods=['POST'])
+@login_required
+def save_revenue(shift_id):
+    if not _can_edit_shift(shift_id):
+        return jsonify({'error': 'Нет доступа'}), 403
+    data = request.json or {}
+    with get_db() as conn:
+        conn.execute('''
+            UPDATE shift_revenue SET
+                total_revenue=?, delivery_revenue=?, delivery_orders=?,
+                pickup_revenue=?, pickup_orders=?,
+                cash_amount=?, card_amount=?, online_amount=?,
+                change_amount=?, actual_cash=?, terminal_last3=?, terminal_amount=?
+            WHERE shift_id=?
+        ''', (
+            _f(data, 'total_revenue'), _f(data, 'delivery_revenue'), _i(data, 'delivery_orders'),
+            _f(data, 'pickup_revenue'), _i(data, 'pickup_orders'),
+            _f(data, 'cash_amount'), _f(data, 'card_amount'), _f(data, 'online_amount'),
+            _f(data, 'change_amount'), _f(data, 'actual_cash'),
+            data.get('terminal_last3', ''), _f(data, 'terminal_amount'),
+            shift_id
+        ))
+        desc = (f"нал {_fmt_money(data.get('cash_amount'))}, "
+                f"безнал {_fmt_money(data.get('card_amount'))}, "
+                f"онлайн {_fmt_money(data.get('online_amount'))}, "
+                f"итого {_fmt_money(data.get('total_revenue'))}")
+        log_action(conn, 'revenue_update', desc, shift_id=shift_id, upsert_by_shift=True)
+        auto_bonuses = calculate_bonuses(conn, shift_id)
+        conn.commit()
+    return jsonify({'ok': True, 'auto_bonuses': auto_bonuses})
+
+
+@app.route('/shift/<int:shift_id>/save-expense', methods=['POST'])
+@login_required
+def save_expense(shift_id):
+    if not _can_edit_shift(shift_id):
+        return jsonify({'error': 'Нет доступа'}), 403
+    data = request.json or {}
+    expense_id = data.get('id')
+    with get_db() as conn:
+        cats = dict(get_expense_categories(conn))
+        cat_label = cats.get(data.get('category', 'other'), data.get('category', 'другое'))
+        amount = _f(data, 'amount_cash') + _f(data, 'amount_card')
+        pay_type = 'нал' if _f(data, 'amount_cash') > 0 else 'безнал'
+        note = (data.get('description') or '').strip()
+        if expense_id:
+            conn.execute('''
+                UPDATE expenses SET category=?, description=?, amount_cash=?, amount_card=?, is_gulash=?
+                WHERE id=? AND shift_id=?
+            ''', (data.get('category', 'other'), data.get('description', ''),
+                  _f(data, 'amount_cash'), _f(data, 'amount_card'), 1 if data.get('is_gulash') else 0,
+                  expense_id, shift_id))
+            desc = f"Изменён расход: {cat_label}"
+            if note:
+                desc += f" «{note}»"
+            desc += f", {_fmt_money(amount)} ({pay_type})"
+            log_action(conn, 'expense_update', desc, shift_id=shift_id, entity_id=expense_id)
+        else:
+            conn.execute('''
+                INSERT INTO expenses (shift_id, category, description, amount_cash, amount_card, is_gulash)
+                VALUES (?,?,?,?,?,?)
+            ''', (shift_id, data.get('category', 'other'), data.get('description', ''),
+                  _f(data, 'amount_cash'), _f(data, 'amount_card'), 1 if data.get('is_gulash') else 0))
+            expense_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+            desc = f"Добавлен расход: {cat_label}"
+            if note:
+                desc += f" «{note}»"
+            desc += f", {_fmt_money(amount)} ({pay_type})"
+            log_action(conn, 'expense_add', desc, shift_id=shift_id, entity_id=expense_id)
+        conn.commit()
+    return jsonify({'ok': True, 'id': expense_id})
+
+
+@app.route('/shift/<int:shift_id>/delete-expense/<int:expense_id>', methods=['POST'])
+@login_required
+def delete_expense(shift_id, expense_id):
+    if not _can_edit_shift(shift_id):
+        return jsonify({'error': 'Нет доступа'}), 403
+    with get_db() as conn:
+        exp = conn.execute('SELECT * FROM expenses WHERE id=? AND shift_id=?', (expense_id, shift_id)).fetchone()
+        if exp:
+            cats = dict(get_expense_categories(conn))
+            cat_label = cats.get(exp['category'], exp['category'])
+            amount = (exp['amount_cash'] or 0) + (exp['amount_card'] or 0)
+            pay_type = 'нал' if (exp['amount_cash'] or 0) > 0 else 'безнал'
+            note = (exp['description'] or '').strip()
+            desc = f"Удалён расход: {cat_label}"
+            if note:
+                desc += f" «{note}»"
+            desc += f", {_fmt_money(amount)} ({pay_type})"
+        else:
+            desc = f"Удалён расход #{expense_id}"
+        conn.execute('DELETE FROM expenses WHERE id=? AND shift_id=?', (expense_id, shift_id))
+        log_action(conn, 'expense_delete', desc, shift_id=shift_id, entity_id=expense_id)
+        conn.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/shift/<int:shift_id>/save-staff', methods=['POST'])
+@login_required
+def save_staff(shift_id):
+    if not _can_edit_shift(shift_id):
+        return jsonify({'error': 'Нет доступа'}), 403
+    data = request.json or {}
+    staff_id = data.get('id')
+    with get_db() as conn:
+        if staff_id:
+            # Preserve bonus fields if client didn't send them (e.g. hours-only autosave)
+            existing = conn.execute(
+                'SELECT bonus_amount, penalty_amount, bonus_comment FROM employee_shifts WHERE id=? AND shift_id=?',
+                (staff_id, shift_id)
+            ).fetchone()
+            has_bonus = 'bonus_amount' in data
+            bonus_amount  = _f(data, 'bonus_amount')  if has_bonus else float(existing['bonus_amount']  or 0 if existing else 0)
+            penalty_amount = _f(data, 'penalty_amount') if has_bonus else float(existing['penalty_amount'] or 0 if existing else 0)
+            bonus_comment  = data.get('bonus_comment', (existing['bonus_comment'] or '') if existing else '') if has_bonus else ((existing['bonus_comment'] or '') if existing else '')
+            conn.execute('''
+                UPDATE employee_shifts SET
+                    full_name_snapshot=?, role_snapshot=?, rate_snapshot=?,
+                    rate_per_km_snapshot=?, rate_per_order_snapshot=?,
+                    shift_start=?, shift_end=?, hours_worked=?,
+                    km=?, orders=?, bonus_amount=?, penalty_amount=?, bonus_comment=?,
+                    base_pay=?, total_amount=?, is_paid=?, paid_amount=?
+                WHERE id=? AND shift_id=?
+            ''', (
+                data.get('full_name_snapshot', ''), data.get('role_snapshot', ''),
+                _f(data, 'rate_snapshot'), _f(data, 'rate_per_km_snapshot'), _f(data, 'rate_per_order_snapshot'),
+                data.get('shift_start', ''), data.get('shift_end', ''), _f(data, 'hours_worked'),
+                _f(data, 'km'), _i(data, 'orders'),
+                bonus_amount, penalty_amount, bonus_comment,
+                _f(data, 'base_pay'), _f(data, 'total_amount'),
+                1 if data.get('is_paid') else 0, _f(data, 'paid_amount'),
+                staff_id, shift_id
+            ))
+            name = data.get('full_name_snapshot', '')
+            role_lbl = ROLE_LABELS.get(data.get('role_snapshot', ''), data.get('role_snapshot', ''))
+            log_action(conn, 'staff_update',
+                f"Обновлены данные: {name} ({role_lbl}), итого {_fmt_money(data.get('total_amount'))}",
+                shift_id=shift_id, entity_id=staff_id)
+            auto_bonuses = calculate_bonuses(conn, shift_id)
+        else:
+            emp_id = data.get('employee_id')
+            if emp_id:
+                already = conn.execute(
+                    'SELECT id FROM employee_shifts WHERE shift_id=? AND employee_id=?',
+                    (shift_id, emp_id)
+                ).fetchone()
+                if already:
+                    return jsonify({'ok': False, 'error': 'duplicate'}), 200
+            rate = _f(data, 'rate_snapshot')
+            rate_km = _f(data, 'rate_per_km_snapshot')
+            rate_ord = _f(data, 'rate_per_order_snapshot')
+            if emp_id:
+                # Look up rate active on the shift date
+                shift = conn.execute('SELECT date FROM shifts WHERE id=?', (shift_id,)).fetchone()
+                shift_date = shift['date'] if shift else date.today().isoformat()
+                hist = conn.execute('''
+                    SELECT rate, rate_per_km, rate_per_order
+                    FROM employee_rate_history
+                    WHERE employee_id=? AND effective_from <= ?
+                    ORDER BY effective_from DESC LIMIT 1
+                ''', (emp_id, shift_date)).fetchone()
+                if hist:
+                    rate = rate or hist['rate']
+                    rate_km = rate_km or hist['rate_per_km']
+                    rate_ord = rate_ord or hist['rate_per_order']
+                else:
+                    emp = conn.execute('SELECT * FROM employees WHERE id=?', (emp_id,)).fetchone()
+                    if emp:
+                        rate = rate or emp['rate']
+                        rate_km = rate_km or emp['rate_per_km']
+                        rate_ord = rate_ord or emp['rate_per_order']
+            conn.execute('''
+                INSERT INTO employee_shifts
+                (shift_id, employee_id, full_name_snapshot, role_snapshot,
+                 rate_snapshot, rate_per_km_snapshot, rate_per_order_snapshot,
+                 shift_start, shift_end, hours_worked, km, orders,
+                 bonus_amount, penalty_amount, bonus_comment,
+                 base_pay, total_amount, is_paid, paid_amount)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ''', (
+                shift_id, emp_id or None,
+                data.get('full_name_snapshot', ''), data.get('role_snapshot', ''),
+                rate, rate_km, rate_ord,
+                data.get('shift_start', ''), data.get('shift_end', ''), _f(data, 'hours_worked'),
+                _f(data, 'km'), _i(data, 'orders'),
+                _f(data, 'bonus_amount'), _f(data, 'penalty_amount'), data.get('bonus_comment', ''),
+                _f(data, 'base_pay'), _f(data, 'total_amount'),
+                1 if data.get('is_paid') else 0, _f(data, 'paid_amount')
+            ))
+            staff_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+            name = data.get('full_name_snapshot', '')
+            role_lbl = ROLE_LABELS.get(data.get('role_snapshot', ''), data.get('role_snapshot', ''))
+            log_action(conn, 'staff_add',
+                f"Добавлен сотрудник: {name} ({role_lbl})",
+                shift_id=shift_id, entity_id=staff_id)
+            auto_bonuses = calculate_bonuses(conn, shift_id)
+        conn.commit()
+    return jsonify({'ok': True, 'id': staff_id, 'auto_bonuses': auto_bonuses})
+
+
+@app.route('/shift/<int:shift_id>/pay-staff/<int:staff_id>', methods=['POST'])
+@login_required
+def pay_staff(shift_id, staff_id):
+    if not _can_edit_shift(shift_id):
+        return jsonify({'error': 'Нет доступа'}), 403
+    data = request.json or {}
+    amount = _f(data, 'amount')
+    with get_db() as conn:
+        row = conn.execute(
+            'SELECT * FROM employee_shifts WHERE id=? AND shift_id=?', (staff_id, shift_id)
+        ).fetchone()
+        if not row:
+            return jsonify({'error': 'Не найдено'}), 404
+        conn.execute(
+            'UPDATE employee_shifts SET is_paid=1, paid_amount=? WHERE id=?',
+            (amount, staff_id)
+        )
+        conn.execute('''
+            INSERT INTO salary_payments
+            (employee_id, employee_shift_id, amount, payment_date, paid_by, paid_by_name)
+            VALUES (?,?,?,?,?,?)
+        ''', (row['employee_id'], staff_id, amount, date.today().isoformat(),
+              session['user_id'], session.get('full_name', '')))
+        name = row['full_name_snapshot']
+        role_lbl = ROLE_LABELS.get(row['role_snapshot'], row['role_snapshot'])
+        log_action(conn, 'salary_paid',
+            f"Выплата ЗП: {name} ({role_lbl}), {_fmt_money(amount)}",
+            shift_id=shift_id, entity_id=staff_id)
+        conn.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/shift/<int:shift_id>/delete-staff/<int:staff_id>', methods=['POST'])
+@login_required
+def delete_staff(shift_id, staff_id):
+    if not _can_edit_shift(shift_id):
+        return jsonify({'error': 'Нет доступа'}), 403
+    with get_db() as conn:
+        row = conn.execute(
+            'SELECT * FROM employee_shifts WHERE id=? AND shift_id=?', (staff_id, shift_id)
+        ).fetchone()
+        if row:
+            name = row['full_name_snapshot']
+            role_lbl = ROLE_LABELS.get(row['role_snapshot'], row['role_snapshot'])
+            desc = f"Удалён из смены: {name} ({role_lbl})"
+        else:
+            desc = f"Удалён сотрудник #{staff_id}"
+        conn.execute('DELETE FROM employee_shifts WHERE id=? AND shift_id=?', (staff_id, shift_id))
+        log_action(conn, 'staff_delete', desc, shift_id=shift_id, entity_id=staff_id)
+        auto_bonuses = calculate_bonuses(conn, shift_id)
+        conn.commit()
+    return jsonify({'ok': True, 'auto_bonuses': auto_bonuses})
+
+
+@app.route('/shift/<int:shift_id>/close', methods=['POST'])
+@login_required
+def close_shift(shift_id):
+    if not _can_edit_shift(shift_id):
+        flash('Нет доступа', 'danger')
+        return redirect(url_for('shift_view', shift_id=shift_id))
+    comment = request.form.get('comment', '')
+    closed_by_name = request.form.get('closed_by_name', session.get('full_name', ''))
+    with get_db() as conn:
+        conn.execute('''
+            UPDATE shifts SET status='closed', closed_by=?, closed_at=CURRENT_TIMESTAMP,
+            comment=?, closed_by_name=?
+            WHERE id=?
+        ''', (session['user_id'], comment, closed_by_name, shift_id))
+        log_action(conn, 'shift_close', 'Смена закрыта', shift_id=shift_id)
+        conn.commit()
+    flash('Смена закрыта', 'success')
+    return redirect(url_for('shift_view', shift_id=shift_id))
+
+
+@app.route('/shift/<int:shift_id>/reopen', methods=['POST'])
+@login_required
+@owner_required
+def reopen_shift(shift_id):
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE shifts SET status='open', closed_by=NULL, closed_at=NULL WHERE id=?",
+            (shift_id,)
+        )
+        log_action(conn, 'shift_reopen', 'Смена переоткрыта', shift_id=shift_id)
+        conn.commit()
+    flash('Смена переоткрыта', 'success')
+    return redirect(url_for('shift_view', shift_id=shift_id))
+
+
+# ─── EMPLOYEES ────────────────────────────────────────────────────────────────
+
+@app.route('/employees')
+@login_required
+def employees():
+    role = session.get('role')
+    with get_db() as conn:
+        if role == 'owner':
+            emps = conn.execute('''
+                SELECT e.*, b.name as branch_name
+                FROM employees e LEFT JOIN branches b ON b.id=e.branch_id
+                ORDER BY b.name, e.role, e.full_name
+            ''').fetchall()
+            branches = conn.execute('SELECT * FROM branches WHERE is_active=1').fetchall()
+        else:
+            branch_id = session.get('branch_id')
+            emps = conn.execute(
+                'SELECT e.*, b.name as branch_name FROM employees e '
+                'LEFT JOIN branches b ON b.id=e.branch_id '
+                'WHERE e.branch_id=? ORDER BY e.role, e.full_name',
+                (branch_id,)
+            ).fetchall()
+            branches = conn.execute('SELECT * FROM branches WHERE id=?', (branch_id,)).fetchall()
+
+        # Rate history per employee
+        rate_history = {}
+        address_history = {}
+        for emp in emps:
+            hist = conn.execute('''
+                SELECT * FROM employee_rate_history WHERE employee_id=?
+                ORDER BY effective_from DESC LIMIT 5
+            ''', (emp['id'],)).fetchall()
+            rate_history[emp['id']] = hist
+            addr_hist = conn.execute('''
+                SELECT * FROM employee_address_history WHERE employee_id=?
+                ORDER BY valid_from DESC LIMIT 5
+            ''', (emp['id'],)).fetchall()
+            address_history[emp['id']] = addr_hist
+
+        all_tmpls = conn.execute(
+            'SELECT * FROM rate_templates WHERE is_active=1 ORDER BY role, name'
+        ).fetchall()
+        # branch sets per template (empty set = all branches)
+        tmpl_branch_sets = {}
+        for row in conn.execute('SELECT template_id, branch_id FROM rate_template_branches').fetchall():
+            tmpl_branch_sets.setdefault(row['template_id'], set()).add(row['branch_id'])
+
+    def tmpls_for_emp(emp):
+        bid = emp['branch_id']
+        result = []
+        for t in all_tmpls:
+            branches_set = tmpl_branch_sets.get(t['id'], set())
+            if not branches_set or bid in branches_set:
+                result.append(t)
+        return result
+
+    return render_template('employees.html', employees=emps, branches=branches,
+                           role_labels=ROLE_LABELS, is_owner=(role == 'owner'),
+                           rate_history=rate_history, address_history=address_history,
+                           rate_templates=all_tmpls,
+                           tmpl_branch_sets=tmpl_branch_sets,
+                           tmpls_for_emp=tmpls_for_emp,
+                           today=date.today().isoformat())
+
+
+@app.route('/employees/add', methods=['POST'])
+@login_required
+def add_employee():
+    role = session.get('role')
+    branch_id = request.form.get('branch_id') if role == 'owner' else session.get('branch_id')
+    last_name  = request.form.get('last_name', '').strip()
+    first_name = request.form.get('first_name', '').strip()
+    full_name  = (last_name + (' ' + first_name if first_name else '')).strip()
+    emp_role = request.form.get('role', 'sushi')
+    rate = float(request.form.get('rate', 0) or 0)
+    rate_km = float(request.form.get('rate_per_km', 10) or 10)
+    rate_ord = float(request.form.get('rate_per_order', 100) or 100)
+    effective_from = request.form.get('effective_from') or date.today().isoformat()
+    if not full_name:
+        flash('Введите фамилию сотрудника', 'danger')
+        return redirect(url_for('employees'))
+    with get_db() as conn:
+        conn.execute(
+            'INSERT INTO employees (branch_id, full_name, last_name, first_name, role, rate, rate_per_km, rate_per_order) VALUES (?,?,?,?,?,?,?,?)',
+            (branch_id, full_name, last_name, first_name, emp_role, rate, rate_km, rate_ord)
+        )
+        emp_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        conn.execute(
+            'INSERT INTO employee_rate_history (employee_id, rate, rate_per_km, rate_per_order, effective_from) VALUES (?,?,?,?,?)',
+            (emp_id, rate, rate_km, rate_ord, effective_from)
+        )
+        address = request.form.get('address', '').strip()
+        if address:
+            conn.execute(
+                'INSERT INTO employee_address_history (employee_id, address, valid_from) VALUES (?,?,?)',
+                (emp_id, address, effective_from)
+            )
+        conn.commit()
+    flash(f'Сотрудник {full_name} добавлен', 'success')
+    return redirect(url_for('employees'))
+
+
+@app.route('/employees/<int:emp_id>/update-rate', methods=['POST'])
+@login_required
+def update_employee_rate(emp_id):
+    rate = float(request.form.get('rate', 0) or 0)
+    rate_km = float(request.form.get('rate_per_km', 10) or 10)
+    rate_ord = float(request.form.get('rate_per_order', 100) or 100)
+    effective_from = request.form.get('effective_from') or date.today().isoformat()
+    with get_db() as conn:
+        emp = conn.execute('SELECT * FROM employees WHERE id=?', (emp_id,)).fetchone()
+        if not emp:
+            flash('Сотрудник не найден', 'danger')
+            return redirect(url_for('employees'))
+        conn.execute(
+            'INSERT INTO employee_rate_history (employee_id, rate, rate_per_km, rate_per_order, effective_from) VALUES (?,?,?,?,?)',
+            (emp_id, rate, rate_km, rate_ord, effective_from)
+        )
+        # Update current rate only if effective_from <= today
+        if effective_from <= date.today().isoformat():
+            conn.execute(
+                'UPDATE employees SET rate=?, rate_per_km=?, rate_per_order=? WHERE id=?',
+                (rate, rate_km, rate_ord, emp_id)
+            )
+        conn.commit()
+    flash(f'Ставка сохранена (с {effective_from})', 'success')
+    return redirect(url_for('employees'))
+
+
+@app.route('/employees/<int:emp_id>/toggle', methods=['POST'])
+@login_required
+def toggle_employee(emp_id):
+    with get_db() as conn:
+        conn.execute('UPDATE employees SET is_active = 1-is_active WHERE id=?', (emp_id,))
+        conn.commit()
+    return redirect(url_for('employees'))
+
+
+@app.route('/employees/<int:emp_id>/address', methods=['POST'])
+@login_required
+def update_employee_address(emp_id):
+    address = request.form.get('address', '').strip()
+    valid_from = request.form.get('valid_from') or date.today().isoformat()
+    if not address:
+        flash('Введите адрес', 'danger')
+        return redirect(url_for('employees'))
+    with get_db() as conn:
+        conn.execute(
+            'INSERT INTO employee_address_history (employee_id, address, valid_from) VALUES (?,?,?)',
+            (emp_id, address, valid_from)
+        )
+        conn.commit()
+    flash('Адрес сохранён', 'success')
+    return redirect(url_for('employees'))
+
+
+@app.route('/employees/<int:emp_id>/edit', methods=['POST'])
+@login_required
+def edit_employee(emp_id):
+    last_name  = request.form.get('last_name', '').strip()
+    first_name = request.form.get('first_name', '').strip()
+    full_name  = (last_name + (' ' + first_name if first_name else '')).strip()
+    address    = request.form.get('address', '').strip()
+    address_from = request.form.get('address_from') or date.today().isoformat()
+    rate      = float(request.form.get('rate', 0) or 0)
+    rate_km   = float(request.form.get('rate_per_km', 10) or 10)
+    rate_ord  = float(request.form.get('rate_per_order', 100) or 100)
+    rate_from = request.form.get('rate_from') or date.today().isoformat()
+    with get_db() as conn:
+        emp = conn.execute('SELECT * FROM employees WHERE id=?', (emp_id,)).fetchone()
+        if not emp:
+            flash('Сотрудник не найден', 'danger')
+            return redirect(url_for('employees'))
+        if full_name:
+            conn.execute(
+                'UPDATE employees SET full_name=?, last_name=?, first_name=? WHERE id=?',
+                (full_name, last_name, first_name, emp_id)
+            )
+        # Rate: save to history; update current values only if rate_from <= today
+        conn.execute(
+            'INSERT INTO employee_rate_history (employee_id, rate, rate_per_km, rate_per_order, effective_from) VALUES (?,?,?,?,?)',
+            (emp_id, rate, rate_km, rate_ord, rate_from)
+        )
+        if rate_from <= date.today().isoformat():
+            conn.execute(
+                'UPDATE employees SET rate=?, rate_per_km=?, rate_per_order=? WHERE id=?',
+                (rate, rate_km, rate_ord, emp_id)
+            )
+        if address:
+            conn.execute(
+                'INSERT INTO employee_address_history (employee_id, address, valid_from) VALUES (?,?,?)',
+                (emp_id, address, address_from)
+            )
+        conn.commit()
+    flash('Данные сотрудника сохранены', 'success')
+    return redirect(url_for('employees'))
+
+
+# ─── TAXI ─────────────────────────────────────────────────────────────────────
+
+@app.route('/shift/<int:shift_id>/taxi/add', methods=['POST'])
+@login_required
+def add_taxi_trip(shift_id):
+    if not _can_edit_shift(shift_id):
+        return jsonify({'error': 'Нет доступа'}), 403
+    data = request.json or {}
+    amount = float(data.get('amount', 0) or 0)
+    payment_type = data.get('payment_type', 'cash')
+    in_gulyash = 1 if data.get('in_gulyash') else 0
+    note = data.get('note', '') or ''
+    emps = data.get('employees', [])
+    with get_db() as conn:
+        conn.execute(
+            'INSERT INTO taxi_trips (shift_id, amount, payment_type, in_gulyash, note) VALUES (?,?,?,?,?)',
+            (shift_id, amount, payment_type, in_gulyash, note)
+        )
+        trip_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        for emp in emps:
+            conn.execute(
+                'INSERT INTO taxi_trip_employees (trip_id, employee_id, name_snapshot, address_snapshot) VALUES (?,?,?,?)',
+                (trip_id, emp.get('id') or None, emp.get('name', ''), emp.get('address', ''))
+            )
+        conn.commit()
+    return jsonify({'ok': True, 'trip_id': trip_id})
+
+
+@app.route('/taxi/<int:trip_id>/delete', methods=['POST'])
+@login_required
+def delete_taxi_trip(trip_id):
+    with get_db() as conn:
+        trip = conn.execute('SELECT * FROM taxi_trips WHERE id=?', (trip_id,)).fetchone()
+        if not trip:
+            return jsonify({'error': 'Not found'}), 404
+        if not _can_edit_shift(trip['shift_id']):
+            return jsonify({'error': 'Нет доступа'}), 403
+        conn.execute('DELETE FROM taxi_trip_employees WHERE trip_id=?', (trip_id,))
+        conn.execute('DELETE FROM taxi_trips WHERE id=?', (trip_id,))
+        conn.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/taxi/<int:trip_id>/toggle-gulyash', methods=['POST'])
+@login_required
+def toggle_taxi_gulyash(trip_id):
+    with get_db() as conn:
+        trip = conn.execute('SELECT * FROM taxi_trips WHERE id=?', (trip_id,)).fetchone()
+        if not trip:
+            return jsonify({'error': 'Not found'}), 404
+        if not _can_edit_shift(trip['shift_id']):
+            return jsonify({'error': 'Нет доступа'}), 403
+        new_val = 0 if trip['in_gulyash'] else 1
+        conn.execute('UPDATE taxi_trips SET in_gulyash=? WHERE id=?', (new_val, trip_id))
+        conn.commit()
+    return jsonify({'ok': True, 'in_gulyash': new_val})
+
+
+@app.route('/shift/<int:shift_id>/taxi/create', methods=['POST'])
+@login_required
+def create_taxi_trip(shift_id):
+    if not _can_edit_shift(shift_id):
+        return jsonify({'error': 'Нет доступа'}), 403
+    with get_db() as conn:
+        conn.execute('INSERT INTO taxi_trips (shift_id) VALUES (?)', (shift_id,))
+        trip_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        conn.commit()
+    return jsonify({'ok': True, 'trip_id': trip_id})
+
+
+@app.route('/taxi/<int:trip_id>/employee/add', methods=['POST'])
+@login_required
+def add_taxi_employee(trip_id):
+    with get_db() as conn:
+        trip = conn.execute('SELECT * FROM taxi_trips WHERE id=?', (trip_id,)).fetchone()
+        if not trip or not _can_edit_shift(trip['shift_id']):
+            return jsonify({'error': 'Нет доступа'}), 403
+        data = request.json or {}
+        conn.execute(
+            'INSERT INTO taxi_trip_employees (trip_id, employee_id, name_snapshot, address_snapshot) VALUES (?,?,?,?)',
+            (trip_id, data.get('employee_id') or None, data.get('name', ''), data.get('address', ''))
+        )
+        tte_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        conn.commit()
+    return jsonify({'ok': True, 'tte_id': tte_id})
+
+
+@app.route('/taxi/employee/<int:tte_id>/remove', methods=['POST'])
+@login_required
+def remove_taxi_employee(tte_id):
+    with get_db() as conn:
+        tte = conn.execute('SELECT * FROM taxi_trip_employees WHERE id=?', (tte_id,)).fetchone()
+        if not tte:
+            return jsonify({'error': 'Not found'}), 404
+        trip = conn.execute('SELECT * FROM taxi_trips WHERE id=?', (tte['trip_id'],)).fetchone()
+        if not _can_edit_shift(trip['shift_id']):
+            return jsonify({'error': 'Нет доступа'}), 403
+        conn.execute('DELETE FROM taxi_trip_employees WHERE id=?', (tte_id,))
+        conn.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/taxi/<int:trip_id>/update', methods=['POST'])
+@login_required
+def update_taxi_trip(trip_id):
+    with get_db() as conn:
+        trip = conn.execute('SELECT * FROM taxi_trips WHERE id=?', (trip_id,)).fetchone()
+        if not trip or not _can_edit_shift(trip['shift_id']):
+            return jsonify({'error': 'Нет доступа'}), 403
+        data = request.json or {}
+        fields, vals = [], []
+        if 'amount' in data:
+            fields.append('amount=?'); vals.append(float(data['amount'] or 0))
+        if 'payment_type' in data:
+            fields.append('payment_type=?'); vals.append(data['payment_type'])
+        if 'in_gulyash' in data:
+            fields.append('in_gulyash=?'); vals.append(1 if data['in_gulyash'] else 0)
+        if fields:
+            vals.append(trip_id)
+            conn.execute('UPDATE taxi_trips SET ' + ', '.join(fields) + ' WHERE id=?', vals)
+            conn.commit()
+    return jsonify({'ok': True})
+
+
+# ─── BRANCHES ─────────────────────────────────────────────────────────────────
+
+@app.route('/branches')
+@login_required
+@owner_required
+def branches():
+    with get_db() as conn:
+        blist = conn.execute('SELECT * FROM branches ORDER BY name').fetchall()
+    return render_template('branches.html', branches=blist)
+
+
+@app.route('/branches/add', methods=['POST'])
+@login_required
+@owner_required
+def add_branch():
+    name = request.form.get('name', '').strip().upper()
+    if not name:
+        flash('Введите название филиала', 'danger')
+        return redirect(url_for('branches'))
+    with get_db() as conn:
+        conn.execute('INSERT INTO branches (name) VALUES (?)', (name,))
+        conn.commit()
+    flash(f'Филиал {name} добавлен', 'success')
+    return redirect(url_for('branches'))
+
+
+# ─── USERS ────────────────────────────────────────────────────────────────────
+
+@app.route('/users')
+@login_required
+@owner_required
+def users():
+    with get_db() as conn:
+        ulist = conn.execute('''
+            SELECT u.*, b.name as branch_name
+            FROM users u LEFT JOIN branches b ON b.id=u.branch_id
+            ORDER BY u.role, u.full_name
+        ''').fetchall()
+        branches = conn.execute('SELECT * FROM branches WHERE is_active=1').fetchall()
+    return render_template('users.html', users=ulist, branches=branches)
+
+
+@app.route('/users/add', methods=['POST'])
+@login_required
+@owner_required
+def add_user():
+    username = request.form.get('username', '').strip()
+    password = request.form.get('password', '')
+    full_name = request.form.get('full_name', '').strip()
+    role = request.form.get('role', 'admin')
+    branch_id = request.form.get('branch_id') or None
+    if not username or not password or not full_name:
+        flash('Заполните все поля', 'danger')
+        return redirect(url_for('users'))
+    with get_db() as conn:
+        existing = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()
+        if existing:
+            flash('Логин уже занят', 'danger')
+            return redirect(url_for('users'))
+        conn.execute(
+            'INSERT INTO users (username, password_hash, role, full_name, branch_id) VALUES (?,?,?,?,?)',
+            (username, generate_password_hash(password, method='pbkdf2:sha256'), role, full_name, branch_id)
+        )
+        conn.commit()
+    flash(f'Пользователь {full_name} создан', 'success')
+    return redirect(url_for('users'))
+
+
+@app.route('/users/<int:user_id>/reset-password', methods=['POST'])
+@login_required
+@owner_required
+def reset_password(user_id):
+    new_password = request.form.get('password', '')
+    if not new_password:
+        flash('Введите пароль', 'danger')
+        return redirect(url_for('users'))
+    with get_db() as conn:
+        conn.execute(
+            'UPDATE users SET password_hash=? WHERE id=?',
+            (generate_password_hash(new_password, method='pbkdf2:sha256'), user_id)
+        )
+        conn.commit()
+    flash('Пароль обновлён', 'success')
+    return redirect(url_for('users'))
+
+
+# ─── SETTINGS ─────────────────────────────────────────────────────────────────
+
+@app.route('/settings')
+@login_required
+@owner_required
+def settings():
+    with get_db() as conn:
+        exp_cats = conn.execute(
+            'SELECT * FROM expense_categories ORDER BY sort_order, label'
+        ).fetchall()
+        kpi_blocks = conn.execute(
+            'SELECT * FROM kpi_blocks ORDER BY sort_order, id'
+        ).fetchall()
+        bonus_rules = conn.execute(
+            'SELECT br.*, b.name AS branch_name FROM bonus_rules br '
+            'LEFT JOIN branches b ON b.id=br.branch_id '
+            'ORDER BY COALESCE(b.name, \'ААА\'), br.role, br.threshold_pct'
+        ).fetchall()
+        branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        rate_templates = conn.execute(
+            'SELECT * FROM rate_templates ORDER BY role, name'
+        ).fetchall()
+        # Branch associations per template (list, not set — Jinja2 can't call set())
+        tmpl_branches = {}
+        for row in conn.execute('SELECT template_id, branch_id FROM rate_template_branches').fetchall():
+            tmpl_branches.setdefault(row['template_id'], []).append(row['branch_id'])
+        # Rate history per template
+        tmpl_history = {}
+        for row in conn.execute(
+            'SELECT * FROM rate_template_history ORDER BY template_id, valid_from DESC'
+        ).fetchall():
+            tmpl_history.setdefault(row['template_id'], []).append(row)
+    return render_template('settings.html',
+        exp_cats=exp_cats, kpi_blocks=kpi_blocks,
+        bonus_rules=bonus_rules, branches=branches,
+        rate_templates=rate_templates,
+        tmpl_branches=tmpl_branches, tmpl_history=tmpl_history,
+        today=date.today().isoformat(),
+        formula_vars=FORMULA_VARS, role_labels=ROLE_LABELS)
+
+
+@app.route('/settings/expense-cat/add', methods=['POST'])
+@login_required
+@owner_required
+def add_expense_cat():
+    label = request.form.get('label', '').strip()
+    if not label:
+        flash('Введите название категории', 'danger')
+        return redirect(url_for('settings'))
+    code = label.lower().replace(' ', '_').replace('/', '_')[:30]
+    with get_db() as conn:
+        # Make code unique
+        existing = conn.execute('SELECT id FROM expense_categories WHERE code=?', (code,)).fetchone()
+        if existing:
+            code = code + '_' + str(int(datetime.now().timestamp()))[-4:]
+        max_sort = conn.execute('SELECT COALESCE(MAX(sort_order),0) FROM expense_categories').fetchone()[0]
+        conn.execute(
+            'INSERT INTO expense_categories (code, label, sort_order) VALUES (?,?,?)',
+            (code, label, max_sort + 1)
+        )
+        conn.commit()
+    flash(f'Категория «{label}» добавлена', 'success')
+    return redirect(url_for('settings'))
+
+
+@app.route('/settings/expense-cat/<int:cat_id>/toggle', methods=['POST'])
+@login_required
+@owner_required
+def toggle_expense_cat(cat_id):
+    with get_db() as conn:
+        conn.execute('UPDATE expense_categories SET is_active=1-is_active WHERE id=?', (cat_id,))
+        conn.commit()
+    return redirect(url_for('settings'))
+
+
+@app.route('/settings/kpi/add', methods=['POST'])
+@login_required
+@owner_required
+def add_kpi_block():
+    title = request.form.get('title', '').strip()
+    formula = request.form.get('formula', '').strip()
+    color = request.form.get('color', 'primary')
+    unit = request.form.get('unit', '₽').strip()
+    if not title or not formula:
+        flash('Введите название и формулу', 'danger')
+        return redirect(url_for('settings'))
+    # Validate formula
+    test_vars = {k: 1.0 for k in FORMULA_VARS}
+    result = safe_eval(formula, test_vars)
+    if result is None:
+        flash('Ошибка в формуле — проверьте переменные и операторы', 'danger')
+        return redirect(url_for('settings'))
+    with get_db() as conn:
+        max_sort = conn.execute('SELECT COALESCE(MAX(sort_order),0) FROM kpi_blocks').fetchone()[0]
+        conn.execute(
+            'INSERT INTO kpi_blocks (title, formula, color, unit, sort_order) VALUES (?,?,?,?,?)',
+            (title, formula, color, unit, max_sort + 1)
+        )
+        conn.commit()
+    flash(f'Блок «{title}» добавлен', 'success')
+    return redirect(url_for('settings'))
+
+
+@app.route('/settings/kpi/<int:block_id>/delete', methods=['POST'])
+@login_required
+@owner_required
+def delete_kpi_block(block_id):
+    with get_db() as conn:
+        conn.execute('DELETE FROM kpi_blocks WHERE id=?', (block_id,))
+        conn.commit()
+    flash('Блок удалён', 'success')
+    return redirect(url_for('settings'))
+
+
+@app.route('/settings/kpi/<int:block_id>/toggle', methods=['POST'])
+@login_required
+@owner_required
+def toggle_kpi_block(block_id):
+    with get_db() as conn:
+        conn.execute('UPDATE kpi_blocks SET is_active=1-is_active WHERE id=?', (block_id,))
+        conn.commit()
+    return redirect(url_for('settings'))
+
+
+@app.route('/settings/bonus-rules/add', methods=['POST'])
+@login_required
+@owner_required
+def add_bonus_rule():
+    role = request.form.get('role', '')
+    threshold = request.form.get('threshold_pct', '')
+    bonus = request.form.get('bonus_pct', '')
+    if not role or not threshold or not bonus:
+        flash('Заполните все поля', 'danger')
+        return redirect(url_for('settings') + '#tab-bonuses')
+    try:
+        threshold = float(threshold)
+        bonus = float(bonus)
+    except ValueError:
+        flash('Неверный формат числа', 'danger')
+        return redirect(url_for('settings') + '#tab-bonuses')
+    branch_id = request.form.get('branch_id') or None
+    if branch_id:
+        try: branch_id = int(branch_id)
+        except ValueError: branch_id = None
+    with get_db() as conn:
+        conn.execute(
+            'INSERT INTO bonus_rules (role, threshold_pct, bonus_pct, branch_id) VALUES (?,?,?,?)',
+            (role, threshold, bonus, branch_id)
+        )
+        conn.commit()
+    flash(f'Правило добавлено', 'success')
+    return redirect(url_for('settings') + '#tab-bonuses')
+
+
+@app.route('/settings/bonus-rules/<int:rule_id>/delete', methods=['POST'])
+@login_required
+@owner_required
+def delete_bonus_rule(rule_id):
+    with get_db() as conn:
+        conn.execute('DELETE FROM bonus_rules WHERE id=?', (rule_id,))
+        conn.commit()
+    flash('Правило удалено', 'success')
+    return redirect(url_for('settings') + '#tab-bonuses')
+
+
+@app.route('/settings/bonus-rules/<int:rule_id>/toggle', methods=['POST'])
+@login_required
+@owner_required
+def toggle_bonus_rule(rule_id):
+    with get_db() as conn:
+        conn.execute('UPDATE bonus_rules SET is_active=1-is_active WHERE id=?', (rule_id,))
+        conn.commit()
+    return redirect(url_for('settings') + '?tab=bonuses')
+
+
+@app.route('/bonus_rules/<int:rule_id>/edit', methods=['POST'])
+@login_required
+@owner_required
+def edit_bonus_rule(rule_id):
+    role = request.form.get('role')
+    branch_id = request.form.get('branch_id') or None
+    if branch_id:
+        try:
+            branch_id = int(branch_id)
+        except ValueError:
+            branch_id = None
+    try:
+        threshold_pct = float(request.form.get('threshold_pct', 0))
+        bonus_pct = float(request.form.get('bonus_pct', 0))
+    except ValueError:
+        flash('Неверные значения', 'danger')
+        return redirect(url_for('settings') + '?tab=bonuses')
+    with get_db() as conn:
+        conn.execute(
+            'UPDATE bonus_rules SET role=?, threshold_pct=?, bonus_pct=?, branch_id=? WHERE id=?',
+            (role, threshold_pct, bonus_pct, branch_id, rule_id)
+        )
+        conn.commit()
+    flash('Правило обновлено', 'success')
+    return redirect(url_for('settings') + '?tab=bonuses')
+
+
+# ─── RATE TEMPLATES ───────────────────────────────────────────────────────────
+
+@app.route('/settings/rate-templates/add', methods=['POST'])
+@login_required
+@owner_required
+def add_rate_template():
+    role       = request.form.get('role', '').strip()
+    name       = request.form.get('name', '').strip()
+    rate       = float(request.form.get('rate', 0) or 0)
+    rate_km    = float(request.form.get('rate_per_km', 10) or 10)
+    rate_ord   = float(request.form.get('rate_per_order', 100) or 100)
+    branch_ids = request.form.getlist('branch_ids')
+    valid_from = request.form.get('valid_from') or date.today().isoformat()
+    if not role or not name:
+        flash('Заполните роль и название', 'danger')
+        return redirect(url_for('settings') + '?tab=rates')
+    with get_db() as conn:
+        conn.execute(
+            'INSERT INTO rate_templates (role, name, rate, rate_per_km, rate_per_order) VALUES (?,?,?,?,?)',
+            (role, name, rate, rate_km, rate_ord)
+        )
+        tmpl_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        for bid in branch_ids:
+            try:
+                conn.execute('INSERT OR IGNORE INTO rate_template_branches (template_id, branch_id) VALUES (?,?)',
+                             (tmpl_id, int(bid)))
+            except (ValueError, Exception):
+                pass
+        conn.execute(
+            'INSERT INTO rate_template_history (template_id, rate, rate_per_km, rate_per_order, valid_from) VALUES (?,?,?,?,?)',
+            (tmpl_id, rate, rate_km, rate_ord, valid_from)
+        )
+        conn.commit()
+    flash(f'Ставка «{name}» добавлена', 'success')
+    return redirect(url_for('settings') + '?tab=rates')
+
+
+@app.route('/settings/rate-templates/<int:tmpl_id>/delete', methods=['POST'])
+@login_required
+@owner_required
+def delete_rate_template(tmpl_id):
+    with get_db() as conn:
+        conn.execute('DELETE FROM rate_templates WHERE id=?', (tmpl_id,))
+        conn.commit()
+    flash('Ставка удалена', 'success')
+    return redirect(url_for('settings') + '?tab=rates')
+
+
+@app.route('/settings/rate-templates/<int:tmpl_id>/edit', methods=['POST'])
+@login_required
+@owner_required
+def edit_rate_template(tmpl_id):
+    name       = request.form.get('name', '').strip()
+    rate       = float(request.form.get('rate', 0) or 0)
+    rate_km    = float(request.form.get('rate_per_km', 10) or 10)
+    rate_ord   = float(request.form.get('rate_per_order', 100) or 100)
+    branch_ids = request.form.getlist('branch_ids')
+    valid_from = request.form.get('valid_from') or date.today().isoformat()
+    with get_db() as conn:
+        # Update current rates if valid_from <= today
+        if valid_from <= date.today().isoformat():
+            conn.execute(
+                'UPDATE rate_templates SET name=?, rate=?, rate_per_km=?, rate_per_order=? WHERE id=?',
+                (name, rate, rate_km, rate_ord, tmpl_id)
+            )
+        else:
+            conn.execute('UPDATE rate_templates SET name=? WHERE id=?', (name, tmpl_id))
+        # Save rate history entry
+        conn.execute(
+            'INSERT INTO rate_template_history (template_id, rate, rate_per_km, rate_per_order, valid_from) VALUES (?,?,?,?,?)',
+            (tmpl_id, rate, rate_km, rate_ord, valid_from)
+        )
+        # Replace branch associations
+        conn.execute('DELETE FROM rate_template_branches WHERE template_id=?', (tmpl_id,))
+        for bid in branch_ids:
+            try:
+                conn.execute('INSERT OR IGNORE INTO rate_template_branches (template_id, branch_id) VALUES (?,?)',
+                             (tmpl_id, int(bid)))
+            except (ValueError, Exception):
+                pass
+        conn.commit()
+    flash('Ставка обновлена', 'success')
+    return redirect(url_for('settings') + '?tab=rates')
+
+
+# ─── REPORTS ──────────────────────────────────────────────────────────────────
+
+@app.route('/reports')
+@login_required
+@owner_required
+def reports():
+    period = request.args.get('period', 'week')
+    branch_id = request.args.get('branch_id', '')
+    active_tab = request.args.get('tab', 'shifts')
+
+    today = date.today().isoformat()
+    month_start = date.today().replace(day=1).isoformat()
+    s_date_from = request.args.get('s_date_from', month_start)
+    s_date_to   = request.args.get('s_date_to',   today)
+    s_branch_id = request.args.get('s_branch_id', '')
+    s_role      = request.args.get('s_role', '')
+    s_unpaid    = request.args.get('s_unpaid', '')
+
+    with get_db() as conn:
+        branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+
+        date_filter   = "AND s.date >= date('now','-7 days')" if period == 'week' else \
+                        "AND s.date >= date('now','start of month')" if period == 'month' else \
+                        "AND s.date >= date('now','-30 days')"
+        branch_filter = f"AND s.branch_id={int(branch_id)}" if branch_id.isdigit() else ""
+
+        shifts_data = conn.execute(f'''
+            SELECT s.date, b.name as branch_name, s.status,
+                   COALESCE(r.total_revenue,0) as revenue,
+                   COALESCE(r.delivery_revenue,0) as delivery,
+                   COALESCE(r.pickup_revenue,0) as pickup,
+                   COALESCE(r.delivery_orders,0)+COALESCE(r.pickup_orders,0) as orders,
+                   COALESCE(r.cash_amount,0) as cash,
+                   COALESCE(r.card_amount,0) as card,
+                   s.id as shift_id
+            FROM shifts s
+            JOIN branches b ON b.id=s.branch_id
+            LEFT JOIN shift_revenue r ON r.shift_id=s.id
+            WHERE 1=1 {date_filter} {branch_filter}
+            ORDER BY s.date DESC, b.name
+        ''').fetchall()
+        totals = conn.execute(f'''
+            SELECT COALESCE(SUM(r.total_revenue),0) as revenue,
+                   COALESCE(SUM(r.delivery_revenue),0) as delivery,
+                   COALESCE(SUM(r.pickup_revenue),0) as pickup,
+                   COALESCE(SUM(r.delivery_orders+r.pickup_orders),0) as orders,
+                   COALESCE(SUM(r.cash_amount),0) as cash,
+                   COALESCE(SUM(r.card_amount),0) as card
+            FROM shifts s LEFT JOIN shift_revenue r ON r.shift_id=s.id
+            WHERE 1=1 {date_filter} {branch_filter}
+        ''').fetchone()
+        salary_data = conn.execute(f'''
+            SELECT es.full_name_snapshot, es.role_snapshot,
+                   SUM(es.total_amount) as earned, SUM(es.paid_amount) as paid,
+                   SUM(es.total_amount)-SUM(es.paid_amount) as debt,
+                   COUNT(*) as shifts_count
+            FROM employee_shifts es
+            JOIN shifts s ON s.id=es.shift_id
+            WHERE 1=1 {date_filter} {branch_filter}
+            GROUP BY es.full_name_snapshot, es.role_snapshot
+            ORDER BY debt DESC
+        ''').fetchall()
+
+        # ── Зарплатный отчёт ──────────────────────────────────────────────
+        sal_conds  = ['s.date BETWEEN ? AND ?']
+        sal_params = [s_date_from, s_date_to]
+        if s_branch_id.isdigit():
+            sal_conds.append('s.branch_id = ?')
+            sal_params.append(int(s_branch_id))
+        if s_role:
+            sal_conds.append('es.role_snapshot = ?')
+            sal_params.append(s_role)
+        sal_where  = ' AND '.join(sal_conds)
+        sal_having = 'HAVING SUM(es.total_amount) > SUM(es.paid_amount)' if s_unpaid == '1' else ''
+
+        sal_report = conn.execute(f'''
+            SELECT es.full_name_snapshot  AS name,
+                   es.role_snapshot       AS role,
+                   b.name                 AS branch_name,
+                   COUNT(*)               AS shifts_count,
+                   COALESCE(SUM(es.total_amount), 0)  AS earned,
+                   COALESCE(SUM(es.paid_amount),  0)  AS paid,
+                   COALESCE(SUM(es.total_amount - es.paid_amount), 0) AS debt
+            FROM employee_shifts es
+            JOIN shifts    s ON s.id    = es.shift_id
+            JOIN branches  b ON b.id    = s.branch_id
+            WHERE {sal_where}
+            GROUP BY es.full_name_snapshot, es.role_snapshot, b.id
+            {sal_having}
+            ORDER BY b.name, es.role_snapshot, es.full_name_snapshot
+        ''', sal_params).fetchall()
+
+    return render_template('reports.html',
+        shifts_data=shifts_data, totals=totals, branches=branches,
+        salary_data=salary_data, period=period, selected_branch=branch_id,
+        role_labels=ROLE_LABELS, active_tab=active_tab,
+        sal_report=sal_report,
+        s_date_from=s_date_from, s_date_to=s_date_to,
+        s_branch_id=s_branch_id, s_role=s_role, s_unpaid=s_unpaid)
+
+
+# ─── HISTORY ──────────────────────────────────────────────────────────────────
+
+@app.route('/history')
+@login_required
+def history():
+    role = session.get('role')
+    today = date.today().isoformat()
+    week_ago = (date.today() - timedelta(days=7)).isoformat()
+    date_from = request.args.get('date_from', week_ago)
+    date_to = request.args.get('date_to', today)
+    branch_id = request.args.get('branch_id', '')
+    user_filter = request.args.get('user_id', '')
+    action_filter = request.args.get('action', '')
+
+    with get_db() as conn:
+        conds = ['cl.created_at >= ? AND cl.created_at <= ?']
+        params = [date_from + ' 00:00:00', date_to + ' 23:59:59']
+
+        if role != 'owner':
+            conds.append('cl.user_id = ?')
+            params.append(session['user_id'])
+            if session.get('branch_id'):
+                conds.append('cl.branch_id = ?')
+                params.append(session['branch_id'])
+        else:
+            if branch_id:
+                conds.append('cl.branch_id = ?')
+                params.append(int(branch_id))
+            if user_filter:
+                conds.append('cl.user_id = ?')
+                params.append(int(user_filter))
+
+        if action_filter:
+            conds.append('cl.action = ?')
+            params.append(action_filter)
+
+        where = ' AND '.join(conds)
+        logs = conn.execute(f'''
+            SELECT cl.*
+            FROM change_log cl
+            WHERE {where}
+            ORDER BY cl.created_at DESC
+            LIMIT 300
+        ''', params).fetchall()
+
+        branches = []
+        users = []
+        if role == 'owner':
+            branches = conn.execute(
+                'SELECT * FROM branches WHERE is_active=1 ORDER BY name'
+            ).fetchall()
+            users = conn.execute(
+                "SELECT id, full_name FROM users WHERE role != 'owner' ORDER BY full_name"
+            ).fetchall()
+
+    return render_template('history.html',
+        logs=logs, branches=branches, users=users,
+        date_from=date_from, date_to=date_to,
+        selected_branch=branch_id, selected_user=user_filter,
+        selected_action=action_filter,
+        action_labels=ACTION_LABELS,
+        is_owner=(role == 'owner'))
+
+
+# ─── API ──────────────────────────────────────────────────────────────────────
+
+@app.route('/api/employee/<int:emp_id>')
+@login_required
+def api_employee(emp_id):
+    with get_db() as conn:
+        emp = conn.execute('SELECT * FROM employees WHERE id=?', (emp_id,)).fetchone()
+        if not emp:
+            return jsonify({}), 404
+        return jsonify({
+            'id': emp['id'],
+            'full_name': emp['full_name'],
+            'role': emp['role'],
+            'rate': emp['rate'],
+            'rate_per_km': emp['rate_per_km'],
+            'rate_per_order': emp['rate_per_order'],
+        })
+
+
+# ─── HELPERS ──────────────────────────────────────────────────────────────────
+
+def _can_edit_shift(shift_id):
+    role = session.get('role')
+    if role == 'owner':
+        return True
+    with get_db() as conn:
+        shift = conn.execute('SELECT * FROM shifts WHERE id=?', (shift_id,)).fetchone()
+        if not shift:
+            return False
+        return shift['status'] == 'open' and shift['branch_id'] == session.get('branch_id')
+
+
+def _f(data, key):
+    try:
+        return float(data.get(key) or 0)
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _i(data, key):
+    try:
+        return int(data.get(key) or 0)
+    except (ValueError, TypeError):
+        return 0
+
+
+def calculate_bonuses(conn, shift_id):
+    """Recalculate auto_bonus for all staff in a shift based on bonus_rules."""
+    rev = conn.execute(
+        'SELECT total_revenue FROM shift_revenue WHERE shift_id=?', (shift_id,)
+    ).fetchone()
+    total_revenue = float((rev['total_revenue'] or 0) if rev else 0)
+
+    shift = conn.execute('SELECT branch_id FROM shifts WHERE id=?', (shift_id,)).fetchone()
+    branch_id = shift['branch_id'] if shift else None
+
+    staff = conn.execute(
+        'SELECT id, role_snapshot, hours_worked, base_pay, bonus_amount, penalty_amount '
+        'FROM employee_shifts WHERE shift_id=?', (shift_id,)
+    ).fetchall()
+    if not staff:
+        return []
+
+    rules = conn.execute(
+        'SELECT role, threshold_pct, bonus_pct FROM bonus_rules '
+        'WHERE is_active=1 AND (branch_id IS NULL OR branch_id=?) '
+        'ORDER BY threshold_pct ASC', (branch_id,)
+    ).fetchall()
+
+    rules_by_role = {}
+    for r in rules:
+        rules_by_role.setdefault(r['role'], []).append((r['threshold_pct'], r['bonus_pct']))
+
+    staff_by_role = {}
+    for s in staff:
+        staff_by_role.setdefault(s['role_snapshot'], []).append(s)
+
+    auto_bonus_per_id = {}
+    for role, role_rules in rules_by_role.items():
+        role_staff = staff_by_role.get(role, [])
+        if not role_staff or total_revenue <= 0:
+            continue
+        role_payroll = sum(float(s['base_pay'] or 0) for s in role_staff)
+        payroll_pct = role_payroll / total_revenue * 100
+        applicable_pct = 0
+        for threshold, bonus_pct in role_rules:
+            if payroll_pct < threshold:
+                applicable_pct = bonus_pct
+                break
+        if applicable_pct <= 0:
+            continue
+        bonus_pool = total_revenue * applicable_pct / 100
+        total_hours = sum(float(s['hours_worked'] or 0) for s in role_staff)
+        for s in role_staff:
+            h = float(s['hours_worked'] or 0)
+            auto_bonus_per_id[s['id']] = round(bonus_pool * h / total_hours) if total_hours > 0 else 0
+
+    results = []
+    for s in staff:
+        ab = auto_bonus_per_id.get(s['id'], 0)
+        new_total = round(float(s['base_pay'] or 0) + float(s['bonus_amount'] or 0) + ab - float(s['penalty_amount'] or 0))
+        conn.execute('UPDATE employee_shifts SET auto_bonus=?, total_amount=? WHERE id=?', (ab, new_total, s['id']))
+        results.append({'id': s['id'], 'auto_bonus': ab, 'total_amount': new_total})
+    return results
+
+
+def _fmt_money(v):
+    try:
+        return f"{float(v or 0):,.0f}".replace(',', ' ') + ' ₽'
+    except Exception:
+        return '0 ₽'
+
+
+def log_action(conn, action, description, shift_id=None, entity_id=None, upsert_by_shift=False):
+    if not session.get('user_id'):
+        return
+    branch_id = branch_name = shift_date = None
+    if shift_id:
+        row = conn.execute(
+            'SELECT s.branch_id, b.name, s.date FROM shifts s JOIN branches b ON b.id=s.branch_id WHERE s.id=?',
+            (shift_id,)
+        ).fetchone()
+        if row:
+            branch_id, branch_name, shift_date = row['branch_id'], row['name'], row['date']
+    if upsert_by_shift and shift_id:
+        existing = conn.execute(
+            'SELECT id FROM change_log WHERE shift_id=? AND action=? ORDER BY id DESC LIMIT 1',
+            (shift_id, action)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                'UPDATE change_log SET description=?, user_id=?, user_name=?, created_at=CURRENT_TIMESTAMP WHERE id=?',
+                (description, session['user_id'], session.get('full_name', ''), existing['id'])
+            )
+            return
+    conn.execute('''
+        INSERT INTO change_log
+            (user_id, user_name, action, entity_id, shift_id, branch_id, branch_name, shift_date, description)
+        VALUES (?,?,?,?,?,?,?,?,?)
+    ''', (session['user_id'], session.get('full_name', ''), action, entity_id,
+          shift_id, branch_id, branch_name, shift_date, description))
+
+
+@app.template_filter('datetime_fmt')
+def datetime_fmt(value):
+    if not value:
+        return ''
+    try:
+        dt = datetime.strptime(str(value)[:19], '%Y-%m-%d %H:%M:%S')
+        return dt.strftime('%d.%m %H:%M')
+    except Exception:
+        return value
+
+
+@app.template_filter('date_fmt')
+def date_fmt(value):
+    if not value:
+        return ''
+    try:
+        dt = datetime.strptime(str(value)[:10], '%Y-%m-%d')
+        return dt.strftime('%d.%m.%Y')
+    except Exception:
+        return value
+
+
+@app.context_processor
+def inject_globals():
+    return {'now': datetime.now}
+
+
+if __name__ == '__main__':
+    init_db()
+    print('\n' + '=' * 50)
+    print('CRM Суши запущена!')
+    print('Откройте браузер: http://localhost:5050')
+    print('Логин: owner | Пароль: admin123')
+    print('=' * 50 + '\n')
+    app.run(host='0.0.0.0', port=5050, debug=False)

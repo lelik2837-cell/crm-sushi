@@ -1,0 +1,656 @@
+{% extends 'base.html' %}
+{% set active_tab = request.args.get('tab', 'categories') %}
+{% set tab_titles = {'categories': 'Категории расходов', 'kpi': 'КПИ блоки дашборда', 'bonuses': 'Премии', 'vars': 'Переменные формул', 'rates': 'Ставки сотрудников'} %}
+{% block title %}Настройки — {{ tab_titles.get(active_tab, '') }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="fw-bold mb-0"><i class="bi bi-gear"></i> {{ tab_titles.get(active_tab, 'Настройки') }}</h4>
+</div>
+
+<div>
+
+    <!-- ══ EXPENSE CATEGORIES ══ -->
+    {% if active_tab == 'categories' %}<div>
+        <div class="row g-4">
+            <div class="col-md-5">
+                <div class="card">
+                    <div class="card-header bg-light fw-bold">
+                        <i class="bi bi-plus-circle"></i> Добавить категорию
+                    </div>
+                    <div class="card-body">
+                        <form method="POST" action="{{ url_for('add_expense_cat') }}">
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Название</label>
+                                <input type="text" name="label" class="form-control"
+                                    placeholder="Например: Хозтовары" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">
+                                <i class="bi bi-plus"></i> Добавить
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-7">
+                <div class="card">
+                    <div class="card-header bg-light fw-bold">
+                        <i class="bi bi-list-ul"></i> Категории ({{ exp_cats|length }})
+                    </div>
+                    <div class="card-body p-0">
+                        <table class="table table-sm mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Название</th>
+                                    <th class="text-muted small">Код</th>
+                                    <th class="text-center">Статус</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            {% for cat in exp_cats %}
+                            <tr class="{% if not cat.is_active %}opacity-50{% endif %}">
+                                <td class="fw-semibold">{{ cat.label }}</td>
+                                <td class="text-muted small">{{ cat.code }}</td>
+                                <td class="text-center">
+                                    {% if cat.is_active %}
+                                    <span class="badge bg-success">Активна</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">Скрыта</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-end">
+                                    <form method="POST" action="{{ url_for('toggle_expense_cat', cat_id=cat.id) }}" class="d-inline">
+                                        <button class="btn btn-sm {% if cat.is_active %}btn-outline-secondary{% else %}btn-outline-success{% endif %}">
+                                            {% if cat.is_active %}<i class="bi bi-eye-slash"></i>{% else %}<i class="bi bi-eye"></i>{% endif %}
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% endif %}<!-- ══ KPI BLOCKS ══ -->
+    {% if active_tab == 'kpi' %}<div>
+        <div class="row g-4">
+            <div class="col-md-5">
+                <div class="card">
+                    <div class="card-header bg-light fw-bold">
+                        <i class="bi bi-plus-circle"></i> Добавить КПИ блок
+                    </div>
+                    <div class="card-body">
+                        <form method="POST" action="{{ url_for('add_kpi_block') }}">
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Название блока</label>
+                                <input type="text" name="title" class="form-control"
+                                    placeholder="Например: Прибыль" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Формула</label>
+                                <input type="text" name="formula" class="form-control font-monospace"
+                                    placeholder="revenue - expenses_total - pay_total" required>
+                                <div class="form-text">Используйте переменные из раздела «Переменные формул»</div>
+                            </div>
+                            <div class="row g-2 mb-3">
+                                <div class="col-7">
+                                    <label class="form-label fw-semibold">Цвет</label>
+                                    <select name="color" class="form-select">
+                                        <option value="primary">Синий</option>
+                                        <option value="success">Зелёный</option>
+                                        <option value="danger">Красный</option>
+                                        <option value="warning">Жёлтый</option>
+                                        <option value="info">Голубой</option>
+                                        <option value="dark">Тёмный</option>
+                                    </select>
+                                </div>
+                                <div class="col-5">
+                                    <label class="form-label fw-semibold">Единица</label>
+                                    <input type="text" name="unit" class="form-control" value="₽" placeholder="₽ или %">
+                                </div>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">
+                                <i class="bi bi-plus"></i> Добавить блок
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-7">
+                {% if kpi_blocks %}
+                <div class="card">
+                    <div class="card-header bg-light fw-bold">
+                        <i class="bi bi-grid"></i> Блоки дашборда ({{ kpi_blocks|length }})
+                    </div>
+                    <div class="card-body p-0">
+                        <table class="table table-sm mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Название</th>
+                                    <th>Формула</th>
+                                    <th class="text-center">Цвет</th>
+                                    <th class="text-center">Статус</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            {% for b in kpi_blocks %}
+                            <tr class="{% if not b.is_active %}opacity-50{% endif %}">
+                                <td class="fw-semibold">{{ b.title }}</td>
+                                <td><code class="small">{{ b.formula }}</code></td>
+                                <td class="text-center">
+                                    <span class="badge bg-{{ b.color }}">{{ b.unit }}</span>
+                                </td>
+                                <td class="text-center">
+                                    {% if b.is_active %}
+                                    <span class="badge bg-success">Активен</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">Скрыт</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-end">
+                                    <form method="POST" action="{{ url_for('toggle_kpi_block', block_id=b.id) }}" class="d-inline">
+                                        <button class="btn btn-sm btn-outline-secondary" title="Показать/скрыть">
+                                            <i class="bi bi-{% if b.is_active %}eye-slash{% else %}eye{% endif %}"></i>
+                                        </button>
+                                    </form>
+                                    <form method="POST" action="{{ url_for('delete_kpi_block', block_id=b.id) }}" class="d-inline"
+                                        onsubmit="return confirm('Удалить блок?')">
+                                        <button class="btn btn-sm btn-outline-danger">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {% else %}
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle"></i> Нет блоков КПИ. Добавьте первый блок слева.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    {% endif %}<!-- ══ BONUS RULES ══ -->
+    {% if active_tab == 'bonuses' %}<div>
+        <div class="alert alert-info mb-4">
+            <i class="bi bi-info-circle me-1"></i>
+            <strong>Как работает:</strong> если ФОТ (базовая оплата) роли составляет <strong>меньше указанного %</strong>
+            от выручки смены — всем сотрудникам этой роли начисляется премия в размере указанного % от выручки,
+            распределённая пропорционально отработанным часам. Расчёт происходит автоматически при сохранении выручки и часов.
+        </div>
+        <div class="row g-4">
+            <div class="col-md-5">
+                <div class="card">
+                    <div class="card-header bg-light fw-bold">
+                        <i class="bi bi-plus-circle"></i> Добавить правило
+                    </div>
+                    <div class="card-body">
+                        <form method="POST" action="{{ url_for('add_bonus_rule') }}">
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Категория (роль)</label>
+                                <select name="role" class="form-select" required>
+                                    {% for code, label in role_labels.items() %}
+                                    <option value="{{ code }}">{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Филиал</label>
+                                <select name="branch_id" class="form-select">
+                                    <option value="">Все филиалы</option>
+                                    {% for b in branches %}
+                                    <option value="{{ b.id }}">{{ b.name }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="form-text">Оставьте «Все филиалы» чтобы правило применялось везде</div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Порог ФОТ (%)</label>
+                                <div class="input-group">
+                                    <span class="input-group-text">ФОТ &lt;</span>
+                                    <input type="number" name="threshold_pct" class="form-control" step="0.1" min="0" max="100" placeholder="10" required>
+                                    <span class="input-group-text">%</span>
+                                </div>
+                                <div class="form-text">Если доля ФОТ роли в выручке ниже этого значения — начисляется премия</div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Размер премии (%)</label>
+                                <div class="input-group">
+                                    <input type="number" name="bonus_pct" class="form-control" step="0.1" min="0" max="100" placeholder="1" required>
+                                    <span class="input-group-text">% от выручки</span>
+                                </div>
+                                <div class="form-text">Сумма премии = выручка × этот % , делится по часам</div>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">
+                                <i class="bi bi-plus"></i> Добавить правило
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-7">
+                <div class="card">
+                    <div class="card-header bg-light fw-bold d-flex align-items-center gap-2 flex-wrap">
+                        <span><i class="bi bi-list-check"></i> Правила премирования</span>
+                        <div class="d-flex gap-2 ms-auto">
+                            <select id="filter-role" class="form-select form-select-sm" style="width:auto;" onchange="filterBonusRules()">
+                                <option value="">Все роли</option>
+                                {% for code, label in role_labels.items() %}
+                                <option value="{{ code }}">{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                            <select id="filter-branch" class="form-select form-select-sm" style="width:auto;" onchange="filterBonusRules()">
+                                <option value="">Все филиалы</option>
+                                {% for b in branches %}
+                                <option value="{{ b.name }}">{{ b.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                    </div>
+                    {% if bonus_rules %}
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Роль</th>
+                                    <th>Условие</th>
+                                    <th>Размер</th>
+                                    <th class="text-center">Статус</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            {% set ns = namespace(prev_branch='__none__') %}
+                            {% for r in bonus_rules %}
+                            {% set cur_branch = r.branch_name or 'Все филиалы' %}
+                            {% if cur_branch != ns.prev_branch %}
+                            {% set ns.prev_branch = cur_branch %}
+                            <tr class="branch-separator" data-branch="{{ cur_branch }}">
+                                <td colspan="5" class="py-1 px-3"
+                                    style="background:#f0f2f7; font-size:11px; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:.5px;">
+                                    <i class="bi bi-shop me-1"></i>{{ cur_branch }}
+                                </td>
+                            </tr>
+                            {% endif %}
+                            <tr class="bonus-rule-row {% if not r.is_active %}opacity-50{% endif %}"
+                                data-role="{{ r.role }}" data-branch="{{ r.branch_name or '' }}">
+                                <td class="fw-semibold">{{ role_labels.get(r.role, r.role) }}</td>
+                                <td>ФОТ &lt; <strong>{{ r.threshold_pct }}%</strong></td>
+                                <td><span class="badge bg-success">+{{ r.bonus_pct }}% выручки</span></td>
+                                <td class="text-center">
+                                    {% if r.is_active %}<span class="badge bg-success">Активно</span>
+                                    {% else %}<span class="badge bg-secondary">Отключено</span>{% endif %}
+                                </td>
+                                <td class="text-end">
+                                    <button class="btn btn-sm btn-outline-primary" title="Редактировать"
+                                        onclick="openEditRule({{ r.id }}, '{{ r.role }}', {{ r.branch_id or 'null' }}, {{ r.threshold_pct }}, {{ r.bonus_pct }})">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
+                                    <form method="POST" action="{{ url_for('toggle_bonus_rule', rule_id=r.id) }}" class="d-inline">
+                                        <button class="btn btn-sm btn-outline-secondary" title="Вкл/Выкл">
+                                            <i class="bi bi-{% if r.is_active %}eye-slash{% else %}eye{% endif %}"></i>
+                                        </button>
+                                    </form>
+                                    <form method="POST" action="{{ url_for('delete_bonus_rule', rule_id=r.id) }}" class="d-inline"
+                                          onsubmit="return confirm('Удалить правило?')">
+                                        <button class="btn btn-sm btn-outline-danger">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="card-body text-center text-muted py-4">
+                        <i class="bi bi-inbox fs-2 d-block mb-2 opacity-25"></i>
+                        Правил нет. Добавьте первое правило слева.
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% endif %}<!-- ══ FORMULA VARS ══ -->
+    {% if active_tab == 'vars' %}<div>
+        <div class="card">
+            <div class="card-header bg-light fw-bold">
+                <i class="bi bi-code-slash"></i> Доступные переменные для формул
+            </div>
+            <div class="card-body">
+                <div class="alert alert-info mb-3">
+                    <strong>Как писать формулы:</strong> используйте переменные ниже + операторы
+                    <code>+ - * / ( )</code> и числа.<br>
+                    Примеры: <code>revenue - pay_total - expenses_total</code> &nbsp;|&nbsp;
+                    <code>pay_courier / revenue * 100</code> &nbsp;|&nbsp;
+                    <code>(revenue - expenses_cash) * 0.1</code>
+                </div>
+                <div class="row g-3">
+                {% for var, desc in formula_vars.items() %}
+                <div class="col-md-4">
+                    <div class="d-flex align-items-start gap-2 p-2 border rounded">
+                        <code class="text-primary fw-bold">{{ var }}</code>
+                        <span class="text-muted small">{{ desc }}</span>
+                    </div>
+                </div>
+                {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% endif %}
+
+    <!-- ══ RATE TEMPLATES ══ -->
+    {% if active_tab == 'rates' %}<div>
+        <div class="row g-4">
+            <div class="col-md-5">
+                <div class="card">
+                    <div class="card-header bg-light fw-bold">
+                        <i class="bi bi-plus-circle"></i> Добавить ставку
+                    </div>
+                    <div class="card-body">
+                        <form method="POST" action="{{ url_for('add_rate_template') }}">
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Роль</label>
+                                <select name="role" class="form-select" required
+                                    onchange="toggleRateTmplCourierFields(this.value)">
+                                    {% for code, label in role_labels.items() %}
+                                    <option value="{{ code }}">{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Название ставки</label>
+                                <input type="text" name="name" class="form-control"
+                                    placeholder="Например: Дневная, Ночная, Стажёр" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Филиалы</label>
+                                <div class="d-flex flex-wrap gap-2">
+                                    {% for b in branches %}
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox"
+                                            name="branch_ids" value="{{ b.id }}" id="add-br-{{ b.id }}">
+                                        <label class="form-check-label small" for="add-br-{{ b.id }}">{{ b.name }}</label>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                <div class="form-text text-muted">Не выбрано — доступно для всех филиалов</div>
+                            </div>
+                            <div class="row g-2 mb-3">
+                                <div class="col-4" id="rtpl-rate-col">
+                                    <label class="form-label small">₽/час</label>
+                                    <input type="number" name="rate" class="form-control" value="230" step="0.01" min="0">
+                                </div>
+                                <div class="col-4 rtpl-courier-only" style="display:none;">
+                                    <label class="form-label small">₽/км</label>
+                                    <input type="number" name="rate_per_km" class="form-control" value="10" step="0.01" min="0">
+                                </div>
+                                <div class="col-4 rtpl-courier-only" style="display:none;">
+                                    <label class="form-label small">₽/заказ</label>
+                                    <input type="number" name="rate_per_order" class="form-control" value="100" step="0.01" min="0">
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label small fw-semibold">Действует с</label>
+                                <input type="date" name="valid_from" class="form-control" value="{{ today }}">
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">
+                                <i class="bi bi-plus"></i> Добавить
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-7">
+                <div class="card">
+                    <div class="card-header bg-light fw-bold">
+                        <i class="bi bi-list-ul"></i> Шаблоны ставок ({{ rate_templates|length }})
+                    </div>
+                    <div class="card-body p-0">
+                        {% set ns = namespace(current_role='') %}
+                        {% for tmpl in rate_templates %}
+                        {% if tmpl.role != ns.current_role %}
+                        {% set ns.current_role = tmpl.role %}
+                        <div class="px-3 py-2 bg-light border-bottom fw-semibold small text-muted" style="text-transform:uppercase;letter-spacing:.5px;">
+                            {{ role_labels.get(tmpl.role, tmpl.role) }}
+                        </div>
+                        {% endif %}
+                        <div class="d-flex align-items-center gap-2 px-3 py-2 border-bottom">
+                            <div class="flex-grow-1">
+                                <div>
+                                    <span class="fw-semibold">{{ tmpl.name }}</span>
+                                    <span class="text-muted small ms-2">{{ tmpl.rate }}₽/ч
+                                        {% if tmpl.role == 'courier' and tmpl.rate_per_km %}&nbsp;· {{ tmpl.rate_per_km }}₽/км{% endif %}
+                                        {% if tmpl.role == 'courier' and tmpl.rate_per_order %}&nbsp;· {{ tmpl.rate_per_order }}₽/заказ{% endif %}
+                                    </span>
+                                </div>
+                                {% set cur_branch_ids = tmpl_branches.get(tmpl.id, []) %}
+                                <div class="mt-1">
+                                    {% if cur_branch_ids %}
+                                        {% for b in branches %}{% if b.id in cur_branch_ids %}
+                                        <span class="badge bg-secondary me-1" style="font-size:10px;">{{ b.name }}</span>
+                                        {% endif %}{% endfor %}
+                                    {% else %}
+                                        <span class="text-muted" style="font-size:11px;">Все филиалы</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal"
+                                data-bs-target="#editTmplModal{{ tmpl.id }}">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <form method="POST" action="{{ url_for('delete_rate_template', tmpl_id=tmpl.id) }}" class="d-inline"
+                                onsubmit="return confirm('Удалить ставку «{{ tmpl.name }}»?')">
+                                <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                            </form>
+                        </div>
+                        {% else %}
+                        <div class="text-muted text-center py-4 small">Шаблоны ставок не добавлены</div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Edit template modals -->
+        {% for tmpl in rate_templates %}
+        <div class="modal fade" id="editTmplModal{{ tmpl.id }}" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Редактировать ставку</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <form method="POST" action="{{ url_for('edit_rate_template', tmpl_id=tmpl.id) }}">
+                        <div class="modal-body">
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Название</label>
+                                <input type="text" name="name" class="form-control" value="{{ tmpl.name }}" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Филиалы</label>
+                                <div class="d-flex flex-wrap gap-2">
+                                    {% set cur_branches = tmpl_branches.get(tmpl.id, []) %}
+                                    {% for b in branches %}
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox"
+                                            name="branch_ids" value="{{ b.id }}"
+                                            id="edit-br-{{ tmpl.id }}-{{ b.id }}"
+                                            {% if b.id in cur_branches %}checked{% endif %}>
+                                        <label class="form-check-label small" for="edit-br-{{ tmpl.id }}-{{ b.id }}">{{ b.name }}</label>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                                <div class="form-text text-muted">Не выбрано — для всех филиалов</div>
+                            </div>
+                            <div class="border rounded p-3">
+                                <div class="fw-semibold small mb-2">Новая ставка</div>
+                                <div class="row g-2 mb-2">
+                                    <div class="col{% if tmpl.role != 'courier' %}-12{% else %}-4{% endif %}">
+                                        <label class="form-label small">₽/час</label>
+                                        <input type="number" name="rate" class="form-control" value="{{ tmpl.rate }}" step="0.01">
+                                    </div>
+                                    {% if tmpl.role == 'courier' %}
+                                    <div class="col-4">
+                                        <label class="form-label small">₽/км</label>
+                                        <input type="number" name="rate_per_km" class="form-control" value="{{ tmpl.rate_per_km }}" step="0.01">
+                                    </div>
+                                    <div class="col-4">
+                                        <label class="form-label small">₽/заказ</label>
+                                        <input type="number" name="rate_per_order" class="form-control" value="{{ tmpl.rate_per_order }}" step="0.01">
+                                    </div>
+                                    {% endif %}
+                                </div>
+                                <div class="row g-2 align-items-center">
+                                    <div class="col-auto">
+                                        <label class="form-label small mb-0 text-muted">Действует с</label>
+                                    </div>
+                                    <div class="col">
+                                        <input type="date" name="valid_from" class="form-control form-control-sm">
+                                    </div>
+                                </div>
+                            </div>
+                            {% set hist = tmpl_history.get(tmpl.id, []) %}
+                            {% if hist %}
+                            <div class="mt-3">
+                                <div class="text-muted small fw-semibold mb-1">История ставок:</div>
+                                {% for h in hist[:5] %}
+                                <div class="small text-muted">{{ h.valid_from }} — {{ h.rate }}₽/ч{% if tmpl.role == 'courier' and h.rate_per_km %}, {{ h.rate_per_km }}₽/км{% endif %}</div>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                            <button type="submit" class="btn btn-primary">Сохранить</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>{% endif %}
+
+</div>
+
+<!-- Modal: редактировать правило премирования -->
+<div class="modal fade" id="editRuleModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>Редактировать правило</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="editRuleForm" method="POST">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Категория (роль)</label>
+                        <select name="role" id="edit-role" class="form-select" required>
+                            {% for code, label in role_labels.items() %}
+                            <option value="{{ code }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Филиал</label>
+                        <select name="branch_id" id="edit-branch" class="form-select">
+                            <option value="">Все филиалы</option>
+                            {% for b in branches %}
+                            <option value="{{ b.id }}">{{ b.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Порог ФОТ (%)</label>
+                        <div class="input-group">
+                            <span class="input-group-text">ФОТ &lt;</span>
+                            <input type="number" name="threshold_pct" id="edit-threshold" class="form-control" step="0.1" min="0" max="100" required>
+                            <span class="input-group-text">%</span>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Размер премии (%)</label>
+                        <div class="input-group">
+                            <input type="number" name="bonus_pct" id="edit-bonus" class="form-control" step="0.1" min="0" max="100" required>
+                            <span class="input-group-text">% от выручки</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg me-1"></i>Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function openEditRule(id, role, branchId, threshold, bonus) {
+    document.getElementById('editRuleForm').action = '/bonus_rules/' + id + '/edit';
+    document.getElementById('edit-role').value = role;
+    document.getElementById('edit-branch').value = branchId || '';
+    document.getElementById('edit-threshold').value = threshold;
+    document.getElementById('edit-bonus').value = bonus;
+    new bootstrap.Modal(document.getElementById('editRuleModal')).show();
+}
+
+function filterBonusRules() {
+    var role = document.getElementById('filter-role').value;
+    var branch = document.getElementById('filter-branch').value;
+
+    var rows = document.querySelectorAll('.bonus-rule-row');
+    rows.forEach(function(row) {
+        var rRole = row.dataset.role || '';
+        var rBranch = row.dataset.branch || '';
+        var show = (!role || rRole === role) && (!branch || rBranch === branch);
+        row.style.display = show ? '' : 'none';
+    });
+
+    // Hide branch separator if all its data rows are hidden
+    var separators = document.querySelectorAll('.branch-separator');
+    separators.forEach(function(sep) {
+        var sepBranch = sep.dataset.branch || '';
+        // Find next separator or end of table
+        var next = sep.nextElementSibling;
+        var hasVisible = false;
+        while (next && !next.classList.contains('branch-separator')) {
+            if (next.classList.contains('bonus-rule-row') && next.style.display !== 'none') {
+                hasVisible = true;
+                break;
+            }
+            next = next.nextElementSibling;
+        }
+        sep.style.display = hasVisible ? '' : 'none';
+    });
+}
+
+function toggleRateTmplCourierFields(role) {
+    const isCourier = role === 'courier';
+    document.querySelectorAll('.rtpl-courier-only').forEach(el => {
+        el.style.display = isCourier ? '' : 'none';
+    });
+    const rateCol = document.getElementById('rtpl-rate-col');
+    if (rateCol) rateCol.className = isCourier ? 'col-4' : 'col-12';
+}
+</script>
+{% endblock %}

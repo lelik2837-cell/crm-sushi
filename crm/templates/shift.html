@@ -1,0 +1,1223 @@
+{% extends 'base.html' %}
+{% block title %}Смена {{ shift.date }} — {{ shift.branch_name }}{% endblock %}
+{% block content %}
+<style>
+  .container-fluid { padding: 0 !important; }
+  * { box-sizing: border-box; }
+
+  .page-header {
+    background: #fff; border-bottom: 1px solid #e8eaf0;
+    padding: 14px 28px; display: flex; align-items: center; justify-content: space-between;
+  }
+  .ph-breadcrumb { font-size: 12px; color: #8890a4; margin-bottom: 3px; }
+  .ph-breadcrumb a { color: #8890a4; text-decoration: none; }
+  .ph-title { font-size: 19px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+  .badge-open  { background: #fff3cd; color: #856404; font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 600; }
+  .badge-closed{ background: #e5e7eb; color: #6b7280; font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 600; }
+  .badge-branch{ background: #e8f0fe; color: #1a56db; font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 600; }
+  .ph-actions { display: flex; gap: 8px; }
+  .ph-btn { border: none; border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .ph-btn-outline { background: #fff; color: #4b5563; border: 1.5px solid #d1d5db; }
+  .ph-btn-primary { background: #e94560; color: #fff; }
+  .ph-btn-warning { background: #fbbf24; color: #1a1a2e; }
+
+  .page-body { padding: 20px 28px; background: #f0f2f7; min-height: calc(100vh - 130px); }
+  .grid-main { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .col-left, .col-right { display: flex; flex-direction: column; gap: 20px; }
+
+  .s-card { background: #fff; border-radius: 14px; box-shadow: 0 1px 4px rgba(0,0,0,.06), 0 4px 16px rgba(0,0,0,.04); overflow: hidden; }
+  .s-card-header { padding: 13px 20px 11px; border-bottom: 1px solid #f0f2f7; display: flex; align-items: center; justify-content: space-between; }
+  .s-card-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; color: #6b7280; display: flex; align-items: center; gap: 7px; }
+  .s-card-icon { width: 26px; height: 26px; border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+  .icon-blue { background: #dbeafe; } .icon-orange { background: #fed7aa; }
+  .icon-purple { background: #ede9fe; } .icon-pink { background: #fce7f3; }
+  .icon-teal { background: #ccfbf1; } .icon-green { background: #d1fae5; }
+  .s-card-body { padding: 16px 20px; }
+
+  .mini-label { font-size: 10px; color: #9ca3af; font-weight: 600; text-transform: uppercase; letter-spacing: .3px; margin-bottom: 3px; }
+  .mini-input { width: 100%; padding: 6px 9px; border: 1.5px solid #e5e7eb; border-radius: 7px; font-size: 13px; background: #fff; color: #374151; }
+  .mini-input:focus { outline: none; border-color: #e94560; }
+  .field-label { font-size: 11px; font-weight: 600; color: #8890a4; text-transform: uppercase; letter-spacing: .4px; margin-bottom: 5px; }
+  .field-input { width: 100%; padding: 7px 11px; border: 1.5px solid #e5e7eb; border-radius: 8px; font-size: 14px; color: #374151; background: #f9fafb; }
+  .field-input:focus { outline: none; border-color: #e94560; background: #fff; }
+  .field-input-sm { padding: 6px 10px; font-size: 13px; }
+  .field-select { width: 100%; padding: 7px 28px 7px 11px; border: 1.5px solid #e5e7eb; border-radius: 8px; font-size: 13px; color: #374151; background: #f9fafb; appearance: none; background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%236B7280' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; }
+  .field-select:focus { outline: none; border-color: #e94560; }
+  .field-calc { width: 100%; padding: 6px 9px; border: 1.5px solid #e5e7eb; border-radius: 7px; font-size: 13px; background: #f0f2f7; color: #6b7280; font-weight: 600; text-align: right; white-space: nowrap; overflow: hidden; }
+  .sf-auto-bonus { background: #ecfdf5 !important; color: #059669 !important; font-size: 12px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+  .dot-blue { background: #3b82f6; } .dot-green { background: #10b981; }
+  .sub-section { background: #f9fafb; border-radius: 10px; padding: 12px 14px; }
+  .sub-section-title { font-size: 11px; font-weight: 700; color: #4b5563; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+  .field-group { margin-bottom: 12px; }
+  .field-group:last-child { margin-bottom: 0; }
+  .section-sep { height: 1px; background: #f0f2f7; margin: 12px 0; }
+
+  /* STAFF ROWS */
+  .staff-header-row, .staff-row {
+    display: grid; grid-template-columns: 2fr 68px 68px 52px 116px 68px 82px 90px 28px;
+    align-items: center; gap: 7px;
+  }
+  .staff-header-row { padding-bottom: 5px; border-bottom: 1.5px solid #e5e7eb; margin-bottom: 4px; }
+  .staff-row { padding: 7px 0; border-bottom: 1px solid #f3f4f6; min-width: 0; }
+  .staff-row:last-of-type { border-bottom: none; }
+  .staff-row .sf-name, .courier-row .sf-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .col-label { font-size: 10px; color: #9ca3af; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; }
+  .staff-del { width: 28px; height: 28px; border-radius: 6px; background: #fee2e2; color: #ef4444; border: none; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .paid-select { width: 100%; padding: 5px 28px 5px 8px; border-radius: 7px; font-size: 11px; font-weight: 700; border: none; cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23666' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; transition: all .15s; }
+  .paid-no  { background: #fee2e2; color: #dc2626; }
+  .paid-yes { background: #d1fae5; color: #059669; }
+  .time-sel { padding: 5px 6px !important; font-size: 12px !important; }
+  .role-group-title { font-size: 10px; font-weight: 700; color: #9ca3af; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+  .role-group { margin-bottom: 14px; }
+
+  /* BONUS ROW */
+  .bonus-btns { display: flex; gap: 4px; width: 100%; align-items: stretch; overflow: hidden; }
+  .bonus-btn-prem, .bonus-btn-fine { flex:1; min-width:0; padding: 5px 2px; border-radius: 6px; font-size: 10px; font-weight: 700; cursor: pointer; white-space: nowrap; text-align:center; display:flex; align-items:center; justify-content:center; line-height:1; }
+  .bonus-btn-prem { background: #d1fae5; color: #059669; border: 1.5px solid #6ee7b7; }
+  .bonus-btn-fine { background: #fee2e2; color: #dc2626; border: 1.5px solid #fca5a5; }
+  .staff-bonus-row { display: none; align-items: center; gap: 6px; padding: 3px 0 8px 10px; border-bottom: 1px solid #f3f4f6; }
+  .bonus-arrow { font-size: 10px; color: #c4c8d4; flex-shrink: 0; }
+  .bonus-select { padding: 4px 22px 4px 7px; border-radius: 6px; border: 1.5px solid #e5e7eb; font-size: 11px; font-weight: 600; color: #374151; background: #f9fafb; appearance: none; background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%236B7280' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 6px center; width: 82px; flex-shrink: 0; }
+  .bonus-sel-prem { background: #d1fae5; color: #059669; font-weight: 700; border: none; }
+  .bonus-sel-fine { background: #fee2e2; color: #dc2626; font-weight: 700; border: none; }
+  .bonus-amount  { padding: 4px 8px; border: 1.5px solid #e5e7eb; border-radius: 6px; font-size: 12px; color: #374151; background: #f9fafb; width: 76px; flex-shrink: 0; }
+  .bonus-comment { padding: 4px 8px; border: 1.5px solid #e5e7eb; border-radius: 6px; font-size: 12px; color: #374151; background: #f9fafb; flex: 1; min-width: 0; }
+  .bonus-cancel { padding: 4px 9px; border-radius: 6px; background: #f3f4f6; color: #6b7280; border: 1.5px solid #e5e7eb; font-size: 11px; font-weight: 600; cursor: pointer; white-space: nowrap; flex-shrink: 0; }
+  .bonus-save   { padding: 4px 9px; border-radius: 6px; background: #d1fae5; color: #059669; border: 1.5px solid #6ee7b7; font-size: 11px; font-weight: 600; cursor: pointer; white-space: nowrap; flex-shrink: 0; }
+  .bonus-summary { display: none; align-items: center; gap: 8px; padding: 3px 0 8px 10px; border-bottom: 1px solid #f3f4f6; }
+  .bonus-tag { flex: 1; padding: 5px 12px; border-radius: 7px; font-size: 12px; font-weight: 600; }
+  .bonus-tag-prem { background: #d1fae5; color: #065f46; }
+  .bonus-tag-fine { background: #fee2e2; color: #991b1b; }
+  .bonus-action { width: 22px; height: 22px; border-radius: 5px; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 12px; flex-shrink: 0; }
+  .bonus-edit-btn { background: #e0f2fe; color: #0369a1; }
+  .bonus-del-btn  { background: #fee2e2; color: #ef4444; }
+
+  /* COURIERS */
+  .courier-header-row, .courier-row {
+    display: grid; grid-template-columns: 2fr 58px 58px 52px 116px 72px 90px 28px;
+    align-items: center; gap: 8px;
+  }
+  .courier-header-row { padding-bottom: 6px; border-bottom: 1.5px solid #e5e7eb; margin-bottom: 2px; }
+  .courier-row { padding: 10px 0; border-bottom: 1px solid #f3f4f6; }
+  .courier-row:last-of-type { border-bottom: none; }
+
+  /* EXPENSES */
+  .expense-header, .expense-row {
+    display: grid; gap: 8px; grid-template-columns: 2fr 90px 90px 50px 24px; align-items: center;
+  }
+  .expense-header { padding-bottom: 6px; border-bottom: 1.5px solid #e5e7eb; margin-bottom: 2px; }
+  .expense-row { padding: 8px 0; border-bottom: 1px solid #f3f4f6; }
+  .expense-row:last-child { border-bottom: none; }
+  .row-del { width: 22px; height: 22px; border-radius: 5px; background: #fee2e2; color: #ef4444; border: none; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .pay-type-sel { padding: 4px 24px 4px 7px; border: 1.5px solid #e5e7eb; border-radius: 6px; font-size: 12px; color: #374151; background: #f9fafb; appearance: none; background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%236B7280' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 6px center; width: 100%; }
+  .check-box { width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid #d1d5db; background: #f9fafb; flex-shrink: 0; cursor: pointer; appearance: none; }
+  .check-box:checked { background: #10b981; border-color: #10b981; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 12 12' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M2 6L5 9L10 3' stroke='white' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: center; }
+
+  /* TAXI */
+  .taxi-trip-block { display:grid; grid-template-columns:1fr 140px; gap:10px; border:1px solid #e5e7eb; border-radius:8px; padding:10px 12px; margin-bottom:8px; background:#fafafa; align-items:start; }
+  .taxi-trip-block:last-child { margin-bottom:0; }
+  .taxi-emp-row { display:grid; grid-template-columns:auto 1fr 20px; gap:6px; align-items:center; margin-bottom:4px; }
+  .taxi-emp-name { font-size:13px; font-weight:600; white-space:nowrap; }
+  .taxi-right { display:flex; flex-direction:column; gap:6px; }
+  .taxi-right-label { font-size:10px; font-weight:700; color:#9ca3af; text-transform:uppercase; letter-spacing:.5px; }
+
+  /* BTN-ADD */
+  .btn-add { background: #f3f4f6; color: #374151; border: 1.5px dashed #d1d5db; border-radius: 7px; padding: 5px 12px; font-size: 12px; font-weight: 500; width: 100%; margin-top: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px; }
+  .btn-add:hover { background: #e9ecef; }
+  .inline-staff-list { display:none; position:absolute; top:calc(100% + 2px); left:0; right:0; background:#fff; border:1px solid #d1d5db; border-radius:7px; box-shadow:0 4px 16px rgba(0,0,0,.12); max-height:200px; overflow-y:auto; z-index:300; }
+  .isl-opt { padding:7px 10px; font-size:13px; cursor:pointer; }
+  .isl-opt:hover { background:#f0f4ff; color:#2563eb; }
+  .isl-empty { padding:7px 10px; font-size:12px; color:#9ca3af; }
+
+  /* CLOSE BAR */
+  .close-bar { background: #fff; border-top: 1px solid #e5e7eb; padding: 12px 28px; display: flex; align-items: center; justify-content: flex-end; gap: 10px; position: sticky; bottom: 0; box-shadow: 0 -2px 12px rgba(0,0,0,.06); z-index: 50; }
+  .close-hint { font-size: 12px; color: #9ca3af; margin-right: auto; }
+
+  /* убираем стрелки у всех числовых полей */
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; }
+
+  @media (max-width: 900px) {
+    .grid-main { grid-template-columns: 1fr; }
+    .page-body { padding: 14px 12px; }
+    .staff-header-row, .staff-row { grid-template-columns: 2fr 60px 60px 44px 90px 72px 80px 24px; gap: 4px; }
+    .courier-header-row, .courier-row { grid-template-columns: 2fr 50px 50px 44px 90px 62px 80px 24px; gap: 4px; }
+  }
+</style>
+
+<!-- PAGE HEADER -->
+<div class="page-header">
+  <div>
+    <div class="ph-breadcrumb"><a href="{{ url_for('dashboard') }}">Смены</a> / <span>{{ shift.date }}</span></div>
+    <div class="ph-title">
+      Смена — {{ shift.branch_name }}
+      {% if shift.status == 'open' %}
+      <span class="badge-open">● Открыта</span>
+      {% else %}
+      <span class="badge-closed">● Закрыта</span>
+      {% endif %}
+      <span class="badge-branch">{{ shift.branch_name }}</span>
+    </div>
+  </div>
+  <div class="ph-actions">
+    {% if shift.status == 'open' and can_edit %}
+    <button class="ph-btn ph-btn-outline" onclick="saveAllRevenue()">Сохранить выручку</button>
+    <button class="ph-btn ph-btn-primary" onclick="document.getElementById('closeModal').style.display='flex'">🔒 Закрыть смену</button>
+    {% elif is_owner and shift.status == 'closed' %}
+    <form method="POST" action="{{ url_for('reopen_shift', shift_id=shift.id) }}" style="display:inline">
+      <button class="ph-btn ph-btn-warning" onclick="return confirm('Переоткрыть смену?')">🔓 Переоткрыть</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="page-body">
+<div class="grid-main">
+
+<!-- ══════════ LEFT COLUMN ══════════ -->
+<div class="col-left">
+
+  <!-- BLOCK: ВЫРУЧКА -->
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:stretch;">
+
+    <div class="s-card">
+      <div class="s-card-body">
+        <!-- Нал/Безнал/Онлайн + Выручка -->
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+
+          <div style="background:#f9fafb; border:1.5px solid #e5e7eb; border-radius:10px; padding:12px 14px;">
+            <div style="margin-bottom:9px;">
+              <div class="mini-label">Наличные</div>
+              <input class="mini-input rev-field money-field" data-field="cash_amount" type="text" inputmode="numeric" placeholder="0"
+                value="{{ (revenue.cash_amount or 0)|int }}" {% if not can_edit %}disabled{% endif %}>
+            </div>
+            <div style="margin-bottom:9px;">
+              <div class="mini-label">Безналичные</div>
+              <input class="mini-input rev-field money-field" data-field="card_amount" type="text" inputmode="numeric" placeholder="0"
+                value="{{ (revenue.card_amount or 0)|int }}" {% if not can_edit %}disabled{% endif %}>
+            </div>
+            <div>
+              <div class="mini-label">Онлайн</div>
+              <input class="mini-input rev-field money-field" data-field="online_amount" type="text" inputmode="numeric" placeholder="0"
+                value="{{ (revenue.online_amount or 0)|int }}" {% if not can_edit %}disabled{% endif %}>
+            </div>
+          </div>
+
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            <div style="background:linear-gradient(135deg,#eff6ff 0%,#dbeafe 100%); border-radius:10px; padding:14px 16px; border-left:4px solid #3b82f6; flex:1;">
+              <div style="font-size:10px; color:#6b7280; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px;">Общая выручка</div>
+              <div id="total-revenue-display" style="font-size:clamp(14px,3.2vw,28px); font-weight:800; color:#1e40af; letter-spacing:-.5px; line-height:1; white-space:nowrap; overflow:hidden;">{{ (revenue.total_revenue or 0)|int }} ₽</div>
+              <input type="hidden" class="rev-field" data-field="total_revenue" id="total-revenue-input" value="{{ (revenue.total_revenue or 0)|int }}">
+            </div>
+            <div style="background:#f9fafb; border:1.5px solid #e5e7eb; border-radius:10px; padding:10px 14px;">
+              <div class="mini-label" style="margin-bottom:5px;">Кол-во заказов</div>
+              <input class="mini-input rev-field" data-field="delivery_orders" type="number" min="0" step="1" placeholder="0"
+                value="{{ ((revenue.delivery_orders or 0) + (revenue.pickup_orders or 0)) }}" {% if not can_edit %}disabled{% endif %}
+                style="font-size:16px; font-weight:700;">
+            </div>
+          </div>
+        </div>
+
+        <!-- Доставка / Самовывоз -->
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+          <div class="sub-section">
+            <div class="sub-section-title"><span class="dot dot-blue"></span>Доставка</div>
+            <div class="field-group">
+              <div class="field-label">Выручка</div>
+              <input class="field-input field-input-sm rev-field money-field" data-field="delivery_revenue" type="text" inputmode="numeric" placeholder="0"
+                value="{{ (revenue.delivery_revenue or 0)|int }}" {% if not can_edit %}disabled{% endif %}>
+            </div>
+            <div class="field-group">
+              <div class="field-label">Заказов</div>
+              <input class="field-input field-input-sm rev-field" data-field="delivery_orders_real" type="number" min="0" placeholder="0"
+                value="{{ revenue.delivery_orders or 0 }}" {% if not can_edit %}disabled{% endif %}>
+            </div>
+          </div>
+          <div class="sub-section">
+            <div class="sub-section-title"><span class="dot dot-green"></span>Самовывоз</div>
+            <div class="field-group">
+              <div class="field-label">Выручка</div>
+              <input class="field-input field-input-sm rev-field money-field" data-field="pickup_revenue" type="text" inputmode="numeric" placeholder="0"
+                value="{{ (revenue.pickup_revenue or 0)|int }}" {% if not can_edit %}disabled{% endif %}>
+            </div>
+            <div class="field-group">
+              <div class="field-label">Заказов</div>
+              <input class="field-input field-input-sm rev-field" data-field="pickup_orders" type="number" min="0" placeholder="0"
+                value="{{ revenue.pickup_orders or 0 }}" {% if not can_edit %}disabled{% endif %}>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- КАССОВЫЕ ИТОГИ -->
+    <div class="s-card" style="display:flex; flex-direction:column; justify-content:flex-end;">
+      <div class="s-card-body">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          <div style="background:#fff1f2; border:1.5px solid #fecdd3; border-radius:10px; padding:14px;">
+            <div style="font-size:10px; color:#9f1239; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px;">Итого нал в кассе</div>
+            <div id="kassa-nал" style="font-size:22px; font-weight:800; color:#be123c; line-height:1;">{{ (revenue.cash_amount or 0)|int }} ₽</div>
+          </div>
+          <div style="background:#f0fdf4; border:1.5px solid #bbf7d0; border-radius:10px; padding:14px;">
+            <div style="font-size:10px; color:#166534; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px;">Итого безнал</div>
+            <div id="kassa-beznal" style="font-size:22px; font-weight:800; color:#15803d; line-height:1;">{{ (revenue.card_amount or 0)|int }} ₽</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BLOCK: РАСХОДЫ -->
+  <div class="s-card">
+    <div class="s-card-header">
+      <div class="s-card-title">
+        <div class="s-card-icon icon-orange">🧾</div>
+        Расходы
+      </div>
+      {% if can_edit %}
+      <button class="btn-add" style="width:auto; margin:0; padding:5px 12px;" onclick="addExpenseRow()">+ Добавить</button>
+      {% endif %}
+    </div>
+    <div class="s-card-body">
+      <div class="expense-header">
+        <div class="col-label">Категория</div>
+        <div class="col-label">Сумма</div>
+        <div class="col-label">Оплата</div>
+        <div class="col-label" style="text-align:center">Гуляш</div>
+        <div></div>
+      </div>
+      <div id="expenses-body">
+      {% for exp in expenses %}
+      <div class="expense-row" data-id="{{ exp.id }}">
+        {% if can_edit %}
+        <select class="field-select field-input-sm exp-cat" style="font-size:12px; padding:5px 24px 5px 8px;">
+          {% for code, label in expense_categories %}
+          <option value="{{ code }}" {% if exp.category == code %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <input class="mini-input exp-amount money-field" type="text" inputmode="numeric" placeholder="0"
+          value="{{ ((exp.amount_cash or 0) + (exp.amount_card or 0))|int }}">
+        <select class="pay-type-sel exp-paytype" style="font-size:12px;">
+          <option value="cash" {% if (exp.amount_cash or 0) > 0 %}selected{% endif %}>Наличные</option>
+          <option value="card" {% if (exp.amount_card or 0) > 0 %}selected{% endif %}>Карта</option>
+        </select>
+        <div style="display:flex;justify-content:center;">
+          <input type="checkbox" class="check-box exp-gulash" {% if exp.is_gulash %}checked{% endif %} onchange="saveExpRow(this)">
+        </div>
+        <button class="row-del" onclick="deleteExp(this, {{ exp.id }})">✕</button>
+        {% else %}
+        <span style="font-size:13px;">{% for c, l in expense_categories %}{% if c == exp.category %}{{ l }}{% endif %}{% endfor %}</span>
+        <span style="font-size:13px; text-align:right;">{{ ((exp.amount_cash or 0) + (exp.amount_card or 0))|int }} ₽</span>
+        <span style="font-size:12px; color:#6b7280;">{% if (exp.amount_cash or 0) > 0 %}Нал{% else %}Карта{% endif %}</span>
+        <div style="text-align:center;">{% if exp.is_gulash %}✓{% endif %}</div>
+        <div></div>
+        {% endif %}
+      </div>
+      {% endfor %}
+      </div>
+      {% if not expenses %}<div id="no-expenses" style="text-align:center; color:#9ca3af; padding:16px 0; font-size:13px;">Расходов нет</div>{% endif %}
+    </div>
+  </div>
+
+  <!-- ТАКСИ -->
+  <div class="s-card">
+    <div class="s-card-header">
+      <div class="s-card-title">
+        <div class="s-card-icon icon-pink">🚕</div>Такси
+      </div>
+      {% if can_edit %}
+      <button type="button" class="btn-add" style="width:auto; margin:0; padding:5px 12px;" onclick="addTaxiTrip()">+ Добавить рейс</button>
+      {% endif %}
+    </div>
+    <div class="s-card-body">
+      <div id="taxi-body">
+        {% if not taxi_trips %}<div id="taxi-empty" style="text-align:center;color:#9ca3af;padding:12px 0;font-size:13px;">Рейсов нет</div>{% endif %}
+        {% for t in taxi_trips %}
+        <div class="taxi-trip-block" data-trip-id="{{ t.id }}">
+          <!-- LEFT: employees -->
+          <div>
+            {% if can_edit %}
+            <select class="field-select" style="font-size:12px;margin-bottom:6px;width:100%;"
+              onchange="onTaxiEmpSelect(this,{{ t.id }})">
+              <option value="">— добавить сотрудника —</option>
+              {% for emp in employees %}{% if emp.role != 'courier' %}
+              <option value="{{ emp.id }}"
+                data-name="{{ emp.full_name }}"
+                data-address="{{ emp_addresses.get(emp.id,'') or '' }}">{{ emp.full_name }}</option>
+              {% endif %}{% endfor %}
+            </select>
+            {% endif %}
+            <div class="taxi-emps" id="taxi-emps-{{ t.id }}">
+              {% for tte in taxi_trip_emps[t.id] %}
+              <div class="taxi-emp-row" data-tte-id="{{ tte.id }}">
+                <span class="taxi-emp-name">{{ tte.name_snapshot }}</span>
+                {% if can_edit %}
+                <input class="mini-input" type="text" value="{{ tte.address_snapshot or '' }}" placeholder="Адрес" style="font-size:12px;">
+                <button class="row-del" onclick="removeTaxiEmp(this,{{ tte.id }})">✕</button>
+                {% else %}
+                <span style="font-size:11px;color:#9ca3af;">{{ tte.address_snapshot or '' }}</span>
+                <div></div>
+                {% endif %}
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          <!-- RIGHT: amount, pay, gulyash -->
+          <div class="taxi-right">
+            <div class="taxi-right-label">Сумма</div>
+            {% if can_edit %}
+            <input type="number" class="mini-input taxi-amount-input" placeholder="—" min="0"
+              value="{{ t.amount|int if t.amount else '' }}"
+              onblur="saveTaxiUpdate(this.closest('.taxi-trip-block'))"
+              style="width:100%;text-align:right;">
+            <select class="pay-type-sel taxi-pay-select"
+              onchange="saveTaxiUpdate(this.closest('.taxi-trip-block'))">
+              <option value="cash" {% if t.payment_type != 'card' %}selected{% endif %}>Наличные</option>
+              <option value="card" {% if t.payment_type == 'card' %}selected{% endif %}>Карта</option>
+            </select>
+            <label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;">
+              <input type="checkbox" class="check-box taxi-gulyash-cb"
+                {% if t.in_gulyash %}checked{% endif %}
+                onchange="saveTaxiUpdate(this.closest('.taxi-trip-block'))"> Гуляш
+            </label>
+            <button class="row-del" style="width:100%;border-radius:5px;" onclick="deleteTaxiTrip(this,{{ t.id }})">✕ рейс</button>
+            {% else %}
+            <span style="font-size:14px;font-weight:700;">{{ t.amount|int }} ₽</span>
+            <span style="font-size:12px;color:#6b7280;">{% if t.payment_type == 'card' %}Карта{% else %}Нал{% endif %}</span>
+            {% if t.in_gulyash %}<span style="font-size:12px;color:#10b981;">✓ Гуляш</span>{% endif %}
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+</div><!-- /col-left -->
+
+<!-- ══════════ RIGHT COLUMN ══════════ -->
+<div class="col-right">
+
+  {# Макрос: повторяющаяся строка сотрудника кухни #}
+  {% macro staff_row_tpl(s) %}
+    {% set bv = (s.bonus_amount or 0) - (s.penalty_amount or 0) %}
+    {% set hb = bv != 0 %}
+    <div class="staff-row" data-id="{{ s.id }}" data-employee-id="{{ s.employee_id or '' }}"
+      data-rate="{{ s.rate_snapshot }}" data-rate-km="{{ s.rate_per_km_snapshot }}" data-rate-ord="{{ s.rate_per_order_snapshot }}"
+      data-name="{{ s.full_name_snapshot }}" data-role="{{ s.role_snapshot }}"
+      data-auto-bonus="{{ (s.auto_bonus or 0)|int }}">
+      <div class="field-input-sm sf-name" style="font-size:12px; padding:5px 8px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ s.full_name_snapshot }}</div>
+      <select class="mini-input field-select time-sel sf-start" data-val="{{ s.shift_start or '09:00' }}" {% if not can_edit %}disabled{% endif %}></select>
+      <select class="mini-input field-select time-sel sf-end" data-val="{{ s.shift_end or '19:00' }}" {% if not can_edit %}disabled{% endif %}></select>
+      <div class="field-calc sf-hours">{{ s.hours_worked or 0 }} ч</div>
+      {% if can_edit %}<div class="bonus-btns"><button class="bonus-btn-prem" onclick="toggleBonus(this,'prem')">▲ Премия</button><button class="bonus-btn-fine" onclick="toggleBonus(this,'fine')">▼ Штраф</button></div>{% else %}<div></div>{% endif %}
+      <div class="field-calc sf-auto-bonus">{{ (s.auto_bonus or 0)|int if (s.auto_bonus or 0) > 0 else '—' }}</div>
+      <div class="field-calc sf-total">{{ (s.total_amount or 0)|int }} ₽</div>
+      <select class="paid-select {% if s.is_paid %}paid-yes{% else %}paid-no{% endif %} sf-paid" onchange="onPaidChange(this)" {% if not can_edit %}disabled{% endif %}>
+        <option value="no" {% if not s.is_paid %}selected{% endif %}>Не выплачена</option>
+        <option value="yes" {% if s.is_paid %}selected{% endif %}>Выплачена</option>
+      </select>
+      {% if can_edit %}<button class="staff-del" onclick="deleteStaff(this, {{ s.id }})">✕</button>{% else %}<div></div>{% endif %}
+    </div>
+    <div class="staff-bonus-row" {% if hb %}style="display:flex"{% endif %}>
+      <span class="bonus-arrow">↳</span>
+      <select class="bonus-select {% if bv >= 0 %}bonus-sel-prem{% else %}bonus-sel-fine{% endif %}" onchange="updateBonusSel(this)">
+        <option value="prem" {% if bv >= 0 %}selected{% endif %}>Премия</option>
+        <option value="fine" {% if bv < 0 %}selected{% endif %}>Штраф</option>
+      </select>
+      <input class="bonus-amount money-field" type="text" inputmode="numeric" placeholder="0" value="{{ (bv|abs)|int if hb else '' }}">
+      <input class="bonus-comment" type="text" placeholder="Комментарий..." value="{{ s.bonus_comment or '' }}">
+      {% if can_edit %}
+      <button class="bonus-cancel" onclick="closeBonus(this)">Отменить</button>
+      <button class="bonus-save" onclick="saveBonusRow(this)">Сохранить</button>
+      {% endif %}
+    </div>
+    {% if hb %}
+    <div class="bonus-summary" style="display:flex;">
+      <span class="bonus-arrow">↳</span>
+      <div class="bonus-tag {% if bv >= 0 %}bonus-tag-prem{% else %}bonus-tag-fine{% endif %}">
+        {% if bv >= 0 %}▲ Премия{% else %}▲ Штраф{% endif %}: {{ (bv|abs)|int }} ₽{% if s.bonus_comment %} — {{ s.bonus_comment }}{% endif %}
+      </div>
+      {% if can_edit %}
+      <button class="bonus-action bonus-edit-btn" onclick="editBonus(this)">✎</button>
+      <button class="bonus-action bonus-del-btn" onclick="deleteBonusRow(this)">✕</button>
+      {% endif %}
+    </div>
+    {% endif %}
+  {% endmacro %}
+
+  {% macro staff_cols() %}
+  <div class="staff-header-row" style="margin-bottom:10px;">
+    <div class="col-label">Фамилия</div><div class="col-label">Приход</div><div class="col-label">Уход</div>
+    <div class="col-label">Ч.</div><div></div>
+    <div class="col-label" style="color:#059669">Авт.₽</div>
+    <div class="col-label">Итого ₽</div><div class="col-label">Выплачена</div><div></div>
+  </div>
+  {% endmacro %}
+
+  <!-- BLOCK: АДМИНЫ -->
+  <div class="s-card">
+    <div class="s-card-header"><div class="s-card-title"><div class="s-card-icon icon-purple">👔</div>Админы</div></div>
+    <div class="s-card-body">
+      {{ staff_cols() }}
+      <div id="admin-body">{% for s in staff %}{% if s.role_snapshot == 'admin' %}{{ staff_row_tpl(s) }}{% endif %}{% endfor %}</div>
+      {% if can_edit %}<button class="btn-add" style="width:100%;margin-top:10px;" onclick="showAddStaffInline('admin')">+ Добавить админа</button>{% endif %}
+    </div>
+  </div>
+
+  <!-- BLOCK: ПОВАРА -->
+  <div class="s-card">
+    <div class="s-card-header"><div class="s-card-title"><div class="s-card-icon icon-blue">👨‍🍳</div>Повара</div></div>
+    <div class="s-card-body">
+      {{ staff_cols() }}
+      <div id="cook-body">{% for s in staff %}{% if s.role_snapshot in ('cook','sushi','packer') %}{{ staff_row_tpl(s) }}{% endif %}{% endfor %}</div>
+      {% if can_edit %}<button class="btn-add" style="width:100%;margin-top:10px;" onclick="showAddStaffInline('cook')">+ Добавить повара</button>{% endif %}
+    </div>
+  </div>
+
+  <!-- BLOCK: УБОРКА -->
+  <div class="s-card">
+    <div class="s-card-header"><div class="s-card-title"><div class="s-card-icon icon-teal">🧹</div>Уборка</div></div>
+    <div class="s-card-body">
+      {{ staff_cols() }}
+      <div id="cleaner-body">{% for s in staff %}{% if s.role_snapshot == 'cleaner' %}{{ staff_row_tpl(s) }}{% endif %}{% endfor %}</div>
+      {% if can_edit %}<button class="btn-add" style="width:100%;margin-top:10px;" onclick="showAddStaffInline('cleaner')">+ Добавить уборщика</button>{% endif %}
+    </div>
+  </div>
+
+  <!-- BLOCK: КУРЬЕРЫ -->
+  <div class="s-card">
+    <div class="s-card-header"><div class="s-card-title"><div class="s-card-icon icon-pink">🛵</div>Курьеры</div></div>
+    <div class="s-card-body">
+      <div class="courier-header-row">
+        <div class="col-label">Фамилия</div>
+        <div class="col-label">Км</div>
+        <div class="col-label">Заказов</div>
+        <div class="col-label">Часов</div>
+        <div class="col-label">Премия/Штраф</div>
+        <div class="col-label">Итого ₽</div>
+        <div class="col-label">Выплачена</div>
+        <div></div>
+      </div>
+      <div id="courier-body">
+      {% for s in staff %}{% if s.role_snapshot == 'courier' %}
+        {% set bonus_val = (s.bonus_amount or 0) - (s.penalty_amount or 0) %}
+        {% set has_bonus = bonus_val != 0 %}
+        <div class="courier-row" data-id="{{ s.id }}" data-employee-id="{{ s.employee_id or '' }}"
+          data-rate="{{ s.rate_snapshot }}" data-rate-km="{{ s.rate_per_km_snapshot }}" data-rate-ord="{{ s.rate_per_order_snapshot }}"
+          data-name="{{ s.full_name_snapshot }}" data-role="{{ s.role_snapshot }}"
+          data-auto-bonus="{{ (s.auto_bonus or 0)|int }}">
+          <div class="field-input-sm sf-name" style="font-size:12px; padding:5px 8px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ s.full_name_snapshot }}</div>
+          <input class="mini-input sf-km" type="number" min="0" step="0.1" placeholder="0" value="{{ (s.km or 0)|int }}" {% if not can_edit %}disabled{% endif %}>
+          <input class="mini-input sf-orders" type="number" min="0" placeholder="0" value="{{ s.orders or 0 }}" {% if not can_edit %}disabled{% endif %}>
+          <input class="mini-input sf-hours" type="number" min="0" step="0.5" placeholder="0" value="{{ s.hours_worked or 0 }}" {% if not can_edit %}disabled{% endif %}>
+          {% if can_edit %}
+          <div class="bonus-btns"><button class="bonus-btn-prem" onclick="toggleBonus(this,'prem')">▲ Премия</button><button class="bonus-btn-fine" onclick="toggleBonus(this,'fine')">▼ Штраф</button></div>
+          {% else %}<div></div>{% endif %}
+          <div class="field-calc sf-total">{{ (s.total_amount or 0)|int }} ₽</div>
+          <select class="paid-select {% if s.is_paid %}paid-yes{% else %}paid-no{% endif %} sf-paid"
+            onchange="onPaidChange(this)" {% if not can_edit %}disabled{% endif %}>
+            <option value="no" {% if not s.is_paid %}selected{% endif %}>Не выплачена</option>
+            <option value="yes" {% if s.is_paid %}selected{% endif %}>Выплачена</option>
+          </select>
+          {% if can_edit %}
+          <button class="staff-del" onclick="deleteStaff(this, {{ s.id }})">✕</button>
+          {% else %}<div></div>{% endif %}
+        </div>
+        <div class="staff-bonus-row" {% if has_bonus %}style="display:flex"{% endif %}>
+          <span class="bonus-arrow">↳</span>
+          <select class="bonus-select {% if bonus_val >= 0 %}bonus-sel-prem{% else %}bonus-sel-fine{% endif %}" onchange="updateBonusSel(this)">
+            <option value="prem" {% if bonus_val >= 0 %}selected{% endif %}>Премия</option>
+            <option value="fine" {% if bonus_val < 0 %}selected{% endif %}>Штраф</option>
+          </select>
+          <input class="bonus-amount money-field" type="text" inputmode="numeric" placeholder="0" value="{{ (bonus_val|abs)|int if has_bonus else '' }}">
+          <input class="bonus-comment" type="text" placeholder="Комментарий..." value="{{ s.bonus_comment or '' }}">
+          {% if can_edit %}
+          <button class="bonus-cancel" onclick="closeBonus(this)">Отменить</button>
+          <button class="bonus-save" onclick="saveBonusRow(this)">Сохранить</button>
+          {% endif %}
+        </div>
+        {% if has_bonus %}
+        <div class="bonus-summary" style="display:flex;">
+          <span class="bonus-arrow">↳</span>
+          <div class="bonus-tag {% if bonus_val >= 0 %}bonus-tag-prem{% else %}bonus-tag-fine{% endif %}">
+            {% if bonus_val >= 0 %}▲ Премия{% else %}▲ Штраф{% endif %}: {{ (bonus_val|abs)|int }} ₽{% if s.bonus_comment %} — {{ s.bonus_comment }}{% endif %}
+          </div>
+          {% if can_edit %}
+          <button class="bonus-action bonus-edit-btn" onclick="editBonus(this)">✎</button>
+          <button class="bonus-action bonus-del-btn" onclick="deleteBonusRow(this)">✕</button>
+          {% endif %}
+        </div>
+        {% endif %}
+      {% endif %}{% endfor %}
+      </div>
+      {% if can_edit %}<button class="btn-add" style="width:100%;margin-top:10px;" onclick="showAddStaffInline('courier')">+ Добавить курьера</button>{% endif %}
+    </div>
+  </div>
+
+</div><!-- /col-right -->
+</div><!-- /grid-main -->
+</div><!-- /page-body -->
+
+<!-- CLOSE BAR -->
+<div class="close-bar">
+  <span class="close-hint">Смена {{ shift.status == 'open' and 'открыта' or 'закрыта' }} · {{ shift.branch_name }} · {{ shift.date }}</span>
+  {% if shift.status == 'open' and can_edit %}
+  <button class="ph-btn ph-btn-outline" onclick="saveAllRevenue()">Сохранить выручку</button>
+  <button class="ph-btn ph-btn-primary" onclick="document.getElementById('closeModal').style.display='flex'">🔒 Закрыть смену</button>
+  {% endif %}
+</div>
+
+<!-- CLOSE SHIFT MODAL -->
+{% if shift.status == 'open' and can_edit %}
+<div id="closeModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:1000; align-items:center; justify-content:center;">
+  <div style="background:#fff; border-radius:14px; padding:28px; width:420px; max-width:95vw;">
+    <h5 style="font-weight:700; margin-bottom:16px;">🔒 Закрыть смену</h5>
+    <form method="POST" action="{{ url_for('close_shift', shift_id=shift.id) }}">
+      <div style="margin-bottom:14px;">
+        <div class="field-label">Смену закрыл(а)</div>
+        <input type="text" name="closed_by_name" class="field-input" value="{{ session.get('full_name', '') }}" required>
+      </div>
+      <div style="margin-bottom:14px;">
+        <div class="field-label">Комментарий</div>
+        <textarea name="comment" class="field-input" rows="3" placeholder="Необязательно">{{ shift.comment or '' }}</textarea>
+      </div>
+      <div style="background:#fff3cd; border-radius:8px; padding:10px 14px; font-size:13px; margin-bottom:16px;">
+        ⚠️ После закрытия смены редактирование будет недоступно.
+      </div>
+      <div style="display:flex; gap:10px; justify-content:flex-end;">
+        <button type="button" class="ph-btn ph-btn-outline" onclick="document.getElementById('closeModal').style.display='none'">Отмена</button>
+        <button type="submit" class="ph-btn ph-btn-primary">🔒 Закрыть смену</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+
+{% endblock %}
+{% block scripts %}
+<script>
+const SHIFT_ID = {{ shift.id }};
+const CAN_EDIT = {{ 'true' if can_edit else 'false' }};
+const EXPENSE_CATS = {{ expense_categories | tojson }};
+
+// ── Money field formatting ────────────────────────────────────────────────────
+function readNum(el) {
+  if (!el) return 0;
+  return parseInt(String(el.value).replace(/\D/g, '')) || 0;
+}
+function fmtMoney(val) {
+  const n = parseInt(String(val).replace(/\D/g, '')) || 0;
+  return n ? n.toLocaleString('ru-RU') : '';
+}
+function initMoneyField(el) {
+  // Format initial value
+  if (el.value && el.value !== '0') el.value = fmtMoney(el.value);
+  el.addEventListener('keydown', e => {
+    if (e.key === '-' || e.key === 'e') e.preventDefault();
+  });
+  el.addEventListener('input', () => {
+    const pos = el.selectionStart;
+    const raw = el.value.replace(/\D/g, '');
+    const formatted = raw ? parseInt(raw).toLocaleString('ru-RU') : '';
+    el.value = formatted;
+  });
+  el.addEventListener('focus', () => {
+    // On focus: strip spaces so it's easier to edit
+    const raw = el.value.replace(/\D/g, '');
+    el.value = raw || '';
+    el.select();
+  });
+  el.addEventListener('blur', () => {
+    el.value = fmtMoney(el.value);
+  });
+}
+document.querySelectorAll('.money-field').forEach(initMoneyField);
+
+// ── Time selects ──────────────────────────────────────────────────────────────
+document.querySelectorAll('.time-sel').forEach(sel => {
+  const selected = sel.dataset.val || '09:00';
+  for (let h = 7; h <= 24; h++) {
+    const mins = h < 24 ? [0, 15, 30, 45] : [0];
+    mins.forEach(m => {
+      const val = (h < 10 ? '0' : '') + h + ':' + (m === 0 ? '00' : m);
+      const opt = document.createElement('option');
+      opt.value = val; opt.textContent = val;
+      if (val === selected) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  }
+  if (CAN_EDIT) sel.addEventListener('change', () => autoSaveStaffRow(sel.closest('[data-id]')));
+});
+
+// ── Revenue ───────────────────────────────────────────────────────────────────
+function getRevData() {
+  const d = {};
+  document.querySelectorAll('.rev-field').forEach(el => {
+    const v = el.classList.contains('money-field') ? readNum(el) : (el.value || 0);
+    d[el.dataset.field] = v;
+  });
+  const dOrd = document.querySelector('.rev-field[data-field="delivery_orders_real"]');
+  if (dOrd) d.delivery_orders = parseInt(dOrd.value) || 0;
+  delete d.delivery_orders_real;
+  d.total_revenue = readNum(document.querySelector('.rev-field[data-field="cash_amount"]'))
+                  + readNum(document.querySelector('.rev-field[data-field="card_amount"]'))
+                  + readNum(document.querySelector('.rev-field[data-field="online_amount"]'));
+  return d;
+}
+
+function saveAllRevenue() {
+  fetch(`/shift/${SHIFT_ID}/save-revenue`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(getRevData())
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      showToast('Выручка сохранена ✓');
+      if (d.auto_bonuses) applyAutoBonuses(d.auto_bonuses);
+    }
+  });
+}
+
+function updateKassa() {
+  const cashIn   = readNum(document.querySelector('.rev-field[data-field="cash_amount"]'));
+  const cardIn   = readNum(document.querySelector('.rev-field[data-field="card_amount"]'));
+  const onlineIn = readNum(document.querySelector('.rev-field[data-field="online_amount"]'));
+
+  // Общая выручка = нал + безнал + онлайн (авто)
+  const totalRev = cashIn + cardIn + onlineIn;
+  const dispEl = document.getElementById('total-revenue-display');
+  const inputEl = document.getElementById('total-revenue-input');
+  if (dispEl) dispEl.textContent = Math.round(totalRev).toLocaleString('ru-RU') + ' ₽';
+  if (inputEl) inputEl.value = Math.round(totalRev);
+
+  let expCash = 0, expCard = 0;
+  document.querySelectorAll('#expenses-body [data-id]').forEach(row => {
+    const amt  = readNum(row.querySelector('.exp-amount'));
+    const type = row.querySelector('.exp-paytype')?.value;
+    if (type === 'cash') expCash += amt; else expCard += amt;
+  });
+
+  // Выплаченная ЗП вычитается из кассы нал
+  let paidSalary = 0;
+  document.querySelectorAll('.staff-row[data-id], .courier-row[data-id]').forEach(row => {
+    if (row.querySelector('.sf-paid')?.value === 'yes') {
+      const txt = row.querySelector('.sf-total')?.textContent || '0';
+      paidSalary += parseFloat(txt.replace(/[^\d.-]/g, '')) || 0;
+    }
+  });
+
+  const kassaNal    = cashIn - expCash - paidSalary;
+  const kassaBeznal = cardIn; // только карта, без онлайн
+  const fmt = n => Math.round(n).toLocaleString('ru-RU') + ' ₽';
+  document.getElementById('kassa-nал').textContent = fmt(kassaNal);
+  document.getElementById('kassa-nал').style.color = kassaNal < 0 ? '#dc2626' : '#be123c';
+  document.getElementById('kassa-beznal').textContent = fmt(kassaBeznal);
+}
+
+if (CAN_EDIT) {
+  document.querySelectorAll('.rev-field').forEach(el => {
+    el.addEventListener('input', updateKassa);
+    el.addEventListener('change', () => { saveAllRevenue(); updateKassa(); });
+  });
+}
+
+// ── Expenses ──────────────────────────────────────────────────────────────────
+function addExpenseRow() {
+  const noExp = document.getElementById('no-expenses');
+  if (noExp) noExp.remove();
+  const row = document.createElement('div');
+  row.className = 'expense-row'; row.dataset.id = 'new';
+  row.innerHTML = `
+    <select class="field-select field-input-sm exp-cat" style="font-size:12px; padding:5px 24px 5px 8px;">
+      ${EXPENSE_CATS.map(([c,l]) => `<option value="${c}">${l}</option>`).join('')}
+    </select>
+    <input class="mini-input exp-amount money-field" type="text" inputmode="numeric" placeholder="0" value="">
+    <select class="pay-type-sel exp-paytype" style="font-size:12px;">
+      <option value="cash">Наличные</option><option value="card">Карта</option>
+    </select>
+    <div style="display:flex;justify-content:center;">
+      <input type="checkbox" class="check-box exp-gulash" onchange="saveExpRow(this)">
+    </div>
+    <button class="row-del" onclick="deleteExp(this, null)">✕</button>`;
+  document.getElementById('expenses-body').appendChild(row);
+  initMoneyField(row.querySelector('.exp-amount'));
+  row.querySelector('.exp-amount').addEventListener('change', () => { saveExpRow(row.querySelector('.exp-amount')); updateKassa(); });
+  row.querySelector('.exp-cat').addEventListener('change', () => saveExpRow(row.querySelector('.exp-cat')));
+  row.querySelector('.exp-paytype').addEventListener('change', () => { saveExpRow(row.querySelector('.exp-paytype')); updateKassa(); });
+}
+
+function saveExpRow(el) {
+  const row = el.closest('[data-id]');
+  if (!row) return;
+  const id = row.dataset.id === 'new' ? null : parseInt(row.dataset.id);
+  const amt = readNum(row.querySelector('.exp-amount'));
+  const type = row.querySelector('.exp-paytype')?.value;
+  const data = {
+    id: id,
+    category: row.querySelector('.exp-cat')?.value || 'other',
+    description: '',
+    amount_cash: type === 'cash' ? amt : 0,
+    amount_card: type === 'card' ? amt : 0,
+    is_gulash: row.querySelector('.exp-gulash')?.checked || false,
+  };
+  fetch(`/shift/${SHIFT_ID}/save-expense`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data)
+  }).then(r => r.json()).then(d => {
+    if (d.ok && row.dataset.id === 'new') row.dataset.id = d.id;
+    updateKassa();
+  });
+}
+
+function deleteExp(btn, id) {
+  const row = btn.closest('[data-id]');
+  if (!id && row.dataset.id === 'new') { row.remove(); updateKassa(); return; }
+  if (!confirm('Удалить расход?')) return;
+  fetch(`/shift/${SHIFT_ID}/delete-expense/${id || row.dataset.id}`, { method: 'POST' })
+    .then(r => r.json()).then(d => { if (d.ok) { row.remove(); updateKassa(); } });
+}
+
+// wire up existing expense rows
+document.querySelectorAll('#expenses-body [data-id]').forEach(row => {
+  if (!CAN_EDIT) return;
+  row.querySelector('.exp-amount')?.addEventListener('change', () => { saveExpRow(row.querySelector('.exp-amount')); updateKassa(); });
+  row.querySelector('.exp-cat')?.addEventListener('change', () => saveExpRow(row.querySelector('.exp-cat')));
+  row.querySelector('.exp-paytype')?.addEventListener('change', () => { saveExpRow(row.querySelector('.exp-paytype')); updateKassa(); });
+});
+
+// ── Staff ─────────────────────────────────────────────────────────────────────
+function calcStaffTotal(row) {
+  const rate    = parseFloat(row.dataset.rate    || 0);
+  const rateKm  = parseFloat(row.dataset.rateKm  || 10);
+  const rateOrd = parseFloat(row.dataset.rateOrd || 100);
+  const start   = row.querySelector('.sf-start')?.value || '';
+  const end     = row.querySelector('.sf-end')?.value || '';
+  const km      = parseFloat(row.querySelector('.sf-km')?.value || 0);
+  const orders  = parseFloat(row.querySelector('.sf-orders')?.value || 0);
+  const hoursEl = row.querySelector('.sf-hours');
+  let hours = hoursEl
+    ? (hoursEl.tagName === 'INPUT' ? parseFloat(hoursEl.value || 0) : parseFloat(hoursEl.textContent || 0))
+    : 0;
+
+  if (start && end) {
+    const [sh, sm] = start.split(':').map(Number);
+    const [eh, em] = end.split(':').map(Number);
+    let h = (eh * 60 + em - sh * 60 - sm) / 60;
+    if (h < 0) h += 24;
+    hours = Math.round(h * 4) / 4;
+    if (hoursEl && hoursEl.tagName !== 'INPUT') hoursEl.textContent = hours + ' ч';
+  }
+
+  const base      = hours * rate + km * rateKm + orders * rateOrd;
+  const autoBonus = parseInt(row.dataset.autoBonus || 0);
+  const total     = base + autoBonus;
+  const abEl    = row.querySelector('.sf-auto-bonus');
+  const totalEl = row.querySelector('.sf-total');
+  if (abEl) abEl.textContent = autoBonus > 0 ? autoBonus : '—';
+  if (totalEl) totalEl.textContent = Math.round(total) + ' ₽';
+  return { hours, km, orders, base, autoBonus, total };
+}
+
+function autoSaveStaffRow(row) {
+  if (!row || !CAN_EDIT) return;
+  const id = parseInt(row.dataset.id);
+  if (!id) return;
+  const { hours, km, orders, base, total } = calcStaffTotal(row);
+  const isPaid = row.querySelector('.sf-paid')?.value === 'yes';
+  const data = {
+    id,
+    full_name_snapshot: row.dataset.name || '',
+    role_snapshot: row.dataset.role || '',
+    rate_snapshot: parseFloat(row.dataset.rate || 0),
+    rate_per_km_snapshot: parseFloat(row.dataset.rateKm || 10),
+    rate_per_order_snapshot: parseFloat(row.dataset.rateOrd || 100),
+    hours_worked: hours, km, orders,
+    shift_start: row.querySelector('.sf-start')?.value || '',
+    shift_end:   row.querySelector('.sf-end')?.value   || '',
+    base_pay: base, total_amount: total,
+    is_paid: isPaid, paid_amount: isPaid ? total : 0,
+  };
+  fetch(`/shift/${SHIFT_ID}/save-staff`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data)
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      if (d.auto_bonuses) applyAutoBonuses(d.auto_bonuses);
+      else updateKassa();
+    }
+  });
+}
+
+function onPaidChange(sel) {
+  sel.classList.toggle('paid-yes', sel.value === 'yes');
+  sel.classList.toggle('paid-no',  sel.value !== 'yes');
+  autoSaveStaffRow(sel.closest('[data-id]'));
+  updateKassa();
+}
+
+function deleteStaff(btn, id) {
+  if (!confirm('Удалить сотрудника из смены?')) return;
+  fetch(`/shift/${SHIFT_ID}/delete-staff/${id}`, { method: 'POST' })
+    .then(r => r.json()).then(d => {
+      if (d.ok) {
+        btn.closest('[data-id]').remove();
+        if (d.auto_bonuses) applyAutoBonuses(d.auto_bonuses);
+        else updateKassa();
+      }
+    });
+}
+
+// wire time selects (kitchen) and courier inputs to auto-calc + save
+document.querySelectorAll('.staff-row .sf-start, .staff-row .sf-end').forEach(el => {
+  el.addEventListener('change', () => {
+    const row = el.closest('[data-id]');
+    calcStaffTotal(row);
+    autoSaveStaffRow(row);
+  });
+});
+document.querySelectorAll('.courier-row .sf-km, .courier-row .sf-orders, .courier-row .sf-hours').forEach(el => {
+  el.addEventListener('input', () => calcStaffTotal(el.closest('[data-id]')));
+  el.addEventListener('change', () => {
+    const row = el.closest('[data-id]');
+    calcStaffTotal(row);
+    autoSaveStaffRow(row);
+  });
+});
+
+// ── Bonus rows ────────────────────────────────────────────────────────────────
+function toggleBonus(btn, type) {
+  const row = btn.closest('.staff-row') || btn.closest('.courier-row');
+  if (!row) return;
+  const bonusRow = row.nextElementSibling;
+  if (!bonusRow?.classList.contains('staff-bonus-row')) return;
+  bonusRow.style.display = 'flex';
+  // предвыбор Премия или Штраф
+  if (type) {
+    const sel = bonusRow.querySelector('.bonus-select');
+    if (sel) { sel.value = type; updateBonusSel(sel); }
+  }
+  // скрыть summary если открыт
+  const summary = bonusRow.nextElementSibling;
+  if (summary?.classList.contains('bonus-summary')) summary.style.display = 'none';
+}
+
+function closeBonus(btn) { btn.closest('.staff-bonus-row').style.display = 'none'; }
+
+function editBonus(btn) {
+  const summary = btn.closest('.bonus-summary');
+  const bonusRow = summary.previousElementSibling;
+  bonusRow.style.display = 'flex';
+  summary.style.display = 'none';
+}
+
+function deleteBonusRow(btn) {
+  const summary = btn.closest('.bonus-summary');
+  const bonusRow = summary.previousElementSibling;
+  const staffRow = bonusRow.previousElementSibling;
+  summary.remove();
+  bonusRow.style.display = 'none';
+  // save zeroed bonus to DB
+  const id = parseInt(staffRow?.dataset.id || 0);
+  if (!id) return;
+  fetch(`/shift/${SHIFT_ID}/save-staff`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ id, bonus_amount: 0, penalty_amount: 0, bonus_comment: '' })
+  }).then(r => r.json()).then(d => {
+    if (d.ok && d.auto_bonuses) applyAutoBonuses(d.auto_bonuses);
+    else updateKassa();
+  });
+}
+
+function saveBonusRow(btn) {
+  const bonusRow = btn.closest('.staff-bonus-row');
+  const staffRow = bonusRow.previousElementSibling;
+  const id = parseInt(staffRow?.dataset.id || 0);
+  const isPrem = bonusRow.querySelector('.bonus-select').value === 'prem';
+  const amount = readNum(bonusRow.querySelector('.bonus-amount'));
+  const comment = bonusRow.querySelector('.bonus-comment').value;
+
+  // Show summary
+  let existing = bonusRow.nextElementSibling;
+  if (existing?.classList.contains('bonus-summary')) existing.remove();
+  const text = (isPrem ? '▲ Премия' : '▲ Штраф') + (amount ? ': ' + amount + ' ₽' : '') + (comment ? ' — ' + comment : '');
+  const summary = document.createElement('div');
+  summary.className = 'bonus-summary'; summary.style.display = 'flex';
+  summary.innerHTML = `<span class="bonus-arrow">↳</span><div class="bonus-tag ${isPrem ? 'bonus-tag-prem' : 'bonus-tag-fine'}">${text}</div><button class="bonus-action bonus-edit-btn" onclick="editBonus(this)">✎</button><button class="bonus-action bonus-del-btn" onclick="deleteBonusRow(this)">✕</button>`;
+  bonusRow.parentNode.insertBefore(summary, bonusRow.nextSibling);
+  bonusRow.style.display = 'none';
+
+  if (!id) return;
+  const { base, autoBonus } = calcStaffTotal(staffRow);
+  const bonusAmt   = isPrem ? amount : 0;
+  const penaltyAmt = isPrem ? 0 : amount;
+  fetch(`/shift/${SHIFT_ID}/save-staff`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      id, bonus_amount: bonusAmt, penalty_amount: penaltyAmt,
+      bonus_comment: comment,
+      total_amount: base + bonusAmt - penaltyAmt + autoBonus
+    })
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      if (d.auto_bonuses) applyAutoBonuses(d.auto_bonuses);
+      else {
+        const totalEl = staffRow.querySelector('.sf-total');
+        if (totalEl) totalEl.textContent = Math.round(base + bonusAmt - penaltyAmt + autoBonus) + ' ₽';
+        updateKassa();
+      }
+    }
+  });
+}
+
+function updateBonusSel(sel) {
+  sel.classList.toggle('bonus-sel-prem', sel.value === 'prem');
+  sel.classList.toggle('bonus-sel-fine', sel.value === 'fine');
+}
+
+// ── Add staff inline ──────────────────────────────────────────────────────────
+const ROLE_GROUPS = {
+  admin:   ['admin'],
+  cook:    ['cook','sushi','packer'],
+  cleaner: ['cleaner'],
+  courier: ['courier']
+};
+
+const ALL_SHIFT_EMPLOYEES = [
+  {% for emp in employees %}{id:{{ emp.id }}, name:{{ emp.full_name|tojson }}, role:{{ emp.role|tojson }}, rate:{{ emp.rate }}, rateKm:{{ emp.rate_per_km }}},
+  {% endfor %}
+];
+
+function showAddStaffInline(type) {
+  const body = document.getElementById(type + '-body');
+  if (!body) return;
+  const existing = body.querySelector('.inline-add-row');
+  if (existing) { existing.remove(); return; }
+  const allowed = ROLE_GROUPS[type] || [];
+  const addedIds = new Set(
+    Array.from(document.querySelectorAll('#' + type + '-body [data-employee-id]'))
+      .map(el => el.dataset.employeeId).filter(Boolean)
+  );
+  const opts = ALL_SHIFT_EMPLOYEES
+    .filter(e => allowed.includes(e.role) && !addedIds.has(String(e.id)))
+    .map(e => `<option value="${e.id}" data-name="${e.name.replace(/"/g,'&quot;')}" data-role="${e.role}" data-rate="${e.rate}" data-km="${e.rateKm}">${e.name}</option>`)
+    .join('');
+  const empList = ALL_SHIFT_EMPLOYEES.filter(e => allowed.includes(e.role) && !addedIds.has(String(e.id)));
+  const row = document.createElement('div');
+  row.className = 'inline-add-row';
+  row.style.cssText = 'margin-top:8px; position:relative;';
+  const listHtml = empList.map(e =>
+    `<div class="isl-opt" data-id="${e.id}" data-name="${e.name.replace(/"/g,'&quot;')}" data-role="${e.role}" data-rate="${e.rate}" data-km="${e.rateKm}" onclick="selectInlineStaff(this,'${type}')">${e.name}</div>`
+  ).join('');
+  row.innerHTML = `<div style="display:flex;gap:6px;align-items:center;">
+    <div style="flex:1;position:relative;">
+      <input class="field-select" type="text" placeholder="Поиск сотрудника..." autocomplete="off"
+        oninput="filterInlineStaff(this)" onfocus="this.nextElementSibling.style.display='block'"
+        onkeydown="inlineStaffKey(event,'${type}')" style="width:100%;">
+      <div class="inline-staff-list">${listHtml}${empList.length ? '' : '<div class="isl-empty">Нет доступных сотрудников</div>'}</div>
+    </div>
+    <button class="ph-btn ph-btn-primary" style="white-space:nowrap;padding:5px 10px;font-size:12px;" onclick="addStaffByNameInline(this,'${type}')">Добавить</button>
+  </div>`;
+  body.appendChild(row);
+  row.querySelector('input').focus();
+}
+
+function filterInlineStaff(input) {
+  const q = input.value.toLowerCase();
+  const list = input.nextElementSibling;
+  list.style.display = 'block';
+  let anyVisible = false;
+  list.querySelectorAll('.isl-opt').forEach(item => {
+    const show = item.dataset.name.toLowerCase().includes(q);
+    item.style.display = show ? '' : 'none';
+    if (show) anyVisible = true;
+  });
+  const empty = list.querySelector('.isl-empty');
+  if (empty) empty.style.display = anyVisible ? 'none' : '';
+}
+
+function inlineStaffKey(e, type) {
+  if (e.key !== 'Enter') return;
+  const list = e.target.nextElementSibling;
+  const first = list.querySelector('.isl-opt:not([style*="none"])');
+  if (first) { selectInlineStaff(first, type); return; }
+  addStaffByNameInline(e.target.closest('.inline-add-row').querySelector('button'), type);
+}
+
+function selectInlineStaff(item, type) {
+  _postStaff(item.dataset.id, item.dataset.name, item.dataset.role,
+    parseFloat(item.dataset.rate || 0), parseFloat(item.dataset.km || 10));
+}
+
+function addStaffByNameInline(btn, type) {
+  const input = btn.closest('.inline-add-row').querySelector('input');
+  const name = (input.value || '').trim();
+  if (!name) { input.focus(); return; }
+  const roleMap = { admin: 'admin', cook: 'cook', cleaner: 'cleaner', courier: 'courier' };
+  _postStaff(null, name, roleMap[type] || type, 0, 10);
+}
+
+function _postStaff(empId, name, role, rate, rateKm) {
+  fetch(`/shift/${SHIFT_ID}/save-staff`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      employee_id: empId, full_name_snapshot: name, role_snapshot: role,
+      rate_snapshot: rate, rate_per_km_snapshot: rateKm, rate_per_order_snapshot: 100,
+      shift_start: '', shift_end: '', hours_worked: 0,
+      km: 0, orders: 0, bonus_amount: 0, penalty_amount: 0, bonus_comment: '',
+      base_pay: 0, total_amount: 0, is_paid: false, paid_amount: 0
+    })
+  }).then(r => r.json()).then(d => {
+    if (d.error === 'duplicate') { alert(name + ' уже добавлен в эту смену'); return; }
+    if (d.ok) location.reload();
+  });
+}
+
+// ── Auto-bonus apply ──────────────────────────────────────────────────────────
+function applyAutoBonuses(bonuses) {
+  if (!bonuses || !bonuses.length) return;
+  bonuses.forEach(b => {
+    const row = document.querySelector(`[data-id="${b.id}"]`);
+    if (!row) return;
+    row.dataset.autoBonus = b.auto_bonus || 0;
+    const ab = Math.round(b.auto_bonus || 0);
+    const abEl = row.querySelector('.sf-auto-bonus');
+    if (abEl) abEl.textContent = ab > 0 ? ab : '—';
+    const totalEl = row.querySelector('.sf-total');
+    if (totalEl) totalEl.textContent = Math.round(b.total_amount) + ' ₽';
+  });
+  updateKassa();
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function showToast(msg) {
+  const t = document.createElement('div');
+  t.textContent = msg;
+  t.style.cssText = 'position:fixed;bottom:80px;right:20px;background:#1a1a2e;color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:999;';
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2000);
+}
+
+// Запрет отрицательных значений во всех number-полях
+document.querySelectorAll('input[type="number"]').forEach(el => {
+  el.addEventListener('keydown', e => { if (e.key === '-' || e.key === 'e') e.preventDefault(); });
+  el.addEventListener('input', () => { if (parseFloat(el.value) < 0) el.value = Math.abs(parseFloat(el.value)) || 0; });
+  el.addEventListener('change', () => { if (parseFloat(el.value) < 0) el.value = 0; });
+});
+
+// init
+document.querySelectorAll('.staff-row[data-id], .courier-row[data-id]').forEach(row => calcStaffTotal(row));
+updateKassa();
+
+// ── TAXI ─────────────────────────────────────────────────
+const TAXI_EMPS = [{% for emp in employees %}{% if emp.role != 'courier' %}
+  {id:{{ emp.id }}, name:{{ emp.full_name|tojson }}, addr:{{ (emp_addresses.get(emp.id,'')|string)|tojson }}},{% endif %}{% endfor %}
+];
+const TAXI_EMP_OPTIONS = '<option value="">— добавить сотрудника —</option>' +
+  TAXI_EMPS.map(function(e) {
+    return '<option value="' + e.id + '" data-name="' + e.name.replace(/"/g,'&quot;') + '" data-address="' + e.addr.replace(/"/g,'&quot;') + '">' + e.name + '</option>';
+  }).join('');
+
+async function addTaxiTrip() {
+  var emptyEl = document.getElementById('taxi-empty');
+  if (emptyEl) emptyEl.style.display = 'none';
+
+  var res = await fetch('/shift/{{ shift.id }}/taxi/create', { method: 'POST' });
+  var json = await res.json();
+  if (!json.ok) { alert('Ошибка'); return; }
+  var tid = json.trip_id;
+
+  var block = document.createElement('div');
+  block.className = 'taxi-trip-block';
+  block.dataset.tripId = tid;
+  block.innerHTML =
+    // LEFT
+    '<div>' +
+      '<select class="field-select" style="font-size:12px;margin-bottom:6px;width:100%;" onchange="onTaxiEmpSelect(this,' + tid + ')">' +
+        TAXI_EMP_OPTIONS +
+      '</select>' +
+      '<div class="taxi-emps" id="taxi-emps-' + tid + '"></div>' +
+    '</div>' +
+    // RIGHT
+    '<div class="taxi-right">' +
+      '<div class="taxi-right-label">Сумма</div>' +
+      '<input type="number" class="mini-input taxi-amount-input" placeholder="—" min="0" style="width:100%;text-align:right;" onblur="saveTaxiUpdate(this.closest(\'.taxi-trip-block\'))">' +
+      '<select class="pay-type-sel taxi-pay-select" onchange="saveTaxiUpdate(this.closest(\'.taxi-trip-block\'))">' +
+        '<option value="cash">Наличные</option><option value="card">Карта</option>' +
+      '</select>' +
+      '<label style="display:flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;">' +
+        '<input type="checkbox" class="check-box taxi-gulyash-cb" onchange="saveTaxiUpdate(this.closest(\'.taxi-trip-block\'))"> Гуляш' +
+      '</label>' +
+      '<button class="row-del" style="width:100%;border-radius:5px;" onclick="deleteTaxiTrip(this,' + tid + ')">✕ рейс</button>' +
+    '</div>';
+
+  document.getElementById('taxi-body').appendChild(block);
+}
+
+async function onTaxiEmpSelect(sel, tripId) {
+  if (!sel.value) return;
+  var opt = sel.options[sel.selectedIndex];
+  var empId = parseInt(sel.value);
+  var name = opt.dataset.name || opt.text;
+  var address = opt.dataset.address || '';
+  sel.value = '';
+
+  var res = await fetch('/taxi/' + tripId + '/employee/add', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ employee_id: empId, name: name, address: address })
+  });
+  var json = await res.json();
+  if (!json.ok) { alert('Ошибка'); return; }
+
+  var container = document.getElementById('taxi-emps-' + tripId);
+  var row = document.createElement('div');
+  row.className = 'taxi-emp-row';
+  row.dataset.tteId = json.tte_id;
+  row.innerHTML =
+    '<span class="taxi-emp-name">' + name + '</span>' +
+    '<input class="mini-input" type="text" value="' + address.replace(/"/g,'&quot;') + '" placeholder="Адрес" style="font-size:12px;">' +
+    '<button class="row-del" onclick="removeTaxiEmp(this,' + json.tte_id + ')">✕</button>';
+  container.appendChild(row);
+}
+
+async function removeTaxiEmp(btn, tteId) {
+  var res = await fetch('/taxi/employee/' + tteId + '/remove', { method: 'POST' });
+  var json = await res.json();
+  if (!json.ok) { alert('Ошибка'); return; }
+  btn.closest('.taxi-emp-row').remove();
+}
+
+async function saveTaxiUpdate(block) {
+  var tripId = block.dataset.tripId;
+  var amount = (block.querySelector('.taxi-amount-input') || {}).value || 0;
+  var payType = (block.querySelector('.taxi-pay-select') || {}).value || 'cash';
+  var inGulyash = (block.querySelector('.taxi-gulyash-cb') || {}).checked || false;
+  await fetch('/taxi/' + tripId + '/update', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ amount: parseFloat(amount) || 0, payment_type: payType, in_gulyash: inGulyash })
+  });
+}
+
+async function deleteTaxiTrip(btn, tripId) {
+  if (!confirm('Удалить рейс?')) return;
+  var res = await fetch('/taxi/' + tripId + '/delete', { method: 'POST' });
+  var json = await res.json();
+  if (!json.ok) { alert('Ошибка'); return; }
+  btn.closest('.taxi-trip-block').remove();
+  if (!document.querySelector('#taxi-body .taxi-trip-block')) {
+    var emptyEl = document.getElementById('taxi-empty');
+    if (emptyEl) emptyEl.style.display = '';
+  }
+}
+
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('.inline-add-row')) {
+    document.querySelectorAll('.inline-staff-list').forEach(l => l.style.display = 'none');
+  }
+});
+</script>
+{% endblock %}

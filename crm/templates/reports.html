@@ -1,0 +1,293 @@
+{% extends 'base.html' %}
+{% block title %}Отчёты{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="fw-bold mb-0"><i class="bi bi-bar-chart"></i> Отчёты</h4>
+</div>
+
+<!-- Вкладки -->
+<ul class="nav nav-tabs mb-4" id="reportTabs">
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab != 'salary' %}active{% endif %}"
+           href="{{ url_for('reports') }}?tab=shifts&period={{ period }}&branch_id={{ selected_branch }}">
+            <i class="bi bi-graph-up-arrow"></i> Выручка
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'salary' %}active{% endif %}"
+           href="{{ url_for('reports') }}?tab=salary&s_date_from={{ s_date_from }}&s_date_to={{ s_date_to }}&s_branch_id={{ s_branch_id }}&s_role={{ s_role }}&s_unpaid={{ s_unpaid }}">
+            <i class="bi bi-cash-coin"></i> Зарплаты
+        </a>
+    </li>
+</ul>
+
+
+{# ═══════════════════════════════════════════ ВКЛ. 1 — ПО СМЕНАМ #}
+{% if active_tab != 'salary' %}
+
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" class="row g-2 align-items-end">
+            <input type="hidden" name="tab" value="shifts">
+            <div class="col-md-3">
+                <label class="form-label small fw-semibold">Период</label>
+                <select name="period" class="form-select">
+                    <option value="week"   {% if period=='week'   %}selected{% endif %}>Последние 7 дней</option>
+                    <option value="month"  {% if period=='month'  %}selected{% endif %}>Текущий месяц</option>
+                    <option value="30days" {% if period=='30days' %}selected{% endif %}>Последние 30 дней</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small fw-semibold">Филиал</label>
+                <select name="branch_id" class="form-select">
+                    <option value="">Все филиалы</option>
+                    {% for b in branches %}
+                    <option value="{{ b.id }}" {% if selected_branch == b.id|string %}selected{% endif %}>{{ b.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-primary w-100">Применить</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if totals %}
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <div class="card metric-card p-3">
+            <div class="text-muted small">Выручка</div>
+            <div class="fw-bold fs-4">{{ '{:,.0f}'.format(totals.revenue or 0) }} ₽</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card p-3" style="border-left:4px solid #0d6efd">
+            <div class="text-muted small">Доставка</div>
+            <div class="fw-bold fs-4">{{ '{:,.0f}'.format(totals.delivery or 0) }} ₽</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card p-3" style="border-left:4px solid #198754">
+            <div class="text-muted small">Самовывоз</div>
+            <div class="fw-bold fs-4">{{ '{:,.0f}'.format(totals.pickup or 0) }} ₽</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card p-3" style="border-left:4px solid #fd7e14">
+            <div class="text-muted small">Заказов</div>
+            <div class="fw-bold fs-4">{{ totals.orders or 0 }}</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card p-3" style="border-left:4px solid #6c757d">
+            <div class="text-muted small">Наличные</div>
+            <div class="fw-bold fs-4">{{ '{:,.0f}'.format(totals.cash or 0) }} ₽</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card p-3" style="border-left:4px solid #6f42c1">
+            <div class="text-muted small">Безналичные</div>
+            <div class="fw-bold fs-4">{{ '{:,.0f}'.format(totals.card or 0) }} ₽</div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="card mb-4">
+    <div class="card-header bg-light fw-semibold">По сменам</div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Дата</th><th>Филиал</th>
+                        <th class="text-end">Выручка</th>
+                        <th class="text-end">Доставка</th>
+                        <th class="text-end">Самовывоз</th>
+                        <th class="text-center">Заказов</th>
+                        <th class="text-center">Статус</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for s in shifts_data %}
+                <tr>
+                    <td class="fw-semibold">{{ s.date }}</td>
+                    <td>{{ s.branch_name }}</td>
+                    <td class="text-end fw-semibold">{{ '{:,.0f}'.format(s.revenue) }} ₽</td>
+                    <td class="text-end">{{ '{:,.0f}'.format(s.delivery) }} ₽</td>
+                    <td class="text-end">{{ '{:,.0f}'.format(s.pickup) }} ₽</td>
+                    <td class="text-center">{{ s.orders }}</td>
+                    <td class="text-center">
+                        {% if s.status == 'open' %}<span class="badge bg-warning text-dark">Открыта</span>
+                        {% else %}<span class="badge bg-secondary">Закрыта</span>{% endif %}
+                    </td>
+                    <td><a href="{{ url_for('shift_view', shift_id=s.shift_id) }}" class="btn btn-sm btn-outline-secondary">→</a></td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% endif %}{# конец вкладки "Выручка" #}
+
+
+{# ═══════════════════════════════════════════ ВКЛ. 2 — ЗАРПЛАТНЫЙ ОТЧЁТ #}
+{% if active_tab == 'salary' %}
+
+<!-- Фильтры зарплатного отчёта -->
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" class="row g-2 align-items-end">
+            <input type="hidden" name="tab" value="salary">
+            <div class="col-6 col-md-2">
+                <label class="form-label small fw-semibold">С</label>
+                <input type="date" name="s_date_from" value="{{ s_date_from }}" class="form-control">
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label small fw-semibold">По</label>
+                <input type="date" name="s_date_to" value="{{ s_date_to }}" class="form-control">
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label small fw-semibold">Филиал</label>
+                <select name="s_branch_id" class="form-select">
+                    <option value="">Все</option>
+                    {% for b in branches %}
+                    <option value="{{ b.id }}" {% if s_branch_id == b.id|string %}selected{% endif %}>{{ b.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label small fw-semibold">Категория</label>
+                <select name="s_role" class="form-select">
+                    <option value="">Все</option>
+                    {% for code, label in role_labels.items() %}
+                    <option value="{{ code }}" {% if s_role == code %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-auto d-flex align-items-end">
+                <div class="form-check mb-1 ms-2">
+                    <input class="form-check-input" type="checkbox" name="s_unpaid" value="1" id="chkUnpaid"
+                           {% if s_unpaid == '1' %}checked{% endif %}>
+                    <label class="form-check-label small fw-semibold" for="chkUnpaid">Только невыплаченные</label>
+                </div>
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-primary">Применить</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Итоги зарплатного отчёта -->
+{% if sal_report %}
+{% set total_earned = sal_report | sum(attribute='earned') %}
+{% set total_paid   = sal_report | sum(attribute='paid') %}
+{% set total_debt   = sal_report | sum(attribute='debt') %}
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <div class="card p-3" style="border-left:4px solid #0d6efd">
+            <div class="text-muted small">Начислено</div>
+            <div class="fw-bold fs-4">{{ '{:,.0f}'.format(total_earned) }} ₽</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card p-3" style="border-left:4px solid #198754">
+            <div class="text-muted small">Выплачено</div>
+            <div class="fw-bold fs-4 text-success">{{ '{:,.0f}'.format(total_paid) }} ₽</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card p-3" style="border-left:4px solid #dc3545">
+            <div class="text-muted small">Остаток долга</div>
+            <div class="fw-bold fs-4 text-danger">{{ '{:,.0f}'.format(total_debt) }} ₽</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card p-3" style="border-left:4px solid #6c757d">
+            <div class="text-muted small">Сотрудников</div>
+            <div class="fw-bold fs-4">{{ sal_report | length }}</div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Таблица зарплатного отчёта -->
+<div class="card">
+    <div class="card-header bg-light fw-semibold d-flex justify-content-between align-items-center">
+        <span>Зарплаты по сотрудникам</span>
+        <span class="text-muted small">{{ s_date_from | date_fmt }} — {{ s_date_to | date_fmt }}</span>
+    </div>
+    {% if sal_report %}
+    <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th>Сотрудник</th>
+                    <th>Категория</th>
+                    <th>Филиал</th>
+                    <th class="text-center">Смен</th>
+                    <th class="text-end">Начислено</th>
+                    <th class="text-end">Выплачено</th>
+                    <th class="text-end">Долг</th>
+                    <th class="text-center">Статус</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for r in sal_report %}
+            {% set debt = r.debt or 0 %}
+            {% set paid = r.paid or 0 %}
+            {% set earned = r.earned or 0 %}
+            <tr>
+                <td class="fw-semibold">{{ r.name }}</td>
+                <td>
+                    <span class="badge badge-role-{{ r.role }} text-white">
+                        {{ role_labels.get(r.role, r.role) }}
+                    </span>
+                </td>
+                <td class="small text-muted">{{ r.branch_name }}</td>
+                <td class="text-center">{{ r.shifts_count }}</td>
+                <td class="text-end">{{ '{:,.0f}'.format(earned) }} ₽</td>
+                <td class="text-end text-success">{{ '{:,.0f}'.format(paid) }} ₽</td>
+                <td class="text-end {% if debt > 0 %}text-danger fw-bold{% endif %}">
+                    {{ '{:,.0f}'.format(debt) }} ₽
+                </td>
+                <td class="text-center">
+                    {% if debt <= 0 %}
+                        <span class="badge bg-success">Выплачено</span>
+                    {% elif paid > 0 %}
+                        <span class="badge bg-warning text-dark">Частично</span>
+                    {% else %}
+                        <span class="badge bg-danger">Не выплачено</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+            <tfoot class="table-light fw-bold">
+                <tr>
+                    <td colspan="4">Итого</td>
+                    <td class="text-end">{{ '{:,.0f}'.format(sal_report | sum(attribute='earned')) }} ₽</td>
+                    <td class="text-end text-success">{{ '{:,.0f}'.format(sal_report | sum(attribute='paid')) }} ₽</td>
+                    <td class="text-end text-danger">{{ '{:,.0f}'.format(sal_report | sum(attribute='debt')) }} ₽</td>
+                    <td></td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+    {% else %}
+    <div class="card-body text-center text-muted py-5">
+        <i class="bi bi-inbox fs-1 d-block mb-2 opacity-25"></i>
+        <div class="fw-semibold">Нет данных за выбранный период</div>
+        <div class="small mt-1">Попробуйте изменить фильтры</div>
+    </div>
+    {% endif %}
+</div>
+
+{% endif %}{# конец вкладки "Зарплатный отчёт" #}
+
+{% endblock %}

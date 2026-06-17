@@ -1,0 +1,123 @@
+{% extends 'base.html' %}
+{% block title %}История изменений — CRM Суши{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0"><i class="bi bi-clock-history"></i> История изменений</h4>
+    <span class="text-muted small">Показаны последние 300 записей</span>
+</div>
+
+<!-- Фильтры -->
+<div class="card mb-4">
+    <div class="card-body py-3">
+        <form method="get" class="row g-2 align-items-end">
+            <div class="col-auto">
+                <label class="form-label small mb-1">С</label>
+                <input type="date" name="date_from" value="{{ date_from }}" class="form-control form-control-sm">
+            </div>
+            <div class="col-auto">
+                <label class="form-label small mb-1">По</label>
+                <input type="date" name="date_to" value="{{ date_to }}" class="form-control form-control-sm">
+            </div>
+            {% if is_owner %}
+            <div class="col-auto">
+                <label class="form-label small mb-1">Филиал</label>
+                <select name="branch_id" class="form-select form-select-sm">
+                    <option value="">Все филиалы</option>
+                    {% for b in branches %}
+                    <option value="{{ b.id }}" {% if selected_branch == b.id|string %}selected{% endif %}>{{ b.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-auto">
+                <label class="form-label small mb-1">Администратор</label>
+                <select name="user_id" class="form-select form-select-sm">
+                    <option value="">Все</option>
+                    {% for u in users %}
+                    <option value="{{ u.id }}" {% if selected_user == u.id|string %}selected{% endif %}>{{ u.full_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+            <div class="col-auto">
+                <label class="form-label small mb-1">Тип действия</label>
+                <select name="action" class="form-select form-select-sm">
+                    <option value="">Все</option>
+                    {% for k, (label, color) in action_labels.items() %}
+                    <option value="{{ k }}" {% if selected_action == k %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-primary btn-sm">
+                    <i class="bi bi-funnel"></i> Применить
+                </button>
+            </div>
+            {% if selected_branch or selected_user or selected_action or date_from or date_to %}
+            <div class="col-auto">
+                <a href="{{ url_for('history') }}" class="btn btn-outline-secondary btn-sm">Сбросить</a>
+            </div>
+            {% endif %}
+        </form>
+    </div>
+</div>
+
+<!-- Таблица -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center py-2">
+        <span class="fw-semibold">Записей: <span class="text-primary">{{ logs|length }}</span></span>
+        {% if logs %}
+        <span class="text-muted small">Самая ранняя: {{ logs[-1].created_at | datetime_fmt }} · Самая новая: {{ logs[0].created_at | datetime_fmt }}</span>
+        {% endif %}
+    </div>
+
+    {% if logs %}
+    <div class="table-responsive">
+        <table class="table table-hover table-sm mb-0 align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th style="width:110px">Время</th>
+                    <th>Кто</th>
+                    {% if is_owner %}<th>Филиал</th>{% endif %}
+                    <th style="width:105px">Дата смены</th>
+                    <th style="width:130px">Действие</th>
+                    <th>Описание</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in logs %}
+                {% set al = action_labels.get(log.action, (log.action, 'secondary')) %}
+                <tr>
+                    <td class="text-nowrap text-muted small">{{ log.created_at | datetime_fmt }}</td>
+                    <td class="small fw-semibold">{{ log.user_name }}</td>
+                    {% if is_owner %}
+                    <td class="small">{{ log.branch_name or '—' }}</td>
+                    {% endif %}
+                    <td class="small">
+                        {% if log.shift_id and log.shift_date %}
+                        <a href="{{ url_for('shift_view', shift_id=log.shift_id) }}"
+                           class="text-decoration-none">
+                            {{ log.shift_date | date_fmt }}
+                        </a>
+                        {% else %}—{% endif %}
+                    </td>
+                    <td>
+                        <span class="badge bg-{{ al[1] }} text-{% if al[1] == 'warning' %}dark{% else %}white{% endif %}">
+                            {{ al[0] }}
+                        </span>
+                    </td>
+                    <td class="small text-break">{{ log.description or '' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="card-body text-center text-muted py-5">
+        <i class="bi bi-inbox fs-1 d-block mb-2 opacity-25"></i>
+        <div class="fw-semibold">Нет записей за выбранный период</div>
+        <div class="small mt-1">Попробуйте расширить диапазон дат или сбросить фильтры</div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

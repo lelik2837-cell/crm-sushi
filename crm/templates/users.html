@@ -1,0 +1,115 @@
+{% extends 'base.html' %}
+{% block title %}Пользователи{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="fw-bold mb-0"><i class="bi bi-people"></i> Пользователи</h4>
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addUserModal">
+        <i class="bi bi-plus"></i> Добавить пользователя
+    </button>
+</div>
+<div class="card">
+    <div class="card-body p-0">
+        <table class="table table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Имя</th>
+                    <th>Логин</th>
+                    <th>Роль</th>
+                    <th>Филиал</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for u in users %}
+            <tr>
+                <td class="fw-semibold">{{ u.full_name }}</td>
+                <td><code>{{ u.username }}</code></td>
+                <td>
+                    {% if u.role == 'owner' %}<span class="badge bg-warning text-dark">Владелец</span>
+                    {% elif u.role == 'admin' %}<span class="badge bg-primary">Администратор</span>
+                    {% else %}<span class="badge bg-secondary">Сотрудник</span>{% endif %}
+                </td>
+                <td>{{ u.branch_name or '—' }}</td>
+                <td class="text-end">
+                    <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#pwModal{{ u.id }}">
+                        <i class="bi bi-key"></i> Пароль
+                    </button>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Add User Modal -->
+<div class="modal fade" id="addUserModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Добавить пользователя</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('add_user') }}">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Имя *</label>
+                        <input type="text" name="full_name" class="form-control" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Логин *</label>
+                        <input type="text" name="username" class="form-control" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Пароль *</label>
+                        <input type="text" name="password" class="form-control" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Роль</label>
+                        <select name="role" class="form-select">
+                            <option value="admin">Администратор</option>
+                            <option value="employee">Сотрудник</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Филиал</label>
+                        <select name="branch_id" class="form-select">
+                            <option value="">— не назначен —</option>
+                            {% for b in branches %}
+                            <option value="{{ b.id }}">{{ b.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Создать</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Password Reset Modals -->
+{% for u in users %}
+<div class="modal fade" id="pwModal{{ u.id }}" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Сменить пароль — {{ u.full_name }}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('reset_password', user_id=u.id) }}">
+                <div class="modal-body">
+                    <input type="text" name="password" class="form-control" placeholder="Новый пароль" required>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endfor %}
+{% endblock %}

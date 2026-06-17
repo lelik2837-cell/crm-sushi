@@ -1,0 +1,248 @@
+{% extends 'base.html' %}
+{% block title %}Панель директора{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h4 class="fw-bold mb-0">📊 Панель директора</h4>
+        <small class="text-muted">{{ now().strftime('%d %B %Y') if now else '' }}</small>
+    </div>
+</div>
+
+<!-- ══ KPI BLOCKS ══ -->
+{% if kpi_blocks %}
+<div class="card mb-4">
+    <div class="card-header bg-light d-flex align-items-center justify-content-between flex-wrap gap-2">
+        <span class="fw-bold"><i class="bi bi-graph-up"></i> КПИ показатели</span>
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+            <select id="kpi-branch" class="form-select form-select-sm" style="width:150px">
+                <option value="">Все филиалы</option>
+                {% for b in branches %}
+                <option value="{{ b.id }}">{{ b.name }}</option>
+                {% endfor %}
+            </select>
+            <div class="btn-group btn-group-sm" role="group">
+                <button type="button" class="btn btn-outline-secondary kpi-period active" data-period="today">Сегодня</button>
+                <button type="button" class="btn btn-outline-secondary kpi-period" data-period="week">Неделя</button>
+                <button type="button" class="btn btn-outline-secondary kpi-period" data-period="month">Месяц</button>
+                <button type="button" class="btn btn-outline-secondary kpi-period" data-period="custom">Период</button>
+            </div>
+            <div id="custom-range" class="d-none d-flex gap-1">
+                <input type="date" id="kpi-from" class="form-control form-control-sm" style="width:130px">
+                <input type="date" id="kpi-to" class="form-control form-control-sm" style="width:130px">
+                <button class="btn btn-sm btn-primary" onclick="loadKpi()">OK</button>
+            </div>
+        </div>
+    </div>
+    <div class="card-body">
+        <div class="row g-3" id="kpi-blocks-row">
+            <!-- populated by JS -->
+            <div class="col-12 text-center text-muted py-3" id="kpi-loading">
+                <div class="spinner-border spinner-border-sm"></div> Загрузка...
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- ══ WEEKLY STATS ══ -->
+{% if weekly %}
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <div class="card metric-card p-3">
+            <div class="text-muted small">Выручка за 7 дней</div>
+            <div class="fw-bold fs-4 metric-value">{{ '{:,.0f}'.format(weekly.total or 0) }} ₽</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card p-3" style="border-left: 4px solid #0d6efd">
+            <div class="text-muted small">Доставка</div>
+            <div class="fw-bold fs-4">{{ '{:,.0f}'.format(weekly.delivery or 0) }} ₽</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card p-3" style="border-left: 4px solid #198754">
+            <div class="text-muted small">Самовывоз</div>
+            <div class="fw-bold fs-4">{{ '{:,.0f}'.format(weekly.pickup or 0) }} ₽</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card p-3" style="border-left: 4px solid #fd7e14">
+            <div class="text-muted small">Заказов за 7 дней</div>
+            <div class="fw-bold fs-4">{{ weekly.orders or 0 }}</div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- ══ OPEN SHIFTS ══ -->
+{% if open_shifts %}
+<div class="card mb-4">
+    <div class="card-header bg-warning text-dark">
+        <i class="bi bi-clock"></i> Открытые смены сегодня ({{ open_shifts|length }})
+    </div>
+    <div class="card-body p-0">
+        <div class="list-group list-group-flush">
+        {% for s in open_shifts %}
+        <a href="{{ url_for('shift_view', shift_id=s.id) }}"
+           class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-shop"></i> {{ s.branch_name }}</span>
+            <span class="badge bg-warning text-dark">Открыта</span>
+        </a>
+        {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- ══ OPEN SHIFT FORM ══ -->
+<div class="card mb-4">
+    <div class="card-header bg-light">
+        <i class="bi bi-plus-circle"></i> Открыть смену сегодня
+    </div>
+    <div class="card-body">
+        <form method="POST" action="{{ url_for('open_shift') }}" class="row g-2 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label fw-semibold small">Филиал</label>
+                <select name="branch_id" class="form-select" required>
+                    {% for b in branches %}
+                    <option value="{{ b.id }}">{{ b.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <button type="submit" class="btn btn-primary w-100">
+                    <i class="bi bi-play-circle"></i> Открыть смену
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ══ RECENT SHIFTS ══ -->
+<div class="card">
+    <div class="card-header bg-light">
+        <i class="bi bi-calendar3"></i> Смены за последние 7 дней
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Дата</th>
+                        <th>Филиал</th>
+                        <th class="text-end">Выручка</th>
+                        <th class="text-center">Заказов</th>
+                        <th class="text-center">Статус</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for s in stats %}
+                {% if s.shift_id %}
+                <tr>
+                    <td class="fw-semibold">{{ s.date }}</td>
+                    <td>{{ s.name }}</td>
+                    <td class="text-end fw-semibold">{{ '{:,.0f}'.format(s.revenue) }} ₽</td>
+                    <td class="text-center">{{ s.orders }}</td>
+                    <td class="text-center">
+                        {% if s.status == 'open' %}
+                        <span class="badge bg-warning text-dark">Открыта</span>
+                        {% else %}
+                        <span class="badge bg-secondary">Закрыта</span>
+                        {% endif %}
+                    </td>
+                    <td><a href="{{ url_for('shift_view', shift_id=s.shift_id) }}"
+                           class="btn btn-sm btn-outline-primary">Открыть</a></td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+{% if kpi_blocks %}
+<script>
+const KPI_COLORS = {
+    primary: '#0d6efd', success: '#198754', danger: '#dc3545',
+    warning: '#ffc107', info: '#0dcaf0', dark: '#212529'
+};
+
+let currentPeriod = 'today';
+
+function getPeriodDates(period) {
+    const today = new Date();
+    const fmt = d => d.toISOString().split('T')[0];
+    if (period === 'today') return [fmt(today), fmt(today)];
+    if (period === 'week') {
+        const d = new Date(today); d.setDate(d.getDate() - 6);
+        return [fmt(d), fmt(today)];
+    }
+    if (period === 'month') {
+        return [fmt(today).slice(0,7) + '-01', fmt(today)];
+    }
+    if (period === 'custom') {
+        const f = document.getElementById('kpi-from').value;
+        const t = document.getElementById('kpi-to').value;
+        return [f || fmt(today), t || fmt(today)];
+    }
+    return [fmt(today), fmt(today)];
+}
+
+function loadKpi() {
+    const [dateFrom, dateTo] = getPeriodDates(currentPeriod);
+    const branchId = document.getElementById('kpi-branch').value;
+    let url = `/api/kpi-values?date_from=${dateFrom}&date_to=${dateTo}`;
+    if (branchId) url += `&branch_id=${branchId}`;
+
+    document.getElementById('kpi-loading').classList.remove('d-none');
+    document.getElementById('kpi-blocks-row').innerHTML =
+        '<div class="col-12 text-center text-muted py-3" id="kpi-loading"><div class="spinner-border spinner-border-sm"></div> Загрузка...</div>';
+
+    fetch(url).then(r => r.json()).then(data => {
+        if (!data.ok) return;
+        const row = document.getElementById('kpi-blocks-row');
+        row.innerHTML = '';
+        data.blocks.forEach(b => {
+            const val = b.value !== null ? b.value.toLocaleString('ru-RU', {maximumFractionDigits: 0}) : '—';
+            const color = KPI_COLORS[b.color] || '#0d6efd';
+            const div = document.createElement('div');
+            div.className = 'col-6 col-md-3 col-lg-2';
+            div.innerHTML = `
+                <div class="card p-3 h-100" style="border-left:4px solid ${color}">
+                    <div class="text-muted small mb-1">${b.title}</div>
+                    <div class="fw-bold fs-5" style="color:${color}">${val} ${b.unit}</div>
+                </div>`;
+            row.appendChild(div);
+        });
+        if (data.blocks.length === 0) {
+            row.innerHTML = '<div class="col-12 text-center text-muted py-2">Нет активных блоков. Добавьте в <a href="/settings#tab-kpi">Настройках</a>.</div>';
+        }
+    });
+}
+
+document.querySelectorAll('.kpi-period').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.kpi-period').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentPeriod = btn.dataset.period;
+        document.getElementById('custom-range').classList.toggle('d-none', currentPeriod !== 'custom');
+        if (currentPeriod !== 'custom') loadKpi();
+    });
+});
+
+document.getElementById('kpi-branch').addEventListener('change', loadKpi);
+
+// Init today's dates for custom range
+const today = new Date().toISOString().split('T')[0];
+document.getElementById('kpi-from').value = today;
+document.getElementById('kpi-to').value = today;
+
+loadKpi();
+</script>
+{% endif %}
+{% endblock %}

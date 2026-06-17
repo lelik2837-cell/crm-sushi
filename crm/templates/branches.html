@@ -1,0 +1,52 @@
+{% extends 'base.html' %}
+{% block title %}Филиалы{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="fw-bold mb-0"><i class="bi bi-shop"></i> Филиалы</h4>
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addBranchModal">
+        <i class="bi bi-plus"></i> Добавить филиал
+    </button>
+</div>
+<div class="card">
+    <div class="card-body p-0">
+        <table class="table table-hover mb-0">
+            <thead class="table-light">
+                <tr><th>Название</th><th class="text-center">Статус</th><th>Добавлен</th></tr>
+            </thead>
+            <tbody>
+            {% for b in branches %}
+            <tr>
+                <td class="fw-semibold">{{ b.name }}</td>
+                <td class="text-center">
+                    {% if b.is_active %}<span class="badge bg-success">Активен</span>
+                    {% else %}<span class="badge bg-secondary">Неактивен</span>{% endif %}
+                </td>
+                <td class="text-muted small">{{ b.created_at }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="modal fade" id="addBranchModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Добавить филиал</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('add_branch') }}">
+                <div class="modal-body">
+                    <label class="form-label fw-semibold">Название филиала</label>
+                    <input type="text" name="name" class="form-control" placeholder="Например: ЦЕНТР" required>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Добавить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

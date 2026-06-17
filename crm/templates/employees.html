@@ -1,0 +1,280 @@
+{% extends 'base.html' %}
+{% block title %}Сотрудники{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="fw-bold mb-0"><i class="bi bi-person-badge"></i> Сотрудники</h4>
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addEmpModal">
+        <i class="bi bi-plus"></i> Добавить сотрудника
+    </button>
+</div>
+
+{% for branch in branches %}
+{% set branch_emps = employees | selectattr('branch_id', 'equalto', branch.id) | list %}
+{% if branch_emps %}
+<div class="card mb-4">
+    <div class="card-header bg-light fw-bold">
+        <i class="bi bi-shop"></i> {{ branch.name }}
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Фамилия</th>
+                        <th>Имя</th>
+                        <th>Роль</th>
+                        <th class="text-end">₽/час</th>
+                        <th class="text-end">₽/км</th>
+                        <th class="text-end">₽/заказ</th>
+                        <th class="text-center">Статус</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for emp in branch_emps %}
+                <tr class="{% if not emp.is_active %}table-secondary opacity-50{% endif %}">
+                    <td class="fw-semibold">{{ emp.last_name or emp.full_name }}</td>
+                    <td>{{ emp.first_name or '' }}</td>
+                    <td>
+                        <span class="badge" style="background:{% if emp.role=='admin' %}#6f42c1{% elif emp.role=='sushi' %}#0d6efd{% elif emp.role=='packer' %}#198754{% elif emp.role=='courier' %}#fd7e14{% elif emp.role=='cleaner' %}#6c757d{% else %}#dc3545{% endif %}">
+                            {{ role_labels.get(emp.role, emp.role) }}
+                        </span>
+                    </td>
+                    <td class="text-end">{{ emp.rate }}</td>
+                    <td class="text-end text-muted">{% if emp.role == 'courier' %}{{ emp.rate_per_km }}{% else %}—{% endif %}</td>
+                    <td class="text-end text-muted">{% if emp.role == 'courier' %}{{ emp.rate_per_order }}{% else %}—{% endif %}</td>
+                    <td class="text-center">
+                        {% if emp.is_active %}<span class="badge bg-success">Активен</span>
+                        {% else %}<span class="badge bg-secondary">Неактивен</span>{% endif %}
+                    </td>
+                    <td class="text-end">
+                        <button class="btn btn-sm btn-outline-primary me-1" data-bs-toggle="modal"
+                            data-bs-target="#editModal{{ emp.id }}">
+                            <i class="bi bi-pencil"></i> Редактировать
+                        </button>
+                        <form method="POST" action="{{ url_for('toggle_employee', emp_id=emp.id) }}" class="d-inline">
+                            <button class="btn btn-sm {% if emp.is_active %}btn-outline-danger{% else %}btn-outline-success{% endif %}">
+                                {% if emp.is_active %}<i class="bi bi-pause"></i>{% else %}<i class="bi bi-play"></i>{% endif %}
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endfor %}
+
+<!-- Add Employee Modal -->
+<div class="modal fade" id="addEmpModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Добавить сотрудника</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('add_employee') }}">
+                <div class="modal-body">
+                    {% if is_owner %}
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Филиал</label>
+                        <select name="branch_id" class="form-select" required>
+                            {% for b in branches %}
+                            <option value="{{ b.id }}">{{ b.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% endif %}
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Фамилия *</label>
+                            <input type="text" name="last_name" class="form-control" placeholder="Иванов" required>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Имя</label>
+                            <input type="text" name="first_name" class="form-control" placeholder="Иван">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold"><i class="bi bi-geo-alt me-1"></i>Адрес развоза</label>
+                        <input type="text" name="address" class="form-control" placeholder="ул. Пушкина, д. 5, кв. 12">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Роль</label>
+                        <select name="role" id="add-role-sel" class="form-select" onchange="toggleCourierFields('add', this.value)">
+                            {% for code, label in role_labels.items() %}
+                            <option value="{{ code }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="row g-2">
+                        <div class="col-4">
+                            <label class="form-label fw-semibold">₽/час</label>
+                            <input type="number" name="rate" class="form-control" value="230" step="0.01">
+                        </div>
+                        <div class="col-4 courier-only-add" style="display:none;">
+                            <label class="form-label fw-semibold">₽/км</label>
+                            <input type="number" name="rate_per_km" class="form-control" value="10" step="0.01">
+                        </div>
+                        <div class="col-4 courier-only-add" style="display:none;">
+                            <label class="form-label fw-semibold">₽/заказ</label>
+                            <input type="number" name="rate_per_order" class="form-control" value="100" step="0.01">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Добавить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Employee Modals -->
+{% for emp in employees %}
+{% set is_courier = emp.role == 'courier' %}
+<div class="modal fade" id="editModal{{ emp.id }}" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-pencil-square me-2"></i>{{ emp.full_name }}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('edit_employee', emp_id=emp.id) }}">
+                <div class="modal-body">
+
+                    <!-- Имя -->
+                    <div class="row g-2 mb-4">
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Фамилия *</label>
+                            <input type="text" name="last_name" class="form-control"
+                                value="{{ emp.last_name or '' }}" placeholder="Иванов" required>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Имя</label>
+                            <input type="text" name="first_name" class="form-control"
+                                value="{{ emp.first_name or '' }}" placeholder="Иван">
+                        </div>
+                    </div>
+
+                    <!-- Адрес -->
+                    <div class="border rounded p-3 mb-3">
+                        <div class="fw-semibold mb-2"><i class="bi bi-geo-alt me-1"></i>Адрес развоза</div>
+                        <div class="mb-2">
+                            <input type="text" name="address" class="form-control"
+                                placeholder="ул. Пушкина, д. 5, кв. 12"
+                                value="{{ address_history[emp.id][0].address if address_history[emp.id] else '' }}">
+                        </div>
+                        <div class="row g-2 align-items-center">
+                            <div class="col-auto">
+                                <label class="form-label small mb-0 text-muted">Действует с</label>
+                            </div>
+                            <div class="col">
+                                <input type="date" name="address_from" class="form-control form-control-sm"
+                                    value="{{ today }}">
+                            </div>
+                        </div>
+                        {% if address_history[emp.id] %}
+                        <div class="mt-2">
+                            <div class="text-muted small fw-semibold mb-1">История:</div>
+                            {% for h in address_history[emp.id][:3] %}
+                            <div class="small text-muted">{{ h.valid_from }} — {{ h.address }}</div>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Ставка -->
+                    <div class="border rounded p-3">
+                        <div class="fw-semibold mb-2">Ставка</div>
+                        {% set role_tmpls = tmpls_for_emp(emp) | selectattr('role', 'equalto', emp.role) | list %}
+                        {% if role_tmpls %}
+                        <div class="mb-3">
+                            <label class="form-label small text-muted">Выбрать из шаблонов</label>
+                            <select class="form-select form-select-sm"
+                                onchange="applyRateTemplate(this, {{ emp.id }})">
+                                <option value="">— выбрать шаблон —</option>
+                                {% for t in role_tmpls %}
+                                <option value="{{ t.id }}"
+                                    data-rate="{{ t.rate }}"
+                                    data-km="{{ t.rate_per_km }}"
+                                    data-ord="{{ t.rate_per_order }}">
+                                    {{ t.name }} ({{ t.rate }}₽/ч{% if is_courier and t.rate_per_km %}, {{ t.rate_per_km }}₽/км{% endif %})
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        {% endif %}
+                        <div class="row g-2 mb-2">
+                            <div class="col{% if not is_courier %}-12{% else %}-4{% endif %}">
+                                <label class="form-label small">₽/час</label>
+                                <input type="number" name="rate" id="rate-{{ emp.id }}" class="form-control" value="{{ emp.rate }}" step="0.01">
+                            </div>
+                            {% if is_courier %}
+                            <div class="col-4">
+                                <label class="form-label small">₽/км</label>
+                                <input type="number" name="rate_per_km" id="rate-km-{{ emp.id }}" class="form-control" value="{{ emp.rate_per_km }}" step="0.01">
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label small">₽/заказ</label>
+                                <input type="number" name="rate_per_order" id="rate-ord-{{ emp.id }}" class="form-control" value="{{ emp.rate_per_order }}" step="0.01">
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div class="row g-2 align-items-center">
+                            <div class="col-auto">
+                                <label class="form-label small mb-0 text-muted">Действует с</label>
+                            </div>
+                            <div class="col">
+                                <input type="date" name="rate_from" class="form-control form-control-sm"
+                                    value="{{ today }}">
+                            </div>
+                        </div>
+                        {% if rate_history[emp.id] %}
+                        <div class="mt-2">
+                            <div class="text-muted small fw-semibold mb-1">История:</div>
+                            {% for h in rate_history[emp.id][:3] %}
+                            <div class="small text-muted">{{ h.effective_from }} — {{ h.rate }}₽/ч{% if is_courier and h.rate_per_km %}, {{ h.rate_per_km }}₽/км{% endif %}{% if is_courier and h.rate_per_order %}, {{ h.rate_per_order }}₽/заказ{% endif %}</div>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endfor %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function applyRateTemplate(sel, empId) {
+    if (!sel.value) return;
+    const opt = sel.options[sel.selectedIndex];
+    const r = document.getElementById('rate-'     + empId);
+    const k = document.getElementById('rate-km-'  + empId);
+    const o = document.getElementById('rate-ord-' + empId);
+    if (r) r.value = opt.dataset.rate || 0;
+    if (k) k.value = opt.dataset.km   || 0;
+    if (o) o.value = opt.dataset.ord  || 0;
+    sel.value = '';
+}
+
+function toggleCourierFields(prefix, role) {
+    document.querySelectorAll('.courier-only-' + prefix).forEach(el => {
+        el.style.display = role === 'courier' ? '' : 'none';
+    });
+}
+</script>
+{% endblock %}
