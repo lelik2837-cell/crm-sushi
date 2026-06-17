@@ -814,15 +814,28 @@ def reopen_shift(shift_id):
 @login_required
 def employees():
     role = session.get('role')
+    selected_branches = [bid for bid in request.args.getlist('branch_ids') if bid.isdigit()] if role == 'owner' else []
     with get_db() as conn:
         if role == 'owner':
-            emps = conn.execute('''
-                SELECT e.*, b.name as branch_name
-                FROM employees e LEFT JOIN branches b ON b.id=e.branch_id
-                ORDER BY b.name, e.role, e.full_name
-            ''').fetchall()
-            branches = conn.execute('SELECT * FROM branches WHERE is_active=1').fetchall()
+            all_branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+            if selected_branches:
+                ids_str = ','.join(str(int(b)) for b in selected_branches)
+                emps = conn.execute(f'''
+                    SELECT e.*, b.name as branch_name
+                    FROM employees e LEFT JOIN branches b ON b.id=e.branch_id
+                    WHERE e.branch_id IN ({ids_str})
+                    ORDER BY b.name, e.role, e.full_name
+                ''').fetchall()
+                branches = [b for b in all_branches if str(b['id']) in selected_branches]
+            else:
+                emps = conn.execute('''
+                    SELECT e.*, b.name as branch_name
+                    FROM employees e LEFT JOIN branches b ON b.id=e.branch_id
+                    ORDER BY b.name, e.role, e.full_name
+                ''').fetchall()
+                branches = all_branches
         else:
+            all_branches = []
             branch_id = session.get('branch_id')
             emps = conn.execute(
                 'SELECT e.*, b.name as branch_name FROM employees e '
@@ -865,6 +878,8 @@ def employees():
         return result
 
     return render_template('employees.html', employees=emps, branches=branches,
+                           all_branches=all_branches,
+                           selected_branches=selected_branches,
                            role_labels=ROLE_LABELS, is_owner=(role == 'owner'),
                            rate_history=rate_history, address_history=address_history,
                            rate_templates=all_tmpls,
