@@ -65,8 +65,21 @@
             </div>
             <form method="POST" action="{{ url_for('add_branch') }}">
                 <div class="modal-body">
-                    <label class="form-label fw-semibold">Название филиала</label>
-                    <input type="text" name="name" class="form-control" placeholder="Например: ЦЕНТР" required>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Название филиала</label>
+                        <input type="text" name="name" class="form-control" placeholder="Например: ЦЕНТР" required>
+                    </div>
+                    <div class="mb-1">
+                        <label class="form-label fw-semibold">IP-адрес (необязательно)</label>
+                        <input type="text" name="allowed_ip" class="form-control font-monospace"
+                               placeholder="Например: 192.168.1.10">
+                        <div class="form-text">
+                            Сотрудники с этого IP будут ограничены только этим филиалом.
+                            <a href="#" class="fill-my-ip" data-ip="{{ my_ip }}">
+                                Вставить мой IP ({{ my_ip }})
+                            </a>
+                        </div>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>

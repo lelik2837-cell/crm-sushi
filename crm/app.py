@@ -1260,8 +1260,9 @@ def add_branch():
     if not name:
         flash('Введите название филиала', 'danger')
         return redirect(url_for('branches'))
+    allowed_ip = request.form.get('allowed_ip', '').strip() or None
     with get_db() as conn:
-        conn.execute('INSERT INTO branches (name) VALUES (?)', (name,))
+        conn.execute('INSERT INTO branches (name, allowed_ip) VALUES (?,?)', (name, allowed_ip))
         conn.commit()
     flash(f'Филиал {name} добавлен', 'success')
     return redirect(url_for('branches'))
