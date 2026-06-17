@@ -312,7 +312,6 @@
                 <tr>
                     <td>Итого</td>
                     {% for emp in pivot_emps %}
-                    {% set emp_earned = pivot_rows | sum(attribute='emps') %}
                     {% set col_total = namespace(v=0) %}
                     {% for row in pivot_rows %}
                         {% set cell = row.emps.get(emp) %}
