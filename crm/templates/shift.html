@@ -103,12 +103,16 @@
   .courier-row:last-of-type { border-bottom: none; }
 
   /* EXPENSES */
-  .expense-header, .expense-row {
+  .expense-header {
     display: grid; gap: 8px; grid-template-columns: 2fr 90px 90px 50px 24px; align-items: center;
+    padding-bottom: 6px; border-bottom: 1.5px solid #e5e7eb; margin-bottom: 2px;
   }
-  .expense-header { padding-bottom: 6px; border-bottom: 1.5px solid #e5e7eb; margin-bottom: 2px; }
-  .expense-row { padding: 8px 0; border-bottom: 1px solid #f3f4f6; }
+  .expense-row { padding: 6px 0; border-bottom: 1px solid #f3f4f6; display: flex; flex-direction: column; gap: 5px; }
   .expense-row:last-child { border-bottom: none; }
+  .expense-row-main { display: grid; gap: 8px; grid-template-columns: 2fr 90px 90px 50px 24px; align-items: center; }
+  .exp-note { width: 100%; font-size: 12px; color: #374151; border: 1.5px solid #e5e7eb; border-radius: 6px; padding: 5px 8px; background: #f9fafb; outline: none; resize: none; }
+  .exp-note:focus { border-color: #93c5fd; background: #fff; }
+  .exp-note-view { font-size: 12px; color: #6b7280; font-style: italic; padding: 0; }
   .row-del { width: 22px; height: 22px; border-radius: 5px; background: #fee2e2; color: #ef4444; border: none; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
   .pay-type-sel { padding: 4px 24px 4px 7px; border: 1.5px solid #e5e7eb; border-radius: 6px; font-size: 12px; color: #374151; background: #f9fafb; appearance: none; background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%236B7280' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 6px center; width: 100%; }
   .check-box { width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid #d1d5db; background: #f9fafb; flex-shrink: 0; cursor: pointer; appearance: none; }
@@ -296,35 +300,41 @@
       {% for exp in expenses %}
       <div class="expense-row" data-id="{{ exp.id }}">
         {% if can_edit %}
-        <select class="field-select field-input-sm exp-cat" style="font-size:12px; padding:5px 24px 5px 8px;">
-          {% for parent, children in expense_cats_groups %}
-          {% if children %}
-          <optgroup label="{{ parent.label }}">
-            {% for child in children %}
-            <option value="{{ child.code }}" {% if exp.category == child.code %}selected{% endif %}>{{ child.label }}</option>
+        <div class="expense-row-main">
+          <select class="field-select field-input-sm exp-cat" style="font-size:12px; padding:5px 24px 5px 8px;">
+            {% for parent, children in expense_cats_groups %}
+            {% if children %}
+            <optgroup label="{{ parent.label }}">
+              {% for child in children %}
+              <option value="{{ child.code }}" {% if exp.category == child.code %}selected{% endif %}>{{ child.label }}</option>
+              {% endfor %}
+            </optgroup>
+            {% else %}
+            <option value="{{ parent.code }}" {% if exp.category == parent.code %}selected{% endif %}>{{ parent.label }}</option>
+            {% endif %}
             {% endfor %}
-          </optgroup>
-          {% else %}
-          <option value="{{ parent.code }}" {% if exp.category == parent.code %}selected{% endif %}>{{ parent.label }}</option>
-          {% endif %}
-          {% endfor %}
-        </select>
-        <input class="mini-input exp-amount money-field" type="text" inputmode="numeric" placeholder="0"
-          value="{{ ((exp.amount_cash or 0) + (exp.amount_card or 0))|int }}">
-        <select class="pay-type-sel exp-paytype" style="font-size:12px;">
-          <option value="cash" {% if (exp.amount_cash or 0) > 0 %}selected{% endif %}>Наличные</option>
-          <option value="card" {% if (exp.amount_card or 0) > 0 %}selected{% endif %}>Карта</option>
-        </select>
-        <div style="display:flex;justify-content:center;">
-          <input type="checkbox" class="check-box exp-gulash" {% if exp.is_gulash %}checked{% endif %} onchange="saveExpRow(this)">
+          </select>
+          <input class="mini-input exp-amount money-field" type="text" inputmode="numeric" placeholder="0"
+            value="{{ ((exp.amount_cash or 0) + (exp.amount_card or 0))|int }}">
+          <select class="pay-type-sel exp-paytype" style="font-size:12px;">
+            <option value="cash" {% if (exp.amount_cash or 0) > 0 %}selected{% endif %}>Наличные</option>
+            <option value="card" {% if (exp.amount_card or 0) > 0 %}selected{% endif %}>Карта</option>
+          </select>
+          <div style="display:flex;justify-content:center;">
+            <input type="checkbox" class="check-box exp-gulash" {% if exp.is_gulash %}checked{% endif %} onchange="saveExpRow(this)">
+          </div>
+          <button class="row-del" onclick="deleteExp(this, {{ exp.id }})">✕</button>
         </div>
-        <button class="row-del" onclick="deleteExp(this, {{ exp.id }})">✕</button>
+        <textarea class="exp-note" rows="1" placeholder="Комментарий...">{{ exp.description or '' }}</textarea>
         {% else %}
-        <span style="font-size:13px;">{% for c, l in expense_categories %}{% if c == exp.category %}{{ l }}{% endif %}{% endfor %}</span>
-        <span style="font-size:13px; text-align:right;">{{ ((exp.amount_cash or 0) + (exp.amount_card or 0))|int }} ₽</span>
-        <span style="font-size:12px; color:#6b7280;">{% if (exp.amount_cash or 0) > 0 %}Нал{% else %}Карта{% endif %}</span>
-        <div style="text-align:center;">{% if exp.is_gulash %}✓{% endif %}</div>
-        <div></div>
+        <div class="expense-row-main">
+          <span style="font-size:13px;">{% for c, l in expense_categories %}{% if c == exp.category %}{{ l }}{% endif %}{% endfor %}</span>
+          <span style="font-size:13px; text-align:right;">{{ ((exp.amount_cash or 0) + (exp.amount_card or 0))|int }} ₽</span>
+          <span style="font-size:12px; color:#6b7280;">{% if (exp.amount_cash or 0) > 0 %}Нал{% else %}Карта{% endif %}</span>
+          <div style="text-align:center;">{% if exp.is_gulash %}✓{% endif %}</div>
+          <div></div>
+        </div>
+        {% if exp.description %}<div class="exp-note-view">{{ exp.description }}</div>{% endif %}
         {% endif %}
       </div>
       {% endfor %}
@@ -764,22 +774,26 @@ function addExpenseRow() {
   const row = document.createElement('div');
   row.className = 'expense-row'; row.dataset.id = 'new';
   row.innerHTML = `
-    <select class="field-select field-input-sm exp-cat" style="font-size:12px; padding:5px 24px 5px 8px;">
-      ${buildCatOptions(null)}
-    </select>
-    <input class="mini-input exp-amount money-field" type="text" inputmode="numeric" placeholder="0" value="">
-    <select class="pay-type-sel exp-paytype" style="font-size:12px;">
-      <option value="cash">Наличные</option><option value="card">Карта</option>
-    </select>
-    <div style="display:flex;justify-content:center;">
-      <input type="checkbox" class="check-box exp-gulash" onchange="saveExpRow(this)">
+    <div class="expense-row-main">
+      <select class="field-select field-input-sm exp-cat" style="font-size:12px; padding:5px 24px 5px 8px;">
+        ${buildCatOptions(null)}
+      </select>
+      <input class="mini-input exp-amount money-field" type="text" inputmode="numeric" placeholder="0" value="">
+      <select class="pay-type-sel exp-paytype" style="font-size:12px;">
+        <option value="cash">Наличные</option><option value="card">Карта</option>
+      </select>
+      <div style="display:flex;justify-content:center;">
+        <input type="checkbox" class="check-box exp-gulash" onchange="saveExpRow(this)">
+      </div>
+      <button class="row-del" onclick="deleteExp(this, null)">✕</button>
     </div>
-    <button class="row-del" onclick="deleteExp(this, null)">✕</button>`;
+    <textarea class="exp-note" rows="1" placeholder="Комментарий..."></textarea>`;
   document.getElementById('expenses-body').appendChild(row);
   initMoneyField(row.querySelector('.exp-amount'));
   row.querySelector('.exp-amount').addEventListener('change', () => { saveExpRow(row.querySelector('.exp-amount')); updateKassa(); });
   row.querySelector('.exp-cat').addEventListener('change', () => saveExpRow(row.querySelector('.exp-cat')));
   row.querySelector('.exp-paytype').addEventListener('change', () => { saveExpRow(row.querySelector('.exp-paytype')); updateKassa(); });
+  row.querySelector('.exp-note').addEventListener('blur', () => saveExpRow(row.querySelector('.exp-note')));
 }
 
 function saveExpRow(el) {
@@ -791,7 +805,7 @@ function saveExpRow(el) {
   const data = {
     id: id,
     category: row.querySelector('.exp-cat')?.value || 'other',
-    description: '',
+    description: (row.querySelector('.exp-note')?.value || '').trim(),
     amount_cash: type === 'cash' ? amt : 0,
     amount_card: type === 'card' ? amt : 0,
     is_gulash: row.querySelector('.exp-gulash')?.checked || false,
@@ -819,6 +833,7 @@ document.querySelectorAll('#expenses-body [data-id]').forEach(row => {
   row.querySelector('.exp-amount')?.addEventListener('change', () => { saveExpRow(row.querySelector('.exp-amount')); updateKassa(); });
   row.querySelector('.exp-cat')?.addEventListener('change', () => saveExpRow(row.querySelector('.exp-cat')));
   row.querySelector('.exp-paytype')?.addEventListener('change', () => { saveExpRow(row.querySelector('.exp-paytype')); updateKassa(); });
+  row.querySelector('.exp-note')?.addEventListener('blur', () => saveExpRow(row.querySelector('.exp-note')));
 });
 
 // ── Staff ─────────────────────────────────────────────────────────────────────
