@@ -317,7 +317,7 @@
           <input class="mini-input exp-amount money-field" type="text" inputmode="numeric" placeholder="0"
             value="{{ ((exp.amount_cash or 0) + (exp.amount_card or 0))|int }}">
           <select class="pay-type-sel exp-paytype" style="font-size:12px;">
-            <option value="cash" {% if (exp.amount_cash or 0) > 0 %}selected{% endif %}>Наличные</option>
+            <option value="cash" {% if (exp.amount_card or 0) == 0 %}selected{% endif %}>Наличные</option>
             <option value="card" {% if (exp.amount_card or 0) > 0 %}selected{% endif %}>Карта</option>
           </select>
           <div style="display:flex;justify-content:center;">
@@ -635,15 +635,21 @@
 const SHIFT_ID = {{ shift.id }};
 const CAN_EDIT = {{ 'true' if can_edit else 'false' }};
 const EXPENSE_CATS_GROUPS = {{ expense_cats_groups | tojson }};
+function getFirstCatCode() {
+  if (!EXPENSE_CATS_GROUPS.length) return 'other';
+  const [parent, children] = EXPENSE_CATS_GROUPS[0];
+  return children.length ? children[0].code : parent.code;
+}
 function buildCatOptions(selectedCode) {
+  const sel = selectedCode || getFirstCatCode();
   return EXPENSE_CATS_GROUPS.map(([parent, children]) => {
     if (children.length) {
       const opts = children.map(c =>
-        `<option value="${c.code}"${c.code===selectedCode?' selected':''}>${c.label}</option>`
+        `<option value="${c.code}"${c.code===sel?' selected':''}>${c.label}</option>`
       ).join('');
       return `<optgroup label="${parent.label}">${opts}</optgroup>`;
     }
-    return `<option value="${parent.code}"${parent.code===selectedCode?' selected':''}>${parent.label}</option>`;
+    return `<option value="${parent.code}"${parent.code===sel?' selected':''}>${parent.label}</option>`;
   }).join('');
 }
 
@@ -780,7 +786,7 @@ function addExpenseRow() {
       </select>
       <input class="mini-input exp-amount money-field" type="text" inputmode="numeric" placeholder="0" value="">
       <select class="pay-type-sel exp-paytype" style="font-size:12px;">
-        <option value="cash">Наличные</option><option value="card">Карта</option>
+        <option value="cash" selected>Наличные</option><option value="card">Карта</option>
       </select>
       <div style="display:flex;justify-content:center;">
         <input type="checkbox" class="check-box exp-gulash" onchange="saveExpRow(this)">
