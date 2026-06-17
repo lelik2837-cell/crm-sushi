@@ -317,7 +317,7 @@
           <input class="mini-input exp-amount money-field" type="text" inputmode="numeric" placeholder="0"
             value="{{ ((exp.amount_cash or 0) + (exp.amount_card or 0))|int }}">
           <select class="pay-type-sel exp-paytype" style="font-size:12px;">
-            <option value="cash" {% if (exp.amount_card or 0) == 0 %}selected{% endif %}>Наличные</option>
+            <option value="cash" {% if (exp.amount_cash or 0) > 0 or (exp.amount_card or 0) == 0 %}selected{% endif %}>Наличные</option>
             <option value="card" {% if (exp.amount_card or 0) > 0 %}selected{% endif %}>Карта</option>
           </select>
           <div style="display:flex;justify-content:center;">
@@ -641,16 +641,17 @@ function getFirstCatCode() {
   return children.length ? children[0].code : parent.code;
 }
 function buildCatOptions(selectedCode) {
-  const sel = selectedCode || getFirstCatCode();
-  return EXPENSE_CATS_GROUPS.map(([parent, children]) => {
+  const placeholder = `<option value="" disabled${!selectedCode?' selected':''}>— выбрать расход —</option>`;
+  const opts = EXPENSE_CATS_GROUPS.map(([parent, children]) => {
     if (children.length) {
-      const opts = children.map(c =>
-        `<option value="${c.code}"${c.code===sel?' selected':''}>${c.label}</option>`
+      const inner = children.map(c =>
+        `<option value="${c.code}"${c.code===selectedCode?' selected':''}>${c.label}</option>`
       ).join('');
-      return `<optgroup label="${parent.label}">${opts}</optgroup>`;
+      return `<optgroup label="${parent.label}">${inner}</optgroup>`;
     }
-    return `<option value="${parent.code}"${parent.code===sel?' selected':''}>${parent.label}</option>`;
+    return `<option value="${parent.code}"${parent.code===selectedCode?' selected':''}>${parent.label}</option>`;
   }).join('');
+  return placeholder + opts;
 }
 
 // ── Money field formatting ────────────────────────────────────────────────────
@@ -786,7 +787,8 @@ function addExpenseRow() {
       </select>
       <input class="mini-input exp-amount money-field" type="text" inputmode="numeric" placeholder="0" value="">
       <select class="pay-type-sel exp-paytype" style="font-size:12px;">
-        <option value="cash" selected>Наличные</option><option value="card">Карта</option>
+        <option value="" disabled selected>— выбрать —</option>
+        <option value="cash">Наличные</option><option value="card">Карта</option>
       </select>
       <div style="display:flex;justify-content:center;">
         <input type="checkbox" class="check-box exp-gulash" onchange="saveExpRow(this)">
@@ -806,11 +808,13 @@ function saveExpRow(el) {
   const row = el.closest('[data-id]');
   if (!row) return;
   const id = row.dataset.id === 'new' ? null : parseInt(row.dataset.id);
-  const amt = readNum(row.querySelector('.exp-amount'));
+  const cat = row.querySelector('.exp-cat')?.value;
   const type = row.querySelector('.exp-paytype')?.value;
+  if (!cat || !type) return;
+  const amt = readNum(row.querySelector('.exp-amount'));
   const data = {
     id: id,
-    category: row.querySelector('.exp-cat')?.value || 'other',
+    category: cat,
     description: (row.querySelector('.exp-note')?.value || '').trim(),
     amount_cash: type === 'cash' ? amt : 0,
     amount_card: type === 'card' ? amt : 0,
