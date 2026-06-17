@@ -74,8 +74,8 @@
   /* BONUS ROW */
   .bonus-btns { display: flex; gap: 4px; width: 100%; align-items: stretch; overflow: hidden; }
   .bonus-btn-prem, .bonus-btn-fine { flex:1; min-width:0; padding: 5px 2px; border-radius: 6px; font-size: 10px; font-weight: 700; cursor: pointer; white-space: nowrap; text-align:center; display:flex; align-items:center; justify-content:center; line-height:1; }
-  .bonus-btn-prem { background: #d1fae5; color: #059669; border: 1.5px solid #6ee7b7; }
-  .bonus-btn-fine { background: #fee2e2; color: #dc2626; border: 1.5px solid #fca5a5; }
+  .bonus-btn-prem { background: #f3f4f6; color: #374151; border: 1.5px solid #d1d5db; }
+  .bonus-btn-fine { background: #f3f4f6; color: #374151; border: 1.5px solid #d1d5db; }
   .staff-bonus-row { display: none; align-items: center; gap: 6px; padding: 3px 0 8px 10px; border-bottom: 1px solid #f3f4f6; }
   .bonus-arrow { font-size: 10px; color: #c4c8d4; flex-shrink: 0; }
   .bonus-select { padding: 4px 22px 4px 7px; border-radius: 6px; border: 1.5px solid #e5e7eb; font-size: 11px; font-weight: 600; color: #374151; background: #f9fafb; appearance: none; background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%236B7280' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 6px center; width: 82px; flex-shrink: 0; }
@@ -416,8 +416,8 @@
       <div class="field-calc sf-auto-bonus">{{ (s.auto_bonus or 0)|int if (s.auto_bonus or 0) > 0 else '—' }}</div>
       <div class="field-calc sf-total">{{ (s.total_amount or 0)|int }} ₽</div>
       <select class="paid-select {% if s.is_paid %}paid-yes{% else %}paid-no{% endif %} sf-paid" onchange="onPaidChange(this)" {% if not can_edit %}disabled{% endif %}>
-        <option value="no" {% if not s.is_paid %}selected{% endif %}>Не выплачена</option>
-        <option value="yes" {% if s.is_paid %}selected{% endif %}>Выплачена</option>
+        <option value="no" {% if not s.is_paid %}selected{% endif %}>Нет</option>
+        <option value="yes" {% if s.is_paid %}selected{% endif %}>Да</option>
       </select>
       {% if can_edit %}<button class="staff-del" onclick="deleteStaff(this, {{ s.id }})">✕</button>{% else %}<div></div>{% endif %}
     </div>
@@ -453,7 +453,7 @@
     <div class="col-label">Фамилия</div><div class="col-label">Приход</div><div class="col-label">Уход</div>
     <div class="col-label">Ч.</div><div></div>
     <div class="col-label" style="color:#059669">Авт.₽</div>
-    <div class="col-label">Итого ₽</div><div class="col-label">Выплачена</div><div></div>
+    <div class="col-label">Итого ₽</div><div class="col-label">Выпл.</div><div></div>
   </div>
   {% endmacro %}
 
@@ -498,7 +498,7 @@
         <div class="col-label">Часов</div>
         <div class="col-label">Премия/Штраф</div>
         <div class="col-label">Итого ₽</div>
-        <div class="col-label">Выплачена</div>
+        <div class="col-label">Выпл.</div>
         <div></div>
       </div>
       <div id="courier-body">
@@ -519,8 +519,8 @@
           <div class="field-calc sf-total">{{ (s.total_amount or 0)|int }} ₽</div>
           <select class="paid-select {% if s.is_paid %}paid-yes{% else %}paid-no{% endif %} sf-paid"
             onchange="onPaidChange(this)" {% if not can_edit %}disabled{% endif %}>
-            <option value="no" {% if not s.is_paid %}selected{% endif %}>Не выплачена</option>
-            <option value="yes" {% if s.is_paid %}selected{% endif %}>Выплачена</option>
+            <option value="no" {% if not s.is_paid %}selected{% endif %}>Нет</option>
+            <option value="yes" {% if s.is_paid %}selected{% endif %}>Да</option>
           </select>
           {% if can_edit %}
           <button class="staff-del" onclick="deleteStaff(this, {{ s.id }})">✕</button>
