@@ -1706,6 +1706,9 @@ def reports():
         ''').fetchall()
 
         # ── Зарплатный отчёт ──────────────────────────────────────────────
+        s_group = request.args.get('s_group', 'summary')
+        s_emps  = request.args.getlist('s_emps')
+
         sal_conds  = ['s.date BETWEEN ? AND ?']
         sal_params = [s_date_from, s_date_to]
         if s_branch_id.isdigit():
@@ -1734,13 +1737,98 @@ def reports():
             ORDER BY b.name, es.role_snapshot, es.full_name_snapshot
         ''', sal_params).fetchall()
 
+        # Список всех сотрудников в периоде (для дропдауна выбора)
+        all_sal_emps = conn.execute(f'''
+            SELECT DISTINCT es.full_name_snapshot AS name
+            FROM employee_shifts es
+            JOIN shifts s ON s.id = es.shift_id
+            WHERE {sal_where}
+            ORDER BY es.full_name_snapshot
+        ''', sal_params).fetchall()
+        all_sal_emps = [r['name'] for r in all_sal_emps]
+
+        # ── Сводная таблица по периодам ───────────────────────────────────
+        pivot_rows = []
+        pivot_emps = []
+
+        if s_group != 'summary':
+            raw_params = sal_params[:]
+            emp_filter_sql = ''
+            if s_emps:
+                placeholders = ','.join('?' * len(s_emps))
+                emp_filter_sql = f'AND es.full_name_snapshot IN ({placeholders})'
+                raw_params = raw_params + s_emps
+
+            raw_rows = conn.execute(f'''
+                SELECT s.date, es.full_name_snapshot AS name,
+                       COALESCE(es.total_amount, 0) AS earned,
+                       COALESCE(es.paid_amount,  0) AS paid
+                FROM employee_shifts es
+                JOIN shifts s ON s.id = es.shift_id
+                WHERE {sal_where} {emp_filter_sql}
+                ORDER BY s.date, es.full_name_snapshot
+            ''', raw_params).fetchall()
+
+            def _period_key(date_str):
+                d = datetime.strptime(date_str, '%Y-%m-%d')
+                if s_group == 'day':
+                    return date_str
+                elif s_group == 'week':
+                    return (d - timedelta(days=d.weekday())).strftime('%Y-%m-%d')
+                else:  # month
+                    return date_str[:7]
+
+            def _period_label(key):
+                if s_group == 'day':
+                    d = datetime.strptime(key, '%Y-%m-%d')
+                    days_ru = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+                    return f"{days_ru[d.weekday()]} {d.strftime('%d.%m.%Y')}"
+                elif s_group == 'week':
+                    mon = datetime.strptime(key, '%Y-%m-%d')
+                    sun = mon + timedelta(days=6)
+                    return f"{mon.strftime('%d.%m')}–{sun.strftime('%d.%m.%Y')}"
+                else:
+                    months_ru = ['', 'Январь', 'Февраль', 'Март', 'Апрель', 'Май',
+                                 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь',
+                                 'Ноябрь', 'Декабрь']
+                    y, m = key.split('-')
+                    return f"{months_ru[int(m)]} {y}"
+
+            from collections import OrderedDict
+            periods = OrderedDict()
+            emp_order = []
+
+            for row in raw_rows:
+                pk  = _period_key(row['date'])
+                nm  = row['name']
+                if pk not in periods:
+                    periods[pk] = {'label': _period_label(pk), 'emps': {}, 'earned': 0.0, 'paid': 0.0}
+                if nm not in periods[pk]['emps']:
+                    periods[pk]['emps'][nm] = {'earned': 0.0, 'paid': 0.0}
+                periods[pk]['emps'][nm]['earned'] += row['earned']
+                periods[pk]['emps'][nm]['paid']   += row['paid']
+                periods[pk]['earned'] += row['earned']
+                periods[pk]['paid']   += row['paid']
+                if nm not in emp_order:
+                    emp_order.append(nm)
+
+            for p in periods.values():
+                p['debt'] = p['earned'] - p['paid']
+                for cell in p['emps'].values():
+                    cell['debt'] = cell['earned'] - cell['paid']
+
+            pivot_rows = list(periods.values())
+            pivot_emps = emp_order
+
     return render_template('reports.html',
         shifts_data=shifts_data, totals=totals, branches=branches,
         salary_data=salary_data, period=period, selected_branches=branch_ids,
         role_labels=ROLE_LABELS, active_tab=active_tab,
         sal_report=sal_report,
         s_date_from=s_date_from, s_date_to=s_date_to,
-        s_branch_id=s_branch_id, s_role=s_role, s_unpaid=s_unpaid)
+        s_branch_id=s_branch_id, s_role=s_role, s_unpaid=s_unpaid,
+        s_group=s_group, s_emps=s_emps,
+        all_sal_emps=all_sal_emps, pivot_rows=pivot_rows, pivot_emps=pivot_emps)
 
 
 # ─── HISTORY ──────────────────────────────────────────────────────────────────

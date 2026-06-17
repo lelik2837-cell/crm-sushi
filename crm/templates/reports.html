@@ -161,7 +161,7 @@
 <!-- Фильтры зарплатного отчёта -->
 <div class="card mb-4">
     <div class="card-body">
-        <form method="GET" class="row g-2 align-items-end">
+        <form method="GET" id="salForm" class="row g-2 align-items-end">
             <input type="hidden" name="tab" value="salary">
             <div class="col-6 col-md-2">
                 <label class="form-label small fw-semibold">С</label>
@@ -189,6 +189,38 @@
                     {% endfor %}
                 </select>
             </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label small fw-semibold">Группировка</label>
+                <select name="s_group" class="form-select">
+                    <option value="summary" {% if s_group == 'summary' %}selected{% endif %}>Сводная</option>
+                    <option value="day"     {% if s_group == 'day'     %}selected{% endif %}>По дням</option>
+                    <option value="week"    {% if s_group == 'week'    %}selected{% endif %}>По неделям</option>
+                    <option value="month"   {% if s_group == 'month'   %}selected{% endif %}>По месяцам</option>
+                </select>
+            </div>
+            {% if s_group != 'summary' %}
+            <div class="col-6 col-md-3">
+                <label class="form-label small fw-semibold">Сотрудники</label>
+                <div class="dropdown">
+                    <button type="button" class="btn btn-outline-secondary w-100 text-start d-flex justify-content-between align-items-center"
+                            id="empDropBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside">
+                        <span id="empDropLabel">{% if s_emps %}Выбрано: {{ s_emps|length }}{% else %}Все сотрудники{% endif %}</span>
+                        <i class="bi bi-chevron-down ms-2 small"></i>
+                    </button>
+                    <div class="dropdown-menu p-2 shadow" style="min-width:240px;max-height:300px;overflow-y:auto">
+                        <input type="text" class="form-control form-control-sm mb-2" id="empDropSearch" placeholder="Поиск..." autocomplete="off">
+                        {% for nm in all_sal_emps %}
+                        <div class="form-check sal-emp-item">
+                            <input class="form-check-input sal-emp-cb" type="checkbox" name="s_emps"
+                                   value="{{ nm }}" id="salEmp_{{ loop.index }}"
+                                   {% if nm in s_emps %}checked{% endif %}>
+                            <label class="form-check-label w-100" for="salEmp_{{ loop.index }}" style="cursor:pointer">{{ nm }}</label>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            {% else %}
             <div class="col-auto d-flex align-items-end">
                 <div class="form-check mb-1 ms-2">
                     <input class="form-check-input" type="checkbox" name="s_unpaid" value="1" id="chkUnpaid"
@@ -196,12 +228,118 @@
                     <label class="form-check-label small fw-semibold" for="chkUnpaid">Только невыплаченные</label>
                 </div>
             </div>
+            {% endif %}
             <div class="col-auto">
+                <label class="form-label small fw-semibold d-none d-md-block">&nbsp;</label>
                 <button type="submit" class="btn btn-primary">Применить</button>
             </div>
         </form>
     </div>
 </div>
+
+
+{# ─── СВОДНАЯ ТАБЛИЦА (по дням/неделям/месяцам) ─── #}
+{% if s_group != 'summary' %}
+
+{% if pivot_rows %}
+{% set grand_earned = pivot_rows | sum(attribute='earned') %}
+{% set grand_paid   = pivot_rows | sum(attribute='paid') %}
+{% set grand_debt   = pivot_rows | sum(attribute='debt') %}
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <div class="card p-3" style="border-left:4px solid #0d6efd">
+            <div class="text-muted small">Начислено</div>
+            <div class="fw-bold fs-4">{{ '{:,.0f}'.format(grand_earned) }} ₽</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card p-3" style="border-left:4px solid #198754">
+            <div class="text-muted small">Выплачено</div>
+            <div class="fw-bold fs-4 text-success">{{ '{:,.0f}'.format(grand_paid) }} ₽</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card p-3" style="border-left:4px solid #dc3545">
+            <div class="text-muted small">Долг</div>
+            <div class="fw-bold fs-4 text-danger">{{ '{:,.0f}'.format(grand_debt) }} ₽</div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header bg-light fw-semibold d-flex justify-content-between">
+        <span>
+            {% if s_group == 'day' %}По дням
+            {% elif s_group == 'week' %}По неделям
+            {% else %}По месяцам{% endif %}
+        </span>
+        <span class="text-muted small">{{ s_date_from | date_fmt }} — {{ s_date_to | date_fmt }}</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-bordered table-hover mb-0 align-middle" style="white-space:nowrap">
+            <thead class="table-light">
+                <tr>
+                    <th>Период</th>
+                    {% for emp in pivot_emps %}
+                    <th class="text-end">{{ emp }}</th>
+                    {% endfor %}
+                    <th class="text-end table-success">Выплачено</th>
+                    <th class="text-end table-danger">Долг</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for row in pivot_rows %}
+            <tr>
+                <td class="fw-semibold">{{ row.label }}</td>
+                {% for emp in pivot_emps %}
+                {% set cell = row.emps.get(emp) %}
+                {% if cell and cell.earned > 0 %}
+                    <td class="text-end {% if cell.debt > 0.01 %}text-danger fw-semibold{% endif %}">
+                        {{ '{:,.0f}'.format(cell.earned) }} ₽
+                    </td>
+                {% else %}
+                    <td class="text-center text-muted">—</td>
+                {% endif %}
+                {% endfor %}
+                <td class="text-end table-success fw-semibold">{{ '{:,.0f}'.format(row.paid) }} ₽</td>
+                <td class="text-end {% if row.debt > 0.01 %}text-danger fw-bold{% endif %}">
+                    {{ '{:,.0f}'.format(row.debt) }} ₽
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+            <tfoot class="table-light fw-bold">
+                <tr>
+                    <td>Итого</td>
+                    {% for emp in pivot_emps %}
+                    {% set emp_earned = pivot_rows | sum(attribute='emps') %}
+                    {% set col_total = namespace(v=0) %}
+                    {% for row in pivot_rows %}
+                        {% set cell = row.emps.get(emp) %}
+                        {% if cell %}{% set col_total.v = col_total.v + cell.earned %}{% endif %}
+                    {% endfor %}
+                    <td class="text-end">{{ '{:,.0f}'.format(col_total.v) }} ₽</td>
+                    {% endfor %}
+                    <td class="text-end table-success">{{ '{:,.0f}'.format(grand_paid) }} ₽</td>
+                    <td class="text-end {% if grand_debt > 0.01 %}text-danger{% endif %}">{{ '{:,.0f}'.format(grand_debt) }} ₽</td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+</div>
+
+{% else %}
+<div class="card">
+    <div class="card-body text-center text-muted py-5">
+        <i class="bi bi-inbox fs-1 d-block mb-2 opacity-25"></i>
+        <div class="fw-semibold">Нет данных за выбранный период</div>
+    </div>
+</div>
+{% endif %}
+
+
+{# ─── СВОДНАЯ (прежняя таблица по сотрудникам) ─── #}
+{% else %}
 
 <!-- Итоги зарплатного отчёта -->
 {% if sal_report %}
@@ -236,7 +374,6 @@
 </div>
 {% endif %}
 
-<!-- Таблица зарплатного отчёта -->
 <div class="card">
     <div class="card-header bg-light fw-semibold d-flex justify-content-between align-items-center">
         <span>Зарплаты по сотрудникам</span>
@@ -308,6 +445,8 @@
     {% endif %}
 </div>
 
+{% endif %}{# конец if s_group #}
+
 {% endif %}{# конец вкладки "Зарплатный отчёт" #}
 
 {% endblock %}
@@ -315,17 +454,16 @@
 {% block scripts %}
 <script>
 (function () {
+    // Branch dropdown (shifts tab)
     var cbs  = document.querySelectorAll('.branch-cb');
     var lbl  = document.getElementById('branchBtnLabel');
     var srch = document.getElementById('branchSearch');
 
-    function updateLabel() {
+    function updateBranchLabel() {
         var n = document.querySelectorAll('.branch-cb:checked').length;
         if (lbl) lbl.textContent = n ? 'Выбрано: ' + n : 'Все филиалы';
     }
-
-    cbs.forEach(function (cb) { cb.addEventListener('change', updateLabel); });
-
+    cbs.forEach(function (cb) { cb.addEventListener('change', updateBranchLabel); });
     if (srch) {
         srch.addEventListener('input', function () {
             var q = this.value.toLowerCase();
@@ -333,8 +471,34 @@
                 el.style.display = el.querySelector('label').textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
             });
         });
-        document.getElementById('branchDropdownMenu').addEventListener('shown.bs.dropdown', function () {
-            srch.focus();
+        var menu = document.getElementById('branchDropdownMenu');
+        if (menu) menu.addEventListener('shown.bs.dropdown', function () { srch.focus(); });
+    }
+
+    // Employee dropdown (salary pivot tab)
+    var empCbs  = document.querySelectorAll('.sal-emp-cb');
+    var empLbl  = document.getElementById('empDropLabel');
+    var empSrch = document.getElementById('empDropSearch');
+
+    function updateEmpLabel() {
+        var n = document.querySelectorAll('.sal-emp-cb:checked').length;
+        if (empLbl) empLbl.textContent = n ? 'Выбрано: ' + n : 'Все сотрудники';
+    }
+    empCbs.forEach(function (cb) { cb.addEventListener('change', updateEmpLabel); });
+    if (empSrch) {
+        empSrch.addEventListener('input', function () {
+            var q = this.value.toLowerCase();
+            document.querySelectorAll('.sal-emp-item').forEach(function (el) {
+                el.style.display = el.querySelector('label').textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
+            });
+        });
+    }
+
+    // When grouping changes — auto-submit to reload employee list
+    var grpSelect = document.querySelector('select[name="s_group"]');
+    if (grpSelect) {
+        grpSelect.addEventListener('change', function () {
+            document.getElementById('salForm') && document.getElementById('salForm').submit();
         });
     }
 })();
