@@ -9,7 +9,7 @@
 <!-- Фильтры -->
 <div class="card mb-4">
     <div class="card-body py-3">
-        <form method="GET" action="{{ url_for('expenses_report') }}" class="row g-2 align-items-end">
+        <form method="GET" action="{{ url_for('expenses_report') }}" class="row g-2 align-items-end" id="exp-filter-form">
             <div class="col-sm-auto">
                 <label class="form-label small fw-semibold mb-1">С</label>
                 <input type="date" name="date_from" class="form-control form-control-sm" value="{{ date_from }}">
@@ -18,29 +18,62 @@
                 <label class="form-label small fw-semibold mb-1">По</label>
                 <input type="date" name="date_to" class="form-control form-control-sm" value="{{ date_to }}">
             </div>
+
+            <!-- Мультивыбор филиалов -->
             <div class="col-sm-auto">
-                <label class="form-label small fw-semibold mb-1">Филиал</label>
-                <select name="branch_id" class="form-select form-select-sm">
-                    <option value="">Все филиалы</option>
-                    {% for b in branches %}
-                    <option value="{{ b.id }}" {% if branch_id == b.id|string %}selected{% endif %}>{{ b.name }}</option>
-                    {% endfor %}
-                </select>
+                <label class="form-label small fw-semibold mb-1">Филиалы</label>
+                <div class="dropdown" id="branch-dropdown">
+                    <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle"
+                        data-bs-toggle="dropdown" data-bs-auto-close="outside"
+                        style="min-width:160px; text-align:left;" id="branch-btn">
+                        <span id="branch-btn-label">{% if branch_ids %}Выбрано: {{ branch_ids|length }}{% else %}Все филиалы{% endif %}</span>
+                    </button>
+                    <ul class="dropdown-menu p-2" style="min-width:200px;">
+                        <li class="mb-1">
+                            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                                <input type="checkbox" id="branch-all-cb" onchange="toggleAllBranches(this)"
+                                    {% if not branch_ids %}checked{% endif %}>
+                                <span class="fw-semibold small">Все филиалы</span>
+                            </label>
+                        </li>
+                        <li><hr class="dropdown-divider my-1"></li>
+                        {% for b in branches %}
+                        <li>
+                            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                                <input type="checkbox" class="branch-cb" name="branch_ids" value="{{ b.id }}"
+                                    {% if b.id|string in branch_ids %}checked{% endif %}
+                                    onchange="onBranchCbChange()">
+                                <span class="small">{{ b.name }}</span>
+                            </label>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
             </div>
+
             <div class="col-sm-auto">
                 <label class="form-label small fw-semibold mb-1">Категория</label>
-                <select name="category" class="form-select form-select-sm">
+                <select name="category" class="form-select form-select-sm" style="min-width:160px;">
                     <option value="">Все категории</option>
-                    {% for cat in all_cats %}
-                    {% if not cat.parent_id %}
+                    {% for cat in all_cats %}{% if not cat.parent_id %}
                     <option value="{{ cat.code }}" {% if cat_filter == cat.code %}selected{% endif %}>{{ cat.label }}</option>
                     {% for sub in all_cats %}{% if sub.parent_id == cat.id %}
                     <option value="{{ sub.code }}" {% if cat_filter == sub.code %}selected{% endif %}>&nbsp;&nbsp;↳ {{ sub.label }}</option>
                     {% endif %}{% endfor %}
-                    {% endif %}
-                    {% endfor %}
+                    {% endif %}{% endfor %}
                 </select>
             </div>
+
+            <!-- Фильтр по оплате -->
+            <div class="col-sm-auto">
+                <label class="form-label small fw-semibold mb-1">Оплата</label>
+                <select name="pay_type" class="form-select form-select-sm">
+                    <option value="" {% if not pay_filter %}selected{% endif %}>Все</option>
+                    <option value="cash" {% if pay_filter == 'cash' %}selected{% endif %}>Наличные</option>
+                    <option value="card" {% if pay_filter == 'card' %}selected{% endif %}>Карта</option>
+                </select>
+            </div>
+
             <div class="col-sm-auto">
                 <button type="submit" class="btn btn-primary btn-sm px-3">
                     <i class="bi bi-search me-1"></i>Показать
@@ -179,4 +212,24 @@
 </div>
 {% endif %}
 
+{% endblock %}
+
+{% block scripts %}
+<script>
+function onBranchCbChange() {
+    const cbs = document.querySelectorAll('.branch-cb');
+    const checked = [...cbs].filter(c => c.checked);
+    const allCb = document.getElementById('branch-all-cb');
+    allCb.checked = checked.length === 0;
+    const label = document.getElementById('branch-btn-label');
+    label.textContent = checked.length === 0 ? 'Все филиалы' : 'Выбрано: ' + checked.length;
+}
+
+function toggleAllBranches(cb) {
+    if (cb.checked) {
+        document.querySelectorAll('.branch-cb').forEach(c => c.checked = false);
+        document.getElementById('branch-btn-label').textContent = 'Все филиалы';
+    }
+}
+</script>
 {% endblock %}

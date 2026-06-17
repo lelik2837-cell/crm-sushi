@@ -1901,10 +1901,11 @@ def reports():
 def expenses_report():
     today = date.today().isoformat()
     month_start = date.today().replace(day=1).isoformat()
-    date_from  = request.args.get('date_from', month_start)
-    date_to    = request.args.get('date_to', today)
-    branch_id  = request.args.get('branch_id', '')
-    cat_filter = request.args.get('category', '')
+    date_from   = request.args.get('date_from', month_start)
+    date_to     = request.args.get('date_to', today)
+    branch_ids  = [b for b in request.args.getlist('branch_ids') if b.isdigit()]
+    cat_filter  = request.args.get('category', '')
+    pay_filter  = request.args.get('pay_type', '')   # 'cash' | 'card' | ''
 
     with get_db() as conn:
         branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
@@ -1912,12 +1913,17 @@ def expenses_report():
 
         conds  = ["s.date BETWEEN ? AND ?"]
         params = [date_from, date_to]
-        if branch_id.isdigit():
-            conds.append('s.branch_id = ?')
-            params.append(int(branch_id))
+        if branch_ids:
+            ph = ','.join('?' * len(branch_ids))
+            conds.append(f's.branch_id IN ({ph})')
+            params.extend(int(b) for b in branch_ids)
         if cat_filter:
             conds.append('e.category = ?')
             params.append(cat_filter)
+        if pay_filter == 'cash':
+            conds.append('e.amount_cash > 0')
+        elif pay_filter == 'card':
+            conds.append('e.amount_card > 0')
         where = ' AND '.join(conds)
 
         rows = conn.execute(f'''
@@ -1935,7 +1941,6 @@ def expenses_report():
             ORDER BY s.date DESC, b.name, e.id
         ''', params).fetchall()
 
-        # Totals
         tot = conn.execute(f'''
             SELECT COALESCE(SUM(e.amount_cash),0) as cash,
                    COALESCE(SUM(e.amount_card),0) as card,
@@ -1945,7 +1950,6 @@ def expenses_report():
             WHERE {where}
         ''', params).fetchone()
 
-        # By category
         by_cat = conn.execute(f'''
             SELECT e.category,
                    COALESCE(SUM(e.amount_cash),0) as cash,
@@ -1959,14 +1963,13 @@ def expenses_report():
             ORDER BY total DESC
         ''', params).fetchall()
 
-    # Build code→label map
     cat_map = {c['code']: c['label'] for c in all_cats}
 
     return render_template('expenses_report.html',
         rows=rows, tot=tot, by_cat=by_cat,
         branches=branches, all_cats=all_cats, cat_map=cat_map,
         date_from=date_from, date_to=date_to,
-        branch_id=branch_id, cat_filter=cat_filter)
+        branch_ids=branch_ids, cat_filter=cat_filter, pay_filter=pay_filter)
 
 
 # ─── HISTORY ──────────────────────────────────────────────────────────────────
