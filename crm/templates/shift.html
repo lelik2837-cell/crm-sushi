@@ -110,7 +110,9 @@
   .expense-row { padding: 6px 0; border-bottom: 1px solid #f3f4f6; display: flex; flex-direction: column; gap: 5px; }
   .expense-row:last-child { border-bottom: none; }
   .expense-row-main { display: grid; gap: 8px; grid-template-columns: 2fr 90px 90px 50px 24px; align-items: center; }
-  .exp-note { width: 75%; margin: 0 auto; font-size: 11px; color: #374151; border: 1.5px solid #e5e7eb; border-radius: 6px; padding: 3px 7px; background: #f9fafb; outline: none; resize: none; }
+  .exp-note-wrap { display:flex; align-items:center; gap:5px; padding-left:4px; }
+  .exp-note-arrow { font-size:10px; color:#c0c0c0; flex-shrink:0; line-height:1; }
+  .exp-note { width: 75%; font-size: 11px; color: #374151; border: 1.5px solid #e5e7eb; border-radius: 6px; padding: 3px 7px; background: #f9fafb; outline: none; resize: none; }
   .exp-note:focus { border-color: #93c5fd; background: #fff; }
   .exp-note-view { font-size: 11px; color: #6b7280; font-style: italic; padding: 0; }
   .row-del { width: 22px; height: 22px; border-radius: 5px; background: #fee2e2; color: #ef4444; border: none; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
@@ -325,7 +327,10 @@
           </div>
           <button class="row-del" onclick="deleteExp(this, {{ exp.id }})">✕</button>
         </div>
-        <textarea class="exp-note" rows="1" placeholder="Комментарий...">{{ exp.description or '' }}</textarea>
+        <div class="exp-note-wrap">
+          <span class="exp-note-arrow">↑</span>
+          <textarea class="exp-note" rows="1" placeholder="Комментарий...">{{ exp.description or '' }}</textarea>
+        </div>
         {% else %}
         <div class="expense-row-main">
           <span style="font-size:13px;">{% for c, l in expense_categories %}{% if c == exp.category %}{{ l }}{% endif %}{% endfor %}</span>
@@ -796,7 +801,10 @@ function addExpenseRow() {
       </div>
       <button class="row-del" onclick="deleteExp(this, null)">✕</button>
     </div>
-    <textarea class="exp-note" rows="1" placeholder="Комментарий..."></textarea>`;
+    <div class="exp-note-wrap">
+      <span class="exp-note-arrow">↑</span>
+      <textarea class="exp-note" rows="1" placeholder="Комментарий..."></textarea>
+    </div>`;
   document.getElementById('expenses-body').appendChild(row);
   initMoneyField(row.querySelector('.exp-amount'));
   row.querySelector('.exp-amount').addEventListener('change', () => { saveExpRow(row.querySelector('.exp-amount')); updateKassa(); });
