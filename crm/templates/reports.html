@@ -9,7 +9,7 @@
 <ul class="nav nav-tabs mb-4" id="reportTabs">
     <li class="nav-item">
         <a class="nav-link {% if active_tab != 'salary' %}active{% endif %}"
-           href="{{ url_for('reports') }}?tab=shifts&period={{ period }}&branch_id={{ selected_branch }}">
+           href="{{ url_for('reports') }}?tab=shifts&period={{ period }}{% for bid in selected_branches %}&branch_ids={{ bid }}{% endfor %}">
             <i class="bi bi-graph-up-arrow"></i> Выручка
         </a>
     </li>
@@ -37,14 +37,19 @@
                     <option value="30days" {% if period=='30days' %}selected{% endif %}>Последние 30 дней</option>
                 </select>
             </div>
-            <div class="col-md-3">
-                <label class="form-label small fw-semibold">Филиал</label>
-                <select name="branch_id" class="form-select">
-                    <option value="">Все филиалы</option>
+            <div class="col-12 col-md-7">
+                <label class="form-label small fw-semibold">Филиалы
+                    {% if selected_branches %}
+                    <a href="{{ url_for('reports') }}?tab=shifts&period={{ period }}" class="ms-2 small text-muted fw-normal">сбросить</a>
+                    {% endif %}
+                </label>
+                <div class="d-flex flex-wrap gap-1">
                     {% for b in branches %}
-                    <option value="{{ b.id }}" {% if selected_branch == b.id|string %}selected{% endif %}>{{ b.name }}</option>
+                    <input type="checkbox" class="btn-check" name="branch_ids" value="{{ b.id }}"
+                           id="br{{ b.id }}" {% if b.id|string in selected_branches %}checked{% endif %} autocomplete="off">
+                    <label class="btn btn-outline-primary btn-sm" for="br{{ b.id }}">{{ b.name }}</label>
                     {% endfor %}
-                </select>
+                </div>
             </div>
             <div class="col-md-2">
                 <button type="submit" class="btn btn-primary w-100">Применить</button>

@@ -1510,7 +1510,7 @@ def edit_rate_template(tmpl_id):
 @owner_required
 def reports():
     period = request.args.get('period', 'week')
-    branch_id = request.args.get('branch_id', '')
+    branch_ids = [bid for bid in request.args.getlist('branch_ids') if bid.isdigit()]
     active_tab = request.args.get('tab', 'shifts')
 
     today = date.today().isoformat()
@@ -1527,7 +1527,11 @@ def reports():
         date_filter   = "AND s.date >= date('now','-7 days')" if period == 'week' else \
                         "AND s.date >= date('now','start of month')" if period == 'month' else \
                         "AND s.date >= date('now','-30 days')"
-        branch_filter = f"AND s.branch_id={int(branch_id)}" if branch_id.isdigit() else ""
+        if branch_ids:
+            ids_str = ','.join(str(int(bid)) for bid in branch_ids)
+            branch_filter = f"AND s.branch_id IN ({ids_str})"
+        else:
+            branch_filter = ""
 
         shifts_data = conn.execute(f'''
             SELECT s.date, b.name as branch_name, s.status,
@@ -1597,7 +1601,7 @@ def reports():
 
     return render_template('reports.html',
         shifts_data=shifts_data, totals=totals, branches=branches,
-        salary_data=salary_data, period=period, selected_branch=branch_id,
+        salary_data=salary_data, period=period, selected_branches=branch_ids,
         role_labels=ROLE_LABELS, active_tab=active_tab,
         sal_report=sal_report,
         s_date_from=s_date_from, s_date_to=s_date_to,
