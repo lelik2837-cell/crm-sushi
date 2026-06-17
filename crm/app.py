@@ -1853,7 +1853,7 @@ def shifts_archive():
 
     date_from  = request.args.get('date_from', month_start)
     date_to    = request.args.get('date_to',   today)
-    branch_filter = request.args.get('branch_id', '')
+    branch_ids = [bid for bid in request.args.getlist('branch_ids') if bid.isdigit()]
     status_filter = request.args.get('status', '')
 
     with get_db() as conn:
@@ -1881,12 +1881,11 @@ def shifts_archive():
         params = [date_from, date_to]
 
         if role != 'owner':
-            branch_id = session.get('branch_id')
             query += ' AND s.branch_id = ?'
-            params.append(branch_id)
-        elif branch_filter:
-            query += ' AND s.branch_id = ?'
-            params.append(branch_filter)
+            params.append(session.get('branch_id'))
+        elif branch_ids:
+            ids_str = ','.join(str(int(bid)) for bid in branch_ids)
+            query += f' AND s.branch_id IN ({ids_str})'
 
         if status_filter:
             query += ' AND s.status = ?'
@@ -1901,7 +1900,7 @@ def shifts_archive():
     return render_template('shifts_archive.html',
         shifts=shifts, branches=branches,
         date_from=date_from, date_to=date_to,
-        branch_filter=branch_filter, status_filter=status_filter,
+        selected_branches=branch_ids, status_filter=status_filter,
         total_revenue=total_revenue, total_orders=total_orders,
         is_owner=(role == 'owner'))
 
