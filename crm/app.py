@@ -1569,6 +1569,23 @@ def update_taxi_trip(trip_id):
     return jsonify({'ok': True})
 
 
+@app.route('/taxi/employee/<int:tte_id>/update', methods=['POST'])
+@login_required
+def update_taxi_employee(tte_id):
+    with get_db() as conn:
+        tte = conn.execute('SELECT * FROM taxi_trip_employees WHERE id=?', (tte_id,)).fetchone()
+        if not tte:
+            return jsonify({'error': 'Not found'}), 404
+        trip = conn.execute('SELECT * FROM taxi_trips WHERE id=?', (tte['trip_id'],)).fetchone()
+        if not _can_edit_shift(trip['shift_id']):
+            return jsonify({'error': 'Нет доступа'}), 403
+        data = request.json or {}
+        conn.execute('UPDATE taxi_trip_employees SET address_snapshot=? WHERE id=?',
+                     (data.get('address', ''), tte_id))
+        conn.commit()
+    return jsonify({'ok': True})
+
+
 # ─── BRANCHES ─────────────────────────────────────────────────────────────────
 
 @app.route('/branches')

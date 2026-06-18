@@ -121,16 +121,20 @@
   .check-box:checked { background: #10b981; border-color: #10b981; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 12 12' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M2 6L5 9L10 3' stroke='white' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: center; }
 
   /* TAXI */
-  .taxi-trip-block { border:1px solid #e5e7eb; border-radius:8px; padding:10px 12px; margin-bottom:8px; background:#fafafa; }
+  .taxi-trip-block { margin-bottom:6px; }
   .taxi-trip-block:last-child { margin-bottom:0; }
-  .taxi-emp-row { display:grid; grid-template-columns:1fr 70px 20px; gap:6px; align-items:center; margin-bottom:4px; }
-  .taxi-emp-name { font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .taxi-summary-row { display:grid; grid-template-columns:2fr 90px 90px 50px; gap:8px; align-items:center; padding-top:8px; margin-top:6px; border-top:1px solid #f3f4f6; }
-  .taxi-btn-row { display:flex; gap:6px; margin-top:6px; }
+  .taxi-row { display:grid; grid-template-columns:1.4fr 1.4fr 76px 72px 28px 56px; gap:6px; align-items:center; }
+  .taxi-view-row .taxi-emp-name { font-size:12px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .taxi-view-row .taxi-addr-view { font-size:11px; color:#9ca3af; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .taxi-view-row .taxi-amount-view { font-size:13px; font-weight:700; text-align:right; }
+  .taxi-view-row .taxi-pay-view { font-size:11px; color:#6b7280; }
+  .taxi-view-row .taxi-gulyash-view { font-size:12px; color:#10b981; text-align:center; }
+  .taxi-btn-row { display:flex; gap:6px; margin-top:5px; }
   .taxi-save-btn { padding:5px 8px; border-radius:6px; background:#d1fae5; color:#059669; border:1.5px solid #6ee7b7; font-size:11px; font-weight:700; cursor:pointer; }
   .taxi-cancel-btn { padding:5px 8px; border-radius:6px; background:#f3f4f6; color:#6b7280; border:1.5px solid #d1d5db; font-size:11px; font-weight:600; cursor:pointer; }
-  .taxi-edit-trigger { padding:5px 8px; border-radius:6px; background:#eff6ff; color:#2563eb; border:1.5px solid #bfdbfe; font-size:11px; font-weight:600; cursor:pointer; }
+  .taxi-edit-trigger { padding:3px 7px; border-radius:6px; background:#eff6ff; color:#2563eb; border:1.5px solid #bfdbfe; font-size:11px; font-weight:600; cursor:pointer; }
   .taxi-saved-hint { font-size:11px; color:#059669; display:none; align-self:center; }
+  .taxi-view-acts { display:flex; gap:4px; justify-content:flex-end; }
 
   /* BTN-ADD */
   .btn-add { background: #f3f4f6; color: #374151; border: 1.5px dashed #d1d5db; border-radius: 7px; padding: 5px 12px; font-size: 12px; font-weight: 500; width: 100%; margin-top: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px; }
@@ -376,69 +380,56 @@
       <div id="taxi-body">
         {% if not taxi_trips %}<div id="taxi-empty" style="text-align:center;color:#9ca3af;padding:12px 0;font-size:13px;">Рейсов нет</div>{% endif %}
         {% for t in taxi_trips %}
-        <div class="taxi-trip-block" data-trip-id="{{ t.id }}"
-          data-orig-amount="{{ t.amount|int if t.amount else '' }}"
-          data-orig-pay="{{ t.payment_type or 'cash' }}"
-          data-orig-gulyash="{{ '1' if t.in_gulyash else '0' }}">
+        {% set first_tte = taxi_trip_emps[t.id][0] if taxi_trip_emps[t.id] else none %}
+        <div class="taxi-trip-block"
+          data-trip-id="{{ t.id }}"
+          data-tte-id="{{ first_tte.id if first_tte else '' }}"
+          data-emp-id="{{ first_tte.employee_id if first_tte else '' }}">
+
+          <!-- VIEW ROW -->
+          <div class="taxi-row taxi-view-row">
+            <span class="taxi-emp-name">{{ first_tte.name_snapshot if first_tte else '—' }}</span>
+            <span class="taxi-addr-view">{{ first_tte.address_snapshot if first_tte else '' }}</span>
+            <span class="taxi-amount-view">{{ t.amount|int if t.amount else '—' }} ₽</span>
+            <span class="taxi-pay-view">{% if t.payment_type == 'card' %}Карта{% else %}Нал{% endif %}</span>
+            <span class="taxi-gulyash-view">{% if t.in_gulyash %}✓{% endif %}</span>
+            {% if can_edit %}
+            <div class="taxi-view-acts">
+              <button class="taxi-edit-trigger" onclick="taxiEnterEdit(this.closest('.taxi-trip-block'))">✎</button>
+              <button class="row-del" style="width:26px;height:26px;" onclick="deleteTaxiTrip(this,{{ t.id }})">✕</button>
+            </div>
+            {% else %}<div></div>{% endif %}
+          </div>
+
           {% if can_edit %}
-          <div class="taxi-left-edit" style="display:none">
-            <select class="field-select" style="font-size:12px;margin-bottom:6px;width:100%;"
-              onchange="onTaxiEmpSelect(this,{{ t.id }})">
-              <option value="">— добавить сотрудника —</option>
+          <!-- EDIT ROW -->
+          <div class="taxi-row taxi-edit-row" style="display:none">
+            <select class="field-select taxi-emp-sel" style="font-size:12px;">
+              <option value="">— сотрудник —</option>
               {% for emp in employees %}{% if emp.role != 'courier' %}
               <option value="{{ emp.id }}"
                 data-name="{{ emp.full_name }}"
-                data-address="{{ emp_addresses.get(emp.id,'') or '' }}">{{ emp.full_name }}</option>
+                data-address="{{ emp_addresses.get(emp.id,'') or '' }}"
+                {% if first_tte and first_tte.employee_id == emp.id %}selected{% endif %}>
+                {{ emp.full_name }}
+              </option>
               {% endif %}{% endfor %}
             </select>
-          </div>
-          {% endif %}
-          <div class="taxi-emps" id="taxi-emps-{{ t.id }}">
-            {% for tte in taxi_trip_emps[t.id] %}
-            <div class="taxi-emp-row" data-tte-id="{{ tte.id }}" data-emp-id="{{ tte.employee_id or '' }}">
-              <span class="taxi-emp-name">{{ tte.name_snapshot }}</span>
-              {% if can_edit %}
-              <input class="mini-input" type="text" value="{{ tte.address_snapshot or '' }}" placeholder="Адрес" style="font-size:12px;">
-              <button class="row-del taxi-emp-del" style="display:none" onclick="removeTaxiEmp(this,{{ tte.id }})">✕</button>
-              {% else %}
-              <span style="font-size:11px;color:#9ca3af;">{{ tte.address_snapshot or '' }}</span>
-              <div></div>
-              {% endif %}
-            </div>
-            {% endfor %}
-          </div>
-          {% if can_edit %}
-          <div class="taxi-summary-row taxi-right-edit" style="display:none">
-            <div></div>
+            <input class="mini-input taxi-addr-input" type="text" placeholder="Адрес"
+              value="{{ first_tte.address_snapshot if first_tte else '' }}" style="font-size:12px;">
             <input type="number" class="mini-input taxi-amount-input" placeholder="—" min="0"
-              value="{{ t.amount|int if t.amount else '' }}" style="width:100%;text-align:right;">
-            <select class="pay-type-sel taxi-pay-select" style="width:100%;">
+              value="{{ t.amount|int if t.amount else '' }}" style="text-align:right;">
+            <select class="pay-type-sel taxi-pay-select" style="font-size:12px;">
               <option value="cash" {% if t.payment_type != 'card' %}selected{% endif %}>Нал</option>
               <option value="card" {% if t.payment_type == 'card' %}selected{% endif %}>Карта</option>
             </select>
             <div style="text-align:center;"><input type="checkbox" class="check-box taxi-gulyash-cb" {% if t.in_gulyash %}checked{% endif %}></div>
+            <div></div>
           </div>
-          <div class="taxi-btn-row taxi-right-edit" style="display:none">
+          <div class="taxi-btn-row taxi-edit-btns" style="display:none">
             <button class="taxi-save-btn" onclick="saveTaxiUpdate(this.closest('.taxi-trip-block'))">✓ Сохранить</button>
-            <button class="taxi-cancel-btn" onclick="cancelTaxiUpdate(this.closest('.taxi-trip-block'), {{ t.id }})">↩ Отмена</button>
+            <button class="taxi-cancel-btn" onclick="cancelTaxiEdit(this.closest('.taxi-trip-block'))">↩ Отмена</button>
             <div class="taxi-saved-hint">Сохранено</div>
-          </div>
-          <div class="taxi-summary-row taxi-right-view">
-            <div></div>
-            <span class="taxi-amount-view" style="font-size:14px;font-weight:700;text-align:right;">{{ t.amount|int if t.amount else '—' }} ₽</span>
-            <span class="taxi-pay-view" style="font-size:12px;color:#6b7280;">{% if t.payment_type == 'card' %}Карта{% else %}Нал{% endif %}</span>
-            <span class="taxi-gulyash-view" style="font-size:12px;color:#10b981;text-align:center;">{% if t.in_gulyash %}✓{% endif %}</span>
-          </div>
-          <div class="taxi-btn-row taxi-right-view">
-            <button class="taxi-edit-trigger" onclick="taxiEnterEdit(this.closest('.taxi-trip-block'))">✎ Редактировать</button>
-            <button class="row-del" style="width:28px;height:28px;" title="Удалить рейс" onclick="deleteTaxiTrip(this, {{ t.id }})">✕</button>
-          </div>
-          {% else %}
-          <div class="taxi-summary-row">
-            <div></div>
-            <span style="font-size:14px;font-weight:700;text-align:right;">{{ t.amount|int }} ₽</span>
-            <span style="font-size:12px;color:#6b7280;">{% if t.payment_type == 'card' %}Карта{% else %}Нал{% endif %}</span>
-            <span style="font-size:12px;color:#10b981;text-align:center;">{% if t.in_gulyash %}✓{% endif %}</span>
           </div>
           {% endif %}
         </div>
@@ -1228,18 +1219,25 @@ const TAXI_EMPS = [{% for emp in employees %}{% if emp.role != 'courier' %}
 
 var taxiUsedEmpIds = new Set([{% for t in taxi_trips %}{% for tte in taxi_trip_emps[t.id] %}{% if tte.employee_id %}{{ tte.employee_id }},{% endif %}{% endfor %}{% endfor %}]);
 
-function buildTaxiEmpOptions() {
-  return '<option value="">— добавить сотрудника —</option>' +
+function buildTaxiEmpOptions(selectedId) {
+  selectedId = selectedId ? parseInt(selectedId) : null;
+  return '<option value="">— сотрудник —</option>' +
     TAXI_EMPS.map(function(e) {
-      var dis = taxiUsedEmpIds.has(e.id) ? ' disabled' : '';
-      return '<option value="' + e.id + '"' + dis + ' data-name="' + e.name.replace(/"/g,'&quot;') + '" data-address="' + e.addr.replace(/"/g,'&quot;') + '">' + e.name + '</option>';
+      var dis = (taxiUsedEmpIds.has(e.id) && e.id !== selectedId) ? ' disabled' : '';
+      var sel = (e.id === selectedId) ? ' selected' : '';
+      return '<option value="' + e.id + '"' + dis + sel +
+        ' data-name="' + e.name.replace(/"/g,'&quot;') +
+        '" data-address="' + e.addr.replace(/"/g,'&quot;') + '">' + e.name + '</option>';
     }).join('');
 }
 
 function updateTaxiSelects() {
-  document.querySelectorAll('.taxi-trip-block select.field-select').forEach(function(sel) {
-    sel.querySelectorAll('option[value]').forEach(function(opt) {
-      if (opt.value) opt.disabled = taxiUsedEmpIds.has(parseInt(opt.value));
+  document.querySelectorAll('.taxi-emp-sel').forEach(function(sel) {
+    var curId = sel.value ? parseInt(sel.value) : null;
+    sel.querySelectorAll('option').forEach(function(opt) {
+      if (!opt.value) return;
+      var eid = parseInt(opt.value);
+      opt.disabled = taxiUsedEmpIds.has(eid) && eid !== curId;
     });
   });
 }
@@ -1258,138 +1256,68 @@ async function addTaxiTrip() {
   var block = document.createElement('div');
   block.className = 'taxi-trip-block';
   block.dataset.tripId = tid;
+  block.dataset.tteId = '';
+  block.dataset.empId = '';
+
   block.innerHTML =
-    '<div class="taxi-left-edit">' +
-      '<select class="field-select" style="font-size:12px;margin-bottom:6px;width:100%;" onchange="onTaxiEmpSelect(this,' + tid + ')">' +
-        buildTaxiEmpOptions() +
-      '</select>' +
-    '</div>' +
-    '<div class="taxi-emps" id="taxi-emps-' + tid + '"></div>' +
-    '<div class="taxi-summary-row taxi-right-edit">' +
-      '<div></div>' +
-      '<input type="number" class="mini-input taxi-amount-input" placeholder="—" min="0" style="width:100%;text-align:right;">' +
-      '<select class="pay-type-sel taxi-pay-select" style="width:100%;"><option value="cash">Нал</option><option value="card">Карта</option></select>' +
+    '<div class="taxi-row taxi-edit-row">' +
+      '<select class="field-select taxi-emp-sel" style="font-size:12px;">' + buildTaxiEmpOptions() + '</select>' +
+      '<input class="mini-input taxi-addr-input" type="text" placeholder="Адрес" style="font-size:12px;">' +
+      '<input type="number" class="mini-input taxi-amount-input" placeholder="—" min="0" style="text-align:right;">' +
+      '<select class="pay-type-sel taxi-pay-select" style="font-size:12px;"><option value="cash">Нал</option><option value="card">Карта</option></select>' +
       '<div style="text-align:center;"><input type="checkbox" class="check-box taxi-gulyash-cb"></div>' +
+      '<div></div>' +
     '</div>' +
-    '<div class="taxi-btn-row taxi-right-edit">' +
+    '<div class="taxi-btn-row taxi-edit-btns">' +
       '<button class="taxi-save-btn" onclick="saveTaxiUpdate(this.closest(\'.taxi-trip-block\'))">✓ Сохранить</button>' +
-      '<button class="taxi-cancel-btn" onclick="cancelTaxiUpdate(this.closest(\'.taxi-trip-block\'),' + tid + ')">↩ Отмена</button>' +
+      '<button class="taxi-cancel-btn" onclick="cancelTaxiNewTrip(this.closest(\'.taxi-trip-block\'),' + tid + ')">↩ Отмена</button>' +
       '<div class="taxi-saved-hint">Сохранено</div>' +
     '</div>' +
-    '<div class="taxi-summary-row taxi-right-view" style="display:none">' +
-      '<div></div>' +
-      '<span class="taxi-amount-view" style="font-size:14px;font-weight:700;text-align:right;">— ₽</span>' +
-      '<span class="taxi-pay-view" style="font-size:12px;color:#6b7280;">Нал</span>' +
+    '<div class="taxi-row taxi-view-row" style="display:none">' +
+      '<span class="taxi-emp-name">—</span>' +
+      '<span class="taxi-addr-view" style="font-size:11px;color:#9ca3af;"></span>' +
+      '<span class="taxi-amount-view" style="font-size:13px;font-weight:700;text-align:right;">— ₽</span>' +
+      '<span class="taxi-pay-view" style="font-size:11px;color:#6b7280;">Нал</span>' +
       '<span class="taxi-gulyash-view" style="font-size:12px;color:#10b981;text-align:center;"></span>' +
-    '</div>' +
-    '<div class="taxi-btn-row taxi-right-view" style="display:none">' +
-      '<button class="taxi-edit-trigger" onclick="taxiEnterEdit(this.closest(\'.taxi-trip-block\'))">✎ Редактировать</button>' +
+      '<div class="taxi-view-acts">' +
+        '<button class="taxi-edit-trigger" onclick="taxiEnterEdit(this.closest(\'.taxi-trip-block\'))">✎</button>' +
+        '<button class="row-del" style="width:26px;height:26px;" onclick="deleteTaxiTrip(this,' + tid + ')">✕</button>' +
+      '</div>' +
     '</div>';
 
   document.getElementById('taxi-body').appendChild(block);
 }
 
-async function onTaxiEmpSelect(sel, tripId) {
-  if (!sel.value) return;
-  var opt = sel.options[sel.selectedIndex];
-  var empId = parseInt(sel.value);
-  var name = opt.dataset.name || opt.text;
-  var address = opt.dataset.address || '';
-  sel.value = '';
-
-  var res = await fetch('/taxi/' + tripId + '/employee/add', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ employee_id: empId, name: name, address: address })
-  });
-  var json = await res.json();
-  if (!json.ok) {
-    alert(json.error || 'Ошибка');
-    return;
-  }
-
-  taxiUsedEmpIds.add(empId);
-  updateTaxiSelects();
-
-  var container = document.getElementById('taxi-emps-' + tripId);
-  var row = document.createElement('div');
-  row.className = 'taxi-emp-row';
-  row.dataset.tteId = json.tte_id;
-  row.dataset.empId = empId;
-  row.innerHTML =
-    '<span class="taxi-emp-name">' + name + '</span>' +
-    '<input class="mini-input" type="text" value="' + address.replace(/"/g,'&quot;') + '" placeholder="Адрес" style="font-size:12px;">' +
-    '<button class="row-del taxi-emp-del" onclick="removeTaxiEmp(this,' + json.tte_id + ')">✕</button>';
-  container.appendChild(row);
-}
-
-async function removeTaxiEmp(btn, tteId) {
-  var res = await fetch('/taxi/employee/' + tteId + '/remove', { method: 'POST' });
-  var json = await res.json();
-  if (!json.ok) { alert('Ошибка'); return; }
-  var row = btn.closest('.taxi-emp-row');
-  var empId = parseInt(row.dataset.empId);
-  if (empId) { taxiUsedEmpIds.delete(empId); updateTaxiSelects(); }
-  row.remove();
-}
-
 function taxiEnterEdit(block) {
-  var le = block.querySelector('.taxi-left-edit');
-  if (le) le.style.display = '';
-  block.querySelectorAll('.taxi-right-edit').forEach(function(el){
-    el.style.display = el.classList.contains('taxi-summary-row') ? 'grid' : 'flex';
-  });
-  block.querySelectorAll('.taxi-right-view').forEach(function(el){ el.style.display = 'none'; });
-  block.querySelectorAll('.taxi-emp-del').forEach(function(b){ b.style.display = ''; });
+  block.querySelector('.taxi-view-row').style.display = 'none';
+  block.querySelector('.taxi-edit-row').style.display = 'grid';
+  var btns = block.querySelector('.taxi-edit-btns');
+  if (btns) btns.style.display = 'flex';
   updateTaxiSelects();
 }
 
 function taxiEnterView(block) {
-  var le = block.querySelector('.taxi-left-edit');
-  if (le) le.style.display = 'none';
-  block.querySelectorAll('.taxi-right-edit').forEach(function(el){ el.style.display = 'none'; });
-  block.querySelectorAll('.taxi-right-view').forEach(function(el){
-    el.style.display = el.classList.contains('taxi-summary-row') ? 'grid' : 'flex';
-  });
-  block.querySelectorAll('.taxi-emp-del').forEach(function(b){ b.style.display = 'none'; });
-  var amount = (block.querySelector('.taxi-amount-input') || {}).value || 0;
-  var payType = (block.querySelector('.taxi-pay-select') || {}).value || 'cash';
-  var gulyash = (block.querySelector('.taxi-gulyash-cb') || {}).checked;
-  var at = block.querySelector('.taxi-amount-view');
-  var pt = block.querySelector('.taxi-pay-view');
-  var gt = block.querySelector('.taxi-gulyash-view');
-  if (at) at.textContent = (parseInt(amount) || 0) + ' ₽';
-  if (pt) pt.textContent = payType === 'card' ? 'Карта' : 'Нал';
-  if (gt) gt.textContent = gulyash ? '✓' : '';
+  block.querySelector('.taxi-edit-row').style.display = 'none';
+  var btns = block.querySelector('.taxi-edit-btns');
+  if (btns) btns.style.display = 'none';
+  block.querySelector('.taxi-view-row').style.display = 'grid';
 }
 
-async function saveTaxiUpdate(block) {
-  var tripId = block.dataset.tripId;
-  var amount = (block.querySelector('.taxi-amount-input') || {}).value || 0;
-  var payType = (block.querySelector('.taxi-pay-select') || {}).value || 'cash';
-  var inGulyash = (block.querySelector('.taxi-gulyash-cb') || {}).checked || false;
-  var res = await fetch('/taxi/' + tripId + '/update', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ amount: parseFloat(amount) || 0, payment_type: payType, in_gulyash: inGulyash })
-  });
-  var json = await res.json();
-  if (json.ok) {
-    var hint = block.querySelector('.taxi-saved-hint');
-    if (hint) { hint.style.display = 'block'; setTimeout(function(){ hint.style.display = 'none'; taxiEnterView(block); }, 800); }
-    else taxiEnterView(block);
-  }
+function cancelTaxiEdit(block) {
+  // Revert edit fields to current saved values shown in view row
+  var empId = block.dataset.empId ? parseInt(block.dataset.empId) : '';
+  var empSel = block.querySelector('.taxi-emp-sel');
+  if (empSel) empSel.value = empId || '';
+  var addrInput = block.querySelector('.taxi-addr-input');
+  var addrView = block.querySelector('.taxi-addr-view');
+  if (addrInput && addrView) addrInput.value = addrView.textContent;
+  taxiEnterView(block);
 }
 
-async function cancelTaxiUpdate(block, tripId) {
+async function cancelTaxiNewTrip(block, tripId) {
   var res = await fetch('/taxi/' + tripId + '/delete', { method: 'POST' });
   var json = await res.json();
   if (!json.ok) { alert('Ошибка'); return; }
-  block.querySelectorAll('.taxi-emp-row[data-emp-id]').forEach(function(row){
-    var eid = parseInt(row.dataset.empId);
-    if (eid) taxiUsedEmpIds.delete(eid);
-  });
-  updateTaxiSelects();
   block.remove();
   if (!document.querySelector('#taxi-body .taxi-trip-block')) {
     var emptyEl = document.getElementById('taxi-empty');
@@ -1397,10 +1325,91 @@ async function cancelTaxiUpdate(block, tripId) {
   }
 }
 
+async function saveTaxiUpdate(block) {
+  var tripId = block.dataset.tripId;
+  var oldTteId = block.dataset.tteId ? parseInt(block.dataset.tteId) : null;
+  var oldEmpId = block.dataset.empId ? parseInt(block.dataset.empId) : null;
+
+  var empSel = block.querySelector('.taxi-emp-sel');
+  var newEmpId = (empSel && empSel.value) ? parseInt(empSel.value) : null;
+  var selOpt = empSel && newEmpId ? empSel.options[empSel.selectedIndex] : null;
+  var newEmpName = selOpt ? (selOpt.dataset.name || selOpt.text) : '';
+  var newAddr = (block.querySelector('.taxi-addr-input') || {}).value || '';
+  var amount = (block.querySelector('.taxi-amount-input') || {}).value || 0;
+  var payType = (block.querySelector('.taxi-pay-select') || {}).value || 'cash';
+  var inGulyash = (block.querySelector('.taxi-gulyash-cb') || {}).checked || false;
+
+  var newTteId = oldTteId;
+
+  if (newEmpId !== oldEmpId) {
+    if (oldTteId) {
+      await fetch('/taxi/employee/' + oldTteId + '/remove', { method: 'POST' });
+      if (oldEmpId) taxiUsedEmpIds.delete(oldEmpId);
+      newTteId = null;
+    }
+    if (newEmpId) {
+      var r = await fetch('/taxi/' + tripId + '/employee/add', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ employee_id: newEmpId, name: newEmpName, address: newAddr })
+      });
+      var rj = await r.json();
+      if (!rj.ok) { alert(rj.error || 'Ошибка'); return; }
+      newTteId = rj.tte_id;
+      taxiUsedEmpIds.add(newEmpId);
+    }
+  } else if (oldTteId && newEmpId) {
+    await fetch('/taxi/employee/' + oldTteId + '/update', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ address: newAddr })
+    });
+  }
+
+  var r2 = await fetch('/taxi/' + tripId + '/update', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ amount: parseFloat(amount) || 0, payment_type: payType, in_gulyash: inGulyash })
+  });
+  var rj2 = await r2.json();
+  if (!rj2.ok) { alert('Ошибка сохранения'); return; }
+
+  block.dataset.tteId = newTteId || '';
+  block.dataset.empId = newEmpId || '';
+
+  var eEl = block.querySelector('.taxi-emp-name');
+  var aEl = block.querySelector('.taxi-addr-view');
+  var amEl = block.querySelector('.taxi-amount-view');
+  var pEl = block.querySelector('.taxi-pay-view');
+  var gEl = block.querySelector('.taxi-gulyash-view');
+  if (eEl) eEl.textContent = newEmpName || '—';
+  if (aEl) aEl.textContent = newAddr;
+  if (amEl) amEl.textContent = (parseInt(amount) || 0) + ' ₽';
+  if (pEl) pEl.textContent = payType === 'card' ? 'Карта' : 'Нал';
+  if (gEl) gEl.textContent = inGulyash ? '✓' : '';
+
+  updateTaxiSelects();
+
+  var hint = block.querySelector('.taxi-saved-hint');
+  if (hint) {
+    hint.style.display = 'block';
+    setTimeout(function() { hint.style.display = 'none'; taxiEnterView(block); }, 800);
+  } else {
+    taxiEnterView(block);
+  }
+}
+
 async function deleteTaxiTrip(btn, tripId) {
   if (!confirm('Удалить рейс?')) return;
   var block = btn.closest('.taxi-trip-block');
-  await cancelTaxiUpdate(block, tripId);
+  var empId = block.dataset.empId ? parseInt(block.dataset.empId) : null;
+  if (empId) taxiUsedEmpIds.delete(empId);
+  var res = await fetch('/taxi/' + tripId + '/delete', { method: 'POST' });
+  var json = await res.json();
+  if (!json.ok) { alert('Ошибка'); return; }
+  block.remove();
+  updateTaxiSelects();
+  if (!document.querySelector('#taxi-body .taxi-trip-block')) {
+    var emptyEl = document.getElementById('taxi-empty');
+    if (emptyEl) emptyEl.style.display = '';
+  }
 }
 
 document.addEventListener('click', function(e) {
