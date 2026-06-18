@@ -276,15 +276,16 @@
           </div>
         </div>
         <!-- Факт в кассе -->
-        <div style="margin-top:12px; display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-          <div style="background:#f1f5f9; border:1.5px solid #cbd5e1; border-radius:10px; padding:14px;">
-            <div style="font-size:10px; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px;">Факт в кассе</div>
+        <div style="margin-top:10px; display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          <div style="background:#f1f5f9; border:1.5px solid #cbd5e1; border-radius:8px; padding:5px 12px; display:flex; align-items:center; gap:6px;">
+            <span style="font-size:11px; color:#475569; font-weight:600; flex:1; white-space:nowrap;">Факт в кассе</span>
             <input type="text" inputmode="numeric" id="actual-cash-input"
                    class="mini-input money-field rev-field" data-field="actual_cash"
                    value="{{ (revenue.actual_cash or 0)|int if revenue and revenue.actual_cash else '' }}"
                    placeholder="0"
-                   style="font-size:22px; font-weight:800; color:#334155; background:transparent; border:none; padding:0; width:100%; outline:none;"
+                   style="font-size:15px; font-weight:800; color:#334155; background:transparent; border:none; padding:0; width:72px; text-align:right; outline:none;"
                    {% if not can_edit %}disabled{% endif %}>
+            <span style="font-size:13px; color:#475569; font-weight:600;">₽</span>
           </div>
           <div></div>
         </div>
