@@ -4,8 +4,12 @@ import io
 import operator as _op
 import os
 import re
+import sys
 import logging
 from functools import wraps
+
+# Гарантируем что папка crm/ в пути — нужно для sber_api.py
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from datetime import date, datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -3158,10 +3162,10 @@ def _sber_set(conn, key, value):
 def sber_settings():
     with get_db() as conn:
         if request.method == 'POST':
-            _sber_set(conn, 'sber_client_id',     request.form.get('client_id', '').strip())
-            _sber_set(conn, 'sber_client_secret',  request.form.get('client_secret', '').strip())
-            _sber_set(conn, 'sber_account_number', request.form.get('account_number', '').strip())
-            _sber_set(conn, 'sber_auto_sync',      '1' if request.form.get('auto_sync') else '0')
+            _sber_set(conn, 'sber_client_id',      request.form.get('client_id', '').strip())
+            _sber_set(conn, 'sber_client_secret',   request.form.get('client_secret', '').strip())
+            _sber_set(conn, 'sber_account_number',  request.form.get('account_number', '').strip())
+            _sber_set(conn, 'sber_auto_sync',       '1' if request.form.get('auto_sync') else '0')
             conn.commit()
             flash('Настройки Сбербанка сохранены', 'success')
             return redirect(url_for('sber_settings'))
@@ -3173,43 +3177,107 @@ def sber_settings():
             'auto_sync':      _sber_get(conn, 'sber_auto_sync', '0'),
             'last_sync':      _sber_get(conn, 'sber_last_sync'),
             'last_result':    _sber_get(conn, 'sber_last_result'),
+            'has_token':      bool(_sber_get(conn, 'sber_refresh_token')),
         }
         accounts = conn.execute('SELECT * FROM bank_accounts WHERE is_active=1 ORDER BY name').fetchall()
     return render_template('sber_settings.html', cfg=cfg, accounts=accounts)
+
+
+@app.route('/bank/sber/auth')
+@login_required
+@owner_required
+def sber_auth():
+    """Редирект на страницу авторизации СберБизнес."""
+    import secrets
+    from sber_api import build_auth_url
+    with get_db() as conn:
+        client_id = _sber_get(conn, 'sber_client_id', '71154')
+        state = secrets.token_urlsafe(16)
+        nonce = secrets.token_urlsafe(16)
+        _sber_set(conn, 'sber_oauth_state', state)
+        conn.commit()
+    redirect_uri = url_for('sber_callback', _external=True)
+    auth_url = build_auth_url(client_id, redirect_uri, state, nonce)
+    return redirect(auth_url)
+
+
+@app.route('/bank/sber/callback')
+@login_required
+@owner_required
+def sber_callback():
+    """Обработчик callback после авторизации в СберБизнес."""
+    from sber_api import exchange_code
+    code  = request.args.get('code')
+    state = request.args.get('state')
+    error = request.args.get('error')
+
+    if error:
+        flash(f'Сбербанк отказал в доступе: {error}', 'danger')
+        return redirect(url_for('sber_settings'))
+
+    with get_db() as conn:
+        saved_state = _sber_get(conn, 'sber_oauth_state')
+        if state != saved_state:
+            flash('Ошибка безопасности: state не совпадает. Попробуйте снова.', 'danger')
+            return redirect(url_for('sber_settings'))
+
+        client_id     = _sber_get(conn, 'sber_client_id', '71154')
+        client_secret = _sber_get(conn, 'sber_client_secret')
+
+        try:
+            redirect_uri = url_for('sber_callback', _external=True)
+            tokens = exchange_code(client_id, client_secret, code, redirect_uri)
+            import time
+            _sber_set(conn, 'sber_access_token',  tokens['access_token'])
+            _sber_set(conn, 'sber_refresh_token', tokens.get('refresh_token', ''))
+            _sber_set(conn, 'sber_token_expires',
+                      str(time.time() + int(tokens.get('expires_in', 3600))))
+            conn.commit()
+            flash('Сбербанк успешно подключён! Можно загружать выписки.', 'success')
+        except Exception as e:
+            flash(f'Ошибка получения токена: {e}', 'danger')
+
+    return redirect(url_for('sber_settings'))
 
 
 @app.route('/bank/sber/sync', methods=['POST'])
 @login_required
 @owner_required
 def sber_sync():
-    from sber_api import get_token, get_statement, parse_transactions
+    from sber_api import refresh_access_token, get_statement, parse_transactions
+    import time
 
     data = request.get_json(silent=True) or {}
     date_from = data.get('date_from') or (date.today() - timedelta(days=7)).isoformat()
     date_to   = data.get('date_to')   or date.today().isoformat()
 
     with get_db() as conn:
-        client_id      = _sber_get(conn, 'sber_client_id', '71154')
-        client_secret  = _sber_get(conn, 'sber_client_secret')
-        account_number = _sber_get(conn, 'sber_account_number')
+        client_id       = _sber_get(conn, 'sber_client_id', '71154')
+        client_secret   = _sber_get(conn, 'sber_client_secret')
+        account_number  = _sber_get(conn, 'sber_account_number')
         bank_account_id = data.get('bank_account_id') or _sber_get(conn, 'sber_bank_account_id')
+        refresh_token   = _sber_get(conn, 'sber_refresh_token')
 
-        if not client_secret:
-            return jsonify({'ok': False, 'error': 'Не задан client_secret'})
+        if not refresh_token:
+            return jsonify({'ok': False, 'error': 'Сначала авторизуйтесь в СберБизнес — нажмите кнопку «Подключить»'})
         if not account_number:
             return jsonify({'ok': False, 'error': 'Не задан номер счёта'})
 
         try:
-            # Проверяем кэшированный токен
-            cached_token   = _sber_get(conn, 'sber_access_token')
-            token_exp_str  = _sber_get(conn, 'sber_token_expires')
-            now_ts = datetime.utcnow().timestamp()
+            # Проверяем кэшированный access_token
+            cached_token  = _sber_get(conn, 'sber_access_token')
+            token_exp_str = _sber_get(conn, 'sber_token_expires')
+            now_ts = time.time()
             if cached_token and token_exp_str and float(token_exp_str) > now_ts + 60:
                 access_token = cached_token
             else:
-                access_token, expires_in = get_token(client_id, client_secret)
-                _sber_set(conn, 'sber_access_token',   access_token)
-                _sber_set(conn, 'sber_token_expires',  str(now_ts + expires_in))
+                # Обновляем через refresh_token
+                tokens = refresh_access_token(client_id, client_secret, refresh_token)
+                access_token = tokens['access_token']
+                _sber_set(conn, 'sber_access_token',  access_token)
+                _sber_set(conn, 'sber_token_expires', str(now_ts + int(tokens.get('expires_in', 3600))))
+                if tokens.get('refresh_token'):
+                    _sber_set(conn, 'sber_refresh_token', tokens['refresh_token'])
                 conn.commit()
 
             stmt_json = get_statement(access_token, client_id, account_number, date_from, date_to)
@@ -3296,16 +3364,24 @@ def sber_sync():
 @login_required
 @owner_required
 def sber_test():
-    """Проверка подключения — только получение токена."""
-    from sber_api import get_token
+    """Проверка: обновляем токен через refresh_token."""
+    from sber_api import refresh_access_token
+    import time
     with get_db() as conn:
         client_id     = _sber_get(conn, 'sber_client_id', '71154')
         client_secret = _sber_get(conn, 'sber_client_secret')
-    if not client_secret:
-        return jsonify({'ok': False, 'error': 'Не задан client_secret'})
+        refresh_token = _sber_get(conn, 'sber_refresh_token')
+    if not refresh_token:
+        return jsonify({'ok': False, 'error': 'Нет токена — сначала нажмите «Подключить СберБизнес»'})
     try:
-        token, expires_in = get_token(client_id, client_secret)
-        return jsonify({'ok': True, 'expires_in': expires_in})
+        tokens = refresh_access_token(client_id, client_secret, refresh_token)
+        with get_db() as conn:
+            _sber_set(conn, 'sber_access_token',  tokens['access_token'])
+            _sber_set(conn, 'sber_token_expires', str(time.time() + int(tokens.get('expires_in', 3600))))
+            if tokens.get('refresh_token'):
+                _sber_set(conn, 'sber_refresh_token', tokens['refresh_token'])
+            conn.commit()
+        return jsonify({'ok': True, 'expires_in': tokens.get('expires_in', 3600)})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)})
 
