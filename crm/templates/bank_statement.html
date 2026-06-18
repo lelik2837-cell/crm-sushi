@@ -4,14 +4,17 @@
 {% block content %}
 <div class="container-fluid py-3">
 
-  <div class="d-flex align-items-center mb-3 gap-3">
+  <div class="d-flex align-items-center mb-3 gap-3 flex-wrap">
     <a href="{{ url_for('bank') }}" class="btn btn-outline-secondary btn-sm">
       <i class="bi bi-arrow-left"></i> Назад
     </a>
-    <div>
+    <div class="flex-grow-1">
       <h5 class="mb-0 fw-bold">{{ stmt.filename }}</h5>
       <small class="text-muted">{{ stmt.account_name }} · {{ stmt.date_from }} — {{ stmt.date_to }} · {{ stmt.row_count }} строк</small>
     </div>
+    <a href="{{ url_for('bank_classify', stmt_id=stmt.id) }}" class="btn btn-outline-primary btn-sm">
+      <i class="bi bi-tags me-1"></i>Разметка
+    </a>
   </div>
 
   {% with messages = get_flashed_messages(with_categories=true) %}

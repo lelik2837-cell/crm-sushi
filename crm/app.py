@@ -205,35 +205,80 @@ def _map_csv_columns(fieldnames):
 def _parse_bank_csv(raw_bytes):
     enc = _detect_encoding(raw_bytes)
     text = raw_bytes.decode(enc)
-    lines = text.splitlines()
+    lines = [l for l in text.splitlines() if l.strip()]
+    if not lines:
+        raise ValueError('Файл пустой')
+
+    DATE_WORDS = ('дата', 'date')
+    AMT_WORDS  = ('сумм', 'amount', 'приход', 'расход', 'поступлен', 'списан', 'дебет', 'кредит')
+
+    # Find the header row (first row containing a date keyword + amount keyword and multiple columns)
     header_idx = 0
-    for i, line in enumerate(lines):
+    for i, line in enumerate(lines[:30]):
         low = line.lower()
-        if ('дата' in low or 'date' in low) and ('сумм' in low or 'amount' in low or 'приход' in low):
+        has_date = any(w in low for w in DATE_WORDS)
+        has_amt  = any(w in low for w in AMT_WORDS)
+        n_cols   = max(line.count(';'), line.count(','), line.count('\t'))
+        if has_date and has_amt and n_cols >= 2:
             header_idx = i
             break
+
     data_text = '\n'.join(lines[header_idx:])
-    reader = csv.DictReader(io.StringIO(data_text), delimiter=';')
-    rows = list(reader)
+
+    # Try semicolon, then comma, then tab as delimiter
+    rows = []
+    reader = None
+    for delim in (';', ',', '\t'):
+        r = csv.DictReader(io.StringIO(data_text), delimiter=delim)
+        rs = list(r)
+        fnames = [f for f in (r.fieldnames or []) if f and f.strip()]
+        if rs and len(fnames) >= 2:
+            rows, reader = rs, r
+            break
+
     if not rows:
-        raise ValueError('Файл пустой или не удалось распознать формат')
-    col = _map_csv_columns(reader.fieldnames or [])
+        preview = '\n'.join(lines[:5])
+        raise ValueError(f'Не удалось распознать формат CSV. Начало файла:\n{preview}')
+
+    fieldnames = reader.fieldnames or []
+    col = _map_csv_columns(fieldnames)
+
+    # Auto-detect date column if mapping failed
+    if not col['date']:
+        for f in fieldnames:
+            if not f:
+                continue
+            vals = [row.get(f, '') for row in rows[:5] if row.get(f)]
+            if vals and any(_parse_date_str(v) for v in vals):
+                col['date'] = f
+                break
+
+    # Auto-detect amount columns if mapping failed
+    if not col['amount'] and not col.get('debit') and not col.get('credit'):
+        for f in fieldnames:
+            if not f or f == col.get('date'):
+                continue
+            nums = [_clean_num(row.get(f)) for row in rows[:5]]
+            if any(v is not None and v != 0 for v in nums):
+                col['amount'] = f
+                break
+
     result = []
     for row in rows:
-        date_val = _parse_date_str(row.get(col['date'] or '', '') or '')
+        date_val = _parse_date_str(row.get(col.get('date') or '\x00', '') or '')
         if not date_val:
             continue
-        if col.get('debit') and col.get('credit'):
-            d = _clean_num(row.get(col['debit']))
-            c = _clean_num(row.get(col['credit']))
-            if c and c > 0:
+        if col.get('debit') or col.get('credit'):
+            d = _clean_num(row.get(col.get('debit') or '\x00', '')) or 0
+            c = _clean_num(row.get(col.get('credit') or '\x00', '')) or 0
+            if c > 0:
                 amount = c
-            elif d and d > 0:
+            elif d > 0:
                 amount = -d
             else:
                 continue
-        else:
-            amount = _clean_num(row.get(col.get('amount') or '', ''))
+        elif col.get('amount'):
+            amount = _clean_num(row.get(col['amount'], ''))
             if amount is None:
                 continue
             if col.get('type'):
@@ -242,9 +287,21 @@ def _parse_bank_csv(raw_bytes):
                     amount = -abs(amount)
                 elif any(w in tv for w in ('зачисл', 'приход', 'кредит', ' к ')):
                     amount = abs(amount)
-        desc = (row.get(col.get('description') or '', '') or '').strip()
-        ctr  = (row.get(col.get('counterparty') or '', '') or '').strip()
+        else:
+            continue
+        desc = (row.get(col.get('description') or '\x00', '') or '').strip()
+        ctr  = (row.get(col.get('counterparty') or '\x00', '') or '').strip()
         result.append({'date': date_val, 'amount': amount, 'description': desc, 'counterparty': ctr})
+
+    if not result and rows:
+        col_info = '; '.join(f'{k}={v}' for k, v in col.items() if v) or 'ни одна не определена'
+        first_cols = ', '.join(str(f) for f in fieldnames[:8] if f)
+        raise ValueError(
+            f'Строки найдены ({len(rows)} шт.), но транзакции не распознаны. '
+            f'Колонки файла: {first_cols}. '
+            f'Маппинг: {col_info}.'
+        )
+
     return result
 
 
@@ -2726,8 +2783,147 @@ def bank_upload():
                  t.get('contractor_id'), t.get('category', ''), tid)
             )
         conn.commit()
-    flash(f'Загружено {len(txns)} транзакций', 'success')
-    return redirect(url_for('bank'))
+    flash(f'Загружено {len(txns)} транзакций. Назначьте контрагентов и терминалы.', 'success')
+    return redirect(url_for('bank_classify', stmt_id=stmt_id))
+
+
+@app.route('/bank/statement/<int:stmt_id>/classify', methods=['GET', 'POST'])
+@login_required
+@owner_required
+def bank_classify(stmt_id):
+    with get_db() as conn:
+        stmt = conn.execute('''
+            SELECT bs.*, ba.name as account_name
+            FROM bank_statements bs JOIN bank_accounts ba ON ba.id=bs.bank_account_id
+            WHERE bs.id=?
+        ''', (stmt_id,)).fetchone()
+        if not stmt:
+            flash('Выписка не найдена', 'danger')
+            return redirect(url_for('bank'))
+
+        if request.method == 'POST':
+            ctr_names    = request.form.getlist('ctr_name')
+            ctr_cats     = request.form.getlist('ctr_category')
+            ctr_keywords = request.form.getlist('ctr_keywords')
+            tid_numbers  = request.form.getlist('tid_number')
+            tid_branches = request.form.getlist('tid_branch')
+            tid_names    = request.form.getlist('tid_name')
+
+            for name, cat, kw in zip(ctr_names, ctr_cats, ctr_keywords):
+                name = (name or '').strip()
+                cat  = (cat or '').strip()
+                if not name or not cat:
+                    continue
+                kw = (kw or name).strip() or name
+                existing = conn.execute(
+                    'SELECT id FROM contractors WHERE LOWER(name)=LOWER(?)', (name,)
+                ).fetchone()
+                if existing:
+                    conn.execute('UPDATE contractors SET category=?, keywords=? WHERE id=?',
+                                 (cat, kw, existing['id']))
+                    ctr_id = existing['id']
+                else:
+                    ctr_id = conn.execute(
+                        'INSERT INTO contractors (name, category, keywords) VALUES (?,?,?)',
+                        (name, cat, kw)
+                    ).lastrowid
+                conn.execute('''
+                    UPDATE bank_transactions SET contractor_id=?, category=?
+                    WHERE statement_id=? AND LOWER(TRIM(counterparty))=LOWER(?)
+                ''', (ctr_id, cat, stmt_id, name))
+
+            for tid, branch_str, tname in zip(tid_numbers, tid_branches, tid_names):
+                tid = (tid or '').strip()
+                if not tid:
+                    continue
+                branch_id = int(branch_str) if branch_str and branch_str.isdigit() else None
+                tname = (tname or f'Терминал {tid}').strip()
+                existing = conn.execute(
+                    'SELECT id FROM bank_terminals WHERE terminal_number=?', (tid,)
+                ).fetchone()
+                if existing:
+                    conn.execute('UPDATE bank_terminals SET branch_id=?, name=? WHERE id=?',
+                                 (branch_id, tname, existing['id']))
+                    term_id = existing['id']
+                else:
+                    term_id = conn.execute(
+                        'INSERT INTO bank_terminals (terminal_number, name, branch_id) VALUES (?,?,?)',
+                        (tid, tname, branch_id)
+                    ).lastrowid
+                conn.execute('''
+                    UPDATE bank_transactions SET terminal_id=?
+                    WHERE statement_id=?
+                      AND (description LIKE ? OR counterparty LIKE ?
+                           OR description LIKE ? OR counterparty LIKE ?)
+                ''', (term_id, stmt_id,
+                      f'%TID%{tid}%', f'%TID%{tid}%',
+                      f'%{tid}%', f'%{tid}%'))
+
+            conn.commit()
+            flash('Разметка сохранена', 'success')
+            return redirect(url_for('bank_statement_view', stmt_id=stmt_id))
+
+        # GET — build unique counterparty and terminal lists
+        ctr_rows = conn.execute('''
+            SELECT TRIM(counterparty) as name, COUNT(*) as cnt, SUM(amount) as total,
+                   MIN(contractor_id) as contractor_id, MIN(category) as category
+            FROM bank_transactions
+            WHERE statement_id=? AND TRIM(counterparty) != ''
+            GROUP BY LOWER(TRIM(counterparty))
+            ORDER BY SUM(amount)
+        ''', (stmt_id,)).fetchall()
+
+        existing_ctrs = {c['name'].lower(): c for c in
+                         conn.execute('SELECT name, category, keywords FROM contractors').fetchall()}
+
+        counterparties = []
+        for row in ctr_rows:
+            name = row['name']
+            ex   = existing_ctrs.get(name.lower())
+            counterparties.append({
+                'name':        name,
+                'cnt':         row['cnt'],
+                'total':       row['total'],
+                'is_new':      ex is None,
+                'current_cat': (ex['category'] if ex else row['category']) or '',
+                'keywords':    (ex['keywords'] if ex else name) or name,
+            })
+
+        # Detect TIDs in descriptions
+        all_txns = conn.execute(
+            'SELECT description, counterparty FROM bank_transactions WHERE statement_id=?', (stmt_id,)
+        ).fetchall()
+        tid_cnts = {}
+        for t in all_txns:
+            text = f"{t['description'] or ''} {t['counterparty'] or ''}"
+            m = re.search(r'TID\s*[:\-]?\s*(\d{6,12})', text, re.IGNORECASE)
+            if m:
+                tid = m.group(1)
+                tid_cnts[tid] = tid_cnts.get(tid, 0) + 1
+
+        existing_tids = {r['terminal_number']: r for r in
+                         conn.execute('SELECT terminal_number, name, branch_id FROM bank_terminals').fetchall()}
+
+        tid_list = []
+        for tid, cnt in sorted(tid_cnts.items()):
+            ex = existing_tids.get(tid)
+            tid_list.append({
+                'tid':       tid,
+                'cnt':       cnt,
+                'is_new':    ex is None,
+                'name':      (ex['name'] if ex else '') or '',
+                'branch_id': (ex['branch_id'] if ex else None),
+            })
+
+        txn_count = conn.execute(
+            'SELECT COUNT(*) FROM bank_transactions WHERE statement_id=?', (stmt_id,)
+        ).fetchone()[0]
+        branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        exp_cats = get_expense_categories(conn)
+
+    return render_template('bank_classify.html',
+        stmt=stmt, counterparties=counterparties, tid_list=tid_list,
+        branches=branches, exp_cats=exp_cats, txn_count=txn_count)
 
 
 @app.route('/bank/statement/<int:stmt_id>/delete', methods=['POST'])

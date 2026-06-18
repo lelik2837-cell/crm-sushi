@@ -1,0 +1,172 @@
+{% extends 'base.html' %}
+{% block title %}Разметка выписки{% endblock %}
+{% block content %}
+
+<div class="mb-4">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb mb-2">
+            <li class="breadcrumb-item"><a href="{{ url_for('bank') }}">Банк</a></li>
+            <li class="breadcrumb-item"><a href="{{ url_for('bank_statement_view', stmt_id=stmt.id) }}">{{ stmt.filename }}</a></li>
+            <li class="breadcrumb-item active">Разметка</li>
+        </ol>
+    </nav>
+    <div class="d-flex align-items-start justify-content-between flex-wrap gap-2">
+        <div>
+            <h4 class="fw-bold mb-1">Разметка контрагентов и терминалов</h4>
+            <div class="text-muted small">
+                <span class="fw-semibold text-dark">{{ stmt.account_name }}</span> ·
+                {{ stmt.date_from }} — {{ stmt.date_to }} ·
+                {{ txn_count }} транзакций
+            </div>
+        </div>
+        <a href="{{ url_for('bank_statement_view', stmt_id=stmt.id) }}" class="btn btn-outline-secondary btn-sm">
+            Пропустить →
+        </a>
+    </div>
+</div>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% for cat, msg in messages %}
+<div class="alert alert-{{ 'danger' if cat=='danger' else 'success' if cat=='success' else 'warning' }} alert-dismissible fade show py-2">
+    {{ msg }}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endfor %}
+{% endwith %}
+
+<form method="post">
+
+{% if counterparties %}
+<div class="card mb-4 shadow-sm">
+    <div class="card-header d-flex align-items-center gap-2 py-2">
+        <i class="bi bi-building text-primary"></i>
+        <span class="fw-semibold">Контрагенты</span>
+        {% set new_count = counterparties | selectattr('is_new') | list | length %}
+        {% if new_count > 0 %}
+        <span class="badge bg-warning text-dark">{{ new_count }} новых</span>
+        {% endif %}
+        <span class="text-muted small ms-1">— назначьте категорию расходов</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th style="width:36%">Контрагент</th>
+                    <th>Категория расходов</th>
+                    <th class="text-end" style="width:80px">Опер.</th>
+                    <th class="text-end" style="width:110px">Сумма</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for c in counterparties %}
+            <tr class="{{ 'table-warning' if c.is_new else '' }}">
+                <td>
+                    <input type="hidden" name="ctr_name" value="{{ c.name }}">
+                    <input type="hidden" name="ctr_keywords" value="{{ c.keywords }}">
+                    <span class="small fw-medium">{{ c.name }}</span>
+                    {% if c.is_new %}
+                    <span class="badge bg-warning text-dark ms-1" style="font-size:0.65rem">новый</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <select name="ctr_category" class="form-select form-select-sm" style="max-width:260px">
+                        <option value="">— не классифицировать —</option>
+                        {% for cat in exp_cats %}
+                        <option value="{{ cat.code }}"
+                            {% if cat.code == c.current_cat %}selected{% endif %}>
+                            {{ cat.label }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </td>
+                <td class="text-end text-muted small">{{ c.cnt }}</td>
+                <td class="text-end small fw-semibold {% if c.total < 0 %}text-danger{% else %}text-success{% endif %}">
+                    {{ "{:,.0f}".format(c.total).replace(',', ' ') }} ₽
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% if tid_list %}
+<div class="card mb-4 shadow-sm">
+    <div class="card-header d-flex align-items-center gap-2 py-2">
+        <i class="bi bi-credit-card-2-front text-success"></i>
+        <span class="fw-semibold">Терминалы (TID)</span>
+        {% set new_tid_count = tid_list | selectattr('is_new') | list | length %}
+        {% if new_tid_count > 0 %}
+        <span class="badge bg-warning text-dark">{{ new_tid_count }} новых</span>
+        {% endif %}
+        <span class="text-muted small ms-1">— назначьте филиал</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th style="width:130px">TID</th>
+                    <th>Название терминала</th>
+                    <th>Филиал</th>
+                    <th class="text-end" style="width:80px">Опер.</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for t in tid_list %}
+            <tr class="{{ 'table-warning' if t.is_new else '' }}">
+                <td>
+                    <input type="hidden" name="tid_number" value="{{ t.tid }}">
+                    <code class="small text-dark">{{ t.tid }}</code>
+                    {% if t.is_new %}
+                    <span class="badge bg-warning text-dark ms-1" style="font-size:0.65rem">новый</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <input type="text" name="tid_name" class="form-control form-control-sm"
+                           style="max-width:220px"
+                           value="{{ t.name }}" placeholder="Терминал {{ t.tid }}">
+                </td>
+                <td>
+                    <select name="tid_branch" class="form-select form-select-sm" style="max-width:220px">
+                        <option value="">— не назначать —</option>
+                        {% for b in branches %}
+                        <option value="{{ b.id }}"
+                            {% if b.id == t.branch_id %}selected{% endif %}>
+                            {{ b.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </td>
+                <td class="text-end text-muted small">{{ t.cnt }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% if not counterparties and not tid_list %}
+<div class="alert alert-info d-flex align-items-center gap-2">
+    <i class="bi bi-info-circle-fill fs-5"></i>
+    <div>
+        <div class="fw-semibold">Всё уже размечено</div>
+        <div class="small">В этой выписке не найдено новых контрагентов или терминалов.</div>
+    </div>
+</div>
+{% endif %}
+
+<div class="d-flex gap-2 mt-2">
+    {% if counterparties or tid_list %}
+    <button type="submit" class="btn btn-primary">
+        <i class="bi bi-check-lg me-1"></i>Сохранить разметку
+    </button>
+    {% endif %}
+    <a href="{{ url_for('bank_statement_view', stmt_id=stmt.id) }}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-right me-1"></i>К выписке
+    </a>
+</div>
+
+</form>
+
+{% endblock %}
