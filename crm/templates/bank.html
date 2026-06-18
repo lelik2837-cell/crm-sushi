@@ -6,6 +6,9 @@
 
   <div class="d-flex align-items-center mb-3 gap-3">
     <h4 class="mb-0 fw-bold"><i class="bi bi-bank me-2"></i>Банк</h4>
+    <a href="{{ url_for('sber_settings') }}" class="btn btn-sm btn-outline-success ms-auto">
+      <i class="bi bi-arrow-repeat me-1"></i>Сбербанк авто-импорт
+    </a>
   </div>
 
   {% with messages = get_flashed_messages(with_categories=true) %}

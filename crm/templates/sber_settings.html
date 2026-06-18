@@ -1,0 +1,190 @@
+{% extends 'base.html' %}
+{% block title %}Сбербанк API — CRM Суши{% endblock %}
+{% block content %}
+<div class="container-fluid py-3" style="max-width:680px">
+
+  <div class="d-flex align-items-center gap-3 mb-4">
+    <a href="{{ url_for('bank') }}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-arrow-left"></i> Банк
+    </a>
+    <div>
+      <h5 class="mb-0 fw-bold">
+        <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/8/89/Sberbank_Logo_2020.svg/120px-Sberbank_Logo_2020.svg.png"
+             height="22" class="me-2" alt="">Автосинхронизация Сбербанка
+      </h5>
+      <small class="text-muted">Автоматический импорт выписок через Sber Business API</small>
+    </div>
+  </div>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in messages %}
+    <div class="alert alert-{{ cat }} alert-dismissible fade show py-2">
+      {{ msg }}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endfor %}
+  {% endwith %}
+
+  <!-- Статус -->
+  {% if cfg.last_sync %}
+  <div class="alert alert-light border d-flex align-items-center gap-3 mb-3 py-2">
+    <i class="bi bi-clock-history text-muted fs-5"></i>
+    <div>
+      <div class="fw-semibold small">Последняя синхронизация: {{ cfg.last_sync }}</div>
+      <div class="text-muted small">{{ cfg.last_result }}</div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Форма настроек -->
+  <div class="card shadow-sm mb-4">
+    <div class="card-header py-2 fw-semibold">
+      <i class="bi bi-gear me-1"></i>Параметры подключения
+    </div>
+    <div class="card-body">
+      <form method="post">
+        <div class="mb-3">
+          <label class="form-label fw-medium">Client ID</label>
+          <input type="text" class="form-control" name="client_id"
+                 value="{{ cfg.client_id }}" placeholder="71154">
+          <div class="form-text">Из портала Sber API (Промышленный сервис)</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-medium">Client Secret</label>
+          <input type="password" class="form-control" name="client_secret"
+                 value="{{ cfg.client_secret }}"
+                 placeholder="Введите client_secret из портала Sber API">
+          <div class="form-text">Срок действия до 28.07.2026 — не забудьте обновить</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-medium">Номер расчётного счёта</label>
+          <input type="text" class="form-control font-monospace" name="account_number"
+                 value="{{ cfg.account_number }}"
+                 placeholder="40802810538030021114" maxlength="20">
+        </div>
+        <div class="mb-3">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="auto_sync" id="autoSync"
+                   {% if cfg.auto_sync == '1' %}checked{% endif %}>
+            <label class="form-check-label" for="autoSync">
+              Автоматический импорт при открытии раздела «Банк»
+            </label>
+          </div>
+        </div>
+        <div class="d-flex gap-2">
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-save me-1"></i>Сохранить
+          </button>
+          <button type="button" class="btn btn-outline-secondary" onclick="testConnection()">
+            <i class="bi bi-wifi me-1"></i>Проверить подключение
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Ручная синхронизация -->
+  <div class="card shadow-sm mb-4">
+    <div class="card-header py-2 fw-semibold">
+      <i class="bi bi-cloud-download me-1"></i>Загрузить выписку вручную
+    </div>
+    <div class="card-body">
+      <div class="row g-2 align-items-end">
+        <div class="col">
+          <label class="form-label small mb-1">С даты</label>
+          <input type="date" class="form-control form-control-sm" id="syncFrom">
+        </div>
+        <div class="col">
+          <label class="form-label small mb-1">По дату</label>
+          <input type="date" class="form-control form-control-sm" id="syncTo">
+        </div>
+        <div class="col-auto">
+          <button class="btn btn-success btn-sm" onclick="runSync()">
+            <i class="bi bi-play-fill me-1"></i>Загрузить
+          </button>
+        </div>
+      </div>
+      <div id="syncStatus" class="mt-2" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- Инструкция -->
+  <div class="card shadow-sm border-0 bg-light">
+    <div class="card-body py-2">
+      <div class="fw-semibold small mb-1"><i class="bi bi-info-circle me-1"></i>Как это работает</div>
+      <ol class="small text-muted mb-0 ps-3">
+        <li>CRM подключается к Sber Business API с вашим сертификатом (.p12)</li>
+        <li>Получает токен доступа и запрашивает выписку за указанный период</li>
+        <li>Новые транзакции добавляются в раздел «Банк» → автоматически разносятся по контрагентам</li>
+        <li>Дубликаты пропускаются — можно запускать повторно</li>
+      </ol>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// Установить даты по умолчанию
+(function() {
+  var today = new Date().toISOString().slice(0,10);
+  var week  = new Date(Date.now() - 7*86400000).toISOString().slice(0,10);
+  document.getElementById('syncTo').value = today;
+  document.getElementById('syncFrom').value = week;
+})();
+
+async function testConnection() {
+  var btn = event.target;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Проверка...';
+  try {
+    var r = await fetch('/bank/sber/test', { method: 'POST' });
+    var j = await r.json();
+    if (j.ok) {
+      showStatus('success', '✓ Подключение успешно! Токен получен (действует ' + Math.round(j.expires_in/60) + ' мин)');
+    } else {
+      showStatus('danger', '✗ Ошибка: ' + j.error);
+    }
+  } catch(e) {
+    showStatus('danger', '✗ Ошибка сети: ' + e.message);
+  }
+  btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-wifi me-1"></i>Проверить подключение';
+}
+
+async function runSync() {
+  var btn = event.target;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Загрузка...';
+  var dateFrom = document.getElementById('syncFrom').value;
+  var dateTo   = document.getElementById('syncTo').value;
+  try {
+    var r = await fetch('/bank/sber/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date_from: dateFrom, date_to: dateTo })
+    });
+    var j = await r.json();
+    if (j.ok) {
+      if (j.added > 0) {
+        showStatus('success',
+          '✓ Загружено +' + j.added + ' новых транзакций из ' + j.total +
+          ' &nbsp;<a href="/bank/statement/' + j.stmt_id + '" class="btn btn-sm btn-outline-success ms-2">Открыть выписку →</a>');
+      } else {
+        showStatus('info', 'ℹ Нет новых транзакций за выбранный период.');
+      }
+    } else {
+      showStatus('danger', '✗ Ошибка: ' + j.error);
+    }
+  } catch(e) {
+    showStatus('danger', '✗ Ошибка: ' + e.message);
+  }
+  btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-play-fill me-1"></i>Загрузить';
+}
+
+function showStatus(type, html) {
+  var el = document.getElementById('syncStatus');
+  el.style.display = '';
+  el.innerHTML = '<div class="alert alert-' + type + ' py-2 mb-0">' + html + '</div>';
+}
+</script>
+{% endblock %}

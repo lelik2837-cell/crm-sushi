@@ -4,11 +4,14 @@ import io
 import operator as _op
 import os
 import re
+import logging
 from functools import wraps
 from datetime import date, datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 import sqlite3
+
+logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
 app.secret_key = 'sushi-crm-secret-2024-change-in-prod'
@@ -615,6 +618,10 @@ def init_db():
                 category TEXT DEFAULT '',
                 terminal_id INTEGER REFERENCES bank_terminals(id),
                 is_ignored INTEGER DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS api_settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT
             );
         ''')
 
@@ -3133,6 +3140,174 @@ def bank_statement_view(stmt_id):
         exp_cats    = get_expense_categories(conn)
     return render_template('bank_statement.html',
         stmt=stmt, txns=txns, contractors=contractors, exp_cats=exp_cats)
+
+
+# ─── SBERBANK API SYNC ────────────────────────────────────────────────────────
+
+def _sber_get(conn, key, default=''):
+    row = conn.execute('SELECT value FROM api_settings WHERE key=?', (key,)).fetchone()
+    return row[0] if row else default
+
+def _sber_set(conn, key, value):
+    conn.execute('INSERT OR REPLACE INTO api_settings(key,value) VALUES(?,?)', (key, value))
+
+
+@app.route('/bank/sber/settings', methods=['GET', 'POST'])
+@login_required
+@owner_required
+def sber_settings():
+    with get_db() as conn:
+        if request.method == 'POST':
+            _sber_set(conn, 'sber_client_id',     request.form.get('client_id', '').strip())
+            _sber_set(conn, 'sber_client_secret',  request.form.get('client_secret', '').strip())
+            _sber_set(conn, 'sber_account_number', request.form.get('account_number', '').strip())
+            _sber_set(conn, 'sber_auto_sync',      '1' if request.form.get('auto_sync') else '0')
+            conn.commit()
+            flash('Настройки Сбербанка сохранены', 'success')
+            return redirect(url_for('sber_settings'))
+
+        cfg = {
+            'client_id':      _sber_get(conn, 'sber_client_id', '71154'),
+            'client_secret':  _sber_get(conn, 'sber_client_secret'),
+            'account_number': _sber_get(conn, 'sber_account_number'),
+            'auto_sync':      _sber_get(conn, 'sber_auto_sync', '0'),
+            'last_sync':      _sber_get(conn, 'sber_last_sync'),
+            'last_result':    _sber_get(conn, 'sber_last_result'),
+        }
+        accounts = conn.execute('SELECT * FROM bank_accounts WHERE is_active=1 ORDER BY name').fetchall()
+    return render_template('sber_settings.html', cfg=cfg, accounts=accounts)
+
+
+@app.route('/bank/sber/sync', methods=['POST'])
+@login_required
+@owner_required
+def sber_sync():
+    from sber_api import get_token, get_statement, parse_transactions
+
+    data = request.get_json(silent=True) or {}
+    date_from = data.get('date_from') or (date.today() - timedelta(days=7)).isoformat()
+    date_to   = data.get('date_to')   or date.today().isoformat()
+
+    with get_db() as conn:
+        client_id      = _sber_get(conn, 'sber_client_id', '71154')
+        client_secret  = _sber_get(conn, 'sber_client_secret')
+        account_number = _sber_get(conn, 'sber_account_number')
+        bank_account_id = data.get('bank_account_id') or _sber_get(conn, 'sber_bank_account_id')
+
+        if not client_secret:
+            return jsonify({'ok': False, 'error': 'Не задан client_secret'})
+        if not account_number:
+            return jsonify({'ok': False, 'error': 'Не задан номер счёта'})
+
+        try:
+            # Проверяем кэшированный токен
+            cached_token   = _sber_get(conn, 'sber_access_token')
+            token_exp_str  = _sber_get(conn, 'sber_token_expires')
+            now_ts = datetime.utcnow().timestamp()
+            if cached_token and token_exp_str and float(token_exp_str) > now_ts + 60:
+                access_token = cached_token
+            else:
+                access_token, expires_in = get_token(client_id, client_secret)
+                _sber_set(conn, 'sber_access_token',   access_token)
+                _sber_set(conn, 'sber_token_expires',  str(now_ts + expires_in))
+                conn.commit()
+
+            stmt_json = get_statement(access_token, client_id, account_number, date_from, date_to)
+            txns = parse_transactions(stmt_json)
+
+            if not txns:
+                _sber_set(conn, 'sber_last_sync',   datetime.now().strftime('%d.%m.%Y %H:%M'))
+                _sber_set(conn, 'sber_last_result', '0 новых транзакций')
+                conn.commit()
+                return jsonify({'ok': True, 'added': 0, 'raw': stmt_json})
+
+            # Находим или создаём банковский счёт
+            if not bank_account_id:
+                ba = conn.execute(
+                    "SELECT id FROM bank_accounts WHERE account_number=?", (account_number,)
+                ).fetchone()
+                if ba:
+                    bank_account_id = ba['id']
+                else:
+                    conn.execute(
+                        "INSERT INTO bank_accounts(name, account_number, bank_name, is_active) VALUES(?,?,?,1)",
+                        (f'Сбербанк {account_number[-4:]}', account_number, 'Сбербанк')
+                    )
+                    bank_account_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                    conn.commit()
+                _sber_set(conn, 'sber_bank_account_id', str(bank_account_id))
+                conn.commit()
+
+            # Создаём выписку
+            conn.execute(
+                '''INSERT INTO bank_statements
+                   (bank_account_id, filename, date_from, date_to, row_count, uploaded_at)
+                   VALUES(?,?,?,?,?,?)''',
+                (bank_account_id,
+                 f'Сбербанк {date_from} — {date_to}',
+                 date_from, date_to, len(txns),
+                 datetime.now().isoformat())
+            )
+            stmt_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+
+            # Применяем матчинг контрагентов и терминалов
+            txns = _match_contractors(conn, txns)
+            for txn in txns:
+                if not txn.get('terminal_id'):
+                    txn['terminal_id'] = _match_terminal(conn, txn)
+
+            added = 0
+            for txn in txns:
+                # Пропускаем дубликаты по дате + сумме + описанию
+                dup = conn.execute('''
+                    SELECT id FROM bank_transactions
+                    WHERE bank_account_id=? AND txn_date=? AND amount=? AND description=?
+                ''', (bank_account_id, txn['date'], txn['amount'], txn.get('description',''))).fetchone()
+                if dup:
+                    continue
+                conn.execute('''
+                    INSERT INTO bank_transactions
+                    (statement_id, bank_account_id, txn_date, amount,
+                     description, counterparty, contractor_id, category, terminal_id)
+                    VALUES(?,?,?,?,?,?,?,?,?)
+                ''', (
+                    stmt_id, bank_account_id, txn['date'], txn['amount'],
+                    txn.get('description',''), txn.get('counterparty',''),
+                    txn.get('contractor_id'), txn.get('category',''),
+                    txn.get('terminal_id')
+                ))
+                added += 1
+
+            _sber_set(conn, 'sber_last_sync',   datetime.now().strftime('%d.%m.%Y %H:%M'))
+            _sber_set(conn, 'sber_last_result', f'+{added} новых транзакций из {len(txns)}')
+            conn.commit()
+
+            return jsonify({'ok': True, 'added': added, 'total': len(txns), 'stmt_id': stmt_id})
+
+        except Exception as e:
+            err = str(e)
+            logging.exception('sber_sync error')
+            _sber_set(conn, 'sber_last_result', f'Ошибка: {err[:120]}')
+            conn.commit()
+            return jsonify({'ok': False, 'error': err})
+
+
+@app.route('/bank/sber/test', methods=['POST'])
+@login_required
+@owner_required
+def sber_test():
+    """Проверка подключения — только получение токена."""
+    from sber_api import get_token
+    with get_db() as conn:
+        client_id     = _sber_get(conn, 'sber_client_id', '71154')
+        client_secret = _sber_get(conn, 'sber_client_secret')
+    if not client_secret:
+        return jsonify({'ok': False, 'error': 'Не задан client_secret'})
+    try:
+        token, expires_in = get_token(client_id, client_secret)
+        return jsonify({'ok': True, 'expires_in': expires_in})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
 
 
 # ──────────────────────────────────────────────────────────────────────────────
