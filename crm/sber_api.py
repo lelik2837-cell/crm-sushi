@@ -10,11 +10,13 @@ BASE_DIR  = Path(__file__).parent
 CERT_FILE = BASE_DIR / 'certs' / 'sber_cert.pem'
 KEY_FILE  = BASE_DIR / 'certs' / 'sber_key.pem'
 
-BASE_URL  = 'https://fintech.sberbank.ru:9443'
-NPA_URL   = f'{BASE_URL}/ic/sso/api/v2/npa/token'
-STMT_URL  = f'{BASE_URL}/fintech/api/v1/statement'
+BASE_URL   = 'https://fintech.sberbank.ru:9443'
+AUTH_URL   = f'{BASE_URL}/ic/sso/api/v2/oauth/authorize'
+TOKEN_URL  = f'{BASE_URL}/ic/sso/api/v2/oauth/token'
+NPA_URL    = f'{BASE_URL}/ic/sso/api/v2/npa/token'
+STMT_URL   = f'{BASE_URL}/fintech/api/v1/statement'
 
-SCOPES = 'openid GET_STATEMENT_TRANSACTION GET_STATEMENT_ACCOUNT BANK_CONTROL_STATEMENT'
+SCOPES = 'openid BANK_CONTROL_STATEMENT GET_CLIENT_ACCOUNTS GET_STATEMENT_TRANSACTION GET_STATEMENT_ACCOUNT'
 
 
 def _mtls():
@@ -38,6 +40,75 @@ def _make_jwt(client_id):
         return pyjwt.encode(payload, private_key, algorithm='RS256')
     except ImportError:
         raise RuntimeError('Не установлен pyjwt: pip3 install pyjwt cryptography')
+
+
+def build_auth_url(client_id, redirect_uri, state, nonce):
+    """URL для редиректа пользователя на страницу авторизации СберБизнес."""
+    from urllib.parse import quote
+    params = (
+        f'?response_type=code'
+        f'&client_id={client_id}'
+        f'&redirect_uri={quote(redirect_uri, safe="")}'
+        f'&scope={quote(SCOPES, safe="")}'
+        f'&state={state}'
+        f'&nonce={nonce}'
+    )
+    return AUTH_URL + params
+
+
+def exchange_code(client_id, client_secret, code, redirect_uri):
+    """Обменять authorization code на access_token + refresh_token."""
+    import requests, urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    import base64
+    auth = 'Basic ' + base64.b64encode(f'{client_id}:{client_secret}'.encode()).decode()
+    resp = requests.post(
+        TOKEN_URL,
+        cert=_mtls(),
+        verify=False,
+        headers={
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Authorization': auth,
+        },
+        data={
+            'grant_type':   'authorization_code',
+            'code':         code,
+            'redirect_uri': redirect_uri,
+            'client_id':    client_id,
+            'client_secret': client_secret,
+        },
+        timeout=30,
+    )
+    log.info('exchange_code status=%s body=%s', resp.status_code, resp.text[:400])
+    resp.raise_for_status()
+    return resp.json()
+
+
+def refresh_access_token(client_id, client_secret, refresh_token):
+    """Обновить access_token через refresh_token."""
+    import requests, urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    import base64
+    auth = 'Basic ' + base64.b64encode(f'{client_id}:{client_secret}'.encode()).decode()
+    resp = requests.post(
+        TOKEN_URL,
+        cert=_mtls(),
+        verify=False,
+        headers={
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Authorization': auth,
+        },
+        data={
+            'grant_type':    'refresh_token',
+            'refresh_token': refresh_token,
+            'client_id':     client_id,
+            'client_secret': client_secret,
+        },
+        timeout=30,
+    )
+    log.info('refresh_token status=%s body=%s', resp.status_code, resp.text[:400])
+    resp.raise_for_status()
+    return resp.json()
 
 
 def get_npa_token(client_id, scope=None):

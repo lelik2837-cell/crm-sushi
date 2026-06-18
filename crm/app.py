@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from datetime import date, datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.middleware.proxy_fix import ProxyFix
 import sqlite3
 
 logging.basicConfig(level=logging.INFO)
@@ -20,6 +21,8 @@ logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 app.secret_key = 'sushi-crm-secret-2024-change-in-prod'
 app.config['TEMPLATES_AUTO_RELOAD'] = True
+# Railway и другие прокси-хосты: корректно определяем HTTPS и хост
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 DATABASE = os.environ.get('DATABASE_PATH', os.path.join(os.path.dirname(__file__), 'crm.db'))
 
@@ -3177,30 +3180,67 @@ def sber_settings():
             'auto_sync':      _sber_get(conn, 'sber_auto_sync', '0'),
             'last_sync':      _sber_get(conn, 'sber_last_sync'),
             'last_result':    _sber_get(conn, 'sber_last_result'),
-            'has_token':      _sber_get(conn, 'sber_npa_active') == '1',
+            'has_token':      bool(_sber_get(conn, 'sber_refresh_token')) or _sber_get(conn, 'sber_npa_active') == '1',
         }
         accounts = conn.execute('SELECT * FROM bank_accounts WHERE is_active=1 ORDER BY name').fetchall()
     return render_template('sber_settings.html', cfg=cfg, accounts=accounts)
 
 
-@app.route('/bank/sber/auth', methods=['POST'])
+@app.route('/bank/sber/auth')
 @login_required
 @owner_required
 def sber_auth():
-    """Проверка NPA-подключения к Сбербанку (получить токен напрямую через сертификат)."""
-    from sber_api import get_npa_token
-    import time
+    """Редирект на страницу авторизации СберБизнес (OAuth Authorization Code)."""
+    import secrets
+    from sber_api import build_auth_url
     with get_db() as conn:
         client_id = _sber_get(conn, 'sber_client_id', '71154')
+        state = secrets.token_urlsafe(16)
+        nonce = secrets.token_urlsafe(16)
+        _sber_set(conn, 'sber_oauth_state', state)
+        conn.commit()
+    redirect_uri = url_for('sber_callback', _external=True)
+    auth_url = build_auth_url(client_id, redirect_uri, state, nonce)
+    return redirect(auth_url)
+
+
+@app.route('/bank/sber/callback')
+@login_required
+@owner_required
+def sber_callback():
+    """Обработчик callback после авторизации в СберБизнес."""
+    from sber_api import exchange_code
+    import time
+    code  = request.args.get('code')
+    state = request.args.get('state')
+    error = request.args.get('error')
+
+    if error:
+        flash(f'Сбербанк отказал в доступе: {error}', 'danger')
+        return redirect(url_for('sber_settings'))
+
+    with get_db() as conn:
+        saved_state = _sber_get(conn, 'sber_oauth_state')
+        if state != saved_state:
+            flash('Ошибка безопасности: state не совпадает. Попробуйте снова.', 'danger')
+            return redirect(url_for('sber_settings'))
+
+        client_id     = _sber_get(conn, 'sber_client_id', '71154')
+        client_secret = _sber_get(conn, 'sber_client_secret')
+
         try:
-            access_token = get_npa_token(client_id)
-            _sber_set(conn, 'sber_access_token',  access_token)
-            _sber_set(conn, 'sber_token_expires', str(time.time() + 290))
-            _sber_set(conn, 'sber_npa_active',    '1')
+            redirect_uri = url_for('sber_callback', _external=True)
+            tokens = exchange_code(client_id, client_secret, code, redirect_uri)
+            _sber_set(conn, 'sber_access_token',  tokens['access_token'])
+            _sber_set(conn, 'sber_refresh_token', tokens.get('refresh_token', ''))
+            _sber_set(conn, 'sber_token_expires',
+                      str(time.time() + int(tokens.get('expires_in', 3600))))
+            _sber_set(conn, 'sber_npa_active', '1')
             conn.commit()
-            flash('Сбербанк подключён через NPA! Токен получен.', 'success')
+            flash('Сбербанк успешно подключён! Можно загружать выписки.', 'success')
         except Exception as e:
-            flash(f'Ошибка подключения: {e}', 'danger')
+            flash(f'Ошибка получения токена: {e}', 'danger')
+
     return redirect(url_for('sber_settings'))
 
 
@@ -3223,14 +3263,25 @@ def sber_sync():
             return jsonify({'ok': False, 'error': 'Не задан номер счёта'})
 
         try:
-            from sber_api import get_npa_token
-            # NPA: получаем свежий токен через JWT (5-минутный, без refresh_token)
+            from sber_api import get_npa_token, refresh_access_token
             cached_token  = _sber_get(conn, 'sber_access_token')
             token_exp_str = _sber_get(conn, 'sber_token_expires')
+            refresh_token = _sber_get(conn, 'sber_refresh_token')
             now_ts = time.time()
             if cached_token and token_exp_str and float(token_exp_str) > now_ts + 30:
                 access_token = cached_token
+            elif refresh_token:
+                # OAuth flow: обновляем через refresh_token
+                client_secret = _sber_get(conn, 'sber_client_secret')
+                tokens = refresh_access_token(client_id, client_secret, refresh_token)
+                access_token = tokens['access_token']
+                _sber_set(conn, 'sber_access_token',  access_token)
+                _sber_set(conn, 'sber_token_expires', str(now_ts + int(tokens.get('expires_in', 3600))))
+                if tokens.get('refresh_token'):
+                    _sber_set(conn, 'sber_refresh_token', tokens['refresh_token'])
+                conn.commit()
             else:
+                # NPA flow: получаем токен через сертификат
                 access_token = get_npa_token(client_id)
                 _sber_set(conn, 'sber_access_token',  access_token)
                 _sber_set(conn, 'sber_token_expires', str(now_ts + 290))
