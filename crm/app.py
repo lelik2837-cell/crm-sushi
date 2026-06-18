@@ -3281,11 +3281,7 @@ def sber_sync():
                     _sber_set(conn, 'sber_refresh_token', tokens['refresh_token'])
                 conn.commit()
             else:
-                # NPA flow: получаем токен через сертификат
-                access_token = get_npa_token(client_id)
-                _sber_set(conn, 'sber_access_token',  access_token)
-                _sber_set(conn, 'sber_token_expires', str(now_ts + 290))
-                conn.commit()
+                return jsonify({'ok': False, 'error': 'Нет токена авторизации. Нажмите «Переподключить СберБизнес» и войдите снова.'})
 
             stmt_json = get_statement(access_token, client_id, account_number, date_from, date_to)
             txns = parse_transactions(stmt_json)
@@ -3371,19 +3367,29 @@ def sber_sync():
 @login_required
 @owner_required
 def sber_test():
-    """Проверка NPA-подключения: получаем свежий токен через сертификат."""
-    from sber_api import get_npa_token
+    """Проверка токена: пробуем refresh, если нет — сообщаем переподключиться."""
+    from sber_api import refresh_access_token
     import time
     with get_db() as conn:
-        client_id = _sber_get(conn, 'sber_client_id', '71154')
+        client_id     = _sber_get(conn, 'sber_client_id', '71154')
+        client_secret = _sber_get(conn, 'sber_client_secret')
+        refresh_token = _sber_get(conn, 'sber_refresh_token')
+        cached_token  = _sber_get(conn, 'sber_access_token')
+        token_exp_str = _sber_get(conn, 'sber_token_expires')
+    now_ts = time.time()
+    if cached_token and token_exp_str and float(token_exp_str or 0) > now_ts + 30:
+        return jsonify({'ok': True, 'expires_in': int(float(token_exp_str) - now_ts)})
+    if not refresh_token:
+        return jsonify({'ok': False, 'error': 'Нет токена. Нажмите «Переподключить СберБизнес».'})
     try:
-        access_token = get_npa_token(client_id)
+        tokens = refresh_access_token(client_id, client_secret, refresh_token)
         with get_db() as conn:
-            _sber_set(conn, 'sber_access_token',  access_token)
-            _sber_set(conn, 'sber_token_expires', str(time.time() + 290))
-            _sber_set(conn, 'sber_npa_active',    '1')
+            _sber_set(conn, 'sber_access_token',  tokens['access_token'])
+            _sber_set(conn, 'sber_token_expires', str(now_ts + int(tokens.get('expires_in', 3600))))
+            if tokens.get('refresh_token'):
+                _sber_set(conn, 'sber_refresh_token', tokens['refresh_token'])
             conn.commit()
-        return jsonify({'ok': True, 'expires_in': 290})
+        return jsonify({'ok': True, 'expires_in': tokens.get('expires_in', 3600)})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)})
 
