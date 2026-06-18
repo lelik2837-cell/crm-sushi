@@ -178,13 +178,13 @@ def _clean_num(s):
 
 def _map_csv_columns(fieldnames):
     cols = {(f or '').lower().strip(): f for f in fieldnames}
-    DATE_P  = ['дата операции', 'дата проведения', 'дата платежа', 'дата', 'date']
+    DATE_P  = ['дата операции', 'дата проведения', 'дата платежа', 'дата', 'date_oper', 'o_date', 'date']
     DEBIT_P = ['сумма списания', 'расход', 'дебет', 'сумма дебет', 'списание']
     CRED_P  = ['сумма зачисления', 'приход', 'кредит', 'сумма кредит', 'зачисление']
-    AMT_P   = ['сумма операции', 'сумма платежа', 'сумма', 'amount']
-    TYPE_P  = ['вид операции', 'приход/расход', 'тип операции', 'тип', 'д/к']
-    DESC_P  = ['назначение платежа', 'назначение', 'описание', 'description', 'наименование']
-    CTR_P   = ['контрагент', 'плательщик', 'получатель', 'наименование контрагента']
+    AMT_P   = ['сумма операции', 'сумма платежа', 'sum_rur', 'sum_val', 'сумма', 'amount']
+    TYPE_P  = ['вид операции', 'приход/расход', 'тип операции', 'д/к', 'd_c', 'dc', 'тип']
+    DESC_P  = ['назначение платежа', 'text70', 'назначение', 'описание', 'description', 'наименование']
+    CTR_P   = ['контрагент', 'pol_name', 'получатель', 'plat_name', 'плательщик', 'наименование контрагента']
 
     def find(patterns):
         for p in patterns:
@@ -210,7 +210,7 @@ def _parse_bank_csv(raw_bytes):
         raise ValueError('Файл пустой')
 
     DATE_WORDS = ('дата', 'date')
-    AMT_WORDS  = ('сумм', 'amount', 'приход', 'расход', 'поступлен', 'списан', 'дебет', 'кредит')
+    AMT_WORDS  = ('сумм', 'amount', 'sum', 'приход', 'расход', 'поступлен', 'списан', 'дебет', 'кредит')
 
     # Find the header row (first row containing a date keyword + amount keyword and multiple columns)
     header_idx = 0
@@ -282,10 +282,10 @@ def _parse_bank_csv(raw_bytes):
             if amount is None:
                 continue
             if col.get('type'):
-                tv = (row.get(col['type']) or '').lower()
-                if any(w in tv for w in ('списан', 'расход', 'дебет', ' д ')):
+                tv = (row.get(col['type']) or '').strip().lower()
+                if tv in ('d', 'д') or any(w in tv for w in ('списан', 'расход', 'дебет', ' д ')):
                     amount = -abs(amount)
-                elif any(w in tv for w in ('зачисл', 'приход', 'кредит', ' к ')):
+                elif tv in ('c', 'к') or any(w in tv for w in ('зачисл', 'приход', 'кредит', ' к ')):
                     amount = abs(amount)
         else:
             continue
