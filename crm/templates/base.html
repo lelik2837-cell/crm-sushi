@@ -60,7 +60,7 @@
                                 <i class="bi bi-calendar3 me-2"></i>Смены
                             </a>
                         </li>
-                        {% if session.get('role') in ('owner', 'director') %}
+                        {% if session.get('role') == 'owner' %}
                         <li>
                             <a class="dropdown-item" href="{{ url_for('reports') }}?tab=shifts">
                                 <i class="bi bi-graph-up-arrow me-2"></i>Выручка
@@ -142,8 +142,7 @@
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">
                         <i class="bi bi-person-circle"></i> {{ session.get('full_name') }}
-                        {% if session.get('role') == 'owner' %}<span class="badge bg-warning text-dark ms-1">Владелец</span>
-                        {% elif session.get('role') == 'director' %}<span class="badge bg-info text-dark ms-1">Директор</span>{% endif %}
+                        {% if session.get('role') == 'owner' %}<span class="badge bg-warning text-dark ms-1">Владелец</span>{% endif %}
                     </a>
                     <ul class="dropdown-menu dropdown-menu-end">
                         <li><a class="dropdown-item text-danger" href="{{ url_for('logout') }}"><i class="bi bi-box-arrow-right"></i> Выйти</a></li>

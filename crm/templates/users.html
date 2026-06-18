@@ -26,7 +26,6 @@
                 <td><code>{{ u.username }}</code></td>
                 <td>
                     {% if u.role == 'owner' %}<span class="badge bg-warning text-dark">Владелец</span>
-                    {% elif u.role == 'director' %}<span class="badge bg-info text-dark">Директор</span>
                     {% elif u.role == 'admin' %}<span class="badge bg-primary">Администратор</span>
                     {% else %}<span class="badge bg-secondary">Сотрудник</span>{% endif %}
                 </td>
@@ -73,7 +72,6 @@
                     <div class="mb-3">
                         <label class="form-label">Роль</label>
                         <select name="role" class="form-select">
-                            <option value="director">Директор</option>
                             <option value="admin">Администратор</option>
                             <option value="employee">Сотрудник</option>
                         </select>

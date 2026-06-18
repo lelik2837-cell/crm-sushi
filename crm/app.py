@@ -20,7 +20,6 @@ ROLE_LABELS = {
     'courier': 'Курьер',
     'cleaner': 'Уборщица',
     'cook': 'Повар',
-    'director': 'Директор',
 }
 
 # Hardcoded defaults — seeded into DB on first run
@@ -317,28 +316,6 @@ def init_db():
             SELECT id, branch_id FROM employees WHERE branch_id IS NOT NULL
         ''')
 
-        # Migrate users table: add 'director' to role CHECK constraint
-        users_sql = conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
-        ).fetchone()
-        if users_sql and "'director'" not in users_sql['sql']:
-            conn.executescript('''
-                PRAGMA foreign_keys = OFF;
-                CREATE TABLE users_new (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT UNIQUE NOT NULL,
-                    password_hash TEXT NOT NULL,
-                    role TEXT NOT NULL CHECK(role IN ('owner', 'admin', 'employee', 'director')),
-                    full_name TEXT NOT NULL,
-                    branch_id INTEGER REFERENCES branches(id),
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-                INSERT INTO users_new SELECT * FROM users;
-                DROP TABLE users;
-                ALTER TABLE users_new RENAME TO users;
-                PRAGMA foreign_keys = ON;
-            ''')
-
         # Add allowed_ip to branches if missing
         branch_cols = [r[1] for r in conn.execute("PRAGMA table_info(branches)").fetchall()]
         if 'allowed_ip' not in branch_cols:
@@ -368,16 +345,6 @@ def owner_required(f):
     def decorated(*args, **kwargs):
         if session.get('role') != 'owner':
             flash('Доступ только для владельца', 'danger')
-            return redirect(url_for('dashboard'))
-        return f(*args, **kwargs)
-    return decorated
-
-
-def owner_or_director_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if session.get('role') not in ('owner', 'director'):
-            flash('Доступ запрещён', 'danger')
             return redirect(url_for('dashboard'))
         return f(*args, **kwargs)
     return decorated
@@ -1737,11 +1704,8 @@ def edit_rate_template(tmpl_id):
 
 @app.route('/reports')
 @login_required
-@owner_or_director_required
+@owner_required
 def reports():
-    role = session.get('role')
-    my_branch_ids = _session_branch_ids() if role == 'director' else []
-    director_name = session.get('full_name') if role == 'director' else None
     period = request.args.get('period', 'week')
     branch_ids = [bid for bid in request.args.getlist('branch_ids') if bid.isdigit()]
     active_tab = request.args.get('tab', 'shifts')
@@ -1926,19 +1890,15 @@ def reports():
         s_date_from=s_date_from, s_date_to=s_date_to,
         s_branch_id=s_branch_id, s_role=s_role, s_unpaid=s_unpaid,
         s_group=s_group, s_emps=s_emps,
-        all_sal_emps=all_sal_emps, pivot_rows=pivot_rows, pivot_emps=pivot_emps,
-        my_branch_ids=my_branch_ids, director_name=director_name)
+        all_sal_emps=all_sal_emps, pivot_rows=pivot_rows, pivot_emps=pivot_emps)
 
 
 # ─── EXPENSES REPORT ──────────────────────────────────────────────────────────
 
 @app.route('/report/expenses')
 @login_required
-@owner_or_director_required
+@owner_required
 def expenses_report():
-    role = session.get('role')
-    my_branch_ids = _session_branch_ids() if role == 'director' else []
-    director_name = session.get('full_name') if role == 'director' else None
     today = date.today().isoformat()
     month_start = date.today().replace(day=1).isoformat()
     date_from   = request.args.get('date_from', month_start)
@@ -2009,8 +1969,7 @@ def expenses_report():
         rows=rows, tot=tot, by_cat=by_cat,
         branches=branches, all_cats=all_cats, cat_map=cat_map,
         date_from=date_from, date_to=date_to,
-        branch_ids=branch_ids, cat_filter=cat_filter, pay_filter=pay_filter,
-        my_branch_ids=my_branch_ids, director_name=director_name)
+        branch_ids=branch_ids, cat_filter=cat_filter, pay_filter=pay_filter)
 
 
 # ─── HISTORY ──────────────────────────────────────────────────────────────────
@@ -2031,28 +1990,19 @@ def history():
         conds = ['cl.created_at >= ? AND cl.created_at <= ?']
         params = [date_from + ' 00:00:00', date_to + ' 23:59:59']
 
-        if role == 'director':
-            bids = _session_branch_ids()
-            if bids:
-                if branch_id and int(branch_id) in bids:
-                    conds.append('cl.branch_id = ?')
-                    params.append(int(branch_id))
-                else:
-                    ids_str = ','.join(str(int(b)) for b in bids)
-                    conds.append(f'cl.branch_id IN ({ids_str})')
-        elif role == 'owner':
+        if role != 'owner':
+            conds.append('cl.user_id = ?')
+            params.append(session['user_id'])
+            if session.get('branch_id'):
+                conds.append('cl.branch_id = ?')
+                params.append(session['branch_id'])
+        else:
             if branch_id:
                 conds.append('cl.branch_id = ?')
                 params.append(int(branch_id))
             if user_filter:
                 conds.append('cl.user_id = ?')
                 params.append(int(user_filter))
-        else:
-            conds.append('cl.user_id = ?')
-            params.append(session['user_id'])
-            if session.get('branch_id'):
-                conds.append('cl.branch_id = ?')
-                params.append(session['branch_id'])
 
         if action_filter:
             conds.append('cl.action = ?')
@@ -2069,8 +2019,6 @@ def history():
 
         branches = []
         users = []
-        my_branch_ids = []
-        director_name = None
         if role == 'owner':
             branches = conn.execute(
                 'SELECT * FROM branches WHERE is_active=1 ORDER BY name'
@@ -2078,12 +2026,6 @@ def history():
             users = conn.execute(
                 "SELECT id, full_name FROM users WHERE role != 'owner' ORDER BY full_name"
             ).fetchall()
-        elif role == 'director':
-            branches = conn.execute(
-                'SELECT * FROM branches WHERE is_active=1 ORDER BY name'
-            ).fetchall()
-            my_branch_ids = _session_branch_ids()
-            director_name = session.get('full_name')
 
     return render_template('history.html',
         logs=logs, branches=branches, users=users,
@@ -2091,8 +2033,7 @@ def history():
         selected_branch=branch_id, selected_user=user_filter,
         selected_action=action_filter,
         action_labels=ACTION_LABELS,
-        is_owner=(role == 'owner'),
-        my_branch_ids=my_branch_ids, director_name=director_name)
+        is_owner=(role == 'owner'))
 
 
 # ─── API ──────────────────────────────────────────────────────────────────────
@@ -2311,11 +2252,7 @@ def shifts_archive():
         '''
         params = [date_from, date_to]
 
-        if role == 'director':
-            if branch_ids:
-                ids_str = ','.join(str(int(bid)) for bid in branch_ids)
-                query += f' AND s.branch_id IN ({ids_str})'
-        elif role != 'owner':
+        if role != 'owner':
             bids = _session_branch_ids()
             if bids:
                 ids_str = ','.join(str(int(b)) for b in bids)
@@ -2334,16 +2271,12 @@ def shifts_archive():
         total_revenue = sum(s['revenue'] for s in shifts)
         total_orders  = sum(s['orders']  for s in shifts)
 
-    my_branch_ids = _session_branch_ids() if role == 'director' else []
-    director_name = session.get('full_name') if role == 'director' else None
-
     return render_template('shifts_archive.html',
         shifts=shifts, branches=branches,
         date_from=date_from, date_to=date_to,
         selected_branches=branch_ids, status_filter=status_filter,
         total_revenue=total_revenue, total_orders=total_orders,
-        is_owner=(role in ('owner', 'director')),
-        my_branch_ids=my_branch_ids, director_name=director_name)
+        is_owner=(role == 'owner'))
 
 
 init_db()
