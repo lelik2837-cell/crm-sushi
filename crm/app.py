@@ -330,6 +330,27 @@ def _match_contractors(conn, txns):
 
 def _match_terminal(conn, txn):
     text = (txn.get('description') or '') + ' ' + (txn.get('counterparty') or '')
+    # Сначала ищем по номерам мерчантов/терминалов из настроек филиалов
+    branches = conn.execute(
+        'SELECT id, name, merchant_numbers FROM branches WHERE merchant_numbers IS NOT NULL AND merchant_numbers != ""'
+    ).fetchall()
+    for branch in branches:
+        numbers = [n.strip() for n in (branch['merchant_numbers'] or '').split(',') if n.strip()]
+        for num in numbers:
+            if num and num in text:
+                # Находим или создаём запись терминала для этого филиала
+                t = conn.execute(
+                    'SELECT id FROM bank_terminals WHERE terminal_number=? AND branch_id=?',
+                    (num, branch['id'])
+                ).fetchone()
+                if t:
+                    return t['id']
+                conn.execute(
+                    'INSERT INTO bank_terminals (terminal_number, name, branch_id) VALUES (?,?,?)',
+                    (num, f'{branch["name"]} – {num}', branch['id'])
+                )
+                return conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+    # Фолбэк: стандартный TID паттерн
     m = re.search(r'TID\s*[:\-]?\s*(\d{6,12})', text, re.IGNORECASE)
     if m:
         tid = m.group(1)
@@ -543,6 +564,8 @@ def init_db():
         branch_cols = [r[1] for r in conn.execute("PRAGMA table_info(branches)").fetchall()]
         if 'allowed_ip' not in branch_cols:
             conn.execute("ALTER TABLE branches ADD COLUMN allowed_ip TEXT DEFAULT NULL")
+        if 'merchant_numbers' not in branch_cols:
+            conn.execute("ALTER TABLE branches ADD COLUMN merchant_numbers TEXT DEFAULT ''")
 
         # Add type and parent_id to expense_categories if missing
         ec_cols = [r[1] for r in conn.execute("PRAGMA table_info(expense_categories)").fetchall()]
@@ -1691,8 +1714,12 @@ def add_branch():
 @owner_required
 def edit_branch(branch_id):
     allowed_ip = request.form.get('allowed_ip', '').strip() or None
+    merchant_numbers = request.form.get('merchant_numbers', '').strip()
     with get_db() as conn:
-        conn.execute('UPDATE branches SET allowed_ip=? WHERE id=?', (allowed_ip, branch_id))
+        conn.execute(
+            'UPDATE branches SET allowed_ip=?, merchant_numbers=? WHERE id=?',
+            (allowed_ip, merchant_numbers, branch_id)
+        )
         conn.commit()
     flash('Настройки филиала сохранены', 'success')
     return redirect(url_for('branches'))
