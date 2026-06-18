@@ -19,7 +19,20 @@
                     <span id="branchBtnLabel">{% if selected_branches %}Выбрано: {{ selected_branches|length }}{% else %}Все филиалы{% endif %}</span>
                     <i class="bi bi-chevron-down small"></i>
                 </button>
-                <div class="dropdown-menu p-2 shadow" style="min-width:240px;max-height:320px;overflow-y:auto" id="branchDropdownMenu">
+                <div class="dropdown-menu p-2 shadow" style="min-width:240px;max-height:380px;overflow-y:auto" id="branchDropdownMenu">
+                    {% if branch_groups %}
+                    <div class="mb-2">
+                        <div class="text-muted small px-1 mb-1" style="font-size:0.75rem">ГРУППЫ</div>
+                        {% for g in branch_groups %}
+                        <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start mb-1"
+                                onclick="selectBranchGroup({{ g.branch_ids | tojson }})">
+                            <i class="bi bi-collection me-1"></i>{{ g.name }}
+                            <span class="text-muted small">({{ g.branch_ids | length }})</span>
+                        </button>
+                        {% endfor %}
+                    </div>
+                    <hr class="my-1">
+                    {% endif %}
                     <input type="text" class="form-control form-control-sm mb-2" placeholder="Поиск филиала..." id="branchSearch" autocomplete="off">
                     <div id="branchList">
                     {% for b in all_branches %}
@@ -390,6 +403,14 @@ document.querySelectorAll('.emp-branch-search').forEach(function(srch) {
         if (lbl) lbl.textContent = n ? 'Выбрано: ' + n : 'Все филиалы';
     }
     cbs.forEach(function (cb) { cb.addEventListener('change', updateLabel); });
+
+    window.selectBranchGroup = function (ids) {
+        document.querySelectorAll('.branch-cb').forEach(function (cb) {
+            if (ids.indexOf(parseInt(cb.value)) >= 0) cb.checked = true;
+        });
+        updateLabel();
+    };
+
     if (srch) {
         srch.addEventListener('input', function () {
             var q = this.value.toLowerCase();

@@ -112,6 +112,29 @@ def get_db():
     return conn
 
 
+def get_branch_groups(conn):
+    groups = conn.execute(
+        'SELECT * FROM branch_groups ORDER BY sort_order, name'
+    ).fetchall()
+    result = []
+    for g in groups:
+        members = conn.execute(
+            '''SELECT b.id, b.name FROM branch_group_members bgm
+               JOIN branches b ON b.id = bgm.branch_id
+               WHERE bgm.group_id = ? AND b.is_active = 1
+               ORDER BY b.name''',
+            (g['id'],)
+        ).fetchall()
+        result.append({
+            'id': g['id'],
+            'name': g['name'],
+            'sort_order': g['sort_order'],
+            'branches': [dict(m) for m in members],
+            'branch_ids': [m['id'] for m in members],
+        })
+    return result
+
+
 def get_expense_categories(conn):
     return conn.execute(
         'SELECT id, code, label, type, parent_id FROM expense_categories WHERE is_active=1 ORDER BY sort_order, label'
@@ -327,6 +350,22 @@ def init_db():
             conn.execute("ALTER TABLE expense_categories ADD COLUMN type TEXT DEFAULT 'expense'")
         if 'parent_id' not in ec_cols:
             conn.execute("ALTER TABLE expense_categories ADD COLUMN parent_id INTEGER REFERENCES expense_categories(id)")
+
+        # Create branch groups tables
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS branch_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                sort_order INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS branch_group_members (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL REFERENCES branch_groups(id) ON DELETE CASCADE,
+                branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                UNIQUE(group_id, branch_id)
+            );
+        ''')
 
         conn.commit()
 
@@ -989,7 +1028,8 @@ def employees():
                            rate_templates=all_tmpls,
                            tmpl_branch_sets=tmpl_branch_sets,
                            tmpls_for_emp=tmpls_for_emp,
-                           today=date.today().isoformat())
+                           today=date.today().isoformat(),
+                           branch_groups=get_branch_groups(conn))
 
 
 @app.route('/employees/add', methods=['POST'])
@@ -1280,7 +1320,66 @@ def update_taxi_trip(trip_id):
 def branches():
     with get_db() as conn:
         blist = conn.execute('SELECT * FROM branches ORDER BY name').fetchall()
-    return render_template('branches.html', branches=blist, my_ip=get_client_ip())
+        groups = get_branch_groups(conn)
+    return render_template('branches.html', branches=blist, my_ip=get_client_ip(), branch_groups=groups)
+
+
+@app.route('/branches/groups/add', methods=['POST'])
+@login_required
+@owner_required
+def add_branch_group():
+    name = request.form.get('name', '').strip()
+    branch_ids = [b for b in request.form.getlist('branch_ids') if b.isdigit()]
+    if not name:
+        flash('Введите название группы', 'danger')
+        return redirect(url_for('branches'))
+    with get_db() as conn:
+        sort_order = conn.execute('SELECT COUNT(*) FROM branch_groups').fetchone()[0] * 10
+        conn.execute('INSERT INTO branch_groups (name, sort_order) VALUES (?,?)', (name, sort_order))
+        group_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        for bid in branch_ids:
+            conn.execute(
+                'INSERT OR IGNORE INTO branch_group_members (group_id, branch_id) VALUES (?,?)',
+                (group_id, int(bid))
+            )
+        conn.commit()
+    flash(f'Группа «{name}» создана', 'success')
+    return redirect(url_for('branches'))
+
+
+@app.route('/branches/groups/<int:group_id>/edit', methods=['POST'])
+@login_required
+@owner_required
+def edit_branch_group(group_id):
+    name = request.form.get('name', '').strip()
+    branch_ids = [b for b in request.form.getlist('branch_ids') if b.isdigit()]
+    if not name:
+        flash('Введите название группы', 'danger')
+        return redirect(url_for('branches'))
+    with get_db() as conn:
+        conn.execute('UPDATE branch_groups SET name=? WHERE id=?', (name, group_id))
+        conn.execute('DELETE FROM branch_group_members WHERE group_id=?', (group_id,))
+        for bid in branch_ids:
+            conn.execute(
+                'INSERT OR IGNORE INTO branch_group_members (group_id, branch_id) VALUES (?,?)',
+                (group_id, int(bid))
+            )
+        conn.commit()
+    flash(f'Группа «{name}» обновлена', 'success')
+    return redirect(url_for('branches'))
+
+
+@app.route('/branches/groups/<int:group_id>/delete', methods=['POST'])
+@login_required
+@owner_required
+def delete_branch_group(group_id):
+    with get_db() as conn:
+        g = conn.execute('SELECT name FROM branch_groups WHERE id=?', (group_id,)).fetchone()
+        if g:
+            conn.execute('DELETE FROM branch_groups WHERE id=?', (group_id,))
+            conn.commit()
+            flash(f'Группа «{g["name"]}» удалена', 'success')
+    return redirect(url_for('branches'))
 
 
 @app.route('/branches/add', methods=['POST'])
@@ -1890,7 +1989,8 @@ def reports():
         s_date_from=s_date_from, s_date_to=s_date_to,
         s_branch_id=s_branch_id, s_role=s_role, s_unpaid=s_unpaid,
         s_group=s_group, s_emps=s_emps,
-        all_sal_emps=all_sal_emps, pivot_rows=pivot_rows, pivot_emps=pivot_emps)
+        all_sal_emps=all_sal_emps, pivot_rows=pivot_rows, pivot_emps=pivot_emps,
+        branch_groups=get_branch_groups(conn))
 
 
 # ─── EXPENSES REPORT ──────────────────────────────────────────────────────────
@@ -1969,7 +2069,8 @@ def expenses_report():
         rows=rows, tot=tot, by_cat=by_cat,
         branches=branches, all_cats=all_cats, cat_map=cat_map,
         date_from=date_from, date_to=date_to,
-        branch_ids=branch_ids, cat_filter=cat_filter, pay_filter=pay_filter)
+        branch_ids=branch_ids, cat_filter=cat_filter, pay_filter=pay_filter,
+        branch_groups=get_branch_groups(conn))
 
 
 # ─── HISTORY ──────────────────────────────────────────────────────────────────
@@ -2033,7 +2134,8 @@ def history():
         selected_branch=branch_id, selected_user=user_filter,
         selected_action=action_filter,
         action_labels=ACTION_LABELS,
-        is_owner=(role == 'owner'))
+        is_owner=(role == 'owner'),
+        branch_groups=get_branch_groups(conn))
 
 
 # ─── API ──────────────────────────────────────────────────────────────────────
@@ -2276,7 +2378,8 @@ def shifts_archive():
         date_from=date_from, date_to=date_to,
         selected_branches=branch_ids, status_filter=status_filter,
         total_revenue=total_revenue, total_orders=total_orders,
-        is_owner=(role == 'owner'))
+        is_owner=(role == 'owner'),
+        branch_groups=get_branch_groups(conn))
 
 
 init_db()

@@ -24,9 +24,29 @@
                 <label class="form-label small mb-1">Филиал</label>
                 <select name="branch_id" class="form-select form-select-sm">
                     <option value="">Все филиалы</option>
+                    {% if branch_groups %}
+                        {% set grouped_ids = [] %}
+                        {% for g in branch_groups %}
+                        <optgroup label="📁 {{ g.name }}">
+                            {% for b in g.branches %}
+                            {% if grouped_ids.append(b.id) %}{% endif %}
+                            <option value="{{ b.id }}" {% if selected_branch == b.id|string %}selected{% endif %}>{{ b.name }}</option>
+                            {% endfor %}
+                        </optgroup>
+                        {% endfor %}
+                        {% set ungrouped = branches | rejectattr('id', 'in', grouped_ids) | list %}
+                        {% if ungrouped %}
+                        <optgroup label="— Без группы —">
+                            {% for b in ungrouped %}
+                            <option value="{{ b.id }}" {% if selected_branch == b.id|string %}selected{% endif %}>{{ b.name }}</option>
+                            {% endfor %}
+                        </optgroup>
+                        {% endif %}
+                    {% else %}
                     {% for b in branches %}
                     <option value="{{ b.id }}" {% if selected_branch == b.id|string %}selected{% endif %}>{{ b.name }}</option>
                     {% endfor %}
+                    {% endif %}
                 </select>
             </div>
             <div class="col-auto">
