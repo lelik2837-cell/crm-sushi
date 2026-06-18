@@ -45,37 +45,41 @@
                         <span id="branchBtnLabel">{% if selected_branches %}Выбрано: {{ selected_branches|length }}{% else %}Все филиалы{% endif %}</span>
                         <i class="bi bi-chevron-down ms-2 small"></i>
                     </button>
-                    <div class="dropdown-menu p-2 shadow" style="min-width:240px;max-height:380px;overflow-y:auto" id="branchDropdownMenu">
+                    <ul class="dropdown-menu p-2 shadow" style="min-width:240px;max-height:380px;overflow-y:auto" id="branchDropdownMenu">
                         {% if branch_groups %}
-                        <div class="mb-2">
-                            <div class="text-muted small px-1 mb-1" style="font-size:0.75rem">ГРУППЫ</div>
-                            {% for g in branch_groups %}
-                            <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start mb-1"
+                        <li>
+                            <div class="text-muted px-1 mb-1" style="font-size:0.75rem">ГРУППЫ</div>
+                        </li>
+                        {% for g in branch_groups %}
+                        <li class="mb-1">
+                            <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1"
                                     onclick="selectBranchGroup({{ g.branch_ids | tojson }})">
                                 <i class="bi bi-collection me-1"></i>{{ g.name }}
                                 <span class="text-muted small">({{ g.branch_ids | length }})</span>
                             </button>
-                            {% endfor %}
-                        </div>
-                        <hr class="my-1">
-                        {% endif %}
-                        <input type="text" class="form-control form-control-sm mb-2" placeholder="Поиск филиала..." id="branchSearch" autocomplete="off">
-                        <div id="branchList">
-                        {% for b in branches %}
-                        <div class="form-check branch-item">
-                            <input class="form-check-input branch-cb" type="checkbox" name="branch_ids"
-                                   value="{{ b.id }}" id="br{{ b.id }}"
-                                   {% if b.id|string in selected_branches %}checked{% endif %}>
-                            <label class="form-check-label w-100" for="br{{ b.id }}" style="cursor:pointer">{{ b.name }}</label>
-                        </div>
+                        </li>
                         {% endfor %}
-                        </div>
-                        {% if selected_branches %}
-                        <div class="border-top mt-2 pt-2">
-                            <a href="{{ url_for('reports') }}?tab=shifts&period={{ period }}" class="small text-muted">× Сбросить выбор</a>
-                        </div>
+                        <li><hr class="dropdown-divider my-1"></li>
                         {% endif %}
-                    </div>
+                        <li class="mb-1">
+                            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                                <input type="checkbox" id="branch-all-cb" onchange="toggleAllBranches(this)"
+                                    {% if not selected_branches %}checked{% endif %}>
+                                <span class="fw-semibold small">Все филиалы</span>
+                            </label>
+                        </li>
+                        <li><hr class="dropdown-divider my-1"></li>
+                        {% for b in branches %}
+                        <li>
+                            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                                <input type="checkbox" class="branch-cb" name="branch_ids" value="{{ b.id }}"
+                                    {% if b.id|string in selected_branches %}checked{% endif %}
+                                    onchange="onBranchCbChange()">
+                                <span class="small">{{ b.name }}</span>
+                            </label>
+                        </li>
+                        {% endfor %}
+                    </ul>
                 </div>
             </div>
             <div class="col-md-2">
@@ -467,33 +471,30 @@
 <script>
 (function () {
     // Branch dropdown (shifts tab)
-    var cbs  = document.querySelectorAll('.branch-cb');
-    var lbl  = document.getElementById('branchBtnLabel');
-    var srch = document.getElementById('branchSearch');
-
-    function updateBranchLabel() {
-        var n = document.querySelectorAll('.branch-cb:checked').length;
-        if (lbl) lbl.textContent = n ? 'Выбрано: ' + n : 'Все филиалы';
+    function onBranchCbChange() {
+        var checked = Array.from(document.querySelectorAll('.branch-cb')).filter(function(c) { return c.checked; });
+        var allCb = document.getElementById('branch-all-cb');
+        if (allCb) allCb.checked = checked.length === 0;
+        var lbl = document.getElementById('branchBtnLabel');
+        if (lbl) lbl.textContent = checked.length === 0 ? 'Все филиалы' : 'Выбрано: ' + checked.length;
     }
-    cbs.forEach(function (cb) { cb.addEventListener('change', updateBranchLabel); });
+
+    function toggleAllBranches(cb) {
+        if (cb.checked) {
+            document.querySelectorAll('.branch-cb').forEach(function(c) { c.checked = false; });
+            var lbl = document.getElementById('branchBtnLabel');
+            if (lbl) lbl.textContent = 'Все филиалы';
+        }
+    }
 
     window.selectBranchGroup = function (ids) {
+        var allCb = document.getElementById('branch-all-cb');
+        if (allCb) allCb.checked = false;
         document.querySelectorAll('.branch-cb').forEach(function (cb) {
             if (ids.indexOf(parseInt(cb.value)) >= 0) cb.checked = true;
         });
-        updateBranchLabel();
+        onBranchCbChange();
     };
-
-    if (srch) {
-        srch.addEventListener('input', function () {
-            var q = this.value.toLowerCase();
-            document.querySelectorAll('.branch-item').forEach(function (el) {
-                el.style.display = el.querySelector('label').textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
-            });
-        });
-        var menu = document.getElementById('branchDropdownMenu');
-        if (menu) menu.addEventListener('shown.bs.dropdown', function () { srch.focus(); });
-    }
 
     // Employee dropdown (salary pivot tab)
     var empCbs  = document.querySelectorAll('.sal-emp-cb');
