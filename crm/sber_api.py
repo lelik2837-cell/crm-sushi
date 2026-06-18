@@ -145,12 +145,6 @@ def get_npa_token(client_id, scope=None):
     return data.get('access_token') or data.get('token', '')
 
 
-def refresh_access_token(client_id, client_secret=None, refresh_token=None):
-    """Обновить или получить новый NPA access_token."""
-    # NPA не использует refresh_token — получаем новый через JWT каждый раз
-    return {'access_token': get_npa_token(client_id), 'expires_in': 300}
-
-
 def _get_one_day(session, access_token, client_id, account_number, statement_date):
     """Запрос выписки за один день с пагинацией."""
     ops = []
@@ -240,15 +234,20 @@ def parse_transactions(data):
         if not date_str or date_str == 'None':
             continue
 
-        amount = float(op.get('Amount', op.get('amount', op.get('sum', 0))) or 0)
+        raw_amt = op.get('amount') or op.get('Amount') or op.get('operationAmount') or op.get('sum') or 0
+        if isinstance(raw_amt, dict):
+            raw_amt = raw_amt.get('amount') or raw_amt.get('sum') or raw_amt.get('value') or 0
+        amount = float(raw_amt or 0)
 
         direction = str(
-            op.get('Direction', op.get('direction', op.get('operationType',
-            op.get('OperType', op.get('indicator', '')))))
-        ).upper()
-        if any(x in direction for x in ('OUT', 'DEBIT', 'РАСХОД', 'СПИСАН', '2', 'D')):
+            op.get('direction') or op.get('Direction') or op.get('operationType') or
+            op.get('indicator') or op.get('OperType') or ''
+        ).upper().strip()
+        DEBIT_VALS  = {'DEBIT', 'OUT', 'DBIT', 'РАСХОД', 'СПИСАНИЕ', 'D', '2'}
+        CREDIT_VALS = {'CREDIT', 'IN', 'CRDT', 'ПРИХОД', 'ЗАЧИСЛЕНИЕ', 'C', '1'}
+        if direction in DEBIT_VALS or any(x in direction for x in ('OUT', 'DEBIT', 'РАСХОД', 'СПИСАН', 'DBIT')):
             amount = -abs(amount)
-        elif any(x in direction for x in ('IN', 'CREDIT', 'ПРИХОД', 'ЗАЧИСЛ', '1', 'C')):
+        elif direction in CREDIT_VALS or any(x in direction for x in ('IN', 'CREDIT', 'ПРИХОД', 'ЗАЧИСЛ', 'CRDT')):
             amount = abs(amount)
 
         desc = str(
