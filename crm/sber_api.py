@@ -1,4 +1,5 @@
 import base64
+import re
 import time
 import uuid
 import logging
@@ -237,7 +238,7 @@ def parse_transactions(data):
         raw_amt = op.get('amount') or op.get('Amount') or op.get('operationAmount') or op.get('sum') or 0
         if isinstance(raw_amt, dict):
             raw_amt = raw_amt.get('amount') or raw_amt.get('sum') or raw_amt.get('value') or 0
-        amount = float(raw_amt or 0)
+        amount = float(str(raw_amt).replace(',', '.') or 0)
 
         direction = str(
             op.get('direction') or op.get('Direction') or op.get('operationType') or
@@ -250,30 +251,40 @@ def parse_transactions(data):
         elif direction in CREDIT_VALS or any(x in direction for x in ('IN', 'CREDIT', 'ПРИХОД', 'ЗАЧИСЛ', 'CRDT')):
             amount = abs(amount)
 
-        # Вложенные объекты перевода (rurTransfer, swiftTransfer, cardTransfer и т.д.)
+        # Вложенные объекты перевода (rurTransfer, swiftTransfer и т.д.)
         transfer = (op.get('rurTransfer') or op.get('swiftTransfer') or
                     op.get('cardTransfer') or op.get('budgetTransfer') or {})
 
-        desc = str(
+        purpose = str(
             op.get('paymentPurpose') or op.get('Purpose') or op.get('purpose') or
-            transfer.get('paymentPurpose') or transfer.get('purpose') or
-            op.get('operationName') or op.get('description') or ''
+            transfer.get('paymentPurpose') or op.get('operationName') or op.get('description') or ''
         ).strip()
+        desc = purpose
 
-        if amount >= 0:
+        # Карточная покупка (operationCode=17 или слово PURCHASE в назначении)
+        is_card = (str(op.get('operationCode', '')) == '17' or
+                   'PURCHASE' in purpose.upper())
+
+        if amount < 0 and is_card:
+            # Название магазина между "Сбербанка " и " по карте"
+            m = re.search(r'[Сс]бербанка\s+(.+?)\s+по\s+карте', purpose)
+            counterparty = m.group(1).strip() if m else ''
+        elif amount >= 0:
+            # Входящий перевод — плательщик
             counterparty = str(
-                op.get('payerName') or op.get('PayerName') or op.get('debtorName') or
-                transfer.get('payerName') or transfer.get('debtorName') or ''
+                transfer.get('payerName') or op.get('payerName') or op.get('debtorName') or ''
             ).strip()
         else:
+            # Исходящий перевод — получатель
             counterparty = str(
-                op.get('recipientName') or op.get('RecipientName') or op.get('creditorName') or
-                transfer.get('recipientName') or transfer.get('creditorName') or ''
+                transfer.get('payeeName') or transfer.get('recipientName') or
+                op.get('recipientName') or op.get('creditorName') or ''
             ).strip()
+        # Последний резерв
         if not counterparty:
             counterparty = str(
                 op.get('counterPartyName') or op.get('contragentName') or
-                transfer.get('counterPartyName') or transfer.get('name') or ''
+                transfer.get('name') or ''
             ).strip()
 
         result.append({
