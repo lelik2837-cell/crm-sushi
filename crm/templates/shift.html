@@ -613,10 +613,31 @@
 <div id="closeModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:1000; align-items:center; justify-content:center;">
   <div style="background:#fff; border-radius:14px; padding:28px; width:420px; max-width:95vw;">
     <h5 style="font-weight:700; margin-bottom:16px;">🔒 Закрыть смену</h5>
-    <form method="POST" action="{{ url_for('close_shift', shift_id=shift.id) }}">
+    <form method="POST" action="{{ url_for('close_shift', shift_id=shift.id) }}" id="closeShiftForm">
       <div style="margin-bottom:14px;">
         <div class="field-label">Смену закрыл(а)</div>
-        <input type="text" name="closed_by_name" class="field-input" value="{{ session.get('full_name', '') }}" required>
+        {% set shift_admins = staff | selectattr('role_snapshot', 'equalto', 'admin') | list %}
+        <select id="closedBySelect" class="field-input" style="margin-bottom:0;">
+          {% if shift_admins %}
+          <optgroup label="Администраторы на смене">
+            {% for s in shift_admins %}
+            <option value="{{ s.full_name_snapshot }}"
+              {% if s.full_name_snapshot == session.get('full_name', '') %}selected{% endif %}>
+              {{ s.full_name_snapshot }}
+            </option>
+            {% endfor %}
+          </optgroup>
+          {% endif %}
+          <optgroup label="Другие сотрудники">
+            {% for e in employees %}
+            <option value="{{ e.full_name }}">{{ e.full_name }}</option>
+            {% endfor %}
+          </optgroup>
+          <option value="__other__">— Другой (ввести вручную) —</option>
+        </select>
+        <input type="text" id="closedByCustom" class="field-input"
+               placeholder="Введите имя" style="display:none; margin-top:8px;">
+        <input type="hidden" name="closed_by_name" id="closedByHidden">
       </div>
       <div style="margin-bottom:14px;">
         <div class="field-label">Комментарий</div>
@@ -1365,5 +1386,41 @@ document.addEventListener('click', function(e) {
     document.querySelectorAll('.inline-staff-list').forEach(l => l.style.display = 'none');
   }
 });
+
+// ── Close shift modal: who closed ────────────────────────────────────────────
+(function () {
+  var sel    = document.getElementById('closedBySelect');
+  var custom = document.getElementById('closedByCustom');
+  var hidden = document.getElementById('closedByHidden');
+  var form   = document.getElementById('closeShiftForm');
+  if (!sel) return;
+
+  function syncHidden() {
+    hidden.value = sel.value === '__other__' ? custom.value.trim() : sel.value;
+  }
+
+  sel.addEventListener('change', function () {
+    if (sel.value === '__other__') {
+      custom.style.display = '';
+      custom.focus();
+    } else {
+      custom.style.display = 'none';
+    }
+    syncHidden();
+  });
+
+  custom.addEventListener('input', syncHidden);
+
+  form.addEventListener('submit', function (e) {
+    syncHidden();
+    if (!hidden.value.trim()) {
+      e.preventDefault();
+      alert('Укажите, кто закрыл смену');
+      if (sel.value === '__other__') custom.focus();
+    }
+  });
+
+  syncHidden();
+})();
 </script>
 {% endblock %}
