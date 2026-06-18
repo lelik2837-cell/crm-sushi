@@ -15,9 +15,10 @@ AUTH_URL  = 'https://sbi.sberbank.ru:9443/ic/sso/api/v2/oauth/authorize'
 # Токены и API — fintech.sberbank.ru (mTLS с нашим сертификатом)
 TOKEN_URL = 'https://fintech.sberbank.ru:9443/ic/sso/api/v2/oauth/token'
 NPA_URL   = 'https://fintech.sberbank.ru:9443/ic/sso/api/v2/npa/token'
-STMT_URL  = 'https://fintech.sberbank.ru:9443/fintech/api/v1/statement'
+STMT_URL  = 'https://fintech.sberbank.ru:9443/fintech/api/v2/statement/transactions'
 
-SCOPES = 'openid BANK_CONTROL_STATEMENT GET_CLIENT_ACCOUNTS GET_STATEMENT_TRANSACTION GET_STATEMENT_ACCOUNT'
+# Scope v1 — универсальный доступ ко всем операциям (включает BANK_CONTROL_STATEMENT и др.)
+SCOPES = 'openid di-17ae8543-3452-4b7e-8ae4-93ae0045dcf1'
 
 
 def _mtls():
