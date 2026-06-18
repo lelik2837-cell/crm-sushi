@@ -157,6 +157,11 @@ def get_statement(access_token, client_id, account_number, date_from, date_to):
     import urllib3
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+    params = {
+        'accountNumber': account_number,
+        'startDate':     date_from,
+        'endDate':       date_to,
+    }
     resp = requests.get(
         STMT_URL,
         cert=_mtls(),
@@ -167,16 +172,12 @@ def get_statement(access_token, client_id, account_number, date_from, date_to):
             'rqUID':           str(uuid.uuid4()),
             'Accept':          'application/json',
         },
-        params={
-            'accountNumber': account_number,
-            'startDate':     date_from,
-            'endDate':       date_to,
-        },
+        params=params,
         timeout=60,
     )
-    log.info('get_statement status=%s body=%s', resp.status_code, resp.text[:500])
-    resp.raise_for_status()
-    return resp.json()
+    log.info('get_statement status=%s params=%s body=%s', resp.status_code, params, resp.text[:800])
+    if not resp.ok:
+        raise RuntimeError(f'{resp.status_code} {resp.text[:600]}')
 
 
 def parse_transactions(data):
