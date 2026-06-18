@@ -1,6 +1,9 @@
 import ast
+import csv
+import io
 import operator as _op
 import os
+import re
 from functools import wraps
 from datetime import date, datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
@@ -140,6 +143,136 @@ def get_expense_categories(conn):
         'SELECT id, code, label, type, parent_id FROM expense_categories WHERE is_active=1 ORDER BY sort_order, label'
     ).fetchall()
 
+
+# ─── BANK HELPERS ─────────────────────────────────────────────────────────────
+
+def _detect_encoding(raw_bytes):
+    for enc in ('utf-8-sig', 'utf-8', 'cp1251'):
+        try:
+            raw_bytes.decode(enc)
+            return enc
+        except UnicodeDecodeError:
+            continue
+    return 'utf-8'
+
+
+def _parse_date_str(s):
+    s = str(s).strip().split(' ')[0].split('T')[0]
+    for fmt in ('%d.%m.%Y', '%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%Y.%m.%d'):
+        try:
+            return datetime.strptime(s, fmt).strftime('%Y-%m-%d')
+        except ValueError:
+            continue
+    return None
+
+
+def _clean_num(s):
+    if not s:
+        return None
+    s = str(s).strip().replace('\xa0', '').replace(' ', '').replace(' ', '').replace(' ', '').replace(',', '.')
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _map_csv_columns(fieldnames):
+    cols = {(f or '').lower().strip(): f for f in fieldnames}
+    DATE_P  = ['дата операции', 'дата проведения', 'дата платежа', 'дата', 'date']
+    DEBIT_P = ['сумма списания', 'расход', 'дебет', 'сумма дебет', 'списание']
+    CRED_P  = ['сумма зачисления', 'приход', 'кредит', 'сумма кредит', 'зачисление']
+    AMT_P   = ['сумма операции', 'сумма платежа', 'сумма', 'amount']
+    TYPE_P  = ['вид операции', 'приход/расход', 'тип операции', 'тип', 'д/к']
+    DESC_P  = ['назначение платежа', 'назначение', 'описание', 'description', 'наименование']
+    CTR_P   = ['контрагент', 'плательщик', 'получатель', 'наименование контрагента']
+
+    def find(patterns):
+        for p in patterns:
+            if p in cols:
+                return cols[p]
+            for k, v in cols.items():
+                if p in k:
+                    return v
+        return None
+
+    return {
+        'date': find(DATE_P), 'debit': find(DEBIT_P), 'credit': find(CRED_P),
+        'amount': find(AMT_P), 'type': find(TYPE_P),
+        'description': find(DESC_P), 'counterparty': find(CTR_P),
+    }
+
+
+def _parse_bank_csv(raw_bytes):
+    enc = _detect_encoding(raw_bytes)
+    text = raw_bytes.decode(enc)
+    lines = text.splitlines()
+    header_idx = 0
+    for i, line in enumerate(lines):
+        low = line.lower()
+        if ('дата' in low or 'date' in low) and ('сумм' in low or 'amount' in low or 'приход' in low):
+            header_idx = i
+            break
+    data_text = '\n'.join(lines[header_idx:])
+    reader = csv.DictReader(io.StringIO(data_text), delimiter=';')
+    rows = list(reader)
+    if not rows:
+        raise ValueError('Файл пустой или не удалось распознать формат')
+    col = _map_csv_columns(reader.fieldnames or [])
+    result = []
+    for row in rows:
+        date_val = _parse_date_str(row.get(col['date'] or '', '') or '')
+        if not date_val:
+            continue
+        if col.get('debit') and col.get('credit'):
+            d = _clean_num(row.get(col['debit']))
+            c = _clean_num(row.get(col['credit']))
+            if c and c > 0:
+                amount = c
+            elif d and d > 0:
+                amount = -d
+            else:
+                continue
+        else:
+            amount = _clean_num(row.get(col.get('amount') or '', ''))
+            if amount is None:
+                continue
+            if col.get('type'):
+                tv = (row.get(col['type']) or '').lower()
+                if any(w in tv for w in ('списан', 'расход', 'дебет', ' д ')):
+                    amount = -abs(amount)
+                elif any(w in tv for w in ('зачисл', 'приход', 'кредит', ' к ')):
+                    amount = abs(amount)
+        desc = (row.get(col.get('description') or '', '') or '').strip()
+        ctr  = (row.get(col.get('counterparty') or '', '') or '').strip()
+        result.append({'date': date_val, 'amount': amount, 'description': desc, 'counterparty': ctr})
+    return result
+
+
+def _match_contractors(conn, txns):
+    contractors = conn.execute('SELECT id, name, category, keywords FROM contractors WHERE is_active=1').fetchall()
+    for txn in txns:
+        text = ((txn.get('description') or '') + ' ' + (txn.get('counterparty') or '')).lower()
+        for c in contractors:
+            kws = [k.strip().lower() for k in (c['keywords'] or c['name']).split(',') if k.strip()]
+            if any(kw in text for kw in kws):
+                txn['contractor_id'] = c['id']
+                txn['category'] = txn.get('category') or c['category']
+                break
+    return txns
+
+
+def _match_terminal(conn, txn):
+    text = (txn.get('description') or '') + ' ' + (txn.get('counterparty') or '')
+    m = re.search(r'TID\s*[:\-]?\s*(\d{6,12})', text, re.IGNORECASE)
+    if m:
+        tid = m.group(1)
+        t = conn.execute('SELECT id FROM bank_terminals WHERE terminal_number=?', (tid,)).fetchone()
+        if t:
+            return t['id']
+    return None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 def build_cats_groups(cats):
     """Build grouped structure for dropdown: [(parent_dict, [child_dict, ...]), ...]."""
@@ -371,6 +504,57 @@ def init_db():
             conn.execute("ALTER TABLE shift_revenue ADD COLUMN actual_cash_comment TEXT DEFAULT ''")
         except Exception:
             pass
+
+        # Create bank module tables
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS contractors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                category TEXT DEFAULT '',
+                keywords TEXT DEFAULT '',
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS bank_terminals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                terminal_number TEXT NOT NULL UNIQUE,
+                name TEXT DEFAULT '',
+                branch_id INTEGER REFERENCES branches(id),
+                is_active INTEGER DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS bank_accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                bank_name TEXT DEFAULT '',
+                account_number TEXT DEFAULT '',
+                branch_id INTEGER REFERENCES branches(id),
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS bank_statements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bank_account_id INTEGER NOT NULL REFERENCES bank_accounts(id) ON DELETE CASCADE,
+                filename TEXT NOT NULL,
+                uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                uploaded_by INTEGER REFERENCES users(id),
+                date_from DATE,
+                date_to DATE,
+                row_count INTEGER DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS bank_transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                statement_id INTEGER NOT NULL REFERENCES bank_statements(id) ON DELETE CASCADE,
+                bank_account_id INTEGER NOT NULL REFERENCES bank_accounts(id),
+                txn_date DATE NOT NULL,
+                amount REAL NOT NULL,
+                description TEXT DEFAULT '',
+                counterparty TEXT DEFAULT '',
+                contractor_id INTEGER REFERENCES contractors(id),
+                category TEXT DEFAULT '',
+                terminal_id INTEGER REFERENCES bank_terminals(id),
+                is_ignored INTEGER DEFAULT 0
+            );
+        ''')
 
         conn.commit()
 
@@ -2392,6 +2576,337 @@ def shifts_archive():
         is_owner=(role == 'owner'),
         branch_groups=get_branch_groups(conn))
 
+
+# ─── BANK STATEMENTS ──────────────────────────────────────────────────────────
+
+@app.route('/bank/')
+@login_required
+@owner_required
+def bank():
+    tab = request.args.get('tab', 'statements')
+    date_from = request.args.get('date_from', (date.today().replace(day=1)).isoformat())
+    date_to   = request.args.get('date_to', date.today().isoformat())
+    with get_db() as conn:
+        accounts    = conn.execute('SELECT * FROM bank_accounts WHERE is_active=1 ORDER BY name').fetchall()
+        statements  = conn.execute('''
+            SELECT bs.*, ba.name as account_name
+            FROM bank_statements bs JOIN bank_accounts ba ON ba.id=bs.bank_account_id
+            ORDER BY bs.uploaded_at DESC
+        ''').fetchall()
+        contractors = conn.execute(
+            'SELECT c.*, ec.label as cat_label FROM contractors c LEFT JOIN expense_categories ec ON ec.code=c.category WHERE c.is_active=1 ORDER BY c.name'
+        ).fetchall()
+        terminals   = conn.execute(
+            'SELECT t.*, b.name as branch_name FROM bank_terminals t LEFT JOIN branches b ON b.id=t.branch_id ORDER BY t.terminal_number'
+        ).fetchall()
+        branches    = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        exp_cats    = get_expense_categories(conn)
+
+        beznal_rows = []
+        beznal_branches = []
+        if tab == 'beznal':
+            beznal_branches = conn.execute('''
+                SELECT DISTINCT b.id, b.name FROM bank_terminals t
+                JOIN branches b ON b.id=t.branch_id WHERE t.is_active=1 ORDER BY b.name
+            ''').fetchall()
+            raw = conn.execute('''
+                SELECT bt.txn_date, t.branch_id, SUM(bt.amount) as total
+                FROM bank_transactions bt
+                JOIN bank_terminals t ON t.id=bt.terminal_id
+                WHERE bt.txn_date BETWEEN ? AND ? AND bt.amount > 0 AND bt.is_ignored=0
+                GROUP BY bt.txn_date, t.branch_id
+                ORDER BY bt.txn_date DESC
+            ''', (date_from, date_to)).fetchall()
+            days = {}
+            for r in raw:
+                days.setdefault(r['txn_date'], {})[r['branch_id']] = r['total']
+            beznal_rows = sorted(days.items(), reverse=True)
+
+        expense_rows = []
+        expense_total = 0
+        if tab == 'expenses':
+            expense_rows = conn.execute('''
+                SELECT
+                    COALESCE(c.name, bt.counterparty, bt.description, '—') as name,
+                    bt.category,
+                    ec.label as cat_label,
+                    SUM(-bt.amount) as total,
+                    COUNT(*) as cnt
+                FROM bank_transactions bt
+                LEFT JOIN contractors c ON c.id=bt.contractor_id
+                LEFT JOIN expense_categories ec ON ec.code=bt.category
+                WHERE bt.txn_date BETWEEN ? AND ? AND bt.amount < 0 AND bt.is_ignored=0
+                GROUP BY bt.contractor_id, bt.category, COALESCE(c.name, bt.counterparty, bt.description)
+                ORDER BY total DESC
+            ''', (date_from, date_to)).fetchall()
+            expense_total = sum(r['total'] for r in expense_rows)
+
+        compare_rows = []
+        compare_bank = 0
+        compare_crm  = 0
+        if tab == 'compare':
+            compare_rows = conn.execute('''
+                SELECT
+                    COALESCE(bt.txn_date, e.date) as dt,
+                    COALESCE(c.name, bt.counterparty, bt.description, '—') as counterparty,
+                    bt.category as bank_cat,
+                    ec1.label as bank_cat_label,
+                    -bt.amount as bank_amount,
+                    e.amount_cash + e.amount_card as crm_amount,
+                    e.description as crm_desc
+                FROM bank_transactions bt
+                LEFT JOIN contractors c ON c.id=bt.contractor_id
+                LEFT JOIN expense_categories ec1 ON ec1.code=bt.category
+                LEFT JOIN expenses e ON e.date=bt.txn_date
+                    AND ABS(e.amount_cash+e.amount_card - (-bt.amount)) < 1
+                WHERE bt.txn_date BETWEEN ? AND ? AND bt.amount < 0 AND bt.is_ignored=0
+                ORDER BY dt DESC
+            ''', (date_from, date_to)).fetchall()
+            compare_bank = conn.execute(
+                'SELECT COALESCE(SUM(-amount),0) FROM bank_transactions WHERE txn_date BETWEEN ? AND ? AND amount<0 AND is_ignored=0',
+                (date_from, date_to)
+            ).fetchone()[0]
+            compare_crm = conn.execute(
+                "SELECT COALESCE(SUM(amount_cash+amount_card),0) FROM expenses e JOIN shifts s ON s.id=e.shift_id WHERE s.date BETWEEN ? AND ?",
+                (date_from, date_to)
+            ).fetchone()[0]
+
+    return render_template('bank.html',
+        tab=tab, date_from=date_from, date_to=date_to,
+        accounts=accounts, statements=statements,
+        contractors=contractors, terminals=terminals,
+        branches=branches, exp_cats=exp_cats,
+        beznal_rows=beznal_rows, beznal_branches=beznal_branches,
+        expense_rows=expense_rows, expense_total=expense_total,
+        compare_rows=compare_rows, compare_bank=compare_bank, compare_crm=compare_crm,
+    )
+
+
+@app.route('/bank/upload', methods=['POST'])
+@login_required
+@owner_required
+def bank_upload():
+    account_id = request.form.get('account_id', '')
+    f = request.files.get('file')
+    if not account_id or not f:
+        flash('Выберите счёт и файл', 'danger')
+        return redirect(url_for('bank'))
+    raw = f.read()
+    try:
+        txns = _parse_bank_csv(raw)
+    except Exception as e:
+        flash(f'Ошибка разбора файла: {e}', 'danger')
+        return redirect(url_for('bank'))
+    if not txns:
+        flash('Не найдено ни одной транзакции', 'warning')
+        return redirect(url_for('bank'))
+    with get_db() as conn:
+        _match_contractors(conn, txns)
+        dates = [t['date'] for t in txns]
+        stmt_id = conn.execute(
+            'INSERT INTO bank_statements (bank_account_id, filename, uploaded_by, date_from, date_to, row_count) VALUES (?,?,?,?,?,?)',
+            (int(account_id), f.filename, session['user_id'], min(dates), max(dates), len(txns))
+        ).lastrowid
+        for t in txns:
+            tid = _match_terminal(conn, t)
+            conn.execute(
+                'INSERT INTO bank_transactions (statement_id, bank_account_id, txn_date, amount, description, counterparty, contractor_id, category, terminal_id) VALUES (?,?,?,?,?,?,?,?,?)',
+                (stmt_id, int(account_id), t['date'], t['amount'], t['description'], t['counterparty'],
+                 t.get('contractor_id'), t.get('category', ''), tid)
+            )
+        conn.commit()
+    flash(f'Загружено {len(txns)} транзакций', 'success')
+    return redirect(url_for('bank'))
+
+
+@app.route('/bank/statement/<int:stmt_id>/delete', methods=['POST'])
+@login_required
+@owner_required
+def bank_statement_delete(stmt_id):
+    with get_db() as conn:
+        conn.execute('DELETE FROM bank_statements WHERE id=?', (stmt_id,))
+        conn.commit()
+    flash('Выписка удалена', 'success')
+    return redirect(url_for('bank'))
+
+
+@app.route('/bank/transaction/<int:txn_id>/update', methods=['POST'])
+@login_required
+@owner_required
+def bank_txn_update(txn_id):
+    contractor_id = request.form.get('contractor_id') or None
+    category = request.form.get('category', '')
+    is_ignored = 1 if request.form.get('is_ignored') else 0
+    with get_db() as conn:
+        conn.execute(
+            'UPDATE bank_transactions SET contractor_id=?, category=?, is_ignored=? WHERE id=?',
+            (contractor_id, category, is_ignored, txn_id)
+        )
+        conn.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/bank/accounts/add', methods=['POST'])
+@login_required
+@owner_required
+def bank_account_add():
+    name = request.form.get('name', '').strip()
+    bank_name = request.form.get('bank_name', '').strip()
+    account_number = request.form.get('account_number', '').strip()
+    branch_id = request.form.get('branch_id') or None
+    if not name:
+        flash('Введите название счёта', 'danger')
+        return redirect(url_for('bank', tab='accounts'))
+    with get_db() as conn:
+        conn.execute(
+            'INSERT INTO bank_accounts (name, bank_name, account_number, branch_id) VALUES (?,?,?,?)',
+            (name, bank_name, account_number, branch_id)
+        )
+        conn.commit()
+    flash(f'Счёт «{name}» добавлен', 'success')
+    return redirect(url_for('bank', tab='accounts'))
+
+
+@app.route('/bank/accounts/<int:acc_id>/delete', methods=['POST'])
+@login_required
+@owner_required
+def bank_account_delete(acc_id):
+    with get_db() as conn:
+        conn.execute('UPDATE bank_accounts SET is_active=0 WHERE id=?', (acc_id,))
+        conn.commit()
+    flash('Счёт удалён', 'success')
+    return redirect(url_for('bank', tab='accounts'))
+
+
+@app.route('/bank/contractors/add', methods=['POST'])
+@login_required
+@owner_required
+def bank_contractor_add():
+    name = request.form.get('name', '').strip()
+    category = request.form.get('category', '').strip()
+    keywords = request.form.get('keywords', '').strip()
+    if not name:
+        flash('Введите название контрагента', 'danger')
+        return redirect(url_for('bank', tab='contractors'))
+    with get_db() as conn:
+        conn.execute(
+            'INSERT INTO contractors (name, category, keywords) VALUES (?,?,?)',
+            (name, category, keywords)
+        )
+        conn.commit()
+    flash(f'Контрагент «{name}» добавлен', 'success')
+    return redirect(url_for('bank', tab='contractors'))
+
+
+@app.route('/bank/contractors/<int:ctr_id>/edit', methods=['POST'])
+@login_required
+@owner_required
+def bank_contractor_edit(ctr_id):
+    name = request.form.get('name', '').strip()
+    category = request.form.get('category', '').strip()
+    keywords = request.form.get('keywords', '').strip()
+    with get_db() as conn:
+        conn.execute(
+            'UPDATE contractors SET name=?, category=?, keywords=? WHERE id=?',
+            (name, category, keywords, ctr_id)
+        )
+        conn.commit()
+    flash('Контрагент обновлён', 'success')
+    return redirect(url_for('bank', tab='contractors'))
+
+
+@app.route('/bank/contractors/<int:ctr_id>/delete', methods=['POST'])
+@login_required
+@owner_required
+def bank_contractor_delete(ctr_id):
+    with get_db() as conn:
+        conn.execute('UPDATE contractors SET is_active=0 WHERE id=?', (ctr_id,))
+        conn.commit()
+    flash('Контрагент удалён', 'success')
+    return redirect(url_for('bank', tab='contractors'))
+
+
+@app.route('/bank/terminals/add', methods=['POST'])
+@login_required
+@owner_required
+def bank_terminal_add():
+    terminal_number = request.form.get('terminal_number', '').strip()
+    name = request.form.get('name', '').strip()
+    branch_id = request.form.get('branch_id') or None
+    if not terminal_number:
+        flash('Введите номер терминала', 'danger')
+        return redirect(url_for('bank', tab='terminals'))
+    with get_db() as conn:
+        try:
+            conn.execute(
+                'INSERT INTO bank_terminals (terminal_number, name, branch_id) VALUES (?,?,?)',
+                (terminal_number, name, branch_id)
+            )
+            conn.commit()
+            flash(f'Терминал {terminal_number} добавлен', 'success')
+        except Exception:
+            flash('Терминал с таким номером уже существует', 'danger')
+    return redirect(url_for('bank', tab='terminals'))
+
+
+@app.route('/bank/terminals/<int:tid>/edit', methods=['POST'])
+@login_required
+@owner_required
+def bank_terminal_edit(tid):
+    name = request.form.get('name', '').strip()
+    branch_id = request.form.get('branch_id') or None
+    with get_db() as conn:
+        conn.execute(
+            'UPDATE bank_terminals SET name=?, branch_id=? WHERE id=?',
+            (name, branch_id, tid)
+        )
+        conn.commit()
+    flash('Терминал обновлён', 'success')
+    return redirect(url_for('bank', tab='terminals'))
+
+
+@app.route('/bank/terminals/<int:tid>/delete', methods=['POST'])
+@login_required
+@owner_required
+def bank_terminal_delete(tid):
+    with get_db() as conn:
+        conn.execute('UPDATE bank_terminals SET is_active=0 WHERE id=?', (tid,))
+        conn.commit()
+    flash('Терминал удалён', 'success')
+    return redirect(url_for('bank', tab='terminals'))
+
+
+@app.route('/bank/statement/<int:stmt_id>')
+@login_required
+@owner_required
+def bank_statement_view(stmt_id):
+    with get_db() as conn:
+        stmt = conn.execute('''
+            SELECT bs.*, ba.name as account_name
+            FROM bank_statements bs JOIN bank_accounts ba ON ba.id=bs.bank_account_id
+            WHERE bs.id=?
+        ''', (stmt_id,)).fetchone()
+        if not stmt:
+            flash('Выписка не найдена', 'danger')
+            return redirect(url_for('bank'))
+        txns = conn.execute('''
+            SELECT bt.*, c.name as contractor_name, ec.label as cat_label,
+                   t.terminal_number, b.name as terminal_branch
+            FROM bank_transactions bt
+            LEFT JOIN contractors c ON c.id=bt.contractor_id
+            LEFT JOIN expense_categories ec ON ec.code=bt.category
+            LEFT JOIN bank_terminals t ON t.id=bt.terminal_id
+            LEFT JOIN branches b ON b.id=t.branch_id
+            WHERE bt.statement_id=?
+            ORDER BY bt.txn_date DESC, bt.id DESC
+        ''', (stmt_id,)).fetchall()
+        contractors = conn.execute('SELECT * FROM contractors WHERE is_active=1 ORDER BY name').fetchall()
+        exp_cats    = get_expense_categories(conn)
+    return render_template('bank_statement.html',
+        stmt=stmt, txns=txns, contractors=contractors, exp_cats=exp_cats)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 init_db()
 

@@ -1,0 +1,217 @@
+{% extends 'base.html' %}
+{% block title %}Выписка — {{ stmt.filename }} — CRM Суши{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+
+  <div class="d-flex align-items-center mb-3 gap-3">
+    <a href="{{ url_for('bank') }}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-arrow-left"></i> Назад
+    </a>
+    <div>
+      <h5 class="mb-0 fw-bold">{{ stmt.filename }}</h5>
+      <small class="text-muted">{{ stmt.account_name }} · {{ stmt.date_from }} — {{ stmt.date_to }} · {{ stmt.row_count }} строк</small>
+    </div>
+  </div>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in messages %}
+      <div class="alert alert-{{ cat }} alert-dismissible fade show" role="alert">
+        {{ msg }}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+      </div>
+    {% endfor %}
+  {% endwith %}
+
+  <!-- Summary cards -->
+  {% set total_credit = namespace(val=0) %}
+  {% set total_debit = namespace(val=0) %}
+  {% set cnt_terminal = namespace(val=0) %}
+  {% for t in txns %}
+    {% if not t.is_ignored %}
+      {% if t.amount > 0 %}{% set total_credit.val = total_credit.val + t.amount %}{% endif %}
+      {% if t.amount < 0 %}{% set total_debit.val = total_debit.val + t.amount %}{% endif %}
+      {% if t.terminal_id %}{% set cnt_terminal.val = cnt_terminal.val + 1 %}{% endif %}
+    {% endif %}
+  {% endfor %}
+
+  <div class="row g-3 mb-3">
+    <div class="col-md-3">
+      <div class="card metric-card" style="border-left-color:#198754">
+        <div class="card-body py-2">
+          <div class="text-muted small">Поступления</div>
+          <div class="fs-5 fw-bold text-success">{{ '%.0f'|format(total_credit.val) }} ₽</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card metric-card">
+        <div class="card-body py-2">
+          <div class="text-muted small">Списания</div>
+          <div class="fs-5 fw-bold text-danger">{{ '%.0f'|format(total_debit.val|abs) }} ₽</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card metric-card" style="border-left-color:#0d6efd">
+        <div class="card-body py-2">
+          <div class="text-muted small">Транзакций</div>
+          <div class="fs-5 fw-bold">{{ txns|length }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card metric-card" style="border-left-color:#fd7e14">
+        <div class="card-body py-2">
+          <div class="text-muted small">С терминалом</div>
+          <div class="fs-5 fw-bold text-warning">{{ cnt_terminal.val }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Filter -->
+  <div class="mb-3 d-flex gap-2 flex-wrap">
+    <span class="text-muted small align-self-center">Фильтр:</span>
+    <button class="btn btn-sm btn-outline-secondary filter-btn active" data-filter="all">Все</button>
+    <button class="btn btn-sm btn-outline-success filter-btn" data-filter="credit">Поступления</button>
+    <button class="btn btn-sm btn-outline-danger filter-btn" data-filter="debit">Списания</button>
+    <button class="btn btn-sm btn-outline-warning filter-btn" data-filter="terminal">С терминалом</button>
+    <button class="btn btn-sm btn-outline-secondary filter-btn" data-filter="ignored">Игнорируемые</button>
+  </div>
+
+  <!-- Transactions table -->
+  <div class="card">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover table-sm mb-0" id="txnTable">
+          <thead class="table-light">
+            <tr>
+              <th>Дата</th>
+              <th class="text-end">Сумма</th>
+              <th>Контрагент</th>
+              <th>Описание</th>
+              <th>Контрагент CRM</th>
+              <th>Категория</th>
+              <th>Терминал</th>
+              <th>Игнор</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in txns %}
+            <tr class="txn-row
+              {% if t.amount > 0 %}txn-credit{% else %}txn-debit{% endif %}
+              {% if t.terminal_id %}txn-terminal{% endif %}
+              {% if t.is_ignored %}txn-ignored table-secondary text-muted{% endif %}"
+              data-id="{{ t.id }}">
+              <td class="text-nowrap">{{ t.txn_date }}</td>
+              <td class="text-end fw-semibold text-nowrap
+                {% if t.is_ignored %}text-muted{% elif t.amount > 0 %}text-success{% else %}text-danger{% endif %}">
+                {% if t.amount > 0 %}+{% endif %}{{ '%.0f'|format(t.amount) }} ₽
+              </td>
+              <td class="small">{{ t.counterparty[:40] if t.counterparty else '—' }}</td>
+              <td class="small text-muted">{{ t.description[:60] if t.description else '—' }}</td>
+              <td>
+                <select class="form-select form-select-sm txn-contractor" style="min-width:130px" data-id="{{ t.id }}">
+                  <option value="">—</option>
+                  {% for c in contractors %}
+                  <option value="{{ c.id }}" {% if c.id == t.contractor_id %}selected{% endif %}>{{ c.name }}</option>
+                  {% endfor %}
+                </select>
+              </td>
+              <td>
+                <select class="form-select form-select-sm txn-category" style="min-width:120px" data-id="{{ t.id }}">
+                  <option value="">—</option>
+                  {% for cat in exp_cats %}
+                  <option value="{{ cat.code }}" {% if cat.code == t.category %}selected{% endif %}>{{ cat.label }}</option>
+                  {% endfor %}
+                </select>
+              </td>
+              <td class="small text-nowrap">
+                {% if t.terminal_number %}
+                  <span class="badge bg-warning text-dark">{{ t.terminal_number }}</span>
+                  {% if t.terminal_branch %}<br><span class="text-muted">{{ t.terminal_branch }}</span>{% endif %}
+                {% else %}—{% endif %}
+              </td>
+              <td>
+                <input type="checkbox" class="form-check-input txn-ignore" data-id="{{ t.id }}"
+                       {% if t.is_ignored %}checked{% endif %}>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Filter buttons
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    this.classList.add('active');
+    const f = this.dataset.filter;
+    document.querySelectorAll('.txn-row').forEach(row => {
+      if (f === 'all') {
+        row.style.display = '';
+      } else if (f === 'credit') {
+        row.style.display = row.classList.contains('txn-credit') && !row.classList.contains('txn-ignored') ? '' : 'none';
+      } else if (f === 'debit') {
+        row.style.display = row.classList.contains('txn-debit') && !row.classList.contains('txn-ignored') ? '' : 'none';
+      } else if (f === 'terminal') {
+        row.style.display = row.classList.contains('txn-terminal') ? '' : 'none';
+      } else if (f === 'ignored') {
+        row.style.display = row.classList.contains('txn-ignored') ? '' : 'none';
+      }
+    });
+  });
+});
+
+// Save contractor/category/ignore on change
+function saveRow(id, data) {
+  fetch(`/bank/transaction/${id}/update`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: new URLSearchParams(data)
+  });
+}
+
+document.querySelectorAll('.txn-contractor').forEach(sel => {
+  sel.addEventListener('change', function() {
+    const id = this.dataset.id;
+    const row = document.querySelector(`.txn-row[data-id="${id}"]`);
+    const cat = row.querySelector('.txn-category').value;
+    const ign = row.querySelector('.txn-ignore').checked ? '1' : '';
+    saveRow(id, {contractor_id: this.value, category: cat, is_ignored: ign});
+  });
+});
+
+document.querySelectorAll('.txn-category').forEach(sel => {
+  sel.addEventListener('change', function() {
+    const id = this.dataset.id;
+    const row = document.querySelector(`.txn-row[data-id="${id}"]`);
+    const ctr = row.querySelector('.txn-contractor').value;
+    const ign = row.querySelector('.txn-ignore').checked ? '1' : '';
+    saveRow(id, {contractor_id: ctr, category: this.value, is_ignored: ign});
+  });
+});
+
+document.querySelectorAll('.txn-ignore').forEach(chk => {
+  chk.addEventListener('change', function() {
+    const id = this.dataset.id;
+    const row = document.querySelector(`.txn-row[data-id="${id}"]`);
+    const ctr = row.querySelector('.txn-contractor').value;
+    const cat = row.querySelector('.txn-category').value;
+    const ign = this.checked ? '1' : '';
+    saveRow(id, {contractor_id: ctr, category: cat, is_ignored: ign});
+    // Toggle visual
+    if (this.checked) {
+      row.classList.add('txn-ignored', 'table-secondary', 'text-muted');
+    } else {
+      row.classList.remove('txn-ignored', 'table-secondary', 'text-muted');
+    }
+  });
+});
+</script>
+{% endblock %}
