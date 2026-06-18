@@ -250,22 +250,30 @@ def parse_transactions(data):
         elif direction in CREDIT_VALS or any(x in direction for x in ('IN', 'CREDIT', 'ПРИХОД', 'ЗАЧИСЛ', 'CRDT')):
             amount = abs(amount)
 
+        # Вложенные объекты перевода (rurTransfer, swiftTransfer, cardTransfer и т.д.)
+        transfer = (op.get('rurTransfer') or op.get('swiftTransfer') or
+                    op.get('cardTransfer') or op.get('budgetTransfer') or {})
+
         desc = str(
-            op.get('Purpose', op.get('purpose', op.get('paymentPurpose',
-            op.get('operationName', op.get('description', ''))))) or ''
+            op.get('paymentPurpose') or op.get('Purpose') or op.get('purpose') or
+            transfer.get('paymentPurpose') or transfer.get('purpose') or
+            op.get('operationName') or op.get('description') or ''
         ).strip()
 
         if amount >= 0:
             counterparty = str(
-                op.get('PayerName', op.get('payerName', op.get('debtorName', ''))) or ''
+                op.get('payerName') or op.get('PayerName') or op.get('debtorName') or
+                transfer.get('payerName') or transfer.get('debtorName') or ''
             ).strip()
         else:
             counterparty = str(
-                op.get('RecipientName', op.get('recipientName', op.get('creditorName', ''))) or ''
+                op.get('recipientName') or op.get('RecipientName') or op.get('creditorName') or
+                transfer.get('recipientName') or transfer.get('creditorName') or ''
             ).strip()
         if not counterparty:
             counterparty = str(
-                op.get('counterPartyName', op.get('contragentName', '')) or ''
+                op.get('counterPartyName') or op.get('contragentName') or
+                transfer.get('counterPartyName') or transfer.get('name') or ''
             ).strip()
 
         result.append({

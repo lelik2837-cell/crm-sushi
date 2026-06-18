@@ -3185,6 +3185,37 @@ def sber_debug():
     return jsonify(info)
 
 
+@app.route('/bank/sber/debug-tx')
+@login_required
+@owner_required
+def sber_debug_tx():
+    """Показать сырую структуру первых 2 транзакций от Сбера (для отладки полей)."""
+    from sber_api import get_statement, _mtls, STMT_URL
+    import time, requests, urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    with get_db() as conn:
+        access_token   = _sber_get(conn, 'sber_access_token')
+        client_id      = _sber_get(conn, 'sber_client_id', '71154')
+        account_number = _sber_get(conn, 'sber_account_number')
+        if not access_token or not account_number:
+            return jsonify({'error': 'Нет токена или счёта'})
+        today = date.today().isoformat()
+        resp = requests.get(
+            STMT_URL,
+            cert=_mtls(), verify=False,
+            headers={'Authorization': f'Bearer {access_token}',
+                     'x-ibm-client-id': str(client_id),
+                     'Accept': 'application/json'},
+            params={'accountNumber': account_number, 'statementDate': today, 'page': 1},
+            timeout=30,
+        )
+        raw = resp.json() if resp.ok else {'status': resp.status_code, 'body': resp.text[:1000]}
+        ops = (raw.get('transactions') or raw.get('operations') or raw.get('operationList') or
+               raw.get('items') or [])
+        return jsonify({'status': resp.status_code, 'keys_top': list(raw.keys()),
+                        'first_2_ops': ops[:2]})
+
+
 @app.route('/bank/sber/settings', methods=['GET', 'POST'])
 @login_required
 @owner_required
