@@ -527,9 +527,14 @@ def init_db():
                 name TEXT NOT NULL,
                 bank_name TEXT DEFAULT '',
                 account_number TEXT DEFAULT '',
-                branch_id INTEGER REFERENCES branches(id),
                 is_active INTEGER DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS bank_account_branches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bank_account_id INTEGER NOT NULL REFERENCES bank_accounts(id) ON DELETE CASCADE,
+                branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                UNIQUE(bank_account_id, branch_id)
             );
             CREATE TABLE IF NOT EXISTS bank_statements (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2588,6 +2593,12 @@ def bank():
     date_to   = request.args.get('date_to', date.today().isoformat())
     with get_db() as conn:
         accounts    = conn.execute('SELECT * FROM bank_accounts WHERE is_active=1 ORDER BY name').fetchall()
+        acc_branches = {}
+        for row in conn.execute('''
+            SELECT bab.bank_account_id, b.id, b.name FROM bank_account_branches bab
+            JOIN branches b ON b.id=bab.branch_id ORDER BY b.name
+        ''').fetchall():
+            acc_branches.setdefault(row['bank_account_id'], []).append({'id': row['id'], 'name': row['name']})
         statements  = conn.execute('''
             SELECT bs.*, ba.name as account_name
             FROM bank_statements bs JOIN bank_accounts ba ON ba.id=bs.bank_account_id
@@ -2673,7 +2684,7 @@ def bank():
 
     return render_template('bank.html',
         tab=tab, date_from=date_from, date_to=date_to,
-        accounts=accounts, statements=statements,
+        accounts=accounts, acc_branches=acc_branches, statements=statements,
         contractors=contractors, terminals=terminals,
         branches=branches, exp_cats=exp_cats,
         beznal_rows=beznal_rows, beznal_branches=beznal_branches,
@@ -2753,15 +2764,20 @@ def bank_account_add():
     name = request.form.get('name', '').strip()
     bank_name = request.form.get('bank_name', '').strip()
     account_number = request.form.get('account_number', '').strip()
-    branch_id = request.form.get('branch_id') or None
+    branch_ids = [b for b in request.form.getlist('branch_ids') if b.isdigit()]
     if not name:
         flash('Введите название счёта', 'danger')
         return redirect(url_for('bank', tab='accounts'))
     with get_db() as conn:
-        conn.execute(
-            'INSERT INTO bank_accounts (name, bank_name, account_number, branch_id) VALUES (?,?,?,?)',
-            (name, bank_name, account_number, branch_id)
-        )
+        acc_id = conn.execute(
+            'INSERT INTO bank_accounts (name, bank_name, account_number) VALUES (?,?,?)',
+            (name, bank_name, account_number)
+        ).lastrowid
+        for bid in branch_ids:
+            conn.execute(
+                'INSERT OR IGNORE INTO bank_account_branches (bank_account_id, branch_id) VALUES (?,?)',
+                (acc_id, int(bid))
+            )
         conn.commit()
     flash(f'Счёт «{name}» добавлен', 'success')
     return redirect(url_for('bank', tab='accounts'))

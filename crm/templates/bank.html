@@ -635,7 +635,7 @@
               <th>Название</th>
               <th>Банк</th>
               <th>Номер счёта</th>
-              <th>Филиал</th>
+              <th>Филиалы</th>
               <th></th>
             </tr>
           </thead>
@@ -646,8 +646,10 @@
               <td>{{ a.bank_name or '—' }}</td>
               <td><code>{{ a.account_number or '—' }}</code></td>
               <td>
-                {% for b in branches %}{% if b.id == a.branch_id %}{{ b.name }}{% endif %}{% endfor %}
-                {% if not a.branch_id %}—{% endif %}
+                {% set abs = acc_branches.get(a.id, []) %}
+                {% if abs %}
+                  {% for b in abs %}<span class="badge bg-secondary me-1">{{ b.name }}</span>{% endfor %}
+                {% else %}—{% endif %}
               </td>
               <td class="text-end">
                 <form method="post" action="{{ url_for('bank_account_delete', acc_id=a.id) }}"
@@ -687,13 +689,17 @@
               <input type="text" name="account_number" class="form-control" placeholder="40802810...">
             </div>
             <div class="mb-3">
-              <label class="form-label fw-semibold">Филиал</label>
-              <select name="branch_id" class="form-select">
-                <option value="">— общий счёт —</option>
+              <label class="form-label fw-semibold">Филиалы</label>
+              <div class="border rounded p-2" style="max-height:180px;overflow-y:auto;">
                 {% for b in branches %}
-                <option value="{{ b.id }}">{{ b.name }}</option>
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="branch_ids"
+                         value="{{ b.id }}" id="accBr{{ b.id }}">
+                  <label class="form-check-label" for="accBr{{ b.id }}">{{ b.name }}</label>
+                </div>
                 {% endfor %}
-              </select>
+              </div>
+              <div class="form-text">Не выбрано — общий счёт</div>
             </div>
           </div>
           <div class="modal-footer">
