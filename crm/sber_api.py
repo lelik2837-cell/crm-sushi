@@ -10,11 +10,12 @@ BASE_DIR  = Path(__file__).parent
 CERT_FILE = BASE_DIR / 'certs' / 'sber_cert.pem'
 KEY_FILE  = BASE_DIR / 'certs' / 'sber_key.pem'
 
-BASE_URL   = 'https://fintech.sberbank.ru:9443'
-AUTH_URL   = f'{BASE_URL}/ic/sso/api/v2/oauth/authorize'
-TOKEN_URL  = f'{BASE_URL}/ic/sso/api/v2/oauth/token'
-NPA_URL    = f'{BASE_URL}/ic/sso/api/v2/npa/token'
-STMT_URL   = f'{BASE_URL}/fintech/api/v1/statement'
+# Авторизация браузером — sbi.sberbank.ru (публичный, без mTLS для браузера)
+AUTH_URL  = 'https://sbi.sberbank.ru:9443/ic/sso/api/v2/oauth/authorize'
+# Токены и API — fintech.sberbank.ru (mTLS с нашим сертификатом)
+TOKEN_URL = 'https://fintech.sberbank.ru:9443/ic/sso/api/v2/oauth/token'
+NPA_URL   = 'https://fintech.sberbank.ru:9443/ic/sso/api/v2/npa/token'
+STMT_URL  = 'https://fintech.sberbank.ru:9443/fintech/api/v1/statement'
 
 SCOPES = 'openid BANK_CONTROL_STATEMENT GET_CLIENT_ACCOUNTS GET_STATEMENT_TRANSACTION GET_STATEMENT_ACCOUNT'
 
