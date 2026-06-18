@@ -3159,6 +3159,32 @@ def _sber_set(conn, key, value):
     conn.execute('INSERT OR REPLACE INTO api_settings(key,value) VALUES(?,?)', (key, value))
 
 
+@app.route('/bank/sber/debug')
+@login_required
+@owner_required
+def sber_debug():
+    """Отладка: показать состояние токенов в базе."""
+    import time
+    with get_db() as conn:
+        keys = ['sber_client_id','sber_account_number','sber_access_token',
+                'sber_refresh_token','sber_token_expires','sber_npa_active','sber_last_sync','sber_last_result']
+        info = {}
+        for k in keys:
+            v = _sber_get(conn, k)
+            if k in ('sber_access_token','sber_refresh_token') and v:
+                info[k] = v[:12] + '...' + f' (len={len(v)})'
+            elif k == 'sber_token_expires' and v:
+                try:
+                    exp = float(v)
+                    remaining = exp - time.time()
+                    info[k] = f'{v} (осталось {int(remaining)}с / {int(remaining/60)}мин)'
+                except:
+                    info[k] = v
+            else:
+                info[k] = v or '(пусто)'
+    return jsonify(info)
+
+
 @app.route('/bank/sber/settings', methods=['GET', 'POST'])
 @login_required
 @owner_required
