@@ -26,7 +26,14 @@
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
       "Bash(git push *)",
-      "Bash(python3 -c \"import py_compile; py_compile.compile\\('crm/app.py', doraise=True\\)\")"
+      "Bash(python3 -c \"import py_compile; py_compile.compile\\('crm/app.py', doraise=True\\)\")",
+      "Bash(lsof -ti:5050)",
+      "Bash(xargs kill -9)",
+      "Bash(curl -s http://localhost:5050/login)",
+      "Bash(curl -s -c /tmp/c4.txt -X POST http://localhost:5050/login -d 'username=owner&password=admin123' -D -)",
+      "Bash(curl -s -b /tmp/c4.txt http://localhost:5050/bank/sber/settings -D -)",
+      "Bash(curl -s -b /tmp/c4.txt -X POST http://localhost:5050/bank/sber/auth -D -)",
+      "Bash(curl -s -c /tmp/c4.txt -b /tmp/c4.txt -X POST http://localhost:5050/bank/sber/auth -L)"
     ],
     "additionalDirectories": [
       "/Users/aleksey/.claude/projects/-Users-aleksey-Desktop-CRM-sushi"

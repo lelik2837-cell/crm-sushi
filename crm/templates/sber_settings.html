@@ -9,7 +9,7 @@
     </a>
     <div>
       <h5 class="mb-0 fw-bold">Автосинхронизация Сбербанка</h5>
-      <small class="text-muted">Импорт выписок через Sber Business API</small>
+      <small class="text-muted">Импорт выписок через SberAPI (NPA)</small>
     </div>
   </div>
 
@@ -26,14 +26,14 @@
   <div class="alert alert-success d-flex align-items-center gap-3 py-2 mb-3">
     <i class="bi bi-check-circle-fill fs-4 text-success"></i>
     <div>
-      <div class="fw-semibold">Сбербанк подключён</div>
+      <div class="fw-semibold">Сбербанк подключён (NPA)</div>
       {% if cfg.last_sync %}
       <div class="small text-muted">Последняя синхронизация: {{ cfg.last_sync }} — {{ cfg.last_result }}</div>
       {% endif %}
     </div>
-    <a href="{{ url_for('sber_auth') }}" class="btn btn-sm btn-outline-success ms-auto">
-      Переподключить
-    </a>
+    <form method="post" action="{{ url_for('sber_auth') }}" class="ms-auto">
+      <button type="submit" class="btn btn-sm btn-outline-success">Переподключить</button>
+    </form>
   </div>
   {% else %}
   <div class="card border-warning mb-4">
@@ -42,12 +42,14 @@
         <i class="bi bi-bank2 text-warning" style="font-size:2.2rem"></i>
       </div>
       <div class="flex-grow-1">
-        <div class="fw-bold fs-6 mb-1">Требуется авторизация в СберБизнес</div>
-        <div class="text-muted small">Нажмите кнопку — откроется страница входа Сбербанка. Войдите как владелец счёта и разрешите доступ к выпискам.</div>
+        <div class="fw-bold fs-6 mb-1">Требуется подключение к СберАПИ</div>
+        <div class="text-muted small">Нажмите кнопку для проверки NPA-соединения через сертификат. Браузерная авторизация не нужна.</div>
       </div>
-      <a href="{{ url_for('sber_auth') }}" class="btn btn-warning fw-bold px-4">
-        <i class="bi bi-box-arrow-right me-1"></i>Подключить СберБизнес
-      </a>
+      <form method="post" action="{{ url_for('sber_auth') }}">
+        <button type="submit" class="btn btn-warning fw-bold px-4">
+          <i class="bi bi-plug me-1"></i>Подключить СберАПИ
+        </button>
+      </form>
     </div>
   </div>
   {% endif %}
@@ -93,7 +95,6 @@
   </div>
 
   <!-- Ручная загрузка -->
-  {% if cfg.has_token %}
   <div class="card shadow-sm mb-4">
     <div class="card-header py-2 fw-semibold small">
       <i class="bi bi-cloud-download me-1"></i>Загрузить выписку
@@ -112,7 +113,7 @@
           <button class="btn btn-success btn-sm" onclick="runSync()">
             <i class="bi bi-play-fill me-1"></i>Загрузить
           </button>
-          <button class="btn btn-outline-secondary btn-sm" onclick="testConnection()">
+          <button class="btn btn-outline-secondary btn-sm" onclick="testConnection()" title="Проверить соединение">
             <i class="bi bi-wifi"></i>
           </button>
         </div>
@@ -120,18 +121,21 @@
       <div id="syncStatus" class="mt-2" style="display:none"></div>
     </div>
   </div>
-  {% endif %}
 
   <!-- Инструкция -->
   <div class="card border-0 bg-light">
     <div class="card-body py-2 small">
       <div class="fw-semibold mb-1"><i class="bi bi-info-circle me-1"></i>Как это работает</div>
       <ol class="text-muted mb-0 ps-3">
-        <li>Нажмите «Подключить СберБизнес» → войдите в интернет-банк и разрешите доступ</li>
-        <li>CRM получит токены доступа и будет обновлять их автоматически</li>
-        <li>Новые транзакции добавляются в «Банк» и разносятся по контрагентам</li>
-        <li>Redirect URI для портала Sber API: <code>{{ url_for('sber_callback', _external=True) }}</code></li>
+        <li>Убедитесь, что Client ID и Client Secret заполнены — нажмите «Сохранить»</li>
+        <li>Нажмите «Подключить СберАПИ» — CRM проверит соединение через сертификат</li>
+        <li>Если появится ошибка «NPA-доступ не активирован» — обратитесь в поддержку Sber API: <a href="https://developers.sber.ru" target="_blank">developers.sber.ru</a></li>
+        <li>После активации нажмите «Загрузить» — новые транзакции появятся в разделе «Банк»</li>
       </ol>
+      <div class="mt-2 text-muted">
+        <strong>Сертификат:</strong> crm/certs/sber_cert.pem (действует до 18.06.2027) &nbsp;|&nbsp;
+        <strong>Client:</strong> CI02741778-PROM-71154
+      </div>
     </div>
   </div>
 
@@ -148,12 +152,12 @@
 })();
 
 async function testConnection() {
-  showStatus('info', '<span class="spinner-border spinner-border-sm me-1"></span>Проверка...');
+  showStatus('info', '<span class="spinner-border spinner-border-sm me-1"></span>Проверка соединения...');
   try {
     var r = await fetch('/bank/sber/test', { method: 'POST' });
     var j = await r.json();
     if (j.ok) {
-      showStatus('success', '✓ Подключение работает! Токен обновлён (действует ' + Math.round(j.expires_in/60) + ' мин)');
+      showStatus('success', '✓ Соединение работает! Токен получен (действует ~5 минут)');
     } else {
       showStatus('danger', '✗ ' + j.error);
     }
