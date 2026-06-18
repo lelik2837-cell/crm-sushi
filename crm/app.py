@@ -3384,7 +3384,7 @@ def sber_sync():
         except Exception as e:
             err = str(e)
             logging.exception('sber_sync error')
-            _sber_set(conn, 'sber_last_result', f'Ошибка: {err[:120]}')
+            _sber_set(conn, 'sber_last_result', f'Ошибка: {err[:500]}')
             conn.commit()
             return jsonify({'ok': False, 'error': err})
 

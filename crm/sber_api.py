@@ -151,42 +151,83 @@ def refresh_access_token(client_id, client_secret=None, refresh_token=None):
     return {'access_token': get_npa_token(client_id), 'expires_in': 300}
 
 
+def _get_one_day(session, access_token, client_id, account_number, statement_date):
+    """Запрос выписки за один день с пагинацией."""
+    ops = []
+    page = 1
+    while True:
+        params = {
+            'accountNumber': account_number,
+            'statementDate': statement_date,
+            'page':          page,
+        }
+        resp = session.get(
+            STMT_URL,
+            params=params,
+            timeout=60,
+        )
+        log.info('statement day=%s page=%s status=%s body=%s',
+                 statement_date, page, resp.status_code, resp.text[:600])
+        if not resp.ok:
+            raise RuntimeError(f'{resp.status_code} {resp.text[:600]}')
+        data = resp.json()
+        # Транзакции могут быть в разных полях v2 ответа
+        batch = (
+            data.get('transactions') or
+            data.get('operations') or
+            data.get('operationList') or
+            data.get('items') or
+            (data.get('body', {}) or {}).get('transactions') or
+            []
+        )
+        ops.extend(batch)
+        # Есть следующая страница?
+        links = data.get('links') or []
+        has_next = any(l.get('rel') == 'next' for l in links)
+        if not has_next or not batch:
+            break
+        page += 1
+    return ops
+
+
 def get_statement(access_token, client_id, account_number, date_from, date_to):
-    """Запрос выписки по счёту."""
+    """Запрос выписки за период — перебираем каждый день."""
     import requests
     import urllib3
+    from datetime import date as _date, timedelta
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-    params = {
-        'accountNumber': account_number,
-        'startDate':     date_from,
-        'endDate':       date_to,
-    }
-    resp = requests.get(
-        STMT_URL,
-        cert=_mtls(),
-        verify=False,
-        headers={
-            'Authorization':   f'Bearer {access_token}',
-            'x-ibm-client-id': str(client_id),
-            'rqUID':           str(uuid.uuid4()),
-            'Accept':          'application/json',
-        },
-        params=params,
-        timeout=60,
-    )
-    log.info('get_statement status=%s params=%s body=%s', resp.status_code, params, resp.text[:800])
-    if not resp.ok:
-        raise RuntimeError(f'{resp.status_code} {resp.text[:600]}')
+    session = requests.Session()
+    session.cert    = _mtls()
+    session.verify  = False
+    session.headers.update({
+        'Authorization':   f'Bearer {access_token}',
+        'x-ibm-client-id': str(client_id),
+        'Accept':          'application/json',
+    })
+
+    start = _date.fromisoformat(date_from)
+    end   = _date.fromisoformat(date_to)
+    all_ops = []
+    cur = start
+    while cur <= end:
+        session.headers['rqUID'] = str(uuid.uuid4())
+        day_ops = _get_one_day(session, access_token, client_id,
+                               account_number, cur.isoformat())
+        all_ops.extend(day_ops)
+        cur += timedelta(days=1)
+
+    return {'transactions': all_ops}
 
 
 def parse_transactions(data):
-    """Разбирает ответ Sber API в список {'date','amount','description','counterparty'}."""
+    """Разбирает ответ Sber API (v2) в список {'date','amount','description','counterparty'}."""
     ops = (
-        data.get('Statement', {}).get('Transactions') or
         data.get('transactions') or
         data.get('operations') or
         data.get('operationList') or
+        data.get('items') or
+        data.get('Statement', {}).get('Transactions') or
         []
     )
     result = []
