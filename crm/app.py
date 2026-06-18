@@ -367,6 +367,11 @@ def init_db():
             );
         ''')
 
+        try:
+            conn.execute("ALTER TABLE shift_revenue ADD COLUMN actual_cash_comment TEXT DEFAULT ''")
+        except Exception:
+            pass
+
         conn.commit()
 
 
@@ -661,13 +666,14 @@ def save_revenue(shift_id):
                 total_revenue=?, delivery_revenue=?, delivery_orders=?,
                 pickup_revenue=?, pickup_orders=?,
                 cash_amount=?, card_amount=?, online_amount=?,
-                change_amount=?, actual_cash=?, terminal_last3=?, terminal_amount=?
+                change_amount=?, actual_cash=?, actual_cash_comment=?, terminal_last3=?, terminal_amount=?
             WHERE shift_id=?
         ''', (
             _f(data, 'total_revenue'), _f(data, 'delivery_revenue'), _i(data, 'delivery_orders'),
             _f(data, 'pickup_revenue'), _i(data, 'pickup_orders'),
             _f(data, 'cash_amount'), _f(data, 'card_amount'), _f(data, 'online_amount'),
             _f(data, 'change_amount'), _f(data, 'actual_cash'),
+            data.get('actual_cash_comment', ''),
             data.get('terminal_last3', ''), _f(data, 'terminal_amount'),
             shift_id
         ))
