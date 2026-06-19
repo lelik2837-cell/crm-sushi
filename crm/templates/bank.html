@@ -364,6 +364,34 @@
 
   <!-- ══════════════════════ КОНТРАГЕНТЫ ══════════════════════ -->
   {% if tab == 'contractors' %}
+
+  <!-- Управление категориями контрагентов -->
+  <div class="card mb-3">
+    <div class="card-header py-2 d-flex justify-content-between align-items-center">
+      <span class="fw-semibold small"><i class="bi bi-tags me-1"></i>Категории контрагентов</span>
+    </div>
+    <div class="card-body py-2">
+      <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+        {% for cat in ctr_cats %}
+        <span class="badge bg-light text-dark border d-flex align-items-center gap-1 px-2 py-1">
+          {{ cat.name }}
+          <form method="POST" action="{{ url_for('bank_ctr_cat_delete', cat_id=cat.id) }}"
+                class="d-inline" onsubmit="return confirm('Удалить категорию «{{ cat.name }}»?')">
+            <button type="submit" class="btn-close btn-close-sm" style="font-size:0.6rem"></button>
+          </form>
+        </span>
+        {% endfor %}
+      </div>
+      <form method="POST" action="{{ url_for('bank_ctr_cat_add') }}" class="d-flex gap-2">
+        <input type="text" name="name" class="form-control form-control-sm" style="max-width:200px"
+               placeholder="Новая категория" required>
+        <button type="submit" class="btn btn-sm btn-outline-primary">
+          <i class="bi bi-plus"></i> Добавить
+        </button>
+      </form>
+    </div>
+  </div>
+
   <div class="card">
     <div class="card-header d-flex justify-content-between align-items-center">
       <span><i class="bi bi-people me-2"></i>Контрагенты</span>
@@ -392,7 +420,7 @@
             {% for c in contractors %}
             <tr>
               <td class="fw-semibold">{{ c.name }}</td>
-              <td>{{ c.cat_label or c.category or '—' }}</td>
+              <td>{{ c.category or '—' }}</td>
               <td class="text-muted small">{{ c.keywords or '—' }}</td>
               <td class="text-end">
                 <button class="btn btn-outline-secondary btn-sm me-1"
@@ -428,11 +456,11 @@
               <input type="text" name="name" class="form-control" required placeholder="ООО Поставщик">
             </div>
             <div class="mb-3">
-              <label class="form-label fw-semibold">Категория расходов</label>
+              <label class="form-label fw-semibold">Категория</label>
               <select name="category" class="form-select">
                 <option value="">— не выбрана —</option>
-                {% for cat in exp_cats %}
-                <option value="{{ cat.code }}">{{ cat.label }}</option>
+                {% for cat in ctr_cats %}
+                <option value="{{ cat.name }}">{{ cat.name }}</option>
                 {% endfor %}
               </select>
             </div>
@@ -467,11 +495,11 @@
               <input type="text" name="name" class="form-control" value="{{ c.name }}" required>
             </div>
             <div class="mb-3">
-              <label class="form-label fw-semibold">Категория расходов</label>
+              <label class="form-label fw-semibold">Категория</label>
               <select name="category" class="form-select">
                 <option value="">— не выбрана —</option>
-                {% for cat in exp_cats %}
-                <option value="{{ cat.code }}" {% if cat.code == c.category %}selected{% endif %}>{{ cat.label }}</option>
+                {% for cat in ctr_cats %}
+                <option value="{{ cat.name }}" {% if cat.name == c.category %}selected{% endif %}>{{ cat.name }}</option>
                 {% endfor %}
               </select>
             </div>

@@ -566,6 +566,17 @@ def init_db():
                     (code, label, sort)
                 )
 
+            _DEFAULT_CTR_CATS = [
+                ('Продукты', 1), ('Упаковка', 2), ('Налоги', 3),
+                ('Зарплата', 4), ('Аренда', 5), ('Коммунальные', 6),
+                ('Транспорт', 7), ('Реклама', 8), ('Оборудование', 9), ('Прочее', 10),
+            ]
+            for name, sort in _DEFAULT_CTR_CATS:
+                conn.execute(
+                    "INSERT OR IGNORE INTO contractor_categories (name, sort_order) VALUES (?,?)",
+                    (name, sort)
+                )
+
         # Create user_branches table (many-to-many users ↔ branches)
         conn.executescript('''
             CREATE TABLE IF NOT EXISTS user_branches (
@@ -642,6 +653,11 @@ def init_db():
                 keywords TEXT DEFAULT '',
                 is_active INTEGER DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS contractor_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                sort_order INTEGER DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS bank_terminals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2793,13 +2809,14 @@ def bank():
             ORDER BY bs.uploaded_at DESC
         ''').fetchall()
         contractors = conn.execute(
-            'SELECT c.*, ec.label as cat_label FROM contractors c LEFT JOIN expense_categories ec ON ec.code=c.category WHERE c.is_active=1 ORDER BY c.name'
+            'SELECT * FROM contractors WHERE is_active=1 ORDER BY name'
         ).fetchall()
         terminals   = conn.execute(
             'SELECT t.*, b.name as branch_name FROM bank_terminals t LEFT JOIN branches b ON b.id=t.branch_id ORDER BY t.terminal_number'
         ).fetchall()
         branches    = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
         exp_cats    = get_expense_categories(conn)
+        ctr_cats    = conn.execute('SELECT * FROM contractor_categories ORDER BY sort_order, name').fetchall()
 
         beznal_rows = []
         beznal_branches = []
@@ -2874,7 +2891,7 @@ def bank():
         tab=tab, date_from=date_from, date_to=date_to,
         accounts=accounts, acc_branches=acc_branches, statements=statements,
         contractors=contractors, terminals=terminals,
-        branches=branches, exp_cats=exp_cats,
+        branches=branches, exp_cats=exp_cats, ctr_cats=ctr_cats,
         beznal_rows=beznal_rows, beznal_branches=beznal_branches,
         expense_rows=expense_rows, expense_total=expense_total,
         compare_rows=compare_rows, compare_bank=compare_bank, compare_crm=compare_crm,
@@ -3119,6 +3136,28 @@ def bank_account_delete(acc_id):
         conn.commit()
     flash('Счёт удалён', 'success')
     return redirect(url_for('bank', tab='accounts'))
+
+
+@app.route('/bank/contractor-categories/add', methods=['POST'])
+@login_required
+@owner_required
+def bank_ctr_cat_add():
+    name = request.form.get('name', '').strip()
+    if name:
+        with get_db() as conn:
+            conn.execute('INSERT OR IGNORE INTO contractor_categories (name) VALUES (?)', (name,))
+            conn.commit()
+    return redirect(url_for('bank', tab='contractors'))
+
+
+@app.route('/bank/contractor-categories/<int:cat_id>/delete', methods=['POST'])
+@login_required
+@owner_required
+def bank_ctr_cat_delete(cat_id):
+    with get_db() as conn:
+        conn.execute('DELETE FROM contractor_categories WHERE id=?', (cat_id,))
+        conn.commit()
+    return redirect(url_for('bank', tab='contractors'))
 
 
 @app.route('/bank/contractors/add', methods=['POST'])
