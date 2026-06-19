@@ -124,8 +124,8 @@
               <td>
                 <select class="form-select form-select-sm txn-category" style="min-width:120px" data-id="{{ t.id }}">
                   <option value="">—</option>
-                  {% for cat in exp_cats %}
-                  <option value="{{ cat.code }}" {% if cat.code == t.category %}selected{% endif %}>{{ cat.label }}</option>
+                  {% for cat in ctr_cats %}
+                  <option value="{{ cat.name }}" {% if cat.name == t.category %}selected{% endif %}>{{ cat.name }}</option>
                   {% endfor %}
                 </select>
               </td>

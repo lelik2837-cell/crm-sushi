@@ -3272,20 +3272,19 @@ def bank_statement_view(stmt_id):
             flash('Выписка не найдена', 'danger')
             return redirect(url_for('bank'))
         txns = conn.execute('''
-            SELECT bt.*, c.name as contractor_name, ec.label as cat_label,
+            SELECT bt.*, c.name as contractor_name,
                    t.terminal_number, b.name as terminal_branch
             FROM bank_transactions bt
             LEFT JOIN contractors c ON c.id=bt.contractor_id
-            LEFT JOIN expense_categories ec ON ec.code=bt.category
             LEFT JOIN bank_terminals t ON t.id=bt.terminal_id
             LEFT JOIN branches b ON b.id=t.branch_id
             WHERE bt.statement_id=?
             ORDER BY bt.txn_date DESC, bt.id DESC
         ''', (stmt_id,)).fetchall()
         contractors = conn.execute('SELECT * FROM contractors WHERE is_active=1 ORDER BY name').fetchall()
-        exp_cats    = get_expense_categories(conn)
+        ctr_cats    = conn.execute('SELECT * FROM contractor_categories ORDER BY sort_order, name').fetchall()
     return render_template('bank_statement.html',
-        stmt=stmt, txns=txns, contractors=contractors, exp_cats=exp_cats)
+        stmt=stmt, txns=txns, contractors=contractors, ctr_cats=ctr_cats)
 
 
 # ─── SBERBANK API SYNC ────────────────────────────────────────────────────────
