@@ -332,12 +332,9 @@ def _match_terminal(conn, txn):
     text = (txn.get('description') or '') + ' ' + (txn.get('counterparty') or '')
 
     # 1. Совпадение по номеру карты из настроек филиала
-    #    Сбербанк пишет номер карты в описании: "по карте MIR 2202209264BD8602"
-    card_match = re.search(
-        r'по\s+карте\s+(?:MIR|VISA|MASTERCARD|МИР|MAESTRO|UNIONPAY)?\s*(\w{8,20})',
-        text, re.IGNORECASE
-    )
-    card_in_desc = card_match.group(1) if card_match else ''
+    # Извлекаем все длинные буквенно-цифровые последовательности (маскированные номера карт Сбербанка)
+    # Пример: "по карте MIR 2202209264BD8602" → '2202209264BD8602'
+    card_sequences = re.findall(r'[A-Za-z0-9]{10,24}', text)
 
     cards = conn.execute(
         'SELECT bc.id as card_id, bc.card_number, bc.card_name, bc.branch_id, b.name as branch_name '
@@ -345,8 +342,10 @@ def _match_terminal(conn, txn):
     ).fetchall()
     for card in cards:
         num = card['card_number'].replace(' ', '')
-        # Совпадение: последние N цифр карты встречаются в номере из описания
-        if card_in_desc and (num in card_in_desc or card_in_desc.endswith(num)):
+        # Проверяем все длинные последовательности: номер карты должен быть суффиксом
+        matched = any(seq.endswith(num) or (len(num) >= 8 and num in seq)
+                      for seq in card_sequences)
+        if matched:
             label = f'{card["branch_name"]} – {card["card_name"] or card["card_number"]}'
             t = conn.execute(
                 'SELECT id FROM bank_terminals WHERE terminal_number=? AND branch_id=?',
