@@ -62,6 +62,7 @@
                     <th>Название</th>
                     <th>IP-адрес</th>
                     <th>Мерчант / терминал</th>
+                    <th>Карты</th>
                     <th class="text-center">Статус</th>
                     <th>Добавлен</th>
                     <th></th>
@@ -81,6 +82,19 @@
                 <td class="small">
                     {% if b.merchant_numbers %}
                     <code class="text-primary">{{ b.merchant_numbers }}</code>
+                    {% else %}
+                    <span class="text-muted">—</span>
+                    {% endif %}
+                </td>
+                <td class="small">
+                    {% set b_cards = cards_by_branch.get(b.id, []) %}
+                    {% if b_cards %}
+                    {% for card in b_cards %}
+                    <span class="badge bg-light text-dark border me-1">
+                        <i class="bi bi-credit-card me-1"></i>{{ card.card_number }}
+                        {% if card.card_name %}<span class="text-muted">{{ card.card_name }}</span>{% endif %}
+                    </span>
+                    {% endfor %}
                     {% else %}
                     <span class="text-muted">—</span>
                     {% endif %}
@@ -212,40 +226,93 @@
 <!-- Edit Branch Modals -->
 {% for b in branches %}
 <div class="modal fade" id="editBranchModal{{ b.id }}" tabindex="-1">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title"><i class="bi bi-shop"></i> {{ b.name }}</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
-            <form method="POST" action="{{ url_for('edit_branch', branch_id=b.id) }}">
-                <div class="modal-body">
-                    <label class="form-label fw-semibold">IP-адрес филиала</label>
-                    <input type="text" name="allowed_ip" class="form-control font-monospace"
-                           placeholder="Например: 192.168.1.10"
-                           value="{{ b.allowed_ip or '' }}">
-                    <div class="form-text mb-3">
-                        Сотрудники, заходящие с этого IP, будут ограничены только этим филиалом.
-                        Оставьте пустым, чтобы убрать ограничение.
-                        <br>
-                        <a href="#" class="fill-my-ip" data-ip="{{ my_ip }}">
-                            Вставить мой текущий IP ({{ my_ip }})
-                        </a>
+            <div class="modal-body">
+
+                <!-- Основные настройки -->
+                <form id="editBranchForm{{ b.id }}" method="POST" action="{{ url_for('edit_branch', branch_id=b.id) }}">
+                    <div class="mb-2">
+                        <label class="form-label fw-semibold mb-1">IP-адрес филиала</label>
+                        <input type="text" name="allowed_ip" class="form-control font-monospace"
+                               placeholder="Например: 192.168.1.10" value="{{ b.allowed_ip or '' }}">
+                        <div class="form-text">
+                            Сотрудники с этого IP будут ограничены только этим филиалом.
+                            <a href="#" class="fill-my-ip" data-ip="{{ my_ip }}">Вставить мой IP ({{ my_ip }})</a>
+                        </div>
                     </div>
-                    <label class="form-label fw-semibold">Номера мерчанта / терминала (Сбербанк)</label>
-                    <input type="text" name="merchant_numbers" class="form-control font-monospace"
-                           placeholder="Например: КА_116223, КА_116224"
-                           value="{{ b.merchant_numbers or '' }}">
-                    <div class="form-text">
-                        Номера из описания операций в банковской выписке. Через запятую, если несколько.
-                        Используются для автоматического определения филиала при импорте.
+                    <div class="mb-0">
+                        <label class="form-label fw-semibold mb-1">Номера мерчанта / терминала (Сбербанк)</label>
+                        <input type="text" name="merchant_numbers" class="form-control font-monospace"
+                               placeholder="Например: КА_116223, КА_116224" value="{{ b.merchant_numbers or '' }}">
+                        <div class="form-text">Номера из описания выписки, через запятую.</div>
                     </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                    <button type="submit" class="btn btn-primary">Сохранить</button>
-                </div>
-            </form>
+                </form>
+
+                <hr class="my-3">
+
+                <!-- Карты филиала -->
+                <div class="fw-semibold mb-2"><i class="bi bi-credit-card me-1"></i>Карты для покупок</div>
+                {% set b_cards = cards_by_branch.get(b.id, []) %}
+                {% if b_cards %}
+                <table class="table table-sm mb-2">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Номер карты</th>
+                            <th>Название</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for card in b_cards %}
+                    <tr>
+                        <td class="font-monospace">{{ card.card_number }}</td>
+                        <td class="text-muted">{{ card.card_name or '—' }}</td>
+                        <td class="text-end">
+                            <form method="POST" action="{{ url_for('delete_branch_card', card_id=card.id) }}"
+                                  onsubmit="return confirm('Удалить карту {{ card.card_number }}?')">
+                                <button class="btn btn-sm btn-outline-danger py-0 px-2">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="text-muted small mb-2">Карты не добавлены</p>
+                {% endif %}
+
+                <!-- Форма добавления карты -->
+                <form method="POST" action="{{ url_for('add_branch_card', branch_id=b.id) }}"
+                      class="d-flex gap-2 align-items-end">
+                    <div class="flex-grow-1">
+                        <label class="form-label small mb-1">Последние 4 цифры карты</label>
+                        <input type="text" name="card_number" class="form-control form-control-sm font-monospace"
+                               placeholder="Например: 8602" maxlength="20" required>
+                    </div>
+                    <div class="flex-grow-1">
+                        <label class="form-label small mb-1">Название карты</label>
+                        <input type="text" name="card_name" class="form-control form-control-sm"
+                               placeholder="Например: карта закупки Ринат">
+                    </div>
+                    <div>
+                        <button type="submit" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-plus"></i> Добавить
+                        </button>
+                    </div>
+                </form>
+
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+                <button type="submit" form="editBranchForm{{ b.id }}" class="btn btn-primary">Сохранить настройки</button>
+            </div>
         </div>
     </div>
 </div>

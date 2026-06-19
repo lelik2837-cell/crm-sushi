@@ -330,15 +330,45 @@ def _match_contractors(conn, txns):
 
 def _match_terminal(conn, txn):
     text = (txn.get('description') or '') + ' ' + (txn.get('counterparty') or '')
-    # Сначала ищем по номерам мерчантов/терминалов из настроек филиалов
+
+    # 1. Совпадение по номеру карты из настроек филиала
+    #    Сбербанк пишет номер карты в описании: "по карте MIR 2202209264BD8602"
+    card_match = re.search(
+        r'по\s+карте\s+(?:MIR|VISA|MASTERCARD|МИР|MAESTRO|UNIONPAY)?\s*(\w{8,20})',
+        text, re.IGNORECASE
+    )
+    card_in_desc = card_match.group(1) if card_match else ''
+
+    cards = conn.execute(
+        'SELECT bc.id as card_id, bc.card_number, bc.card_name, bc.branch_id, b.name as branch_name '
+        'FROM branch_cards bc JOIN branches b ON b.id=bc.branch_id WHERE bc.is_active=1'
+    ).fetchall()
+    for card in cards:
+        num = card['card_number'].replace(' ', '')
+        # Совпадение: последние N цифр карты встречаются в номере из описания
+        if card_in_desc and (num in card_in_desc or card_in_desc.endswith(num)):
+            label = f'{card["branch_name"]} – {card["card_name"] or card["card_number"]}'
+            t = conn.execute(
+                'SELECT id FROM bank_terminals WHERE terminal_number=? AND branch_id=?',
+                (num, card['branch_id'])
+            ).fetchone()
+            if t:
+                return t['id']
+            conn.execute(
+                'INSERT INTO bank_terminals (terminal_number, name, branch_id) VALUES (?,?,?)',
+                (num, label, card['branch_id'])
+            )
+            return conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+
+    # 2. Совпадение по номерам мерчанта/терминала из настроек филиала
     branches = conn.execute(
-        'SELECT id, name, merchant_numbers FROM branches WHERE merchant_numbers IS NOT NULL AND merchant_numbers != ""'
+        'SELECT id, name, merchant_numbers FROM branches '
+        'WHERE merchant_numbers IS NOT NULL AND merchant_numbers != ""'
     ).fetchall()
     for branch in branches:
         numbers = [n.strip() for n in (branch['merchant_numbers'] or '').split(',') if n.strip()]
         for num in numbers:
             if num and num in text:
-                # Находим или создаём запись терминала для этого филиала
                 t = conn.execute(
                     'SELECT id FROM bank_terminals WHERE terminal_number=? AND branch_id=?',
                     (num, branch['id'])
@@ -350,7 +380,8 @@ def _match_terminal(conn, txn):
                     (num, f'{branch["name"]} – {num}', branch['id'])
                 )
                 return conn.execute('SELECT last_insert_rowid()').fetchone()[0]
-    # Фолбэк: стандартный TID паттерн
+
+    # 3. Фолбэк: стандартный TID паттерн
     m = re.search(r'TID\s*[:\-]?\s*(\d{6,12})', text, re.IGNORECASE)
     if m:
         tid = m.group(1)
@@ -587,6 +618,14 @@ def init_db():
                 group_id INTEGER NOT NULL REFERENCES branch_groups(id) ON DELETE CASCADE,
                 branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
                 UNIQUE(group_id, branch_id)
+            );
+            CREATE TABLE IF NOT EXISTS branch_cards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                card_number TEXT NOT NULL,
+                card_name TEXT DEFAULT '',
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         ''')
 
@@ -1632,7 +1671,12 @@ def branches():
     with get_db() as conn:
         blist = conn.execute('SELECT * FROM branches ORDER BY name').fetchall()
         groups = get_branch_groups(conn)
-    return render_template('branches.html', branches=blist, my_ip=get_client_ip(), branch_groups=groups)
+        cards_rows = conn.execute('SELECT * FROM branch_cards ORDER BY branch_id, id').fetchall()
+    cards_by_branch = {}
+    for c in cards_rows:
+        cards_by_branch.setdefault(c['branch_id'], []).append(dict(c))
+    return render_template('branches.html', branches=blist, my_ip=get_client_ip(),
+                           branch_groups=groups, cards_by_branch=cards_by_branch)
 
 
 @app.route('/branches/groups/add', methods=['POST'])
@@ -1722,6 +1766,36 @@ def edit_branch(branch_id):
         )
         conn.commit()
     flash('Настройки филиала сохранены', 'success')
+    return redirect(url_for('branches'))
+
+
+@app.route('/branches/<int:branch_id>/cards/add', methods=['POST'])
+@login_required
+@owner_required
+def add_branch_card(branch_id):
+    card_number = request.form.get('card_number', '').strip().replace(' ', '')
+    card_name   = request.form.get('card_name', '').strip()
+    if not card_number:
+        flash('Введите номер карты', 'danger')
+        return redirect(url_for('branches'))
+    with get_db() as conn:
+        conn.execute(
+            'INSERT OR IGNORE INTO branch_cards (branch_id, card_number, card_name) VALUES (?,?,?)',
+            (branch_id, card_number, card_name)
+        )
+        conn.commit()
+    flash(f'Карта {card_number} добавлена', 'success')
+    return redirect(url_for('branches'))
+
+
+@app.route('/branches/cards/<int:card_id>/delete', methods=['POST'])
+@login_required
+@owner_required
+def delete_branch_card(card_id):
+    with get_db() as conn:
+        conn.execute('DELETE FROM branch_cards WHERE id=?', (card_id,))
+        conn.commit()
+    flash('Карта удалена', 'success')
     return redirect(url_for('branches'))
 
 
