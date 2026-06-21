@@ -15,12 +15,6 @@
     <a href="{{ url_for('bank_classify', stmt_id=stmt.id) }}" class="btn btn-outline-primary btn-sm">
       <i class="bi bi-tags me-1"></i>Разметка
     </a>
-    <form method="POST" action="{{ url_for('bank_statement_rematch', stmt_id=stmt.id) }}" class="d-inline">
-      <button type="submit" class="btn btn-outline-secondary btn-sm"
-              title="Повторно применить ключевые слова контрагентов ко всем транзакциям">
-        <i class="bi bi-arrow-repeat me-1"></i>Переназначить контрагентов
-      </button>
-    </form>
   </div>
 
   {% with messages = get_flashed_messages(with_categories=true) %}
@@ -48,7 +42,7 @@
       <div class="card metric-card" style="border-left-color:#198754">
         <div class="card-body py-2">
           <div class="text-muted small">Поступления</div>
-          <div class="fs-5 fw-bold text-success">{{ '%.0f'|format(total_credit.val) }} ₽</div>
+          <div class="fs-5 fw-bold text-success">{{ total_credit.val|money }} ₽</div>
         </div>
       </div>
     </div>
@@ -56,7 +50,7 @@
       <div class="card metric-card">
         <div class="card-body py-2">
           <div class="text-muted small">Списания</div>
-          <div class="fs-5 fw-bold text-danger">{{ '%.0f'|format(total_debit.val|abs) }} ₽</div>
+          <div class="fs-5 fw-bold text-danger">{{ (total_debit.val|abs)|money }} ₽</div>
         </div>
       </div>
     </div>
@@ -100,8 +94,74 @@
               <th>Контрагент</th>
               <th>Описание</th>
               <th>Контрагент CRM</th>
-              <th>Категория</th>
-              <th>Тип операции</th>
+              <th>
+                Категория
+                <div class="dropdown d-inline-block ms-1">
+                  <button class="btn btn-sm p-0 lh-1 border-0 text-muted col-filter-btn" id="catFilterBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside" title="Фильтр по категории">
+                    <i class="bi bi-funnel" id="catFilterIcon"></i>
+                  </button>
+                  <ul class="dropdown-menu p-2 shadow-sm" style="min-width:200px;max-height:300px;overflow-y:auto">
+                    <li class="mb-1">
+                      <a href="#" class="small text-primary text-decoration-none select-all-cats">Выбрать все</a>
+                      &nbsp;/&nbsp;
+                      <a href="#" class="small text-secondary text-decoration-none deselect-all-cats">Снять все</a>
+                    </li>
+                    <li><hr class="dropdown-divider my-1"></li>
+                    <li>
+                      <label class="dropdown-item d-flex align-items-center gap-2 px-1 py-1 small">
+                        <input type="checkbox" class="cat-chk form-check-input mt-0" value="" checked> (без категории)
+                      </label>
+                    </li>
+                    {% for cat in unique_cats %}
+                    <li>
+                      <label class="dropdown-item d-flex align-items-center gap-2 px-1 py-1 small">
+                        <input type="checkbox" class="cat-chk form-check-input mt-0" value="{{ cat }}" checked> {{ cat }}
+                      </label>
+                    </li>
+                    {% endfor %}
+                  </ul>
+                </div>
+              </th>
+              <th>
+                Тип операции
+                <div class="dropdown d-inline-block ms-1">
+                  <button class="btn btn-sm p-0 lh-1 border-0 text-muted col-filter-btn" id="optypeFilterBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside" title="Фильтр по типу операции">
+                    <i class="bi bi-funnel" id="optypeFilterIcon"></i>
+                  </button>
+                  <ul class="dropdown-menu p-2 shadow-sm" style="min-width:200px">
+                    <li class="mb-1">
+                      <a href="#" class="small text-primary text-decoration-none select-all-optypes">Выбрать все</a>
+                      &nbsp;/&nbsp;
+                      <a href="#" class="small text-secondary text-decoration-none deselect-all-optypes">Снять все</a>
+                    </li>
+                    <li><hr class="dropdown-divider my-1"></li>
+                    <li>
+                      <label class="dropdown-item d-flex align-items-center gap-2 px-1 py-1 small">
+                        <input type="checkbox" class="optype-chk form-check-input mt-0" value="card" checked>
+                        <span class="badge bg-warning text-dark">Карта</span>
+                      </label>
+                    </li>
+                    <li>
+                      <label class="dropdown-item d-flex align-items-center gap-2 px-1 py-1 small">
+                        <input type="checkbox" class="optype-chk form-check-input mt-0" value="acquiring" checked>
+                        <span class="badge bg-success">Эквайринг</span>
+                      </label>
+                    </li>
+                    <li>
+                      <label class="dropdown-item d-flex align-items-center gap-2 px-1 py-1 small">
+                        <input type="checkbox" class="optype-chk form-check-input mt-0" value="contractor" checked>
+                        <span class="badge bg-danger">Оплата контрагенту</span>
+                      </label>
+                    </li>
+                    <li>
+                      <label class="dropdown-item d-flex align-items-center gap-2 px-1 py-1 small">
+                        <input type="checkbox" class="optype-chk form-check-input mt-0" value="transfer" checked>
+                        <span class="badge bg-secondary">Пере-ние средств</span>
+                      </label>
+                    </li>
+                  </ul>
+                </div>
+              </th>
               <th>Игнор</th>
             </tr>
           </thead>
@@ -111,11 +171,13 @@
               {% if t.amount > 0 %}txn-credit{% else %}txn-debit{% endif %}
               {% if t.terminal_id %}txn-terminal{% endif %}
               {% if t.is_ignored %}txn-ignored table-secondary text-muted{% endif %}"
-              data-id="{{ t.id }}">
+              data-id="{{ t.id }}"
+              data-optype="{{ t.op_type }}"
+              data-category="{{ t.category or '' }}">
               <td class="text-nowrap">{{ t.txn_date }}</td>
               <td class="text-end fw-semibold text-nowrap
                 {% if t.is_ignored %}text-muted{% elif t.amount > 0 %}text-success{% else %}text-danger{% endif %}">
-                {% if t.amount > 0 %}+{% endif %}{{ '%.0f'|format(t.amount) }} ₽
+                {% if t.amount > 0 %}+{% endif %}{{ t.amount|money }} ₽
               </td>
               <td class="small" title="{{ t.counterparty or '' }}">{{ t.counterparty[:50] if t.counterparty else '—' }}</td>
               <td class="small text-muted" title="{{ t.description or '' }}">{{ t.description[:100] if t.description else '—' }}</td>
@@ -182,29 +244,91 @@
 </div>
 
 <script>
-// Filter buttons
+// ── Общий фильтр ──────────────────────────────────────────────────────────────
+function applyFilters() {
+  const topFilter = document.querySelector('.filter-btn.active')?.dataset.filter || 'all';
+
+  const optypeChks = document.querySelectorAll('.optype-chk');
+  const checkedOptypes = new Set([...optypeChks].filter(c => c.checked).map(c => c.value));
+  const allOptypeCount = optypeChks.length;
+
+  const catChks = document.querySelectorAll('.cat-chk');
+  const checkedCats = new Set([...catChks].filter(c => c.checked).map(c => c.value));
+  const allCatCount = catChks.length;
+
+  document.querySelectorAll('.txn-row').forEach(row => {
+    const isIgnored = row.classList.contains('txn-ignored');
+    const isCredit  = row.classList.contains('txn-credit');
+    const isTerminal = row.classList.contains('txn-terminal');
+    const optype = row.dataset.optype || '';
+    const cat    = row.dataset.category || '';
+
+    let show = true;
+
+    if (topFilter === 'credit')  show = isCredit && !isIgnored;
+    else if (topFilter === 'debit')   show = !isCredit && !isIgnored;
+    else if (topFilter === 'terminal') show = isTerminal;
+    else if (topFilter === 'ignored')  show = isIgnored;
+
+    if (show && checkedOptypes.size < allOptypeCount)
+      show = checkedOptypes.has(optype);
+
+    if (show && checkedCats.size < allCatCount)
+      show = checkedCats.has(cat);
+
+    row.style.display = show ? '' : 'none';
+  });
+
+  // Иконка воронки меняет цвет если фильтр активен
+  const optypeActive = checkedOptypes.size < allOptypeCount;
+  document.getElementById('optypeFilterIcon').classList.toggle('text-primary', optypeActive);
+  document.getElementById('optypeFilterIcon').classList.toggle('text-muted', !optypeActive);
+
+  const catActive = checkedCats.size < allCatCount;
+  document.getElementById('catFilterIcon').classList.toggle('text-primary', catActive);
+  document.getElementById('catFilterIcon').classList.toggle('text-muted', !catActive);
+}
+
+// Кнопки верхнего фильтра
 document.querySelectorAll('.filter-btn').forEach(btn => {
   btn.addEventListener('click', function() {
     document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
     this.classList.add('active');
-    const f = this.dataset.filter;
-    document.querySelectorAll('.txn-row').forEach(row => {
-      if (f === 'all') {
-        row.style.display = '';
-      } else if (f === 'credit') {
-        row.style.display = row.classList.contains('txn-credit') && !row.classList.contains('txn-ignored') ? '' : 'none';
-      } else if (f === 'debit') {
-        row.style.display = row.classList.contains('txn-debit') && !row.classList.contains('txn-ignored') ? '' : 'none';
-      } else if (f === 'terminal') {
-        row.style.display = row.classList.contains('txn-terminal') ? '' : 'none';
-      } else if (f === 'ignored') {
-        row.style.display = row.classList.contains('txn-ignored') ? '' : 'none';
-      }
-    });
+    applyFilters();
   });
 });
 
-// Save contractor/category/ignore on change
+// Чекбоксы типа операции
+document.querySelectorAll('.optype-chk').forEach(chk => chk.addEventListener('change', applyFilters));
+
+// Чекбоксы категории
+document.querySelectorAll('.cat-chk').forEach(chk => chk.addEventListener('change', applyFilters));
+
+// Выбрать все / Снять все — тип операции
+document.querySelector('.select-all-optypes')?.addEventListener('click', e => {
+  e.preventDefault();
+  document.querySelectorAll('.optype-chk').forEach(c => c.checked = true);
+  applyFilters();
+});
+document.querySelector('.deselect-all-optypes')?.addEventListener('click', e => {
+  e.preventDefault();
+  document.querySelectorAll('.optype-chk').forEach(c => c.checked = false);
+  applyFilters();
+});
+
+// Выбрать все / Снять все — категория
+document.querySelector('.select-all-cats')?.addEventListener('click', e => {
+  e.preventDefault();
+  document.querySelectorAll('.cat-chk').forEach(c => c.checked = true);
+  applyFilters();
+});
+document.querySelector('.deselect-all-cats')?.addEventListener('click', e => {
+  e.preventDefault();
+  document.querySelectorAll('.cat-chk').forEach(c => c.checked = false);
+  applyFilters();
+});
+
+// ── Сохранение контрагента/категории/игнор ───────────────────────────────────
 function saveRow(id, data) {
   fetch(`/bank/transaction/${id}/update`, {
     method: 'POST',
@@ -227,8 +351,9 @@ document.querySelectorAll('.txn-category').forEach(sel => {
   sel.addEventListener('change', function() {
     const id = this.dataset.id;
     const row = document.querySelector(`.txn-row[data-id="${id}"]`);
-    const ctr = row.querySelector('.txn-contractor').value;
+    const ctr = row.querySelector('.txn-contractor')?.value || '';
     const ign = row.querySelector('.txn-ignore').checked ? '1' : '';
+    row.dataset.category = this.value;
     saveRow(id, {contractor_id: ctr, category: this.value, is_ignored: ign});
   });
 });
@@ -237,7 +362,7 @@ document.querySelectorAll('.txn-ignore').forEach(chk => {
   chk.addEventListener('change', function() {
     const id = this.dataset.id;
     const row = document.querySelector(`.txn-row[data-id="${id}"]`);
-    const ctr = row.querySelector('.txn-contractor').value;
+    const ctr = row.querySelector('.txn-contractor')?.value || '';
     const cat = row.querySelector('.txn-category').value;
     const ign = this.checked ? '1' : '';
     saveRow(id, {contractor_id: ctr, category: cat, is_ignored: ign});

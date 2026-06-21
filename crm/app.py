@@ -2720,6 +2720,14 @@ def log_action(conn, action, description, shift_id=None, entity_id=None, upsert_
           shift_id, branch_id, branch_name, shift_date, description))
 
 
+@app.template_filter('money')
+def money_filter(value):
+    try:
+        return '{:,.0f}'.format(float(value or 0)).replace(',', ' ')
+    except Exception:
+        return str(value)
+
+
 @app.template_filter('datetime_fmt')
 def datetime_fmt(value):
     if not value:
@@ -3406,8 +3414,10 @@ def bank_statement_view(stmt_id):
             'SELECT * FROM contractors WHERE is_active=1 AND COALESCE(is_card_merchant,0)=0 ORDER BY name'
         ).fetchall()
         ctr_cats    = conn.execute('SELECT * FROM contractor_categories ORDER BY sort_order, name').fetchall()
+    unique_cats = sorted(set(d['category'] for d in txns if d.get('category')))
     return render_template('bank_statement.html',
-        stmt=stmt, txns=txns, contractors=contractors, ctr_cats=ctr_cats)
+        stmt=stmt, txns=txns, contractors=contractors, ctr_cats=ctr_cats,
+        unique_cats=unique_cats)
 
 
 # ─── SBERBANK API SYNC ────────────────────────────────────────────────────────
