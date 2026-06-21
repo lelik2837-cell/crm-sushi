@@ -114,12 +114,20 @@
               <td class="small" title="{{ t.counterparty or '' }}">{{ t.counterparty[:50] if t.counterparty else '—' }}</td>
               <td class="small text-muted" title="{{ t.description or '' }}">{{ t.description[:100] if t.description else '—' }}</td>
               <td>
-                <select class="form-select form-select-sm txn-contractor" style="min-width:130px" data-id="{{ t.id }}">
-                  <option value="">—</option>
-                  {% for c in contractors %}
-                  <option value="{{ c.id }}" {% if c.id == t.contractor_id %}selected{% endif %}>{{ c.name }}</option>
-                  {% endfor %}
-                </select>
+                <div class="d-flex gap-1 align-items-center">
+                  <select class="form-select form-select-sm txn-contractor" style="min-width:120px" data-id="{{ t.id }}">
+                    <option value="">—</option>
+                    {% for c in contractors %}
+                    <option value="{{ c.id }}" {% if c.id == t.contractor_id %}selected{% endif %}>{{ c.name }}</option>
+                    {% endfor %}
+                  </select>
+                  <button type="button" class="btn btn-sm btn-outline-secondary flex-shrink-0 py-0 px-1 add-ctr-btn"
+                          title="Создать контрагента"
+                          data-cp="{{ t.counterparty or '' }}"
+                          data-bs-toggle="modal" data-bs-target="#quickAddContractorModal">
+                    <i class="bi bi-plus"></i>
+                  </button>
+                </div>
               </td>
               <td>
                 <select class="form-select form-select-sm txn-category" style="min-width:120px" data-id="{{ t.id }}">
@@ -208,7 +216,6 @@ document.querySelectorAll('.txn-ignore').forEach(chk => {
     const cat = row.querySelector('.txn-category').value;
     const ign = this.checked ? '1' : '';
     saveRow(id, {contractor_id: ctr, category: cat, is_ignored: ign});
-    // Toggle visual
     if (this.checked) {
       row.classList.add('txn-ignored', 'table-secondary', 'text-muted');
     } else {
@@ -216,5 +223,53 @@ document.querySelectorAll('.txn-ignore').forEach(chk => {
     }
   });
 });
+
+// Предзаполнение модала быстрого добавления контрагента
+document.querySelectorAll('.add-ctr-btn').forEach(btn => {
+  btn.addEventListener('click', function() {
+    const cp = this.dataset.cp || '';
+    document.getElementById('quickCtrName').value = cp;
+    document.getElementById('quickCtrKeywords').value = cp;
+  });
+});
 </script>
+
+<!-- Модал быстрого добавления контрагента -->
+<div class="modal fade" id="quickAddContractorModal" tabindex="-1">
+  <div class="modal-dialog">
+    <form method="POST" action="{{ url_for('bank_contractor_add') }}">
+      <input type="hidden" name="next" value="{{ request.url }}">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-person-plus me-2"></i>Новый контрагент</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Название <span class="text-danger">*</span></label>
+            <input type="text" id="quickCtrName" name="name" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Категория</label>
+            <select name="category" class="form-select">
+              <option value="">— не выбрана —</option>
+              {% for cat in ctr_cats %}
+              <option value="{{ cat.name }}">{{ cat.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-0">
+            <label class="form-label fw-semibold">Ключевые слова</label>
+            <input type="text" id="quickCtrKeywords" name="keywords" class="form-control">
+            <div class="form-text">Слова из описания выписки (через запятую). По ним контрагент будет распознаваться автоматически.</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+          <button type="submit" class="btn btn-primary">Добавить</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
 {% endblock %}
