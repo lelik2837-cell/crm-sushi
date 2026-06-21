@@ -202,6 +202,36 @@
     {% endif %}
   </div>
 
+  {% if beznal_rows %}
+  <!-- Итоговые карточки -->
+  <div class="row g-3 mb-3">
+    <div class="col-md-4">
+      <div class="card metric-card" style="border-left-color:#198754">
+        <div class="card-body py-2">
+          <div class="text-muted small">Валовой приход (с комиссией)</div>
+          <div class="fs-5 fw-bold text-success" id="bez-gross">—</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card metric-card" style="border-left-color:#0d6efd">
+        <div class="card-body py-2">
+          <div class="text-muted small">Фактический приход</div>
+          <div class="fs-5 fw-bold" id="bez-net">—</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card metric-card" style="border-left-color:#ffc107">
+        <div class="card-body py-2">
+          <div class="text-muted small">Сумма комиссии</div>
+          <div class="fs-5 fw-bold text-warning" id="bez-commission">—</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   <div class="card">
     <div class="card-header"><i class="bi bi-credit-card me-2"></i>Безнал по дням (терминалы)</div>
     <div class="card-body p-0">
@@ -230,13 +260,13 @@
               {% for b in beznal_branches %}
               {% set cell = day_data.get(b.id) %}
               {% set gross = cell.gross if cell else 0 %}
+              {% set commission = cell.commission if cell else 0 %}
               {% set row_total.val = row_total.val + gross %}
-              <td class="beznal-col" data-branch-id="{{ b.id }}">
+              <td class="beznal-col" data-branch-id="{{ b.id }}"
+                  data-gross="{{ (gross * 100)|int }}"
+                  data-commission="{{ (commission * 100)|int }}">
                 {% if cell and cell.gross > 0 %}
-                  <span class="fw-semibold">{{ cell.gross|money }} ₽</span>
-                  {% if cell.commission > 0 %}
-                    <br><span class="text-muted small">{{ cell.commission|money }} комиссия</span>
-                  {% endif %}
+                  {{ cell.gross|money }} ₽
                 {% else %}
                   <span class="text-muted">—</span>
                 {% endif %}
@@ -255,23 +285,40 @@
   <script>
   (function() {
     const chks = document.querySelectorAll('.branch-chk');
-    if (!chks.length) return;
+
+    function fmt(n) {
+      return Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ') + ' ₽';
+    }
+
+    function updateTotals() {
+      const checked = new Set([...chks].filter(c => c.checked).map(c => c.value));
+      let totalGross = 0, totalComm = 0;
+      document.querySelectorAll('tbody .beznal-col').forEach(td => {
+        if (checked.has(td.dataset.branchId)) {
+          totalGross += (parseInt(td.dataset.gross  || 0)) / 100;
+          totalComm  += (parseInt(td.dataset.commission || 0)) / 100;
+        }
+      });
+      const elG = document.getElementById('bez-gross');
+      const elN = document.getElementById('bez-net');
+      const elC = document.getElementById('bez-commission');
+      if (elG) elG.textContent = fmt(totalGross);
+      if (elN) elN.textContent = fmt(totalGross - totalComm);
+      if (elC) elC.textContent = fmt(totalComm);
+    }
 
     function applyBranchFilter() {
       const checked = new Set([...chks].filter(c => c.checked).map(c => c.value));
       document.querySelectorAll('.beznal-col').forEach(el => {
         el.style.display = checked.has(el.dataset.branchId) ? '' : 'none';
       });
-      // Обновить лейбл кнопки
       const label = document.getElementById('branchFilterLabel');
-      if (checked.size === chks.length) {
-        label.textContent = 'Все филиалы';
-      } else if (checked.size === 0) {
-        label.textContent = 'Не выбрано';
-      } else {
-        const names = [...chks].filter(c => c.checked).map(c => c.dataset.name);
-        label.textContent = names.join(', ');
+      if (label) {
+        if (checked.size === chks.length)      label.textContent = 'Все филиалы';
+        else if (checked.size === 0)           label.textContent = 'Не выбрано';
+        else label.textContent = [...chks].filter(c => c.checked).map(c => c.dataset.name).join(', ');
       }
+      updateTotals();
     }
 
     chks.forEach(c => c.addEventListener('change', applyBranchFilter));
@@ -282,6 +329,9 @@
     document.getElementById('deselectAllBranches')?.addEventListener('click', e => {
       e.preventDefault(); chks.forEach(c => c.checked = false); applyBranchFilter();
     });
+
+    // Инициализация при загрузке
+    updateTotals();
   })();
   </script>
   {% endif %}
