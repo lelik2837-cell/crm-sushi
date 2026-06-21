@@ -1,14 +1,12 @@
 FROM python:3.11-slim
 
-WORKDIR /app
+WORKDIR /app/crm
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt /app/
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY . /app
 
-RUN mkdir -p /app/crm && chmod 777 /app/crm
+RUN chmod -R 777 /app/crm
 
-WORKDIR /app/crm
-
-CMD ["sh", "-c", "export DATABASE_PATH=/app/crm/crm.db && python3 app.py"]
+CMD ["sh", "-c", "gunicorn app:app --workers 1 --threads 8 --timeout 120 --bind 0.0.0.0:$PORT"]
