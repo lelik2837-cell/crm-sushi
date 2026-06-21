@@ -302,9 +302,10 @@
       const elG = document.getElementById('bez-gross');
       const elN = document.getElementById('bez-net');
       const elC = document.getElementById('bez-commission');
+      const pct = totalGross > 0 ? (totalComm / totalGross * 100).toFixed(2) : '0.00';
       if (elG) elG.textContent = fmt(totalGross);
       if (elN) elN.textContent = fmt(totalGross - totalComm);
-      if (elC) elC.textContent = fmt(totalComm);
+      if (elC) elC.textContent = fmt(totalComm) + ' (' + pct + '%)';
     }
 
     function applyBranchFilter() {
