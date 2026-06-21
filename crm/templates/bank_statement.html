@@ -101,7 +101,7 @@
               <th>Описание</th>
               <th>Контрагент CRM</th>
               <th>Категория</th>
-              <th>Терминал</th>
+              <th>Тип операции</th>
               <th>Игнор</th>
             </tr>
           </thead>
@@ -144,10 +144,19 @@
                 </select>
               </td>
               <td class="small text-nowrap">
-                {% if t.terminal_number %}
-                  <span class="badge bg-warning text-dark">{{ t.terminal_number }}</span>
+                {% if t.op_type == 'card' %}
+                  <span class="badge bg-warning text-dark">Карта {% if t.op_card4 %}{{ t.op_card4 }}{% endif %}</span>
                   {% if t.terminal_branch %}<br><span class="text-muted">{{ t.terminal_branch }}</span>{% endif %}
-                {% else %}—{% endif %}
+                {% elif t.op_type == 'acquiring' %}
+                  <span class="badge bg-success">Эквайринг{% if t.terminal_number %} {{ t.terminal_number }}{% endif %}</span>
+                  {% if t.terminal_branch %}<br><span class="text-muted">{{ t.terminal_branch }}</span>{% endif %}
+                {% elif t.op_type == 'contractor' %}
+                  <span class="badge bg-danger">Оплата контрагенту</span>
+                {% elif t.op_type == 'transfer' %}
+                  <span class="badge bg-secondary">Пере-ние средств</span>
+                {% else %}
+                  —
+                {% endif %}
               </td>
               <td>
                 <input type="checkbox" class="form-check-input txn-ignore" data-id="{{ t.id }}"

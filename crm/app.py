@@ -3356,16 +3356,44 @@ def bank_statement_view(stmt_id):
             ORDER BY bt.txn_date DESC, bt.id DESC
         ''', (stmt_id,)).fetchall()
         # Для строк с пустым counterparty — извлекаем из описания
+        # Определяем тип операции для каждой транзакции
         txns = []
         for row in txns_raw:
             d = dict(row)
+            desc  = d.get('description') or ''
+            desc_u = desc.upper()
+            desc_l = desc.lower()
+            amount = d.get('amount', 0)
+
             if not d.get('counterparty'):
-                desc = d.get('description') or ''
                 m = re.search(r'[Сс]бербанка\s+(.+?)\s+по\s+карте', desc)
                 if not m:
                     m = re.search(r'в\s+ТУ\s+(.+?)\s+по\s+(?:карте|к)', desc, re.IGNORECASE)
                 if m:
                     d['counterparty'] = m.group(1).strip()
+
+            if 'PURCHASE' in desc_u:
+                # Карточная покупка — извлекаем последние 4 цифры карты
+                cm = re.search(r'по\s+карте\s+(\S+)', desc, re.IGNORECASE)
+                if cm:
+                    digits = re.sub(r'\D', '', cm.group(1))
+                    d['op_card4'] = digits[-4:] if len(digits) >= 4 else digits
+                else:
+                    d['op_card4'] = ''
+                d['op_type'] = 'card'
+            elif d.get('terminal_id') or 'эквайрин' in desc_l:
+                d['op_type'] = 'acquiring'
+                d['op_card4'] = ''
+            elif 'перераспредел' in desc_l or 'между счет' in desc_l:
+                d['op_type'] = 'transfer'
+                d['op_card4'] = ''
+            elif amount < 0:
+                d['op_type'] = 'contractor'
+                d['op_card4'] = ''
+            else:
+                d['op_type'] = 'transfer'
+                d['op_card4'] = ''
+
             txns.append(d)
         contractors = conn.execute('SELECT * FROM contractors WHERE is_active=1 ORDER BY name').fetchall()
         ctr_cats    = conn.execute('SELECT * FROM contractor_categories ORDER BY sort_order, name').fetchall()
