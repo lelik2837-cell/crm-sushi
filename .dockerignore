@@ -1,0 +1,12 @@
+.git
+.DS_Store
+.claude
+crm/crm.db
+crm/crm.db-shm
+crm/crm.db-wal
+1/
+PLAN.md
+TZ_smena_admin.md
+mockup_smena.html
+import_shifts.py
+reference.jpg
