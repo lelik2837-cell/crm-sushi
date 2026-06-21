@@ -336,8 +336,10 @@ def _match_contractors(conn, txns):
                 if existing:
                     cid = existing['id']
                 else:
+                    is_card = 1 if 'PURCHASE' in ((txn.get('description') or '') + ' ' + cp).upper() else 0
                     conn.execute(
-                        'INSERT INTO contractors (name, keywords) VALUES (?,?)', (cp, cp)
+                        'INSERT INTO contractors (name, keywords, is_card_merchant) VALUES (?,?,?)',
+                        (cp, cp, is_card)
                     )
                     cid = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
                     # Обновляем локальный список чтобы следующие транзакции с тем же контрагентом не дублировали запись
@@ -661,6 +663,11 @@ def init_db():
 
         try:
             conn.execute("ALTER TABLE shift_revenue ADD COLUMN actual_cash_comment TEXT DEFAULT ''")
+        except Exception:
+            pass
+
+        try:
+            conn.execute("ALTER TABLE contractors ADD COLUMN is_card_merchant INTEGER DEFAULT 0")
         except Exception:
             pass
 
@@ -3395,7 +3402,9 @@ def bank_statement_view(stmt_id):
                 d['op_card4'] = ''
 
             txns.append(d)
-        contractors = conn.execute('SELECT * FROM contractors WHERE is_active=1 ORDER BY name').fetchall()
+        contractors = conn.execute(
+            'SELECT * FROM contractors WHERE is_active=1 AND COALESCE(is_card_merchant,0)=0 ORDER BY name'
+        ).fetchall()
         ctr_cats    = conn.execute('SELECT * FROM contractor_categories ORDER BY sort_order, name').fetchall()
     return render_template('bank_statement.html',
         stmt=stmt, txns=txns, contractors=contractors, ctr_cats=ctr_cats)
