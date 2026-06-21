@@ -268,7 +268,12 @@ def parse_transactions(data):
         if amount < 0 and is_card:
             # Название магазина между "Сбербанка " и " по карте"
             m = re.search(r'[Сс]бербанка\s+(.+?)\s+по\s+карте', purpose)
-            counterparty = m.group(1).strip() if m else ''
+            if m:
+                counterparty = m.group(1).strip()
+            else:
+                # Запасной паттерн: "в ТУ MERCHANT по карте" (без слова Сбербанка)
+                m2 = re.search(r'в\s+ТУ\s+(.+?)\s+по\s+карте', purpose, re.IGNORECASE)
+                counterparty = m2.group(1).strip() if m2 else ''
         elif amount >= 0:
             # Входящий перевод — плательщик
             counterparty = str(

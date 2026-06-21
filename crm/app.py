@@ -3345,7 +3345,7 @@ def bank_statement_view(stmt_id):
         if not stmt:
             flash('Выписка не найдена', 'danger')
             return redirect(url_for('bank'))
-        txns = conn.execute('''
+        txns_raw = conn.execute('''
             SELECT bt.*, c.name as contractor_name,
                    t.terminal_number, b.name as terminal_branch
             FROM bank_transactions bt
@@ -3355,6 +3355,18 @@ def bank_statement_view(stmt_id):
             WHERE bt.statement_id=?
             ORDER BY bt.txn_date DESC, bt.id DESC
         ''', (stmt_id,)).fetchall()
+        # Для строк с пустым counterparty — извлекаем из описания
+        txns = []
+        for row in txns_raw:
+            d = dict(row)
+            if not d.get('counterparty'):
+                desc = d.get('description') or ''
+                m = re.search(r'[Сс]бербанка\s+(.+?)\s+по\s+карте', desc)
+                if not m:
+                    m = re.search(r'в\s+ТУ\s+(.+?)\s+по\s+(?:карте|к)', desc, re.IGNORECASE)
+                if m:
+                    d['counterparty'] = m.group(1).strip()
+            txns.append(d)
         contractors = conn.execute('SELECT * FROM contractors WHERE is_active=1 ORDER BY name').fetchall()
         ctr_cats    = conn.execute('SELECT * FROM contractor_categories ORDER BY sort_order, name').fetchall()
     return render_template('bank_statement.html',
