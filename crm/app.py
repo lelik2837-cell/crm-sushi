@@ -3085,6 +3085,45 @@ def bank_statement_delete(stmt_id):
     return redirect(url_for('bank'))
 
 
+@app.route('/bank/statements/<int:stmt_id>/rematch', methods=['POST'])
+@login_required
+@owner_required
+def bank_statement_rematch(stmt_id):
+    """Повторно применить автоматический матчинг контрагентов и терминалов."""
+    with get_db() as conn:
+        txns_rows = conn.execute(
+            'SELECT id, description, counterparty FROM bank_transactions WHERE statement_id=?',
+            (stmt_id,)
+        ).fetchall()
+        updated = 0
+        for row in txns_rows:
+            txn = dict(row)
+            matched_cid = None
+            matched_cat = None
+            # Матчинг контрагентов
+            contractors = conn.execute(
+                'SELECT id, name, category, keywords FROM contractors WHERE is_active=1'
+            ).fetchall()
+            text = ((txn.get('description') or '') + ' ' + (txn.get('counterparty') or '')).lower()
+            for c in contractors:
+                kws = [k.strip().lower() for k in (c['keywords'] or c['name']).split(',') if k.strip()]
+                if any(kw in text for kw in kws):
+                    matched_cid = c['id']
+                    matched_cat = c['category']
+                    break
+            # Матчинг терминала
+            tid = _match_terminal(conn, txn)
+            conn.execute(
+                'UPDATE bank_transactions SET contractor_id=?, category=COALESCE(NULLIF(category,""),?), terminal_id=COALESCE(terminal_id,?) WHERE id=?',
+                (matched_cid, matched_cat or '', tid, row['id'])
+            )
+            if matched_cid or tid:
+                updated += 1
+        conn.commit()
+    flash(f'Переназначено: {updated} из {len(txns_rows)} транзакций', 'success')
+    return redirect(url_for('bank_statement_view', stmt_id=stmt_id))
+
+
 @app.route('/bank/transaction/<int:txn_id>/update', methods=['POST'])
 @login_required
 @owner_required
@@ -3167,9 +3206,10 @@ def bank_contractor_add():
     name = request.form.get('name', '').strip()
     category = request.form.get('category', '').strip()
     keywords = request.form.get('keywords', '').strip()
+    next_url = request.form.get('next', '').strip()
     if not name:
         flash('Введите название контрагента', 'danger')
-        return redirect(url_for('bank', tab='contractors'))
+        return redirect(next_url or url_for('bank', tab='contractors'))
     with get_db() as conn:
         conn.execute(
             'INSERT INTO contractors (name, category, keywords) VALUES (?,?,?)',
@@ -3177,7 +3217,7 @@ def bank_contractor_add():
         )
         conn.commit()
     flash(f'Контрагент «{name}» добавлен', 'success')
-    return redirect(url_for('bank', tab='contractors'))
+    return redirect(next_url or url_for('bank', tab='contractors'))
 
 
 @app.route('/bank/contractors/<int:ctr_id>/edit', methods=['POST'])

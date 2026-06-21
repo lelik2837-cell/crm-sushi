@@ -15,6 +15,12 @@
     <a href="{{ url_for('bank_classify', stmt_id=stmt.id) }}" class="btn btn-outline-primary btn-sm">
       <i class="bi bi-tags me-1"></i>Разметка
     </a>
+    <form method="POST" action="{{ url_for('bank_statement_rematch', stmt_id=stmt.id) }}" class="d-inline">
+      <button type="submit" class="btn btn-outline-secondary btn-sm"
+              title="Повторно применить ключевые слова контрагентов ко всем транзакциям">
+        <i class="bi bi-arrow-repeat me-1"></i>Переназначить контрагентов
+      </button>
+    </form>
   </div>
 
   {% with messages = get_flashed_messages(with_categories=true) %}
