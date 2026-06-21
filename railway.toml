@@ -1,2 +1,2 @@
 [deploy]
-startCommand = "python3 -c \"import sqlite3,os; db=os.path.join(os.getcwd(),'crm','crm.db'); print('DB path:', db, '| exists:', os.path.exists(db)); c=sqlite3.connect(db); print('shifts:', c.execute('SELECT COUNT(*) FROM shifts').fetchone()[0], '| branches:', c.execute('SELECT COUNT(*) FROM branches').fetchone()[0]); c.close()\" && gunicorn --chdir crm app:app --workers 1 --threads 8 --timeout 120 --bind 0.0.0.0:$PORT"
+startCommand = "gunicorn --chdir crm app:app --workers 1 --threads 8 --timeout 120 --bind 0.0.0.0:$PORT"
