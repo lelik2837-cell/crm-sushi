@@ -25,9 +25,6 @@ app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 DATABASE = os.environ.get('DATABASE_PATH', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'crm.db'))
-_db_dir = os.path.dirname(DATABASE)
-if _db_dir:
-    os.makedirs(_db_dir, exist_ok=True)
 
 ROLE_LABELS = {
     'admin': 'Администратор',
