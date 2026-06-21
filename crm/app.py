@@ -3744,8 +3744,9 @@ _XL_DAY_SHEETS = {'ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ', 'ВС'}
 
 _XL_ROLE_MAP = {
     'Админ.': 'admin', 'Адм.': 'admin', 'Адм/Упак': 'admin', 'Адм': 'admin',
-    'Администратор': 'admin', 'Упак.': 'packer', 'Упак': 'packer',
-    'Упаковщик': 'packer', 'Сушист': 'sushi', 'Сушист.': 'sushi',
+    'Администратор': 'admin', 'Упак.': 'admin', 'Упак': 'admin',
+    'Упаковщик': 'admin', 'Упаковщица': 'admin',
+    'Сушист': 'sushi', 'Сушист.': 'sushi',
     'Уборщица': 'cleaner', 'Уборщик': 'cleaner',
     'Повара': 'cook', 'Повар': 'cook', 'Повар.': 'cook',
 }
@@ -3951,7 +3952,7 @@ def _xl_process_sheet(ws, branch_id, conn, stats):
                   rate_km=rate_km, rate_ord=rate_ord, comment=comment,
                   base_pay=hrs_pay + km_pay, total=total, paid=paid)
 
-    for r in rows[9:22]:
+    for row_idx, r in enumerate(rows[9:22], start=9):
         name = r[10]
         if not name or not isinstance(name, str) or name.strip() in _XL_SKIP:
             continue
@@ -3961,13 +3962,15 @@ def _xl_process_sheet(ws, branch_id, conn, stats):
         total = _xf(r[21])
         if total == 0:
             continue
-        role_str = r[11]
+        # Роль определяется по позиции строки, не по метке в колонке L:
+        # idx 9-13  (Excel 10-14) = администраторы и упаковщики → admin
+        # idx 14-20 (Excel 15-21) = сушисты → sushi
         if name == 'Уборщица':
             role = 'cleaner'
-        elif role_str and isinstance(role_str, str) and role_str.strip() in _XL_ROLE_MAP:
-            role = _XL_ROLE_MAP[role_str.strip()]
-        else:
+        elif row_idx <= 13:
             role = 'admin'
+        else:
+            role = 'sushi'
         rate   = _xf(r[12])
         start  = _xts(r[13])
         end    = _xts(r[14])
