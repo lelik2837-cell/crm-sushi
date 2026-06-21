@@ -229,16 +229,13 @@
               <td class="text-nowrap">{{ dt }}</td>
               {% for b in beznal_branches %}
               {% set cell = day_data.get(b.id) %}
-              {% set net = cell.net if cell else 0 %}
-              {% set row_total.val = row_total.val + net %}
+              {% set gross = cell.gross if cell else 0 %}
+              {% set row_total.val = row_total.val + gross %}
               <td class="beznal-col" data-branch-id="{{ b.id }}">
-                {% if cell and (cell.income > 0 or cell.commission > 0 or cell.refund > 0) %}
-                  <span class="fw-semibold">{{ cell.net|money }} ₽</span>
+                {% if cell and cell.gross > 0 %}
+                  <span class="fw-semibold">{{ cell.gross|money }} ₽</span>
                   {% if cell.commission > 0 %}
                     <br><span class="text-muted small">{{ cell.commission|money }} комиссия</span>
-                  {% endif %}
-                  {% if cell.refund > 0 %}
-                    <br><span class="text-danger small">{{ cell.refund|money }} возврат</span>
                   {% endif %}
                 {% else %}
                   <span class="text-muted">—</span>

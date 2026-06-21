@@ -2860,30 +2860,26 @@ def bank():
                 SELECT DISTINCT b.id, b.name FROM bank_terminals t
                 JOIN branches b ON b.id=t.branch_id WHERE t.is_active=1 ORDER BY b.name
             ''').fetchall()
+            # Получаем каждую транзакцию отдельно, чтобы извлечь комиссию из описания
             raw = conn.execute('''
-                SELECT bt.txn_date, t.branch_id,
-                    SUM(CASE WHEN bt.amount > 0 THEN bt.amount ELSE 0 END) as income,
-                    SUM(CASE WHEN bt.amount < 0 AND LOWER(bt.description) LIKE '%комисс%'
-                             THEN ABS(bt.amount) ELSE 0 END) as commission,
-                    SUM(CASE WHEN bt.amount < 0 AND LOWER(bt.description) NOT LIKE '%комисс%'
-                             THEN ABS(bt.amount) ELSE 0 END) as refund
+                SELECT bt.txn_date, t.branch_id, bt.amount, bt.description
                 FROM bank_transactions bt
                 JOIN bank_terminals t ON t.id=bt.terminal_id
-                WHERE bt.txn_date BETWEEN ? AND ? AND bt.is_ignored=0
-                GROUP BY bt.txn_date, t.branch_id
+                WHERE bt.txn_date BETWEEN ? AND ? AND bt.amount > 0 AND bt.is_ignored=0
                 ORDER BY bt.txn_date DESC
             ''', (date_from, date_to)).fetchall()
+            _comm_re = re.compile(r'[Кк]омисси[яи]\s+([\d]+[.,][\d]+)', re.IGNORECASE)
             days = {}
             for r in raw:
-                income = r['income'] or 0
-                commission = r['commission'] or 0
-                refund = r['refund'] or 0
-                days.setdefault(r['txn_date'], {})[r['branch_id']] = {
-                    'income': income,
-                    'commission': commission,
-                    'refund': refund,
-                    'net': income - commission - refund,
-                }
+                desc = r['description'] or ''
+                m = _comm_re.search(desc)
+                commission = float(m.group(1).replace(',', '.')) if m else 0.0
+                net = float(r['amount'])
+                gross = net + commission
+                cell = days.setdefault(r['txn_date'], {}).setdefault(r['branch_id'],
+                    {'gross': 0.0, 'commission': 0.0})
+                cell['gross'] += gross
+                cell['commission'] += commission
             beznal_rows = sorted(days.items(), reverse=True)
 
         expense_rows = []
