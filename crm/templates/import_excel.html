@@ -1,0 +1,86 @@
+{% extends 'base.html' %}
+{% block title %}Импорт Excel — CRM Суши{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-3">
+        <div class="col">
+            <h4 class="mb-0"><i class="bi bi-file-earmark-excel me-2 text-success"></i>Импорт смен из Excel</h4>
+            <p class="text-muted mt-1 mb-0">Загрузите файл(ы) расписания недели (.xlsx). Каждый лист ПН–ВС будет импортирован.</p>
+        </div>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for cat, msg in messages %}
+        <div class="alert alert-{{ 'success' if cat == 'success' else 'danger' }} alert-dismissible fade show">
+            {{ msg }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        {% endfor %}
+    {% endwith %}
+
+    <div class="card">
+        <div class="card-header bg-success text-white">
+            <i class="bi bi-upload me-1"></i> Загрузить файл(ы) Excel
+        </div>
+        <div class="card-body">
+            <form method="POST" enctype="multipart/form-data" id="importForm">
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Филиал</label>
+                    <select name="branch_id" class="form-select" required>
+                        <option value="">— выберите филиал —</option>
+                        {% for b in branches %}
+                        <option value="{{ b[0] }}">{{ b[1] }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Файл(ы) Excel (.xlsx)</label>
+                    <input type="file" name="files" id="filesInput" class="form-control"
+                           accept=".xlsx" multiple required>
+                    <div class="form-text">Можно выбрать несколько файлов сразу (один файл = одна неделя)</div>
+                </div>
+
+                <div id="fileList" class="mb-3"></div>
+
+                <button type="submit" class="btn btn-success px-4" id="submitBtn">
+                    <i class="bi bi-cloud-upload me-1"></i> Импортировать
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card mt-3">
+        <div class="card-header">
+            <i class="bi bi-info-circle me-1"></i> Как пользоваться
+        </div>
+        <div class="card-body">
+            <ol class="mb-0">
+                <li>Выберите <strong>филиал</strong> из списка</li>
+                <li>Нажмите <strong>«Выбрать файлы»</strong> и выберите один или несколько .xlsx файлов недели</li>
+                <li>Нажмите <strong>«Импортировать»</strong></li>
+                <li>Данные по всем дням (ПН–ВС) будут загружены в систему</li>
+                <li>Повторный импорт одного и того же дня <strong>не создаёт дубли</strong> — существующие смены пропускаются</li>
+            </ol>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('filesInput').addEventListener('change', function() {
+    const files = Array.from(this.files);
+    const list = document.getElementById('fileList');
+    if (files.length === 0) { list.innerHTML = ''; return; }
+    list.innerHTML = '<ul class="list-group list-group-flush">' +
+        files.map(f => `<li class="list-group-item py-1"><i class="bi bi-file-earmark-excel text-success me-1"></i>${f.name}</li>`).join('') +
+        '</ul>';
+});
+
+document.getElementById('importForm').addEventListener('submit', function() {
+    const btn = document.getElementById('submitBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Загрузка...';
+});
+</script>
+{% endblock %}

@@ -104,6 +104,12 @@
                         {% if session.get('role') == 'owner' %}
                         <li><hr class="dropdown-divider"></li>
                         <li>
+                            <a class="dropdown-item {% if request.endpoint=='excel_import' %}active{% endif %}" href="{{ url_for('excel_import') }}">
+                                <i class="bi bi-file-earmark-excel me-2 text-success"></i>Импорт Excel
+                            </a>
+                        </li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li>
                             <a class="dropdown-item {% if request.endpoint=='branches' %}active{% endif %}" href="{{ url_for('branches') }}">
                                 <i class="bi bi-shop me-2"></i>Филиалы
                             </a>
