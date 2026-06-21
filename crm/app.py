@@ -2861,16 +2861,29 @@ def bank():
                 JOIN branches b ON b.id=t.branch_id WHERE t.is_active=1 ORDER BY b.name
             ''').fetchall()
             raw = conn.execute('''
-                SELECT bt.txn_date, t.branch_id, SUM(bt.amount) as total
+                SELECT bt.txn_date, t.branch_id,
+                    SUM(CASE WHEN bt.amount > 0 THEN bt.amount ELSE 0 END) as income,
+                    SUM(CASE WHEN bt.amount < 0 AND LOWER(bt.description) LIKE '%комисс%'
+                             THEN ABS(bt.amount) ELSE 0 END) as commission,
+                    SUM(CASE WHEN bt.amount < 0 AND LOWER(bt.description) NOT LIKE '%комисс%'
+                             THEN ABS(bt.amount) ELSE 0 END) as refund
                 FROM bank_transactions bt
                 JOIN bank_terminals t ON t.id=bt.terminal_id
-                WHERE bt.txn_date BETWEEN ? AND ? AND bt.amount > 0 AND bt.is_ignored=0
+                WHERE bt.txn_date BETWEEN ? AND ? AND bt.is_ignored=0
                 GROUP BY bt.txn_date, t.branch_id
                 ORDER BY bt.txn_date DESC
             ''', (date_from, date_to)).fetchall()
             days = {}
             for r in raw:
-                days.setdefault(r['txn_date'], {})[r['branch_id']] = r['total']
+                income = r['income'] or 0
+                commission = r['commission'] or 0
+                refund = r['refund'] or 0
+                days.setdefault(r['txn_date'], {})[r['branch_id']] = {
+                    'income': income,
+                    'commission': commission,
+                    'refund': refund,
+                    'net': income - commission - refund,
+                }
             beznal_rows = sorted(days.items(), reverse=True)
 
         expense_rows = []

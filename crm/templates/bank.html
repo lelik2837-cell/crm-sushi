@@ -157,20 +157,51 @@
 
   <!-- ══════════════════════ БЕЗНАЛ ПО ДНЯМ ══════════════════════ -->
   {% if tab == 'beznal' %}
-  <form method="get" class="row g-2 mb-3 align-items-end">
-    <input type="hidden" name="tab" value="beznal">
-    <div class="col-auto">
-      <label class="form-label mb-1 fw-semibold">С</label>
-      <input type="date" name="date_from" class="form-control form-control-sm" value="{{ date_from }}">
+  <div class="d-flex gap-3 align-items-end mb-3 flex-wrap">
+    <form method="get" class="d-flex gap-2 align-items-end flex-wrap">
+      <input type="hidden" name="tab" value="beznal">
+      <div>
+        <label class="form-label mb-1 fw-semibold">С</label>
+        <input type="date" name="date_from" class="form-control form-control-sm" value="{{ date_from }}">
+      </div>
+      <div>
+        <label class="form-label mb-1 fw-semibold">По</label>
+        <input type="date" name="date_to" class="form-control form-control-sm" value="{{ date_to }}">
+      </div>
+      <div>
+        <button class="btn btn-primary btn-sm">Показать</button>
+      </div>
+    </form>
+    {% if beznal_branches %}
+    <div>
+      <label class="form-label mb-1 fw-semibold">Филиалы</label>
+      <div class="dropdown">
+        <button class="btn btn-outline-secondary btn-sm dropdown-toggle" id="branchFilterBtn"
+                data-bs-toggle="dropdown" data-bs-auto-close="outside">
+          <i class="bi bi-shop me-1"></i><span id="branchFilterLabel">Все филиалы</span>
+        </button>
+        <ul class="dropdown-menu p-2 shadow-sm" style="min-width:200px">
+          <li class="mb-1">
+            <a href="#" class="small text-primary text-decoration-none" id="selectAllBranches">Выбрать все</a>
+            &nbsp;/&nbsp;
+            <a href="#" class="small text-secondary text-decoration-none" id="deselectAllBranches">Снять все</a>
+          </li>
+          <li><hr class="dropdown-divider my-1"></li>
+          {% for b in beznal_branches %}
+          <li>
+            <label class="dropdown-item d-flex align-items-center gap-2 px-1 py-1 small">
+              <input type="checkbox" class="branch-chk form-check-input mt-0"
+                     value="{{ b.id }}" data-name="{{ b.name }}" checked>
+              {{ b.name }}
+            </label>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
     </div>
-    <div class="col-auto">
-      <label class="form-label mb-1 fw-semibold">По</label>
-      <input type="date" name="date_to" class="form-control form-control-sm" value="{{ date_to }}">
-    </div>
-    <div class="col-auto">
-      <button class="btn btn-primary btn-sm">Показать</button>
-    </div>
-  </form>
+    {% endif %}
+  </div>
+
   <div class="card">
     <div class="card-header"><i class="bi bi-credit-card me-2"></i>Безнал по дням (терминалы)</div>
     <div class="card-body p-0">
@@ -181,26 +212,40 @@
       </div>
       {% else %}
       <div class="table-responsive">
-        <table class="table table-hover mb-0">
+        <table class="table table-hover mb-0" id="beznal-table">
           <thead class="table-light">
             <tr>
               <th>Дата</th>
-              {% for b in beznal_branches %}<th>{{ b.name }}</th>{% endfor %}
+              {% for b in beznal_branches %}
+              <th class="beznal-col" data-branch-id="{{ b.id }}">{{ b.name }}</th>
+              {% endfor %}
               <th>Итого</th>
             </tr>
           </thead>
           <tbody>
-            {% set col_totals = namespace(data={}) %}
             {% for dt, day_data in beznal_rows %}
             {% set row_total = namespace(val=0) %}
             <tr>
-              <td>{{ dt }}</td>
+              <td class="text-nowrap">{{ dt }}</td>
               {% for b in beznal_branches %}
-              {% set v = day_data.get(b.id, 0) %}
-              {% set row_total.val = row_total.val + v %}
-              <td>{% if v %}{{ '%.0f'|format(v) }} ₽{% else %}—{% endif %}</td>
+              {% set cell = day_data.get(b.id) %}
+              {% set net = cell.net if cell else 0 %}
+              {% set row_total.val = row_total.val + net %}
+              <td class="beznal-col" data-branch-id="{{ b.id }}">
+                {% if cell and (cell.income > 0 or cell.commission > 0 or cell.refund > 0) %}
+                  <span class="fw-semibold">{{ cell.net|money }} ₽</span>
+                  {% if cell.commission > 0 %}
+                    <br><span class="text-muted small">{{ cell.commission|money }} комиссия</span>
+                  {% endif %}
+                  {% if cell.refund > 0 %}
+                    <br><span class="text-danger small">{{ cell.refund|money }} возврат</span>
+                  {% endif %}
+                {% else %}
+                  <span class="text-muted">—</span>
+                {% endif %}
+              </td>
               {% endfor %}
-              <td class="fw-bold">{{ '%.0f'|format(row_total.val) }} ₽</td>
+              <td class="fw-bold">{{ row_total.val|money }} ₽</td>
             </tr>
             {% endfor %}
           </tbody>
@@ -209,6 +254,39 @@
       {% endif %}
     </div>
   </div>
+
+  <script>
+  (function() {
+    const chks = document.querySelectorAll('.branch-chk');
+    if (!chks.length) return;
+
+    function applyBranchFilter() {
+      const checked = new Set([...chks].filter(c => c.checked).map(c => c.value));
+      document.querySelectorAll('.beznal-col').forEach(el => {
+        el.style.display = checked.has(el.dataset.branchId) ? '' : 'none';
+      });
+      // Обновить лейбл кнопки
+      const label = document.getElementById('branchFilterLabel');
+      if (checked.size === chks.length) {
+        label.textContent = 'Все филиалы';
+      } else if (checked.size === 0) {
+        label.textContent = 'Не выбрано';
+      } else {
+        const names = [...chks].filter(c => c.checked).map(c => c.dataset.name);
+        label.textContent = names.join(', ');
+      }
+    }
+
+    chks.forEach(c => c.addEventListener('change', applyBranchFilter));
+
+    document.getElementById('selectAllBranches')?.addEventListener('click', e => {
+      e.preventDefault(); chks.forEach(c => c.checked = true); applyBranchFilter();
+    });
+    document.getElementById('deselectAllBranches')?.addEventListener('click', e => {
+      e.preventDefault(); chks.forEach(c => c.checked = false); applyBranchFilter();
+    });
+  })();
+  </script>
   {% endif %}
 
   <!-- ══════════════════════ РАСХОДЫ ══════════════════════ -->
