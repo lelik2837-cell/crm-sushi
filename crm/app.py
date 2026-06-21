@@ -325,6 +325,26 @@ def _match_contractors(conn, txns):
                 txn['contractor_id'] = c['id']
                 txn['category'] = txn.get('category') or c['category']
                 break
+
+        # Если контрагент не найден — создаём нового из поля counterparty
+        if not txn.get('contractor_id'):
+            cp = (txn.get('counterparty') or '').strip()
+            if cp:
+                existing = conn.execute(
+                    'SELECT id FROM contractors WHERE LOWER(name)=LOWER(?)', (cp,)
+                ).fetchone()
+                if existing:
+                    cid = existing['id']
+                else:
+                    conn.execute(
+                        'INSERT INTO contractors (name, keywords) VALUES (?,?)', (cp, cp)
+                    )
+                    cid = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                    # Обновляем локальный список чтобы следующие транзакции с тем же контрагентом не дублировали запись
+                    contractors = conn.execute(
+                        'SELECT id, name, category, keywords FROM contractors WHERE is_active=1'
+                    ).fetchall()
+                txn['contractor_id'] = cid
     return txns
 
 
@@ -3096,14 +3116,13 @@ def bank_statement_rematch(stmt_id):
             (stmt_id,)
         ).fetchall()
         updated = 0
+        contractors = conn.execute(
+            'SELECT id, name, category, keywords FROM contractors WHERE is_active=1'
+        ).fetchall()
         for row in txns_rows:
             txn = dict(row)
             matched_cid = None
             matched_cat = None
-            # Матчинг контрагентов
-            contractors = conn.execute(
-                'SELECT id, name, category, keywords FROM contractors WHERE is_active=1'
-            ).fetchall()
             text = ((txn.get('description') or '') + ' ' + (txn.get('counterparty') or '')).lower()
             for c in contractors:
                 kws = [k.strip().lower() for k in (c['keywords'] or c['name']).split(',') if k.strip()]
@@ -3111,6 +3130,21 @@ def bank_statement_rematch(stmt_id):
                     matched_cid = c['id']
                     matched_cat = c['category']
                     break
+            # Если не найден — создаём из counterparty
+            if not matched_cid:
+                cp = (txn.get('counterparty') or '').strip()
+                if cp:
+                    existing = conn.execute(
+                        'SELECT id FROM contractors WHERE LOWER(name)=LOWER(?)', (cp,)
+                    ).fetchone()
+                    if existing:
+                        matched_cid = existing['id']
+                    else:
+                        conn.execute('INSERT INTO contractors (name, keywords) VALUES (?,?)', (cp, cp))
+                        matched_cid = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                        contractors = conn.execute(
+                            'SELECT id, name, category, keywords FROM contractors WHERE is_active=1'
+                        ).fetchall()
             # Матчинг терминала
             tid = _match_terminal(conn, txn)
             conn.execute(
