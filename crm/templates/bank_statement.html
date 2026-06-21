@@ -117,7 +117,7 @@
                 {% if t.is_ignored %}text-muted{% elif t.amount > 0 %}text-success{% else %}text-danger{% endif %}">
                 {% if t.amount > 0 %}+{% endif %}{{ '%.0f'|format(t.amount) }} ₽
               </td>
-              <td class="small" title="{{ t.counterparty or '' }}">{{ t.counterparty[:50] if t.counterparty else '—' }}</td>
+              <td class="small" title="{{ t.counterparty or '' }}">{{ t.counterparty[:50] if (t.op_type == 'contractor' and t.counterparty) else '—' }}</td>
               <td class="small text-muted" title="{{ t.description or '' }}">{{ t.description[:100] if t.description else '—' }}</td>
               <td>
                 <div class="d-flex gap-1 align-items-center">
