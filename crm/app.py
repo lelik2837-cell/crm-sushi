@@ -588,6 +588,11 @@ def init_db():
                     (code, label, sort)
                 )
 
+            conn.execute('''CREATE TABLE IF NOT EXISTS contractor_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                sort_order INTEGER DEFAULT 0
+            )''')
             _DEFAULT_CTR_CATS = [
                 ('Продукты', 1), ('Упаковка', 2), ('Налоги', 3),
                 ('Зарплата', 4), ('Аренда', 5), ('Коммунальные', 6),
