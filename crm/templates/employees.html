@@ -110,6 +110,23 @@
                                 {% if emp.is_active %}<i class="bi bi-pause"></i>{% else %}<i class="bi bi-play"></i>{% endif %}
                             </button>
                         </form>
+                        {% if is_owner %}
+                        {% if shift_counts.get(emp.id, 0) > 0 %}
+                        <button class="btn btn-sm btn-outline-danger ms-1"
+                                title="Переназначить смены и удалить"
+                                data-bs-toggle="modal"
+                                data-bs-target="#reassignModal{{ emp.id }}">
+                            <i class="bi bi-shuffle"></i>
+                        </button>
+                        {% else %}
+                        <form method="POST" action="{{ url_for('delete_employee', emp_id=emp.id) }}" class="d-inline"
+                              onsubmit="return confirm('Удалить {{ emp.full_name }}?\nЭто действие нельзя отменить.')">
+                            <button class="btn btn-sm btn-outline-danger ms-1" title="Удалить сотрудника">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </form>
+                        {% endif %}
+                        {% endif %}
                     </td>
                 </tr>
                 {% endfor %}
@@ -240,16 +257,19 @@
                     {% endif %}
 
                     <!-- Имя -->
+                    {% set _parts = (emp.full_name or '').split() %}
+                    {% set _ln = emp.last_name if emp.last_name else (_parts[0] if _parts else '') %}
+                    {% set _fn = emp.first_name if emp.first_name else (_parts[1:] | join(' ')) %}
                     <div class="row g-2 mb-4">
                         <div class="col-6">
                             <label class="form-label fw-semibold">Фамилия *</label>
                             <input type="text" name="last_name" class="form-control"
-                                value="{{ emp.last_name or '' }}" placeholder="Иванов" required>
+                                value="{{ _ln }}" placeholder="Иванов" required>
                         </div>
                         <div class="col-6">
                             <label class="form-label fw-semibold">Имя</label>
                             <input type="text" name="first_name" class="form-control"
-                                value="{{ emp.first_name or '' }}" placeholder="Иван">
+                                value="{{ _fn }}" placeholder="Иван">
                         </div>
                     </div>
 
@@ -346,6 +366,60 @@
     </div>
 </div>
 {% endfor %}
+
+<!-- Reassign & Delete Modals -->
+{% if is_owner %}
+{% for emp in employees %}
+{% if shift_counts.get(emp.id, 0) > 0 %}
+<div class="modal fade" id="reassignModal{{ emp.id }}" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title"><i class="bi bi-shuffle me-2"></i>Переназначить смены и удалить</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('reassign_and_delete_employee', emp_id=emp.id) }}"
+                  onsubmit="return confirm('Переназначить все смены и удалить «{{ emp.full_name }}»?\nЭто действие нельзя отменить.')">
+                <div class="modal-body">
+                    <div class="alert alert-warning py-2 small mb-3">
+                        <i class="bi bi-exclamation-triangle me-1"></i>
+                        У <strong>{{ emp.full_name }}</strong> есть <strong>{{ shift_counts.get(emp.id, 0) }}</strong> записей в сменах.
+                        Выберите сотрудника, на которого переназначить эти смены, затем дубликат будет удалён.
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Переназначить смены на:</label>
+                        <select name="target_id" class="form-select" required>
+                            <option value="">— выберите сотрудника —</option>
+                            {% for other in employees %}
+                            {% if other.id != emp.id %}
+                            <option value="{{ other.id }}"
+                                {% if other.branch_id == emp.branch_id %}
+                                style="font-weight:600"
+                                {% endif %}>
+                                {{ other.full_name }}
+                                ({{ other.branch_name or '—' }},
+                                {{ role_labels.get(other.role, other.role) }})
+                                {% if other.branch_id == emp.branch_id %} ★{% endif %}
+                            </option>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">★ — тот же филиал</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-danger">
+                        <i class="bi bi-shuffle me-1"></i>Переназначить и удалить
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endfor %}
+{% endif %}
 
 {% endblock %}
 

@@ -43,7 +43,8 @@
       "Bash(sqlite3 crm.db \"SELECT id, name, branch_id, role, is_active FROM employees ORDER BY branch_id, id;\")",
       "Bash(sqlite3 crm.db \".schema expense_categories\")",
       "Bash(sqlite3 crm.db \"SELECT * FROM expense_categories LIMIT 20;\")",
-      "Bash(sqlite3 crm.db \"SELECT id, full_name, branch_id, role, is_active FROM employees ORDER BY branch_id, id;\")"
+      "Bash(sqlite3 crm.db \"SELECT id, full_name, branch_id, role, is_active FROM employees ORDER BY branch_id, id;\")",
+      "Bash(python3 -c \"import sys; sys.path.insert\\(0,'crm'\\); from app import app; print\\('OK'\\)\")"
     ],
     "additionalDirectories": [
       "/Users/aleksey/.claude/projects/-Users-aleksey-Desktop-CRM-sushi"

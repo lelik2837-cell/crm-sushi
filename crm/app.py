@@ -1382,6 +1382,15 @@ def employees():
         ''').fetchall():
             emp_branches_map.setdefault(row['employee_id'], []).append(row['branch_id'])
 
+        shift_counts = {}
+        if emps:
+            ids_str = ','.join(str(e['id']) for e in emps)
+            for row in conn.execute(f'''
+                SELECT employee_id, COUNT(*) as cnt FROM employee_shifts
+                WHERE employee_id IN ({ids_str}) GROUP BY employee_id
+            ''').fetchall():
+                shift_counts[row['employee_id']] = row['cnt']
+
         all_tmpls = conn.execute(
             'SELECT * FROM rate_templates WHERE is_active=1 ORDER BY role, name'
         ).fetchall()
@@ -1408,6 +1417,7 @@ def employees():
                            rate_templates=all_tmpls,
                            tmpl_branch_sets=tmpl_branch_sets,
                            tmpls_for_emp=tmpls_for_emp,
+                           shift_counts=shift_counts,
                            today=date.today().isoformat(),
                            branch_groups=get_branch_groups(conn))
 
@@ -1556,6 +1566,70 @@ def edit_employee(emp_id):
             )
         conn.commit()
     flash('Данные сотрудника сохранены', 'success')
+    return redirect(url_for('employees'))
+
+
+@app.route('/employees/<int:emp_id>/delete', methods=['POST'])
+@login_required
+def delete_employee(emp_id):
+    if session.get('role') != 'owner':
+        flash('Только владелец может удалять сотрудников', 'danger')
+        return redirect(url_for('employees'))
+    with get_db() as conn:
+        emp = conn.execute('SELECT * FROM employees WHERE id=?', (emp_id,)).fetchone()
+        if not emp:
+            flash('Сотрудник не найден', 'danger')
+            return redirect(url_for('employees'))
+        shift_count = conn.execute(
+            'SELECT COUNT(*) FROM employee_shifts WHERE employee_id=?', (emp_id,)
+        ).fetchone()[0]
+        if shift_count > 0:
+            flash(
+                f'Нельзя удалить «{emp["full_name"]}» — есть {shift_count} записей в сменах. Деактивируйте сотрудника.',
+                'danger'
+            )
+            return redirect(url_for('employees'))
+        conn.execute('UPDATE taxi_trip_employees SET employee_id=NULL WHERE employee_id=?', (emp_id,))
+        conn.execute('DELETE FROM employee_rate_history WHERE employee_id=?', (emp_id,))
+        conn.execute('DELETE FROM employee_address_history WHERE employee_id=?', (emp_id,))
+        conn.execute('DELETE FROM employee_branches WHERE employee_id=?', (emp_id,))
+        conn.execute('DELETE FROM employees WHERE id=?', (emp_id,))
+        conn.commit()
+    flash(f'Сотрудник «{emp["full_name"]}» удалён', 'success')
+    return redirect(url_for('employees'))
+
+
+@app.route('/employees/<int:emp_id>/reassign-delete', methods=['POST'])
+@login_required
+def reassign_and_delete_employee(emp_id):
+    if session.get('role') != 'owner':
+        flash('Только владелец может выполнять это действие', 'danger')
+        return redirect(url_for('employees'))
+    target_id = request.form.get('target_id', type=int)
+    if not target_id or target_id == emp_id:
+        flash('Выберите другого сотрудника для переназначения', 'danger')
+        return redirect(url_for('employees'))
+    with get_db() as conn:
+        emp = conn.execute('SELECT * FROM employees WHERE id=?', (emp_id,)).fetchone()
+        target = conn.execute('SELECT * FROM employees WHERE id=?', (target_id,)).fetchone()
+        if not emp or not target:
+            flash('Сотрудник не найден', 'danger')
+            return redirect(url_for('employees'))
+        shift_count = conn.execute(
+            'SELECT COUNT(*) FROM employee_shifts WHERE employee_id=?', (emp_id,)
+        ).fetchone()[0]
+        conn.execute('UPDATE employee_shifts SET employee_id=? WHERE employee_id=?', (target_id, emp_id))
+        conn.execute('UPDATE salary_payments SET employee_id=? WHERE employee_id=?', (target_id, emp_id))
+        conn.execute('UPDATE taxi_trip_employees SET employee_id=? WHERE employee_id=?', (target_id, emp_id))
+        conn.execute('DELETE FROM employee_rate_history WHERE employee_id=?', (emp_id,))
+        conn.execute('DELETE FROM employee_address_history WHERE employee_id=?', (emp_id,))
+        conn.execute('DELETE FROM employee_branches WHERE employee_id=?', (emp_id,))
+        conn.execute('DELETE FROM employees WHERE id=?', (emp_id,))
+        conn.commit()
+    flash(
+        f'Переназначено {shift_count} смен: «{emp["full_name"]}» → «{target["full_name"]}». Дубликат удалён.',
+        'success'
+    )
     return redirect(url_for('employees'))
 
 
