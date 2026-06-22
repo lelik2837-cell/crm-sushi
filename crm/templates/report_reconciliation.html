@@ -23,13 +23,16 @@
                         <input type="text" class="form-control form-control-sm mb-1"
                                id="ctr-search" placeholder="Поиск..." oninput="filterCtrs(this.value)" autocomplete="off">
                         <div style="max-height:300px; overflow-y:auto;">
-                            <button type="button" class="dropdown-item rounded small py-1 text-muted ctr-opt" data-name=""
-                                    onclick="pickCtr('', '— выберите контрагента —')">— сбросить —</button>
+                            <button type="button" class="dropdown-item rounded small py-1 text-muted ctr-opt"
+                                    data-ctr-id="" data-ctr-label="— выберите контрагента —" data-name=""
+                                    onclick="pickCtr(this)">— сбросить —</button>
                             {% for c in contractors %}
                             <button type="button"
                                     class="dropdown-item rounded small py-1 ctr-opt {% if contractor_id == c.id|string %}active{% endif %}"
+                                    data-ctr-id="{{ c.id }}"
+                                    data-ctr-label="{{ c.name }}"
                                     data-name="{{ c.name|lower }}"
-                                    onclick="pickCtr('{{ c.id }}', {{ c.name|tojson }})">{{ c.name }}</button>
+                                    onclick="pickCtr(this)">{{ c.name }}</button>
                             {% endfor %}
                         </div>
                     </div>
@@ -267,7 +270,9 @@ function filterCtrs(q) {
     });
 }
 
-function pickCtr(id, label) {
+function pickCtr(el) {
+    var id    = el.dataset.ctrId    || '';
+    var label = el.dataset.ctrLabel || '— выберите контрагента —';
     document.getElementById('ctr-hidden').value = id;
     document.getElementById('ctr-btn-label').textContent = label;
     bootstrap.Dropdown.getOrCreateInstance(document.getElementById('ctr-btn')).hide();
