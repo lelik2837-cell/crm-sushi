@@ -397,39 +397,40 @@
     </div>
     {% if sal_report %}
     <div class="table-responsive">
-        <table class="table table-hover mb-0 align-middle">
+        <table class="table table-hover mb-0 align-middle" id="salTable">
             <thead class="table-light">
                 <tr>
-                    <th>Сотрудник</th>
-                    <th>Категория</th>
-                    <th>Филиал</th>
-                    <th class="text-center">Смен</th>
-                    <th class="text-end">Начислено</th>
-                    <th class="text-end">Выплачено</th>
-                    <th class="text-end">Долг</th>
-                    <th class="text-center">Статус</th>
+                    <th class="sal-sort" style="cursor:pointer;user-select:none" title="Сортировать">Сотрудник <span class="sal-arrow text-muted small"></span></th>
+                    <th class="sal-sort" style="cursor:pointer;user-select:none" title="Сортировать">Категория <span class="sal-arrow text-muted small"></span></th>
+                    <th class="sal-sort" style="cursor:pointer;user-select:none" title="Сортировать">Филиал <span class="sal-arrow text-muted small"></span></th>
+                    <th class="sal-sort text-center" style="cursor:pointer;user-select:none" title="Сортировать">Смен <span class="sal-arrow text-muted small"></span></th>
+                    <th class="sal-sort text-end" style="cursor:pointer;user-select:none" title="Сортировать">Начислено <span class="sal-arrow text-muted small"></span></th>
+                    <th class="sal-sort text-end" style="cursor:pointer;user-select:none" title="Сортировать">Выплачено <span class="sal-arrow text-muted small"></span></th>
+                    <th class="sal-sort text-end" style="cursor:pointer;user-select:none" title="Сортировать">Долг <span class="sal-arrow text-muted small"></span></th>
+                    <th class="sal-sort text-center" style="cursor:pointer;user-select:none" title="Сортировать">Статус <span class="sal-arrow text-muted small"></span></th>
                 </tr>
             </thead>
-            <tbody>
+            <tbody id="salTbody">
             {% for r in sal_report %}
             {% set debt = r.debt or 0 %}
             {% set paid = r.paid or 0 %}
             {% set earned = r.earned or 0 %}
+            {% set status_ord = 0 if debt <= 0 else (1 if paid > 0 else 2) %}
             <tr>
-                <td class="fw-semibold">{{ r.name }}</td>
-                <td>
+                <td class="fw-semibold" data-val="{{ r.name }}">{{ r.name }}</td>
+                <td data-val="{{ role_labels.get(r.role, r.role) }}">
                     <span class="badge badge-role-{{ r.role }} text-white">
                         {{ role_labels.get(r.role, r.role) }}
                     </span>
                 </td>
-                <td class="small text-muted">{{ r.branch_name }}</td>
-                <td class="text-center">{{ r.shifts_count }}</td>
-                <td class="text-end">{{ '{:,.0f}'.format(earned) }} ₽</td>
-                <td class="text-end text-success">{{ '{:,.0f}'.format(paid) }} ₽</td>
-                <td class="text-end {% if debt > 0 %}text-danger fw-bold{% endif %}">
+                <td class="small text-muted" data-val="{{ r.branch_name }}">{{ r.branch_name }}</td>
+                <td class="text-center" data-val="{{ r.shifts_count }}">{{ r.shifts_count }}</td>
+                <td class="text-end" data-val="{{ earned }}">{{ '{:,.0f}'.format(earned) }} ₽</td>
+                <td class="text-end text-success" data-val="{{ paid }}">{{ '{:,.0f}'.format(paid) }} ₽</td>
+                <td class="text-end {% if debt > 0 %}text-danger fw-bold{% endif %}" data-val="{{ debt }}">
                     {{ '{:,.0f}'.format(debt) }} ₽
                 </td>
-                <td class="text-center">
+                <td class="text-center" data-val="{{ status_ord }}">
                     {% if debt <= 0 %}
                         <span class="badge bg-success">Выплачено</span>
                     {% elif paid > 0 %}
@@ -522,6 +523,42 @@
             document.getElementById('salForm') && document.getElementById('salForm').submit();
         });
     }
+
+    // Salary table sort
+    (function () {
+        var table  = document.getElementById('salTable');
+        if (!table) return;
+        var tbody  = document.getElementById('salTbody');
+        var ths    = Array.from(table.querySelectorAll('thead .sal-sort'));
+        var curCol = -1, curDir = 0;
+
+        ths.forEach(function (th, idx) {
+            th.addEventListener('click', function () {
+                var dir = (curCol === idx && curDir === -1) ? 1 : -1;
+                curCol = idx; curDir = dir;
+
+                ths.forEach(function (h) {
+                    h.querySelector('.sal-arrow').textContent = '';
+                });
+                th.querySelector('.sal-arrow').textContent = dir === -1 ? '↓' : '↑';
+
+                var rows = Array.from(tbody.querySelectorAll('tr'));
+                rows.sort(function (a, b) {
+                    var aCell = a.querySelectorAll('td')[idx];
+                    var bCell = b.querySelectorAll('td')[idx];
+                    if (!aCell || !bCell) return 0;
+                    var aRaw = aCell.dataset.val !== undefined ? aCell.dataset.val : aCell.textContent.trim();
+                    var bRaw = bCell.dataset.val !== undefined ? bCell.dataset.val : bCell.textContent.trim();
+                    var aN = parseFloat(aRaw), bN = parseFloat(bRaw);
+                    var cmp = (!isNaN(aN) && !isNaN(bN))
+                        ? aN - bN
+                        : aRaw.localeCompare(bRaw, 'ru');
+                    return cmp * dir;
+                });
+                rows.forEach(function (r) { tbody.appendChild(r); });
+            });
+        });
+    })();
 })();
 </script>
 {% endblock %}
