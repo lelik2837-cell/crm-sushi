@@ -1,0 +1,340 @@
+{% extends 'base.html' %}
+{% block title %}Накладные{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="fw-bold mb-0"><i class="bi bi-box-seam"></i> Накладные</h4>
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addModal">
+        <i class="bi bi-plus"></i> Добавить накладную
+    </button>
+</div>
+
+<!-- Фильтры -->
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" class="row g-2 align-items-end">
+            <div class="col-6 col-md-2">
+                <label class="form-label small fw-semibold">С</label>
+                <input type="date" name="p_date_from" value="{{ date_from }}" class="form-control">
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label small fw-semibold">По</label>
+                <input type="date" name="p_date_to" value="{{ date_to }}" class="form-control">
+            </div>
+            {% if is_owner %}
+            <div class="col-6 col-md-2">
+                <label class="form-label small fw-semibold">Филиал</label>
+                <select name="p_branch_id" class="form-select">
+                    <option value="">Все</option>
+                    {% for b in all_branches %}
+                    <option value="{{ b.id }}" {% if branch_flt == b.id|string %}selected{% endif %}>{{ b.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+            <div class="col-6 col-md-3">
+                <label class="form-label small fw-semibold">Поставщик</label>
+                <input type="text" name="p_supplier" value="{{ supp_flt }}" class="form-control" placeholder="Поиск по поставщику" list="supp-list-flt">
+                <datalist id="supp-list-flt">
+                    {% for s in suppliers %}<option value="{{ s }}">{% endfor %}
+                </datalist>
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-primary">Применить</button>
+                <a href="{{ url_for('purchases') }}" class="btn btn-outline-secondary ms-1">Сброс</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if rows %}
+<!-- Итоги -->
+{% set total_sum = rows | sum(attribute='amount') %}
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <div class="card p-3" style="border-left:4px solid #0d6efd">
+            <div class="text-muted small">Сумма за период</div>
+            <div class="fw-bold fs-4">{{ '{:,.0f}'.format(total_sum) }} ₽</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card p-3" style="border-left:4px solid #6c757d">
+            <div class="text-muted small">Накладных</div>
+            <div class="fw-bold fs-4">{{ rows | length }}</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card p-3" style="border-left:4px solid #198754">
+            <div class="text-muted small">Поставщиков</div>
+            <div class="fw-bold fs-4">{{ by_supplier | length }}</div>
+        </div>
+    </div>
+</div>
+
+<!-- Таблица накладных -->
+<div class="card mb-4">
+    <div class="card-header bg-light fw-semibold d-flex justify-content-between">
+        <span>Список накладных</span>
+        <span class="text-muted small">{{ date_from }} — {{ date_to }}</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle" id="purchTable">
+            <thead class="table-light">
+                <tr>
+                    <th class="purch-sort" style="cursor:pointer;user-select:none">Дата <span class="purch-arrow text-muted small"></span></th>
+                    <th class="purch-sort" style="cursor:pointer;user-select:none">Поставщик <span class="purch-arrow text-muted small"></span></th>
+                    {% if is_owner %}
+                    <th class="purch-sort" style="cursor:pointer;user-select:none">Филиал <span class="purch-arrow text-muted small"></span></th>
+                    {% endif %}
+                    <th class="purch-sort text-end" style="cursor:pointer;user-select:none">Сумма ₽ <span class="purch-arrow text-muted small"></span></th>
+                    <th>Накладная №</th>
+                    <th>Заметка</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody id="purchTbody">
+            {% for r in rows %}
+            <tr>
+                <td data-val="{{ r.date }}">{{ r.date }}</td>
+                <td class="fw-semibold" data-val="{{ r.supplier }}">{{ r.supplier }}</td>
+                {% if is_owner %}
+                <td class="text-muted small" data-val="{{ r.branch_name }}">{{ r.branch_name }}</td>
+                {% endif %}
+                <td class="text-end fw-semibold" data-val="{{ r.amount }}">{{ '{:,.0f}'.format(r.amount) }} ₽</td>
+                <td class="text-muted small">{{ r.invoice_number or '—' }}</td>
+                <td class="text-muted small">{{ r.note or '' }}</td>
+                <td class="text-end" style="white-space:nowrap">
+                    <button class="btn btn-sm btn-outline-secondary me-1"
+                            data-bs-toggle="modal" data-bs-target="#editModal{{ r.id }}">
+                        <i class="bi bi-pencil"></i>
+                    </button>
+                    <form method="POST" action="{{ url_for('purchases_delete', pid=r.id) }}" class="d-inline"
+                          onsubmit="return confirm('Удалить эту накладную?')">
+                        <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+            <tfoot class="table-light fw-bold">
+                <tr>
+                    <td colspan="{{ 3 if is_owner else 2 }}">Итого</td>
+                    <td class="text-end">{{ '{:,.0f}'.format(total_sum) }} ₽</td>
+                    <td colspan="3"></td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+</div>
+
+<!-- Сводка по поставщикам -->
+<div class="card">
+    <div class="card-header bg-light fw-semibold">
+        <i class="bi bi-bar-chart-line me-1"></i> Сверка по поставщикам
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle" id="suppTable">
+            <thead class="table-light">
+                <tr>
+                    <th class="supp-sort" style="cursor:pointer;user-select:none">Поставщик <span class="supp-arrow text-muted small"></span></th>
+                    <th class="supp-sort text-center" style="cursor:pointer;user-select:none">Накладных <span class="supp-arrow text-muted small"></span></th>
+                    <th class="supp-sort text-end" style="cursor:pointer;user-select:none">Сумма ₽ <span class="supp-arrow text-muted small"></span></th>
+                    <th class="supp-sort text-end" style="cursor:pointer;user-select:none">Доля % <span class="supp-arrow text-muted small"></span></th>
+                </tr>
+            </thead>
+            <tbody id="suppTbody">
+            {% for s in by_supplier %}
+            {% set pct = (s.total / total_sum * 100) if total_sum > 0 else 0 %}
+            <tr>
+                <td class="fw-semibold" data-val="{{ s.supplier }}">
+                    <a href="{{ url_for('purchases') }}?p_date_from={{ date_from }}&p_date_to={{ date_to }}&p_supplier={{ s.supplier }}" class="text-decoration-none text-dark">
+                        {{ s.supplier }}
+                    </a>
+                </td>
+                <td class="text-center" data-val="{{ s.cnt }}">{{ s.cnt }}</td>
+                <td class="text-end fw-semibold" data-val="{{ s.total }}">{{ '{:,.0f}'.format(s.total) }} ₽</td>
+                <td class="text-end text-muted" data-val="{{ pct | round(1) }}">
+                    <div class="d-flex align-items-center justify-content-end gap-2">
+                        <span>{{ '{:.1f}'.format(pct) }}%</span>
+                        <div style="width:60px;height:8px;background:#e9ecef;border-radius:4px;overflow:hidden">
+                            <div style="width:{{ pct | round(0) }}%;height:100%;background:#0d6efd;border-radius:4px"></div>
+                        </div>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+            <tfoot class="table-light fw-bold">
+                <tr>
+                    <td>Итого</td>
+                    <td class="text-center">{{ rows | length }}</td>
+                    <td class="text-end">{{ '{:,.0f}'.format(total_sum) }} ₽</td>
+                    <td class="text-end">100%</td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+</div>
+
+{% else %}
+<div class="card">
+    <div class="card-body text-center text-muted py-5">
+        <i class="bi bi-inbox fs-1 d-block mb-2 opacity-25"></i>
+        <div class="fw-semibold">Нет накладных за выбранный период</div>
+        <div class="small mt-1">Нажмите «Добавить накладную» чтобы внести первую запись</div>
+    </div>
+</div>
+{% endif %}
+
+
+<!-- Модал добавления -->
+<div class="modal fade" id="addModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-plus-circle me-2"></i>Добавить накладную</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('purchases_add') }}">
+                <div class="modal-body">
+                    {% if is_owner %}
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Филиал *</label>
+                        <select name="branch_id" class="form-select" required>
+                            <option value="">— выберите —</option>
+                            {% for b in all_branches %}
+                            <option value="{{ b.id }}">{{ b.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% endif %}
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Поставщик *</label>
+                        <input type="text" name="supplier" class="form-control" required
+                               placeholder="Название поставщика" list="supp-list-add">
+                        <datalist id="supp-list-add">
+                            {% for s in suppliers %}<option value="{{ s }}">{% endfor %}
+                        </datalist>
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Сумма * ₽</label>
+                            <input type="number" name="amount" class="form-control" step="0.01" min="0.01" required placeholder="0">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Дата прихода *</label>
+                            <input type="date" name="date" class="form-control" value="{{ today }}" required>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Номер накладной</label>
+                        <input type="text" name="invoice_number" class="form-control" placeholder="№ 12345 от ...">
+                    </div>
+                    <div class="mb-1">
+                        <label class="form-label fw-semibold">Заметка</label>
+                        <input type="text" name="note" class="form-control" placeholder="Необязательно">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Добавить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Модалы редактирования -->
+{% for r in rows %}
+<div class="modal fade" id="editModal{{ r.id }}" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>Редактировать накладную</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('purchases_edit', pid=r.id) }}">
+                <div class="modal-body">
+                    {% if is_owner %}
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Филиал *</label>
+                        <select name="branch_id" class="form-select" required>
+                            {% for b in all_branches %}
+                            <option value="{{ b.id }}" {% if b.id == r.branch_id %}selected{% endif %}>{{ b.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% endif %}
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Поставщик *</label>
+                        <input type="text" name="supplier" class="form-control" required
+                               value="{{ r.supplier }}" list="supp-list-edit{{ r.id }}">
+                        <datalist id="supp-list-edit{{ r.id }}">
+                            {% for s in suppliers %}<option value="{{ s }}">{% endfor %}
+                        </datalist>
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Сумма * ₽</label>
+                            <input type="number" name="amount" class="form-control" step="0.01" min="0.01" required value="{{ r.amount }}">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Дата прихода *</label>
+                            <input type="date" name="date" class="form-control" value="{{ r.date }}" required>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Номер накладной</label>
+                        <input type="text" name="invoice_number" class="form-control" value="{{ r.invoice_number or '' }}" placeholder="№ 12345 от ...">
+                    </div>
+                    <div class="mb-1">
+                        <label class="form-label fw-semibold">Заметка</label>
+                        <input type="text" name="note" class="form-control" value="{{ r.note or '' }}">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endfor %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    function makeTableSortable(tableId, tbodyId, thClass, arrowClass) {
+        var table = document.getElementById(tableId);
+        if (!table) return;
+        var tbody = document.getElementById(tbodyId);
+        var ths   = Array.from(table.querySelectorAll('thead .' + thClass));
+        var curCol = -1, curDir = 0;
+        ths.forEach(function (th, idx) {
+            th.addEventListener('click', function () {
+                var dir = (curCol === idx && curDir === -1) ? 1 : -1;
+                curCol = idx; curDir = dir;
+                ths.forEach(function (h) { h.querySelector('.' + arrowClass).textContent = ''; });
+                th.querySelector('.' + arrowClass).textContent = dir === -1 ? '↓' : '↑';
+                var rows = Array.from(tbody.querySelectorAll('tr'));
+                rows.sort(function (a, b) {
+                    var ac = a.querySelectorAll('td')[idx];
+                    var bc = b.querySelectorAll('td')[idx];
+                    if (!ac || !bc) return 0;
+                    var av = ac.dataset.val !== undefined ? ac.dataset.val : ac.textContent.trim();
+                    var bv = bc.dataset.val !== undefined ? bc.dataset.val : bc.textContent.trim();
+                    var an = parseFloat(av), bn = parseFloat(bv);
+                    return ((!isNaN(an) && !isNaN(bn)) ? an - bn : av.localeCompare(bv, 'ru')) * dir;
+                });
+                rows.forEach(function (r) { tbody.appendChild(r); });
+            });
+        });
+    }
+    makeTableSortable('purchTable', 'purchTbody', 'purch-sort', 'purch-arrow');
+    makeTableSortable('suppTable',  'suppTbody',  'supp-sort',  'supp-arrow');
+})();
+</script>
+{% endblock %}

@@ -739,6 +739,21 @@ def init_db():
                 key   TEXT PRIMARY KEY,
                 value TEXT
             );
+            CREATE TABLE IF NOT EXISTS purchase_suppliers (
+                id   INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE
+            );
+            CREATE TABLE IF NOT EXISTS purchases (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                branch_id      INTEGER NOT NULL REFERENCES branches(id),
+                supplier       TEXT    NOT NULL,
+                amount         REAL    NOT NULL DEFAULT 0,
+                date           DATE    NOT NULL,
+                invoice_number TEXT,
+                note           TEXT,
+                created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_by     INTEGER REFERENCES users(id)
+            );
         ''')
 
         conn.commit()
@@ -2512,6 +2527,154 @@ def reports():
 
 
 # ─── EXPENSES REPORT ──────────────────────────────────────────────────────────
+
+# ─── PURCHASES (накладные) ────────────────────────────────────────────────────
+
+@app.route('/purchases')
+@login_required
+def purchases():
+    role = session.get('role')
+    with get_db() as conn:
+        if role == 'owner':
+            all_branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        else:
+            all_branches = []
+
+        today = date.today().isoformat()
+        first_day = date.today().replace(day=1).isoformat()
+        date_from  = request.args.get('p_date_from', first_day)
+        date_to    = request.args.get('p_date_to',   today)
+        branch_flt = request.args.get('p_branch_id', '')
+        supp_flt   = request.args.get('p_supplier',  '').strip()
+
+        where  = ['p.date >= ?', 'p.date <= ?']
+        params = [date_from, date_to]
+
+        if role != 'owner':
+            bids = _session_branch_ids()
+            if bids:
+                where.append(f"p.branch_id IN ({','.join(str(b) for b in bids)})")
+        elif branch_flt:
+            where.append('p.branch_id = ?')
+            params.append(int(branch_flt))
+
+        if supp_flt:
+            where.append('p.supplier LIKE ?')
+            params.append(f'%{supp_flt}%')
+
+        sql_where = ' AND '.join(where)
+
+        rows = conn.execute(f'''
+            SELECT p.*, b.name AS branch_name
+            FROM purchases p
+            JOIN branches b ON b.id = p.branch_id
+            WHERE {sql_where}
+            ORDER BY p.date DESC, p.id DESC
+        ''', params).fetchall()
+
+        by_supplier = conn.execute(f'''
+            SELECT p.supplier,
+                   COUNT(*) AS cnt,
+                   SUM(p.amount) AS total
+            FROM purchases p
+            JOIN branches b ON b.id = p.branch_id
+            WHERE {sql_where}
+            GROUP BY p.supplier
+            ORDER BY total DESC
+        ''', params).fetchall()
+
+        suppliers = [r['name'] for r in conn.execute(
+            'SELECT name FROM purchase_suppliers ORDER BY name'
+        ).fetchall()]
+
+    return render_template('purchases.html',
+                           rows=rows,
+                           by_supplier=by_supplier,
+                           suppliers=suppliers,
+                           all_branches=all_branches,
+                           is_owner=(role == 'owner'),
+                           date_from=date_from,
+                           date_to=date_to,
+                           branch_flt=branch_flt,
+                           supp_flt=supp_flt,
+                           today=today)
+
+
+@app.route('/purchases/add', methods=['POST'])
+@login_required
+def purchases_add():
+    role = session.get('role')
+    if role == 'owner':
+        branch_id = request.form.get('branch_id', type=int)
+    else:
+        branch_id = session.get('branch_id')
+    supplier = request.form.get('supplier', '').strip()
+    amount   = float(request.form.get('amount', 0) or 0)
+    p_date   = request.form.get('date') or date.today().isoformat()
+    inv_num  = request.form.get('invoice_number', '').strip()
+    note     = request.form.get('note', '').strip()
+    if not supplier or not branch_id or amount <= 0:
+        flash('Заполните поставщика, филиал и сумму', 'danger')
+        return redirect(url_for('purchases'))
+    with get_db() as conn:
+        conn.execute(
+            'INSERT INTO purchases (branch_id, supplier, amount, date, invoice_number, note, created_by) VALUES (?,?,?,?,?,?,?)',
+            (branch_id, supplier, amount, p_date, inv_num or None, note or None, session['user_id'])
+        )
+        conn.execute('INSERT OR IGNORE INTO purchase_suppliers (name) VALUES (?)', (supplier,))
+        conn.commit()
+    flash('Накладная добавлена', 'success')
+    return redirect(url_for('purchases'))
+
+
+@app.route('/purchases/<int:pid>/edit', methods=['POST'])
+@login_required
+def purchases_edit(pid):
+    role = session.get('role')
+    supplier = request.form.get('supplier', '').strip()
+    amount   = float(request.form.get('amount', 0) or 0)
+    p_date   = request.form.get('date') or date.today().isoformat()
+    inv_num  = request.form.get('invoice_number', '').strip()
+    note     = request.form.get('note', '').strip()
+    if role == 'owner':
+        branch_id = request.form.get('branch_id', type=int)
+    else:
+        branch_id = None
+    with get_db() as conn:
+        row = conn.execute('SELECT * FROM purchases WHERE id=?', (pid,)).fetchone()
+        if not row:
+            flash('Запись не найдена', 'danger')
+            return redirect(url_for('purchases'))
+        if role != 'owner' and row['branch_id'] not in _session_branch_ids():
+            flash('Нет доступа', 'danger')
+            return redirect(url_for('purchases'))
+        bid = branch_id if (role == 'owner' and branch_id) else row['branch_id']
+        conn.execute(
+            'UPDATE purchases SET branch_id=?, supplier=?, amount=?, date=?, invoice_number=?, note=? WHERE id=?',
+            (bid, supplier, amount, p_date, inv_num or None, note or None, pid)
+        )
+        conn.execute('INSERT OR IGNORE INTO purchase_suppliers (name) VALUES (?)', (supplier,))
+        conn.commit()
+    flash('Накладная обновлена', 'success')
+    return redirect(url_for('purchases'))
+
+
+@app.route('/purchases/<int:pid>/delete', methods=['POST'])
+@login_required
+def purchases_delete(pid):
+    with get_db() as conn:
+        row = conn.execute('SELECT * FROM purchases WHERE id=?', (pid,)).fetchone()
+        if not row:
+            flash('Запись не найдена', 'danger')
+            return redirect(url_for('purchases'))
+        if session.get('role') != 'owner' and row['branch_id'] not in _session_branch_ids():
+            flash('Нет доступа', 'danger')
+            return redirect(url_for('purchases'))
+        conn.execute('DELETE FROM purchases WHERE id=?', (pid,))
+        conn.commit()
+    flash('Накладная удалена', 'success')
+    return redirect(url_for('purchases'))
+
 
 @app.route('/report/expenses')
 @login_required

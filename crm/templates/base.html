@@ -77,6 +77,11 @@
                             </a>
                         </li>
                         <li>
+                            <a class="dropdown-item {% if request.endpoint=='purchases' %}active{% endif %}" href="{{ url_for('purchases') }}">
+                                <i class="bi bi-box-seam me-2"></i>Накладные
+                            </a>
+                        </li>
+                        <li>
                             <a class="dropdown-item {% if request.endpoint and request.endpoint.startswith('bank') %}active{% endif %}" href="{{ url_for('bank') }}">
                                 <i class="bi bi-bank me-2"></i>Банк
                             </a>
