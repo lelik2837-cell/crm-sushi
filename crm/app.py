@@ -677,6 +677,12 @@ def init_db():
             pass
 
         try:
+            conn.execute("ALTER TABLE purchases ADD COLUMN import_hash TEXT")
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_purchases_import_hash ON purchases(import_hash) WHERE import_hash IS NOT NULL")
+        except Exception:
+            pass
+
+        try:
             conn.execute("ALTER TABLE contractors ADD COLUMN is_card_merchant INTEGER DEFAULT 0")
         except Exception:
             pass
@@ -3378,6 +3384,21 @@ def purchases_import_excel():
     unique_suppliers = sorted(set(r['supplier_raw'] for r in rows if r['supplier_raw']))
     unique_payers    = sorted(set(r['payer_raw']    for r in rows if r['payer_raw']))
 
+    import hashlib
+
+    def _row_hash(row):
+        key = f"{row['date']}|{row['invoice_number']}|{row['supplier_raw']}|{row['amount']:.4f}"
+        return hashlib.md5(key.encode('utf-8')).hexdigest()
+
+    hashes = [_row_hash(r) for r in rows]
+
+    with get_db() as conn:
+        existing_hashes = set()
+        for h in hashes:
+            if conn.execute('SELECT 1 FROM purchases WHERE import_hash=?', (h,)).fetchone():
+                existing_hashes.add(h)
+    already_count = len(existing_hashes)
+
     import_key = str(uuid.uuid4())
     temp_path  = f'/tmp/crm_inv_{import_key}.json'
     with open(temp_path, 'w', encoding='utf-8') as f:
@@ -3395,6 +3416,7 @@ def purchases_import_excel():
     return render_template('purchases_import_excel.html',
         step=2, branches=branches, suppliers=suppliers,
         preview=rows[:15], total_rows=len(rows),
+        already_count=already_count,
         unique_branches=unique_branches,
         unique_suppliers=unique_suppliers,
         unique_payers=unique_payers,
@@ -3406,7 +3428,7 @@ def purchases_import_excel():
 @login_required
 @owner_required
 def purchases_import_excel_confirm():
-    import json, os
+    import json, os, hashlib
 
     import_key = session.get('inv_import_key')
     if not import_key:
@@ -3442,7 +3464,11 @@ def purchases_import_excel_confirm():
         if request.form.get(f'payer_{raw}'):
             include_payers.add(raw)
 
-    imported = skipped = 0
+    def _row_hash(row):
+        key = f"{row['date']}|{row['invoice_number']}|{row['supplier_raw']}|{row['amount']:.4f}"
+        return hashlib.md5(key.encode('utf-8')).hexdigest()
+
+    imported = skipped = duplicates = 0
     with get_db() as conn:
         for row in rows:
             payer = row['payer_raw']
@@ -3457,10 +3483,17 @@ def purchases_import_excel_confirm():
             if not supplier:
                 skipped += 1
                 continue
+
+            h = _row_hash(row)
+            existing = conn.execute('SELECT id FROM purchases WHERE import_hash=?', (h,)).fetchone()
+            if existing:
+                duplicates += 1
+                continue
+
             conn.execute(
-                'INSERT INTO purchases (branch_id, supplier, amount, date, invoice_number, payer, created_by) VALUES (?,?,?,?,?,?,?)',
+                'INSERT INTO purchases (branch_id, supplier, amount, date, invoice_number, payer, import_hash, created_by) VALUES (?,?,?,?,?,?,?,?)',
                 (branch_id, supplier, row['amount'], row['date'],
-                 row['invoice_number'] or None, payer or None, session.get('user_id'))
+                 row['invoice_number'] or None, payer or None, h, session.get('user_id'))
             )
             conn.execute('INSERT OR IGNORE INTO purchase_suppliers (name) VALUES (?)', (supplier,))
             imported += 1
@@ -3472,8 +3505,12 @@ def purchases_import_excel_confirm():
         pass
     session.pop('inv_import_key', None)
 
-    flash(f'Импортировано {imported} накладных' + (f', пропущено {skipped}' if skipped else ''),
-          'success' if imported > 0 else 'warning')
+    parts = [f'Импортировано {imported} накладных']
+    if duplicates:
+        parts.append(f'пропущено дублей: {duplicates}')
+    if skipped:
+        parts.append(f'пропущено без маппинга: {skipped}')
+    flash(', '.join(parts), 'success' if imported > 0 else 'warning')
     return redirect(url_for('purchases'))
 
 

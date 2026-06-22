@@ -38,6 +38,9 @@
     <i class="bi bi-check-circle me-1"></i>
     Файл <strong>{{ filename }}</strong> разобран: найдено <strong>{{ total_rows }}</strong> накладных
     за период <strong>{{ date_min }}</strong> — <strong>{{ date_max }}</strong>
+    {% if already_count %}
+    · <span class="text-warning fw-semibold"><i class="bi bi-exclamation-triangle me-1"></i>{{ already_count }} уже есть в базе — будут пропущены</span>
+    {% endif %}
 </div>
 
 <form method="POST" action="{{ url_for('purchases_import_excel_confirm') }}">
@@ -166,7 +169,8 @@
             <i class="bi bi-arrow-left me-1"></i>Загрузить другой файл
         </a>
         <button type="submit" class="btn btn-success px-4">
-            <i class="bi bi-check2-circle me-1"></i>Импортировать {{ total_rows }} накладных
+            <i class="bi bi-check2-circle me-1"></i>Импортировать
+            {% if already_count %}{{ total_rows - already_count }} новых{% else %}{{ total_rows }}{% endif %} накладных
         </button>
     </div>
 
