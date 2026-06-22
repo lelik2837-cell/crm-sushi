@@ -1,0 +1,161 @@
+{% extends 'base.html' %}
+{% block title %}{{ emp.full_name }} — ЗП{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
+    <a href="{{ url_for('reports') }}?tab=salary&s_date_from={{ date_from }}&s_date_to={{ date_to }}"
+       class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i> Назад к отчёту</a>
+    <h4 class="fw-bold mb-0">
+        <i class="bi bi-person-circle me-2"></i>{{ emp.full_name }}
+        <span class="badge badge-role-{{ emp.role }} text-white ms-2 fw-normal">
+            {{ role_labels.get(emp.role, emp.role) }}
+        </span>
+    </h4>
+</div>
+
+<!-- Период -->
+<div class="card mb-4">
+    <div class="card-body py-2">
+        <form method="GET" class="d-flex align-items-center gap-2 flex-wrap">
+            <span class="small fw-semibold text-muted">Период:</span>
+            <input type="date" name="date_from" value="{{ date_from }}" class="form-control form-control-sm" style="width:150px">
+            <span class="text-muted">—</span>
+            <input type="date" name="date_to" value="{{ date_to }}" class="form-control form-control-sm" style="width:150px">
+            <button class="btn btn-primary btn-sm">Показать</button>
+        </form>
+    </div>
+</div>
+
+<!-- Сводка -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <div class="card text-center p-3">
+            <div class="text-muted small mb-1">Смен</div>
+            <div class="fw-bold fs-4">{{ shifts_data | length }}</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card text-center p-3">
+            <div class="text-muted small mb-1">Начислено</div>
+            <div class="fw-bold fs-5">{{ '{:,.0f}'.format(total_earned) }} ₽</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card text-center p-3">
+            <div class="text-muted small mb-1">Выплачено</div>
+            <div class="fw-bold fs-5 text-success">{{ '{:,.0f}'.format(total_paid) }} ₽</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card text-center p-3">
+            <div class="text-muted small mb-1">Долг</div>
+            <div class="fw-bold fs-5 {% if total_debt > 0 %}text-danger{% else %}text-success{% endif %}">{{ '{:,.0f}'.format(total_debt) }} ₽</div>
+        </div>
+    </div>
+</div>
+
+<!-- Таблица смен -->
+{% if shifts_data %}
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-bold">Смены</span>
+        <span class="small text-muted">{{ date_from | date_fmt }} — {{ date_to | date_fmt }}</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle" style="font-size:0.9rem">
+            <thead class="table-light">
+                <tr>
+                    <th>Дата</th>
+                    <th>Филиал</th>
+                    <th>Должность</th>
+                    <th class="text-end">Часы</th>
+                    <th class="text-end">Км/Заказы</th>
+                    <th class="text-end">База</th>
+                    <th class="text-end">Бонус</th>
+                    <th class="text-end">Штраф</th>
+                    <th class="text-end fw-bold">Итого</th>
+                    <th class="text-end">Выплачено</th>
+                    <th class="text-center">Статус</th>
+                    <th class="text-center">Смена</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for r in shifts_data %}
+            {% set debt = (r.total_amount or 0) - (r.paid_amount or 0) %}
+            <tr>
+                <td class="fw-semibold">
+                    {% set d = r.date %}
+                    {% set dow_map = {'Mon':'Пн','Tue':'Вт','Wed':'Ср','Thu':'Чт','Fri':'Пт','Sat':'Сб','Sun':'Вс'} %}
+                    {{ r.date | date_fmt }}
+                </td>
+                <td class="small">{{ r.branch_name }}</td>
+                <td>
+                    <span class="badge badge-role-{{ r.role_snapshot }} text-white">
+                        {{ role_labels.get(r.role_snapshot, r.role_snapshot) }}
+                    </span>
+                </td>
+                <td class="text-end text-muted small">
+                    {% if r.hours_worked %}{{ '%.1f'|format(r.hours_worked) }}ч{% endif %}
+                    {% if r.shift_start and r.shift_end %}
+                    <div class="text-muted" style="font-size:0.75rem">{{ r.shift_start }}–{{ r.shift_end }}</div>
+                    {% endif %}
+                </td>
+                <td class="text-end text-muted small">
+                    {% if r.km %}<div>{{ r.km }} км</div>{% endif %}
+                    {% if r.orders %}<div>{{ r.orders }} зак.</div>{% endif %}
+                    {% if not r.km and not r.orders %}—{% endif %}
+                </td>
+                <td class="text-end">{{ '{:,.0f}'.format(r.base_pay or 0) }} ₽</td>
+                <td class="text-end text-success">
+                    {% set total_bonus = (r.bonus_amount or 0) + (r.auto_bonus or 0) %}
+                    {% if total_bonus > 0 %}
+                    +{{ '{:,.0f}'.format(total_bonus) }} ₽
+                    {% if r.bonus_comment %}<div class="text-muted" style="font-size:0.75rem">{{ r.bonus_comment }}</div>{% endif %}
+                    {% else %}—{% endif %}
+                </td>
+                <td class="text-end text-danger">
+                    {% if r.penalty_amount %}−{{ '{:,.0f}'.format(r.penalty_amount) }} ₽{% else %}—{% endif %}
+                </td>
+                <td class="text-end fw-bold">{{ '{:,.0f}'.format(r.total_amount or 0) }} ₽</td>
+                <td class="text-end text-success">{{ '{:,.0f}'.format(r.paid_amount or 0) }} ₽</td>
+                <td class="text-center">
+                    {% if debt <= 0 %}
+                        <span class="badge bg-success">Выплачено</span>
+                    {% elif r.paid_amount and r.paid_amount > 0 %}
+                        <span class="badge bg-warning text-dark">Частично</span>
+                    {% else %}
+                        <span class="badge bg-danger">Не выплачено</span>
+                    {% endif %}
+                </td>
+                <td class="text-center">
+                    <a href="{{ url_for('shift_view', shift_id=r.shift_id) }}" target="_blank"
+                       class="btn btn-sm btn-outline-secondary py-0 px-2" title="Открыть смену">
+                        <i class="bi bi-box-arrow-up-right"></i>
+                    </a>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+            <tfoot class="table-light fw-bold">
+                <tr>
+                    <td colspan="5">Итого</td>
+                    <td class="text-end">{{ '{:,.0f}'.format(shifts_data | sum(attribute='base_pay')) }} ₽</td>
+                    <td class="text-end text-success">+{{ '{:,.0f}'.format((shifts_data | sum(attribute='bonus_amount')) + (shifts_data | sum(attribute='auto_bonus'))) }} ₽</td>
+                    <td class="text-end text-danger">−{{ '{:,.0f}'.format(shifts_data | sum(attribute='penalty_amount')) }} ₽</td>
+                    <td class="text-end">{{ '{:,.0f}'.format(total_earned) }} ₽</td>
+                    <td class="text-end text-success">{{ '{:,.0f}'.format(total_paid) }} ₽</td>
+                    <td colspan="2"></td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="card">
+    <div class="card-body text-center text-muted py-5">
+        <i class="bi bi-inbox fs-1 d-block mb-2 opacity-25"></i>
+        <div class="fw-semibold">Нет смен за выбранный период</div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

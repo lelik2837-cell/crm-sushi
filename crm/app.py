@@ -774,6 +774,48 @@ def init_db():
             );
         ''')
 
+        # Feature: multiple roles per employee
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS employee_roles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                role TEXT NOT NULL,
+                rate REAL DEFAULT 0,
+                rate_per_km REAL DEFAULT 10,
+                rate_per_order REAL DEFAULT 100,
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(employee_id, role)
+            );
+        ''')
+
+        # Feature: import batches for Excel imports
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS import_batches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                branch_id INTEGER NOT NULL REFERENCES branches(id),
+                filename TEXT NOT NULL,
+                imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                imported_by INTEGER REFERENCES users(id),
+                shifts_created INTEGER DEFAULT 0,
+                expenses_created INTEGER DEFAULT 0,
+                employees_created INTEGER DEFAULT 0,
+                employee_shifts_created INTEGER DEFAULT 0
+            );
+        ''')
+        _shifts_cols = [r[1] for r in conn.execute("PRAGMA table_info(shifts)").fetchall()]
+        if 'import_batch_id' not in _shifts_cols:
+            conn.execute("ALTER TABLE shifts ADD COLUMN import_batch_id INTEGER REFERENCES import_batches(id)")
+
+        # Feature: fire/restore employees
+        _emp_cols2 = [r[1] for r in conn.execute("PRAGMA table_info(employees)").fetchall()]
+        if 'is_fired' not in _emp_cols2:
+            conn.execute("ALTER TABLE employees ADD COLUMN is_fired INTEGER DEFAULT 0")
+        if 'fired_at' not in _emp_cols2:
+            conn.execute("ALTER TABLE employees ADD COLUMN fired_at TIMESTAMP")
+        if 'fired_comment' not in _emp_cols2:
+            conn.execute("ALTER TABLE employees ADD COLUMN fired_comment TEXT DEFAULT ''")
+
         conn.commit()
 
 
@@ -1367,26 +1409,41 @@ def employees():
                 emps = conn.execute(f'''
                     SELECT e.*, b.name as branch_name
                     FROM employees e LEFT JOIN branches b ON b.id=e.branch_id
-                    WHERE e.branch_id IN ({ids_str})
+                    WHERE e.branch_id IN ({ids_str}) AND COALESCE(e.is_fired,0)=0
                     ORDER BY b.name, e.role, e.full_name
+                ''').fetchall()
+                fired_emps = conn.execute(f'''
+                    SELECT e.*, b.name as branch_name
+                    FROM employees e LEFT JOIN branches b ON b.id=e.branch_id
+                    WHERE e.branch_id IN ({ids_str}) AND e.is_fired=1
+                    ORDER BY e.fired_at DESC, e.full_name
                 ''').fetchall()
                 branches = [b for b in all_branches if str(b['id']) in selected_branches]
             else:
                 emps = conn.execute('''
                     SELECT e.*, b.name as branch_name
                     FROM employees e LEFT JOIN branches b ON b.id=e.branch_id
+                    WHERE COALESCE(e.is_fired,0)=0
                     ORDER BY b.name, e.role, e.full_name
+                ''').fetchall()
+                fired_emps = conn.execute('''
+                    SELECT e.*, b.name as branch_name
+                    FROM employees e LEFT JOIN branches b ON b.id=e.branch_id
+                    WHERE e.is_fired=1
+                    ORDER BY e.fired_at DESC, e.full_name
                 ''').fetchall()
                 branches = all_branches
         else:
             all_branches = []
+            fired_emps = []
             bids = _session_branch_ids()
             if bids:
                 ids_str = ','.join(str(int(b)) for b in bids)
                 emps = conn.execute(f'''
                     SELECT e.*, b.name as branch_name FROM employees e
                     LEFT JOIN branches b ON b.id=e.branch_id
-                    WHERE e.branch_id IN ({ids_str}) ORDER BY b.name, e.role, e.full_name
+                    WHERE e.branch_id IN ({ids_str}) AND COALESCE(e.is_fired,0)=0
+                    ORDER BY b.name, e.role, e.full_name
                 ''').fetchall()
                 branches = conn.execute(f'SELECT * FROM branches WHERE id IN ({ids_str}) ORDER BY name').fetchall()
             else:
@@ -1396,7 +1453,8 @@ def employees():
         # Rate history per employee
         rate_history = {}
         address_history = {}
-        for emp in emps:
+        all_emps_for_hist = list(emps) + list(fired_emps)
+        for emp in all_emps_for_hist:
             hist = conn.execute('''
                 SELECT * FROM employee_rate_history WHERE employee_id=?
                 ORDER BY effective_from DESC LIMIT 5
@@ -1415,9 +1473,15 @@ def employees():
         ''').fetchall():
             emp_branches_map.setdefault(row['employee_id'], []).append(row['branch_id'])
 
+        # Extra roles per employee
+        emp_roles_map = {}
+        for row in conn.execute('SELECT * FROM employee_roles WHERE is_active=1 ORDER BY role').fetchall():
+            emp_roles_map.setdefault(row['employee_id'], []).append(dict(row))
+
         shift_counts = {}
-        if emps:
-            ids_str = ','.join(str(e['id']) for e in emps)
+        all_emp_ids = [e['id'] for e in all_emps_for_hist]
+        if all_emp_ids:
+            ids_str = ','.join(str(i) for i in all_emp_ids)
             for row in conn.execute(f'''
                 SELECT employee_id, COUNT(*) as cnt FROM employee_shifts
                 WHERE employee_id IN ({ids_str}) GROUP BY employee_id
@@ -1427,7 +1491,6 @@ def employees():
         all_tmpls = conn.execute(
             'SELECT * FROM rate_templates WHERE is_active=1 ORDER BY role, name'
         ).fetchall()
-        # branch sets per template (empty set = all branches)
         tmpl_branch_sets = {}
         for row in conn.execute('SELECT template_id, branch_id FROM rate_template_branches').fetchall():
             tmpl_branch_sets.setdefault(row['template_id'], set()).add(row['branch_id'])
@@ -1441,10 +1504,12 @@ def employees():
                 result.append(t)
         return result
 
-    return render_template('employees.html', employees=emps, branches=branches,
+    return render_template('employees.html', employees=emps, fired_employees=fired_emps,
+                           branches=branches,
                            all_branches=all_branches,
                            selected_branches=selected_branches,
                            emp_branches_map=emp_branches_map,
+                           emp_roles_map=emp_roles_map,
                            role_labels=ROLE_LABELS, is_owner=(role == 'owner'),
                            rate_history=rate_history, address_history=address_history,
                            rate_templates=all_tmpls,
@@ -1532,6 +1597,35 @@ def toggle_employee(emp_id):
     with get_db() as conn:
         conn.execute('UPDATE employees SET is_active = 1-is_active WHERE id=?', (emp_id,))
         conn.commit()
+    return redirect(url_for('employees'))
+
+
+@app.route('/employees/<int:emp_id>/fire', methods=['POST'])
+@login_required
+@owner_required
+def fire_employee(emp_id):
+    comment = request.form.get('comment', '').strip()
+    with get_db() as conn:
+        conn.execute(
+            'UPDATE employees SET is_fired=1, fired_at=CURRENT_TIMESTAMP, fired_comment=?, is_active=0 WHERE id=?',
+            (comment, emp_id)
+        )
+        conn.commit()
+    flash('Сотрудник уволен', 'warning')
+    return redirect(url_for('employees'))
+
+
+@app.route('/employees/<int:emp_id>/restore', methods=['POST'])
+@login_required
+@owner_required
+def restore_employee(emp_id):
+    with get_db() as conn:
+        conn.execute(
+            'UPDATE employees SET is_fired=0, fired_at=NULL, fired_comment=NULL, is_active=1 WHERE id=?',
+            (emp_id,)
+        )
+        conn.commit()
+    flash('Сотрудник восстановлен', 'success')
     return redirect(url_for('employees'))
 
 
@@ -2439,7 +2533,8 @@ def reports():
         sal_having = 'HAVING SUM(es.total_amount) > SUM(es.paid_amount)' if s_unpaid == '1' else ''
 
         sal_report = conn.execute(f'''
-            SELECT COALESCE(e.full_name, es.full_name_snapshot) AS name,
+            SELECT es.employee_id,
+                   COALESCE(e.full_name, es.full_name_snapshot) AS name,
                    COALESCE(e.role, es.role_snapshot)           AS role,
                    b.name                                        AS branch_name,
                    COUNT(*)                                      AS shifts_count,
@@ -2555,7 +2650,156 @@ def reports():
         branch_groups=get_branch_groups(conn))
 
 
+# ─── EMPLOYEE SALARY DETAIL ───────────────────────────────────────────────────
+
+@app.route('/reports/employee/<int:emp_id>')
+@login_required
+@owner_required
+def employee_salary_detail(emp_id):
+    month_start = date.today().replace(day=1).isoformat()
+    today = date.today().isoformat()
+    date_from = request.args.get('date_from', month_start)
+    date_to   = request.args.get('date_to',   today)
+
+    with get_db() as conn:
+        emp = conn.execute('SELECT * FROM employees WHERE id=?', (emp_id,)).fetchone()
+        if not emp:
+            flash('Сотрудник не найден', 'danger')
+            return redirect(url_for('reports') + '?tab=salary')
+
+        shifts_data = conn.execute('''
+            SELECT es.id AS es_id,
+                   s.id  AS shift_id,
+                   s.date,
+                   b.name AS branch_name,
+                   es.role_snapshot,
+                   es.hours_worked,
+                   es.km,
+                   es.orders,
+                   es.shift_start,
+                   es.shift_end,
+                   es.base_pay,
+                   es.bonus_amount,
+                   COALESCE(es.auto_bonus, 0) AS auto_bonus,
+                   es.penalty_amount,
+                   es.total_amount,
+                   es.paid_amount,
+                   es.is_paid,
+                   es.bonus_comment
+            FROM employee_shifts es
+            JOIN shifts s ON s.id = es.shift_id
+            JOIN branches b ON b.id = s.branch_id
+            WHERE es.employee_id = ? AND s.date BETWEEN ? AND ?
+            ORDER BY s.date DESC, b.name
+        ''', (emp_id, date_from, date_to)).fetchall()
+
+        total_earned = sum(float(r['total_amount'] or 0) for r in shifts_data)
+        total_paid   = sum(float(r['paid_amount']   or 0) for r in shifts_data)
+        total_debt   = total_earned - total_paid
+
+    return render_template('employee_salary_detail.html',
+        emp=emp, shifts_data=shifts_data,
+        date_from=date_from, date_to=date_to,
+        total_earned=total_earned, total_paid=total_paid, total_debt=total_debt,
+        role_labels=ROLE_LABELS)
+
+
 # ─── EXPENSES REPORT ──────────────────────────────────────────────────────────
+
+
+# ─── CASH FLOW REPORT ────────────────────────────────────────────────────────
+
+@app.route('/report/cash-flow')
+@login_required
+@owner_required
+def cash_flow_report():
+    from collections import defaultdict
+    today      = date.today().isoformat()
+    month_start = date.today().replace(day=1).isoformat()
+    date_from  = request.args.get('date_from', month_start)
+    date_to    = request.args.get('date_to',   today)
+    branch_id  = request.args.get('branch_id', '')
+
+    with get_db() as conn:
+        branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        bf = f'AND s.branch_id = {int(branch_id)}' if branch_id.isdigit() else ''
+
+        revenue_rows = conn.execute(f'''
+            SELECT s.date, s.id AS shift_id, b.id AS branch_id, b.name AS branch_name,
+                   COALESCE(r.cash_amount, 0)  AS cash_revenue,
+                   COALESCE(r.actual_cash, 0)  AS actual_cash,
+                   COALESCE(r.actual_cash_comment, '') AS actual_cash_comment
+            FROM shifts s
+            JOIN branches b ON b.id = s.branch_id
+            LEFT JOIN shift_revenue r ON r.shift_id = s.id
+            WHERE s.date BETWEEN ? AND ? {bf}
+            ORDER BY s.date, b.name
+        ''', (date_from, date_to)).fetchall()
+
+        expense_rows = conn.execute(f'''
+            SELECT s.date, s.branch_id, COALESCE(SUM(e.amount_cash), 0) AS expenses_cash
+            FROM expenses e
+            JOIN shifts s ON s.id = e.shift_id
+            WHERE s.date BETWEEN ? AND ? {bf}
+            GROUP BY s.date, s.branch_id
+        ''', (date_from, date_to)).fetchall()
+
+        salary_rows = conn.execute(f'''
+            SELECT sp.payment_date, s.branch_id, COALESCE(SUM(sp.amount), 0) AS salary_paid
+            FROM salary_payments sp
+            JOIN employee_shifts es ON es.id = sp.employee_shift_id
+            JOIN shifts s ON s.id = es.shift_id
+            WHERE sp.payment_date BETWEEN ? AND ? {bf}
+            GROUP BY sp.payment_date, s.branch_id
+        ''', (date_from, date_to)).fetchall()
+
+    exp_map = defaultdict(float)
+    for r in expense_rows:
+        exp_map[(r['date'], r['branch_id'])] += r['expenses_cash']
+
+    sal_map = defaultdict(float)
+    for r in salary_rows:
+        sal_map[(r['payment_date'], r['branch_id'])] += r['salary_paid']
+
+    days = {}
+    for r in revenue_rows:
+        d = r['date']
+        bid = r['branch_id']
+        exp = exp_map.get((d, bid), 0)
+        sal = sal_map.get((d, bid), 0)
+        if d not in days:
+            days[d] = {'date': d, 'shifts': [], 'cash_revenue': 0.0,
+                       'expenses_cash': 0.0, 'salary_paid': 0.0, 'actual_cash': 0.0}
+        days[d]['shifts'].append({
+            'shift_id':   r['shift_id'],
+            'branch_name': r['branch_name'],
+            'cash_revenue': r['cash_revenue'],
+            'expenses_cash': exp,
+            'salary_paid':  sal,
+            'actual_cash':  r['actual_cash'],
+            'actual_cash_comment': r['actual_cash_comment'],
+        })
+        days[d]['cash_revenue']  += r['cash_revenue']
+        days[d]['expenses_cash'] += exp
+        days[d]['salary_paid']   += sal
+        days[d]['actual_cash']   += r['actual_cash']
+
+    all_dates   = sorted(days.keys())
+    prev_cash   = {}
+    for i, d in enumerate(all_dates):
+        prev_cash[d] = days[all_dates[i-1]]['actual_cash'] if i > 0 else 0.0
+
+    sorted_days = [days[d] for d in reversed(all_dates)]
+    for day in sorted_days:
+        day['morning_cash'] = prev_cash.get(day['date'], 0.0)
+
+    return render_template('cash_flow.html',
+        days=sorted_days,
+        branches=branches,
+        date_from=date_from, date_to=date_to,
+        branch_id=branch_id,
+        branch_groups=get_branch_groups(conn))
+
 
 # ─── API 1C ИНТЕГРАЦИЯ ────────────────────────────────────────────────────────
 
@@ -3023,6 +3267,10 @@ def api_employee(emp_id):
         emp = conn.execute('SELECT * FROM employees WHERE id=?', (emp_id,)).fetchone()
         if not emp:
             return jsonify({}), 404
+        roles = conn.execute(
+            'SELECT * FROM employee_roles WHERE employee_id=? AND is_active=1 ORDER BY role',
+            (emp_id,)
+        ).fetchall()
         return jsonify({
             'id': emp['id'],
             'full_name': emp['full_name'],
@@ -3030,7 +3278,52 @@ def api_employee(emp_id):
             'rate': emp['rate'],
             'rate_per_km': emp['rate_per_km'],
             'rate_per_order': emp['rate_per_order'],
+            'extra_roles': [
+                {'role': r['role'], 'rate': r['rate'],
+                 'rate_per_km': r['rate_per_km'], 'rate_per_order': r['rate_per_order']}
+                for r in roles
+            ],
         })
+
+
+@app.route('/employees/<int:emp_id>/roles/add', methods=['POST'])
+@login_required
+@owner_required
+def add_employee_role(emp_id):
+    role = request.form.get('role', '').strip()
+    rate = float(request.form.get('rate', 0) or 0)
+    rate_km  = float(request.form.get('rate_per_km', 10) or 10)
+    rate_ord = float(request.form.get('rate_per_order', 100) or 100)
+    if not role or role not in ROLE_LABELS:
+        flash('Выберите должность', 'danger')
+        return redirect(url_for('employees'))
+    with get_db() as conn:
+        try:
+            conn.execute(
+                'INSERT INTO employee_roles (employee_id, role, rate, rate_per_km, rate_per_order) VALUES (?,?,?,?,?)',
+                (emp_id, role, rate, rate_km, rate_ord)
+            )
+            conn.commit()
+            flash('Должность добавлена', 'success')
+        except Exception:
+            conn.execute(
+                'UPDATE employee_roles SET rate=?, rate_per_km=?, rate_per_order=? WHERE employee_id=? AND role=?',
+                (rate, rate_km, rate_ord, emp_id, role)
+            )
+            conn.commit()
+            flash('Ставка по должности обновлена', 'success')
+    return redirect(url_for('employees'))
+
+
+@app.route('/employees/roles/<int:role_id>/delete', methods=['POST'])
+@login_required
+@owner_required
+def delete_employee_role(role_id):
+    with get_db() as conn:
+        conn.execute('DELETE FROM employee_roles WHERE id=?', (role_id,))
+        conn.commit()
+    flash('Должность удалена', 'success')
+    return redirect(url_for('employees'))
 
 
 # ─── HELPERS ──────────────────────────────────────────────────────────────────
@@ -4233,7 +4526,7 @@ def _xts(t):
     return None
 
 
-def _xl_process_sheet(ws, branch_id, conn, stats):
+def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
     from datetime import date as _d, datetime as _dt
     rows = list(ws.iter_rows(min_row=1, values_only=True))
     if len(rows) < 7:
@@ -4284,8 +4577,8 @@ def _xl_process_sheet(ws, branch_id, conn, stats):
     else:
         status = 'closed' if closed_by_name else 'open'
         conn.execute(
-            "INSERT INTO shifts (branch_id, date, status, closed_by_name) VALUES (?,?,?,?)",
-            (branch_id, shift_date.isoformat(), status, closed_by_name)
+            "INSERT INTO shifts (branch_id, date, status, closed_by_name, import_batch_id) VALUES (?,?,?,?,?)",
+            (branch_id, shift_date.isoformat(), status, closed_by_name, batch_id)
         )
         shift_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         stats['shifts'] += 1
@@ -4434,30 +4727,35 @@ def _xl_process_sheet(ws, branch_id, conn, stats):
 @login_required
 @owner_required
 def excel_import():
-    branches = get_db().execute(
-        "SELECT id, name FROM branches WHERE is_active=1 ORDER BY name"
-    ).fetchall()
+    with get_db() as conn:
+        branches = conn.execute(
+            "SELECT id, name FROM branches WHERE is_active=1 ORDER BY name"
+        ).fetchall()
+        import_batches = conn.execute('''
+            SELECT ib.*, b.name as branch_name
+            FROM import_batches ib
+            JOIN branches b ON b.id = ib.branch_id
+            ORDER BY ib.imported_at DESC LIMIT 50
+        ''').fetchall()
 
     if request.method == 'POST':
         branch_id = request.form.get('branch_id', '').strip()
         if not branch_id:
             flash('Выберите филиал', 'danger')
-            return render_template('import_excel.html', branches=branches)
+            return render_template('import_excel.html', branches=branches, import_batches=import_batches)
 
         branch_id = int(branch_id)
         files = request.files.getlist('files')
         if not files or all(f.filename == '' for f in files):
             flash('Выберите хотя бы один файл', 'danger')
-            return render_template('import_excel.html', branches=branches)
+            return render_template('import_excel.html', branches=branches, import_batches=import_batches)
 
         try:
             import openpyxl
             import io as _io
         except ImportError:
             flash('Библиотека openpyxl не установлена на сервере', 'danger')
-            return render_template('import_excel.html', branches=branches)
-
-        total_stats = {'shifts': 0, 'expenses': 0, 'employees': 0, 'employee_shifts': 0}
+            return render_template('import_excel.html', branches=branches, import_batches=import_batches)
 
         with get_db() as conn:
             for file in files:
@@ -4465,25 +4763,72 @@ def excel_import():
                     continue
                 data = file.read()
                 wb = openpyxl.load_workbook(_io.BytesIO(data), data_only=True)
+
+                file_stats = {'shifts': 0, 'expenses': 0, 'employees': 0, 'employee_shifts': 0}
+
+                # Create batch record for this file
+                conn.execute(
+                    'INSERT INTO import_batches (branch_id, filename, imported_by) VALUES (?,?,?)',
+                    (branch_id, file.filename, session.get('user_id'))
+                )
+                batch_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+
                 for sheet_name in wb.sheetnames:
                     if sheet_name not in _XL_DAY_SHEETS:
                         continue
                     ws = wb[sheet_name]
                     stats = {'shifts': 0, 'expenses': 0, 'employees': 0, 'employee_shifts': 0}
-                    _xl_process_sheet(ws, branch_id, conn, stats)
-                    for k in total_stats:
-                        total_stats[k] += stats[k]
+                    _xl_process_sheet(ws, branch_id, conn, stats, batch_id=batch_id)
+                    for k in file_stats:
+                        file_stats[k] += stats[k]
 
-        flash(
-            f'Импорт завершён: смен +{total_stats["shifts"]}, '
-            f'расходов +{total_stats["expenses"]}, '
-            f'сотрудников +{total_stats["employees"]}, '
-            f'записей зарплаты +{total_stats["employee_shifts"]}',
-            'success'
-        )
-        return render_template('import_excel.html', branches=branches)
+                conn.execute(
+                    '''UPDATE import_batches SET shifts_created=?, expenses_created=?,
+                       employees_created=?, employee_shifts_created=? WHERE id=?''',
+                    (file_stats['shifts'], file_stats['expenses'],
+                     file_stats['employees'], file_stats['employee_shifts'], batch_id)
+                )
 
-    return render_template('import_excel.html', branches=branches)
+                flash(
+                    f'Файл «{file.filename}»: смен +{file_stats["shifts"]}, '
+                    f'расходов +{file_stats["expenses"]}, '
+                    f'сотрудников +{file_stats["employees"]}, '
+                    f'записей зарплаты +{file_stats["employee_shifts"]}',
+                    'success'
+                )
+
+        return redirect(url_for('excel_import'))
+
+    return render_template('import_excel.html', branches=branches, import_batches=import_batches)
+
+
+@app.route('/excel-import/batch/<int:batch_id>/delete', methods=['POST'])
+@login_required
+@owner_required
+def delete_import_batch(batch_id):
+    with get_db() as conn:
+        batch = conn.execute('SELECT * FROM import_batches WHERE id=?', (batch_id,)).fetchone()
+        if not batch:
+            flash('Импорт не найден', 'danger')
+            return redirect(url_for('excel_import'))
+
+        shift_ids = [r[0] for r in conn.execute(
+            'SELECT id FROM shifts WHERE import_batch_id=?', (batch_id,)
+        ).fetchall()]
+
+        if shift_ids:
+            ids_str = ','.join(str(i) for i in shift_ids)
+            conn.execute(f'DELETE FROM salary_payments WHERE employee_shift_id IN (SELECT id FROM employee_shifts WHERE shift_id IN ({ids_str}))')
+            conn.execute(f'DELETE FROM employee_shifts WHERE shift_id IN ({ids_str})')
+            conn.execute(f'DELETE FROM expenses WHERE shift_id IN ({ids_str})')
+            conn.execute(f'DELETE FROM shift_revenue WHERE shift_id IN ({ids_str})')
+            conn.execute(f'DELETE FROM shifts WHERE id IN ({ids_str})')
+
+        conn.execute('DELETE FROM import_batches WHERE id=?', (batch_id,))
+        conn.commit()
+
+    flash(f'Импорт «{batch["filename"]}» удалён ({len(shift_ids)} смен)', 'success')
+    return redirect(url_for('excel_import'))
 
 
 # ──────────────────────────────────────────────────────────────────────────────

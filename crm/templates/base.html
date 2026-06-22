@@ -77,6 +77,11 @@
                             </a>
                         </li>
                         <li>
+                            <a class="dropdown-item {% if request.endpoint=='cash_flow_report' %}active{% endif %}" href="{{ url_for('cash_flow_report') }}">
+                                <i class="bi bi-cash-stack me-2"></i>Движение наличных
+                            </a>
+                        </li>
+                        <li>
                             <a class="dropdown-item {% if request.endpoint=='purchases' %}active{% endif %}" href="{{ url_for('purchases') }}">
                                 <i class="bi bi-box-seam me-2"></i>Накладные
                             </a>

@@ -65,6 +65,54 @@
             </ol>
         </div>
     </div>
+
+    {% if import_batches %}
+    <div class="card mt-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-archive me-1"></i> История импортов</span>
+            <span class="small text-muted">Последние {{ import_batches | length }}</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover mb-0 align-middle" style="font-size:0.9rem">
+                <thead class="table-light">
+                    <tr>
+                        <th>Файл</th>
+                        <th>Филиал</th>
+                        <th>Дата импорта</th>
+                        <th class="text-center">Смен</th>
+                        <th class="text-center">Записей ЗП</th>
+                        <th class="text-center">Расходов</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for b in import_batches %}
+                <tr>
+                    <td>{{ b.filename }}</td>
+                    <td class="small text-muted">{{ b.branch_name }}</td>
+                    <td class="small text-muted">{{ b.imported_at[:16] if b.imported_at else '—' }}</td>
+                    <td class="text-center">{{ b.shifts_created }}</td>
+                    <td class="text-center">{{ b.employee_shifts_created }}</td>
+                    <td class="text-center">{{ b.expenses_created }}</td>
+                    <td class="text-end">
+                        {% if b.shifts_created > 0 %}
+                        <form method="POST" action="/excel-import/batch/{{ b.id }}/delete"
+                              onsubmit="return confirm('Удалить импорт «{{ b.filename }}»?\nБудут удалены {{ b.shifts_created }} смен(ы) и все связанные данные. Это нельзя отменить.')">
+                            <button class="btn btn-sm btn-outline-danger" title="Удалить импорт">
+                                <i class="bi bi-trash"></i> Удалить
+                            </button>
+                        </form>
+                        {% else %}
+                        <span class="small text-muted">пропущен</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
 </div>
 
 <script>

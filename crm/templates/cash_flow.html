@@ -1,0 +1,172 @@
+{% extends 'base.html' %}
+{% block title %}Движение наличных{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="fw-bold mb-0"><i class="bi bi-cash-stack me-2"></i>Движение наличных</h4>
+</div>
+
+<!-- Фильтры -->
+<div class="card mb-4">
+    <div class="card-body py-2">
+        <form method="GET" class="d-flex align-items-center gap-2 flex-wrap">
+            <span class="small fw-semibold text-muted">Период:</span>
+            <input type="date" name="date_from" value="{{ date_from }}" class="form-control form-control-sm" style="width:150px">
+            <span class="text-muted">—</span>
+            <input type="date" name="date_to" value="{{ date_to }}" class="form-control form-control-sm" style="width:150px">
+            <select name="branch_id" class="form-select form-select-sm" style="width:200px">
+                <option value="">Все филиалы</option>
+                {% for b in branches %}
+                <option value="{{ b.id }}" {% if b.id|string == branch_id %}selected{% endif %}>{{ b.name }}</option>
+                {% endfor %}
+            </select>
+            <button class="btn btn-primary btn-sm">Показать</button>
+        </form>
+    </div>
+</div>
+
+{% if days %}
+<div class="accordion" id="cashAccordion">
+{% for day in days %}
+{% set loop_id = 'day_' ~ loop.index %}
+{% set ru_days = {'Mon':'Пн','Tue':'Вт','Wed':'Ср','Thu':'Чт','Fri':'Пт','Sat':'Сб','Sun':'Вс'} %}
+<div class="card mb-2">
+    <div class="card-header p-0" id="h{{ loop_id }}">
+        <button class="btn w-100 text-start d-flex align-items-center gap-3 py-2 px-3 collapsed"
+                type="button" data-bs-toggle="collapse" data-bs-target="#c{{ loop_id }}"
+                aria-expanded="false">
+            <span class="fw-bold" style="min-width:120px">{{ day.date | date_fmt }}</span>
+            <span class="d-flex gap-3 flex-wrap small">
+                <span class="text-muted">Утром: <span class="fw-semibold text-dark">{% if day.morning_cash %}{{ '{:,.0f}'.format(day.morning_cash) }} ₽{% else %}—{% endif %}</span></span>
+                <span class="text-muted">Выручка нал: <span class="fw-semibold text-primary">+{{ '{:,.0f}'.format(day.cash_revenue) }} ₽</span></span>
+                <span class="text-muted">Расходы нал: <span class="fw-semibold text-warning">−{{ '{:,.0f}'.format(day.expenses_cash) }} ₽</span></span>
+                <span class="text-muted">ФОТ выплачен: <span class="fw-semibold text-danger">−{{ '{:,.0f}'.format(day.salary_paid) }} ₽</span></span>
+                <span class="text-muted">Вечером:
+                    {% if day.actual_cash %}
+                    <span class="fw-bold {% if day.actual_cash > 0 %}text-success{% else %}text-danger{% endif %}">{{ '{:,.0f}'.format(day.actual_cash) }} ₽</span>
+                    {% else %}
+                    <span class="text-muted fw-semibold">—</span>
+                    {% endif %}
+                </span>
+            </span>
+            <i class="bi bi-chevron-down ms-auto"></i>
+        </button>
+    </div>
+    <div id="c{{ loop_id }}" class="collapse" data-bs-parent="">
+        <div class="card-body pt-2 pb-3">
+            {% if day.shifts | length > 1 %}
+            <!-- Сводка по дню (несколько филиалов) -->
+            <div class="row g-3 mb-3">
+                <div class="col-6 col-md-2">
+                    <div class="card bg-light text-center py-2">
+                        <div class="small text-muted">Утром в кассе</div>
+                        <div class="fw-bold">{% if day.morning_cash %}{{ '{:,.0f}'.format(day.morning_cash) }} ₽{% else %}—{% endif %}</div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-2">
+                    <div class="card bg-light text-center py-2">
+                        <div class="small text-muted">Выручка нал</div>
+                        <div class="fw-bold text-primary">+{{ '{:,.0f}'.format(day.cash_revenue) }} ₽</div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-2">
+                    <div class="card bg-light text-center py-2">
+                        <div class="small text-muted">Расходы нал</div>
+                        <div class="fw-bold text-warning">−{{ '{:,.0f}'.format(day.expenses_cash) }} ₽</div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-2">
+                    <div class="card bg-light text-center py-2">
+                        <div class="small text-muted">ФОТ выплачен</div>
+                        <div class="fw-bold text-danger">−{{ '{:,.0f}'.format(day.salary_paid) }} ₽</div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-2">
+                    <div class="card bg-light text-center py-2">
+                        <div class="small text-muted">Вечером в кассе</div>
+                        <div class="fw-bold {% if day.actual_cash %}text-success{% endif %}">{{ '{:,.0f}'.format(day.actual_cash) }} ₽</div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- По филиалам -->
+            <div class="table-responsive">
+                <table class="table table-sm mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Филиал</th>
+                            <th class="text-end">Выручка нал</th>
+                            <th class="text-end">Расходы нал</th>
+                            <th class="text-end">ФОТ выплачен</th>
+                            <th class="text-end">Факт в кассе</th>
+                            <th class="text-center">Смена</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for s in day.shifts %}
+                    <tr>
+                        <td class="fw-semibold">{{ s.branch_name }}</td>
+                        <td class="text-end text-primary">+{{ '{:,.0f}'.format(s.cash_revenue) }} ₽</td>
+                        <td class="text-end text-warning">−{{ '{:,.0f}'.format(s.expenses_cash) }} ₽</td>
+                        <td class="text-end text-danger">−{{ '{:,.0f}'.format(s.salary_paid) }} ₽</td>
+                        <td class="text-end fw-bold {% if s.actual_cash %}text-success{% else %}text-muted{% endif %}">
+                            {{ '{:,.0f}'.format(s.actual_cash) }} ₽
+                            {% if s.actual_cash_comment %}
+                            <div class="text-muted fw-normal" style="font-size:0.75rem">{{ s.actual_cash_comment }}</div>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            <a href="{{ url_for('shift_view', shift_id=s.shift_id) }}" target="_blank"
+                               class="btn btn-sm btn-outline-secondary py-0 px-2">
+                                <i class="bi bi-box-arrow-up-right"></i>
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                    {% if day.shifts | length > 1 %}
+                    <tfoot class="table-light fw-bold">
+                        <tr>
+                            <td>Итого</td>
+                            <td class="text-end text-primary">+{{ '{:,.0f}'.format(day.cash_revenue) }} ₽</td>
+                            <td class="text-end text-warning">−{{ '{:,.0f}'.format(day.expenses_cash) }} ₽</td>
+                            <td class="text-end text-danger">−{{ '{:,.0f}'.format(day.salary_paid) }} ₽</td>
+                            <td class="text-end text-success">{{ '{:,.0f}'.format(day.actual_cash) }} ₽</td>
+                            <td></td>
+                        </tr>
+                    </tfoot>
+                    {% endif %}
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endfor %}
+</div>
+{% else %}
+<div class="card">
+    <div class="card-body text-center text-muted py-5">
+        <i class="bi bi-cash-stack fs-1 d-block mb-2 opacity-25"></i>
+        <div class="fw-semibold">Нет данных за выбранный период</div>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Rotate chevron on accordion toggle
+document.querySelectorAll('[data-bs-toggle="collapse"]').forEach(function(btn) {
+    var target = document.querySelector(btn.dataset.bsTarget);
+    if (!target) return;
+    target.addEventListener('show.bs.collapse', function() {
+        btn.querySelector('.bi-chevron-down').style.transform = 'rotate(180deg)';
+    });
+    target.addEventListener('hide.bs.collapse', function() {
+        btn.querySelector('.bi-chevron-down').style.transform = '';
+    });
+});
+</script>
+{% endblock %}

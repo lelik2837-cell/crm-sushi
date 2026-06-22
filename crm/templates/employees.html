@@ -362,6 +362,86 @@
                     <button type="submit" class="btn btn-primary">Сохранить</button>
                 </div>
             </form>
+
+            <!-- Дополнительные должности -->
+            {% if is_owner %}
+            <div class="px-3 pb-3">
+                <hr>
+                <div class="fw-semibold mb-2"><i class="bi bi-layers me-1"></i>Доп. должности и ставки</div>
+                {% set extra_roles = emp_roles_map.get(emp.id, []) %}
+                {% if extra_roles %}
+                <div class="mb-2">
+                    {% for er in extra_roles %}
+                    <div class="d-flex align-items-center gap-2 mb-1">
+                        <span class="badge badge-role-{{ er.role }} text-white">{{ role_labels.get(er.role, er.role) }}</span>
+                        <span class="small text-muted">{{ er.rate }}₽/ч{% if er.role == 'courier' %}, {{ er.rate_per_km }}₽/км, {{ er.rate_per_order }}₽/заказ{% endif %}</span>
+                        <form method="POST" action="{{ url_for('delete_employee_role', role_id=er.id) }}" class="d-inline ms-auto">
+                            <button class="btn btn-sm btn-outline-danger py-0 px-1" title="Удалить должность"
+                                    onclick="return confirm('Удалить должность {{ role_labels.get(er.role, er.role) }}?')">
+                                <i class="bi bi-x"></i>
+                            </button>
+                        </form>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                <form method="POST" action="{{ url_for('add_employee_role', emp_id=emp.id) }}" class="mt-2">
+                    <div class="row g-2 align-items-end">
+                        <div class="col-5">
+                            <label class="form-label small">Должность</label>
+                            <select name="role" class="form-select form-select-sm" id="extra-role-sel-{{ emp.id }}"
+                                    onchange="toggleExtraRoleCourier(this, {{ emp.id }})">
+                                {% for code, label in role_labels.items() %}
+                                {% if code != emp.role %}
+                                <option value="{{ code }}">{{ label }}</option>
+                                {% endif %}
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-3">
+                            <label class="form-label small">₽/час</label>
+                            <input type="number" name="rate" class="form-control form-control-sm" value="0" step="0.01" id="extra-rate-{{ emp.id }}">
+                        </div>
+                        <div class="col-auto extra-courier-{{ emp.id }}" style="display:none">
+                            <label class="form-label small">₽/км</label>
+                            <input type="number" name="rate_per_km" class="form-control form-control-sm" value="10" step="0.01">
+                        </div>
+                        <div class="col-auto extra-courier-{{ emp.id }}" style="display:none">
+                            <label class="form-label small">₽/заказ</label>
+                            <input type="number" name="rate_per_order" class="form-control form-control-sm" value="100" step="0.01">
+                        </div>
+                        <div class="col-auto">
+                            <button class="btn btn-sm btn-outline-primary" type="submit">
+                                <i class="bi bi-plus"></i> Добавить
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            {% endif %}
+
+            <!-- Уволить -->
+            {% if is_owner %}
+            <div class="px-3 pb-3">
+                <hr>
+                <button class="btn btn-sm btn-outline-danger" type="button"
+                        data-bs-toggle="collapse" data-bs-target="#fireSection{{ emp.id }}">
+                    <i class="bi bi-door-open me-1"></i>Уволить сотрудника
+                </button>
+                <div class="collapse mt-2" id="fireSection{{ emp.id }}">
+                    <form method="POST" action="{{ url_for('fire_employee', emp_id=emp.id) }}"
+                          onsubmit="return confirm('Уволить {{ emp.full_name }}?')">
+                        <div class="mb-2">
+                            <input type="text" name="comment" class="form-control form-control-sm"
+                                   placeholder="Причина увольнения (необязательно)">
+                        </div>
+                        <button type="submit" class="btn btn-sm btn-danger">
+                            <i class="bi bi-door-open me-1"></i>Подтвердить увольнение
+                        </button>
+                    </form>
+                </div>
+            </div>
+            {% endif %}
         </div>
     </div>
 </div>
@@ -421,6 +501,54 @@
 {% endfor %}
 {% endif %}
 
+<!-- Уволенные сотрудники -->
+{% if is_owner and fired_employees %}
+<div class="card mt-4 border-danger border-opacity-25">
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <span class="fw-bold text-danger"><i class="bi bi-door-open me-2"></i>Уволенные сотрудники</span>
+        <span class="badge bg-secondary">{{ fired_employees | length }}</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle" style="font-size:0.9rem">
+            <thead class="table-light">
+                <tr>
+                    <th>Фамилия</th>
+                    <th>Имя</th>
+                    <th>Филиал</th>
+                    <th>Должность</th>
+                    <th>Дата увольнения</th>
+                    <th>Причина</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for emp in fired_employees %}
+            <tr class="table-danger opacity-75">
+                <td class="fw-semibold">{{ emp.last_name or emp.full_name }}</td>
+                <td>{{ emp.first_name or '' }}</td>
+                <td class="small text-muted">{{ emp.branch_name or '—' }}</td>
+                <td>
+                    <span class="badge badge-role-{{ emp.role }} text-white">
+                        {{ role_labels.get(emp.role, emp.role) }}
+                    </span>
+                </td>
+                <td class="small text-muted">{{ emp.fired_at[:10] if emp.fired_at else '—' }}</td>
+                <td class="small text-muted">{{ emp.fired_comment or '—' }}</td>
+                <td class="text-end">
+                    <form method="POST" action="{{ url_for('restore_employee', emp_id=emp.id) }}" class="d-inline">
+                        <button class="btn btn-sm btn-outline-success" title="Восстановить сотрудника">
+                            <i class="bi bi-arrow-counterclockwise"></i> Восстановить
+                        </button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
 {% endblock %}
 
 {% block scripts %}
@@ -440,6 +568,13 @@ function applyRateTemplate(sel, empId) {
 function toggleCourierFields(prefix, role) {
     document.querySelectorAll('.courier-only-' + prefix).forEach(el => {
         el.style.display = role === 'courier' ? '' : 'none';
+    });
+}
+
+function toggleExtraRoleCourier(sel, empId) {
+    var show = sel.value === 'courier';
+    document.querySelectorAll('.extra-courier-' + empId).forEach(function(el) {
+        el.style.display = show ? '' : 'none';
     });
 }
 

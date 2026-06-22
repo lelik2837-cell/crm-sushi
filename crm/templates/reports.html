@@ -417,7 +417,12 @@
             {% set earned = r.earned or 0 %}
             {% set status_ord = 0 if debt <= 0 else (1 if paid > 0 else 2) %}
             <tr>
-                <td class="fw-semibold" data-val="{{ r.name }}">{{ r.name }}</td>
+                <td class="fw-semibold" data-val="{{ r.name }}">
+                    {% if r.employee_id %}
+                    <a href="{{ url_for('employee_salary_detail', emp_id=r.employee_id) }}?date_from={{ s_date_from }}&date_to={{ s_date_to }}"
+                       target="_blank" class="text-decoration-none">{{ r.name }} <i class="bi bi-box-arrow-up-right small text-muted"></i></a>
+                    {% else %}{{ r.name }}{% endif %}
+                </td>
                 <td data-val="{{ role_labels.get(r.role, r.role) }}">
                     <span class="badge badge-role-{{ r.role }} text-white">
                         {{ role_labels.get(r.role, r.role) }}
