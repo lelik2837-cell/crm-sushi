@@ -85,6 +85,11 @@
                             <a class="dropdown-item {% if request.endpoint=='purchases' %}active{% endif %}" href="{{ url_for('purchases') }}">
                                 <i class="bi bi-box-seam me-2"></i>Накладные
                             </a>
+                            {% if session.get('role') == 'owner' %}
+                            <a class="dropdown-item {% if request.endpoint and 'purchases_import' in request.endpoint %}active{% endif %}" href="{{ url_for('purchases_import_excel') }}">
+                                <i class="bi bi-file-earmark-spreadsheet me-2"></i>Импорт накладных
+                            </a>
+                            {% endif %}
                         </li>
                         <li>
                             <a class="dropdown-item {% if request.endpoint and request.endpoint.startswith('bank') %}active{% endif %}" href="{{ url_for('bank') }}">

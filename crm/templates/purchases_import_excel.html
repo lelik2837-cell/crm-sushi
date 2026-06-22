@@ -1,0 +1,176 @@
+{% extends 'base.html' %}
+{% block title %}Импорт накладных из Excel{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center gap-3 mb-3">
+    <h4 class="fw-bold mb-0"><i class="bi bi-file-earmark-spreadsheet me-2"></i>Импорт накладных из Excel</h4>
+    <a href="{{ url_for('purchases') }}" class="btn btn-sm btn-outline-secondary ms-auto">
+        <i class="bi bi-arrow-left me-1"></i>К накладным
+    </a>
+</div>
+
+{% if step == 1 %}
+<!-- ══ ШАГ 1: ЗАГРУЗКА ФАЙЛА ══ -->
+<div class="card" style="max-width:520px">
+    <div class="card-header fw-semibold bg-light">
+        <i class="bi bi-upload me-2"></i>Загрузить файл накладных
+    </div>
+    <div class="card-body">
+        <p class="text-muted small mb-3">
+            Поддерживаются файлы <strong>.xls</strong> и <strong>.xlsx</strong> из системы учёта.<br>
+            Ожидаемые колонки: <span class="text-primary">2</span>-дата·<span class="text-primary">4</span>-накладная·<span class="text-primary">9</span>-филиал·<span class="text-primary">11</span>-контрагент·<span class="text-primary">14</span>-плательщик·<span class="text-primary">18</span>-сумма с НДС
+        </p>
+        <form method="POST" enctype="multipart/form-data">
+            <div class="mb-3">
+                <label class="form-label fw-semibold">Файл Excel</label>
+                <input type="file" name="excel_file" class="form-control" accept=".xls,.xlsx" required>
+            </div>
+            <button type="submit" class="btn btn-primary w-100">
+                <i class="bi bi-search me-1"></i>Разобрать файл
+            </button>
+        </form>
+    </div>
+</div>
+
+{% elif step == 2 %}
+<!-- ══ ШАГ 2: МАППИНГ И ИМПОРТ ══ -->
+<div class="alert alert-success py-2 mb-3">
+    <i class="bi bi-check-circle me-1"></i>
+    Файл <strong>{{ filename }}</strong> разобран: найдено <strong>{{ total_rows }}</strong> накладных
+    за период <strong>{{ date_min }}</strong> — <strong>{{ date_max }}</strong>
+</div>
+
+<form method="POST" action="{{ url_for('purchases_import_excel_confirm') }}">
+
+    <div class="row g-3 mb-3">
+
+        <!-- ── Маппинг филиалов ── -->
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-header bg-light fw-semibold small">
+                    <i class="bi bi-geo-alt me-1 text-primary"></i>Сопоставление филиалов
+                </div>
+                <div class="card-body py-2">
+                    <p class="text-muted" style="font-size:11px">Для каждого подразделения из файла выберите филиал CRM</p>
+                    {% for raw in unique_branches %}
+                    <div class="mb-2">
+                        <label class="form-label small fw-semibold mb-1">«{{ raw }}»</label>
+                        <select name="branch_{{ raw }}" class="form-select form-select-sm" required>
+                            <option value="">— не импортировать —</option>
+                            {% for b in branches %}
+                            <option value="{{ b.id }}"
+                                {% if raw.lower() in b.name.lower() or b.name.lower() in raw.lower() %}selected{% endif %}>
+                                {{ b.name }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Маппинг поставщиков ── -->
+        <div class="col-md-5">
+            <div class="card h-100">
+                <div class="card-header bg-light fw-semibold small">
+                    <i class="bi bi-building me-1 text-success"></i>Контрагенты (поставщики)
+                </div>
+                <div class="card-body py-2">
+                    <p class="text-muted" style="font-size:11px">Оставьте как есть или переименуйте под названия в CRM</p>
+                    <div style="max-height:280px; overflow-y:auto;">
+                    {% for raw in unique_suppliers %}
+                    <div class="mb-2">
+                        <label class="form-label small text-muted mb-1" style="font-size:11px">Из файла: {{ raw }}</label>
+                        <input type="text" name="supplier_{{ raw }}"
+                               value="{{ raw }}"
+                               class="form-control form-control-sm"
+                               list="supp-datalist">
+                    </div>
+                    {% endfor %}
+                    </div>
+                    <datalist id="supp-datalist">
+                        {% for s in suppliers %}<option value="{{ s }}">{% endfor %}
+                    </datalist>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Выбор плательщиков ── -->
+        <div class="col-md-3">
+            <div class="card h-100">
+                <div class="card-header bg-light fw-semibold small">
+                    <i class="bi bi-person-badge me-1 text-warning"></i>Плательщики
+                </div>
+                <div class="card-body py-2">
+                    <p class="text-muted" style="font-size:11px">Отметьте чьи накладные загружать</p>
+                    {% for raw in unique_payers %}
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox"
+                               name="payer_{{ raw }}" id="payer_{{ loop.index }}"
+                               checked>
+                        <label class="form-check-label small" for="payer_{{ loop.index }}">
+                            {{ raw }}
+                        </label>
+                    </div>
+                    {% endfor %}
+                    {% if not unique_payers %}
+                    <div class="text-muted small">Плательщики не найдены</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ── Предпросмотр строк ── -->
+    <div class="card mb-3">
+        <div class="card-header bg-light fw-semibold small d-flex justify-content-between">
+            <span><i class="bi bi-table me-1"></i>Предпросмотр (первые {{ preview|length }} строк из {{ total_rows }})</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0 align-middle" style="font-size:12px">
+                <thead class="table-light">
+                    <tr>
+                        <th>Дата</th>
+                        <th>Накладная №</th>
+                        <th>Филиал (файл)</th>
+                        <th>Контрагент (файл)</th>
+                        <th>Плательщик</th>
+                        <th class="text-end">Сумма с НДС</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for r in preview %}
+                <tr>
+                    <td>{{ r.date }}</td>
+                    <td class="text-muted">{{ r.invoice_number or '—' }}</td>
+                    <td class="fw-semibold">{{ r.branch_raw }}</td>
+                    <td>{{ r.supplier_raw }}</td>
+                    <td class="text-muted small">{{ r.payer_raw or '—' }}</td>
+                    <td class="text-end fw-semibold text-primary">{{ '{:,.2f}'.format(r.amount) }} ₽</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% if total_rows > preview|length %}
+        <div class="card-footer text-muted small text-center">
+            ... и ещё {{ total_rows - preview|length }} строк
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="d-flex gap-2">
+        <a href="{{ url_for('purchases_import_excel') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left me-1"></i>Загрузить другой файл
+        </a>
+        <button type="submit" class="btn btn-success px-4">
+            <i class="bi bi-check2-circle me-1"></i>Импортировать {{ total_rows }} накладных
+        </button>
+    </div>
+
+</form>
+{% endif %}
+
+{% endblock %}

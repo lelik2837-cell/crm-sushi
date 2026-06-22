@@ -672,6 +672,11 @@ def init_db():
             pass
 
         try:
+            conn.execute("ALTER TABLE purchases ADD COLUMN payer TEXT DEFAULT ''")
+        except Exception:
+            pass
+
+        try:
             conn.execute("ALTER TABLE contractors ADD COLUMN is_card_merchant INTEGER DEFAULT 0")
         except Exception:
             pass
@@ -3162,6 +3167,313 @@ def purchases_delete(pid):
         conn.execute('DELETE FROM purchases WHERE id=?', (pid,))
         conn.commit()
     flash('Накладная удалена', 'success')
+    return redirect(url_for('purchases'))
+
+
+# ─── PURCHASES EXCEL IMPORT ───────────────────────────────────────────────────
+
+def _xls_parse_invoices(file_bytes):
+    """Parse .xls (BIFF8) invoices file. Returns list of row dicts."""
+    import struct
+    from datetime import datetime as _dt, timedelta as _td
+
+    data = file_bytes
+
+    def _xl_date(v):
+        try:
+            return (_dt(1899, 12, 30) + _td(days=float(v))).strftime('%Y-%m-%d')
+        except Exception:
+            return ''
+
+    # ---- find SST and worksheet BOF offsets ----
+    def _scan_bof(data):
+        results = []
+        for i in range(0, len(data) - 8):
+            if data[i] == 0x09 and data[i+1] == 0x08:
+                rlen = struct.unpack_from('<H', data, i+2)[0]
+                if rlen in (8, 16):
+                    ver  = struct.unpack_from('<H', data, i+4)[0]
+                    typ  = struct.unpack_from('<H', data, i+6)[0]
+                    results.append((i, ver, typ))
+        return results
+
+    bofs = _scan_bof(data)
+    wb_offset = next((o for o, v, t in bofs if t == 0x0005), None)
+    ws_offset = next((o for o, v, t in bofs if t == 0x0010), None)
+    if wb_offset is None or ws_offset is None:
+        raise ValueError('Не найдена структура XLS-файла')
+
+    # ---- parse SST ----
+    def _parse_sst(data, start):
+        sst = []; offset = start
+        while offset < len(data) - 4:
+            rtype = struct.unpack_from('<H', data, offset)[0]
+            rlen  = struct.unpack_from('<H', data, offset+2)[0]
+            rdata = data[offset+4:offset+4+rlen]; offset += 4 + rlen
+            if rtype == 0x00FC:
+                unique = struct.unpack_from('<I', rdata, 4)[0]; pos = 8
+                for _ in range(unique):
+                    if pos + 3 > len(rdata): break
+                    n = struct.unpack_from('<H', rdata, pos)[0]
+                    flags = rdata[pos+2]; pos += 3
+                    is_uni = flags & 1; grbit_run = (flags >> 3) & 1
+                    if is_uni: s = rdata[pos:pos+n*2].decode('utf-16-le', errors='replace'); pos += n*2
+                    else:      s = rdata[pos:pos+n].decode('cp1251', errors='replace'); pos += n
+                    if grbit_run:
+                        nr = struct.unpack_from('<H', rdata, pos)[0] if pos+2<=len(rdata) else 0
+                        pos += 2 + nr*4
+                    sst.append(s)
+                break
+            if rtype == 0x000A: break
+        return sst
+
+    # ---- parse worksheet cells ----
+    def _parse_ws(data, start, sst):
+        cells = {}; offset = start
+        while offset < len(data) - 4:
+            rtype = struct.unpack_from('<H', data, offset)[0]
+            rlen  = struct.unpack_from('<H', data, offset+2)[0]
+            rdata = data[offset+4:offset+4+rlen]; offset += 4 + rlen
+            if rtype == 0x00FD and len(rdata) >= 10:
+                r = struct.unpack_from('<H', rdata, 0)[0]; c = struct.unpack_from('<H', rdata, 2)[0]
+                idx = struct.unpack_from('<I', rdata, 6)[0]
+                cells[(r, c)] = sst[idx] if idx < len(sst) else ''
+            elif rtype == 0x0203 and len(rdata) >= 14:
+                r = struct.unpack_from('<H', rdata, 0)[0]; c = struct.unpack_from('<H', rdata, 2)[0]
+                cells[(r, c)] = struct.unpack_from('<d', rdata, 6)[0]
+            elif rtype == 0x027E and len(rdata) >= 10:
+                r = struct.unpack_from('<H', rdata, 0)[0]; c = struct.unpack_from('<H', rdata, 2)[0]
+                rk = struct.unpack_from('<I', rdata, 6)[0]; flt = rk & 2; div = rk & 1
+                val = float(rk >> 2) if flt else struct.unpack_from('<d', b'\x00\x00\x00\x00' + struct.pack('<I', rk & 0xFFFFFFFC))[0]
+                if div: val /= 100.0
+                cells[(r, c)] = val
+            elif rtype == 0x00BD and len(rdata) >= 6:
+                r = struct.unpack_from('<H', rdata, 0)[0]; c0 = struct.unpack_from('<H', rdata, 2)[0]
+                for k in range((len(rdata) - 6) // 6):
+                    rk = struct.unpack_from('<I', rdata, 4 + k*6 + 2)[0]; flt = rk & 2; div = rk & 1
+                    val = float(rk >> 2) if flt else struct.unpack_from('<d', b'\x00\x00\x00\x00' + struct.pack('<I', rk & 0xFFFFFFFC))[0]
+                    if div: val /= 100.0
+                    cells[(r, c0 + k)] = val
+            elif rtype == 0x000A: break
+        return cells
+
+    sst   = _parse_sst(data, wb_offset)
+    cells = _parse_ws(data, ws_offset, sst)
+    if not cells:
+        raise ValueError('Данные не найдены в файле')
+
+    max_row = max(r for r, c in cells)
+
+    def cv(r, c):
+        v = cells.get((r, c), '')
+        return str(v).strip() if v != '' else ''
+
+    rows = []
+    for r in range(1, max_row + 1):
+        date_str   = _xl_date(cv(r, 1))   # col 2 → index 1
+        inv_num    = cv(r, 3)              # col 4 → index 3
+        branch_raw = cv(r, 8)             # col 9 → index 8
+        supp_raw   = cv(r, 10)            # col 11 → index 10
+        payer_raw  = cv(r, 13)            # col 14 → index 13
+        amt_raw    = cv(r, 17)            # col 18 → index 17
+
+        if not date_str or not branch_raw:
+            continue
+        try:
+            amount = float(amt_raw) if amt_raw else 0.0
+        except ValueError:
+            amount = 0.0
+        if amount <= 0:
+            continue
+
+        rows.append({
+            'date':         date_str,
+            'invoice_number': inv_num,
+            'branch_raw':   branch_raw,
+            'supplier_raw': supp_raw,
+            'payer_raw':    payer_raw,
+            'amount':       amount,
+        })
+    return rows
+
+
+def _xlsx_parse_invoices(file_bytes):
+    """Parse .xlsx invoices file."""
+    import openpyxl, io as _io
+    from datetime import datetime as _dt
+
+    wb = openpyxl.load_workbook(_io.BytesIO(file_bytes), data_only=True)
+    ws = wb.active
+    rows = []
+    for i, row in enumerate(ws.iter_rows(values_only=True)):
+        if i == 0:
+            continue
+        try:
+            date_v   = row[1]
+            inv_num  = str(row[3] or '').strip()
+            branch_r = str(row[8] or '').strip()
+            supp_r   = str(row[10] or '').strip()
+            payer_r  = str(row[13] or '').strip()
+            amt_v    = row[17]
+
+            if isinstance(date_v, _dt):
+                date_str = date_v.strftime('%Y-%m-%d')
+            elif date_v:
+                date_str = _parse_date_str(str(date_v))
+            else:
+                continue
+
+            amount = float(amt_v or 0)
+            if amount <= 0 or not branch_r:
+                continue
+            rows.append({
+                'date': date_str, 'invoice_number': inv_num,
+                'branch_raw': branch_r, 'supplier_raw': supp_r,
+                'payer_raw': payer_r, 'amount': amount,
+            })
+        except Exception:
+            continue
+    return rows
+
+
+@app.route('/purchases/import-excel', methods=['GET', 'POST'])
+@login_required
+@owner_required
+def purchases_import_excel():
+    import json, uuid, os
+
+    with get_db() as conn:
+        branches  = conn.execute('SELECT id, name FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        suppliers = [r['name'] for r in conn.execute('SELECT name FROM purchase_suppliers ORDER BY name').fetchall()]
+
+    if request.method == 'GET':
+        return render_template('purchases_import_excel.html',
+            step=1, branches=branches, suppliers=suppliers)
+
+    file = request.files.get('excel_file')
+    if not file or file.filename == '':
+        flash('Выберите файл', 'danger')
+        return render_template('purchases_import_excel.html', step=1, branches=branches, suppliers=suppliers)
+
+    file_bytes = file.read()
+    fname = file.filename.lower()
+
+    try:
+        if fname.endswith('.xls'):
+            rows = _xls_parse_invoices(file_bytes)
+        elif fname.endswith('.xlsx'):
+            rows = _xlsx_parse_invoices(file_bytes)
+        else:
+            flash('Поддерживаются только .xls и .xlsx файлы', 'danger')
+            return render_template('purchases_import_excel.html', step=1, branches=branches, suppliers=suppliers)
+    except Exception as e:
+        flash(f'Ошибка чтения файла: {e}', 'danger')
+        return render_template('purchases_import_excel.html', step=1, branches=branches, suppliers=suppliers)
+
+    if not rows:
+        flash('Не найдено строк с данными (сумма > 0 и указан филиал)', 'warning')
+        return render_template('purchases_import_excel.html', step=1, branches=branches, suppliers=suppliers)
+
+    unique_branches  = sorted(set(r['branch_raw']  for r in rows if r['branch_raw']))
+    unique_suppliers = sorted(set(r['supplier_raw'] for r in rows if r['supplier_raw']))
+    unique_payers    = sorted(set(r['payer_raw']    for r in rows if r['payer_raw']))
+
+    import_key = str(uuid.uuid4())
+    temp_path  = f'/tmp/crm_inv_{import_key}.json'
+    with open(temp_path, 'w', encoding='utf-8') as f:
+        json.dump({
+            'rows': rows, 'filename': file.filename,
+            'unique_branches': unique_branches,
+            'unique_suppliers': unique_suppliers,
+            'unique_payers': unique_payers,
+        }, f, ensure_ascii=False)
+    session['inv_import_key'] = import_key
+
+    date_min = min(r['date'] for r in rows)
+    date_max = max(r['date'] for r in rows)
+
+    return render_template('purchases_import_excel.html',
+        step=2, branches=branches, suppliers=suppliers,
+        preview=rows[:15], total_rows=len(rows),
+        unique_branches=unique_branches,
+        unique_suppliers=unique_suppliers,
+        unique_payers=unique_payers,
+        filename=file.filename,
+        date_min=date_min, date_max=date_max)
+
+
+@app.route('/purchases/import-excel/confirm', methods=['POST'])
+@login_required
+@owner_required
+def purchases_import_excel_confirm():
+    import json, os
+
+    import_key = session.get('inv_import_key')
+    if not import_key:
+        flash('Сессия истекла, загрузите файл заново', 'danger')
+        return redirect(url_for('purchases_import_excel'))
+
+    temp_path = f'/tmp/crm_inv_{import_key}.json'
+    try:
+        with open(temp_path, 'r', encoding='utf-8') as f:
+            idata = json.load(f)
+    except FileNotFoundError:
+        flash('Данные не найдены, загрузите файл заново', 'danger')
+        return redirect(url_for('purchases_import_excel'))
+
+    rows             = idata['rows']
+    unique_branches  = idata['unique_branches']
+    unique_suppliers = idata['unique_suppliers']
+    unique_payers    = idata['unique_payers']
+
+    branch_map = {}
+    for raw in unique_branches:
+        val = request.form.get(f'branch_{raw}', '').strip()
+        if val.isdigit():
+            branch_map[raw] = int(val)
+
+    supplier_map = {}
+    for raw in unique_suppliers:
+        val = request.form.get(f'supplier_{raw}', '').strip()
+        supplier_map[raw] = val if val else raw
+
+    include_payers = set()
+    for raw in unique_payers:
+        if request.form.get(f'payer_{raw}'):
+            include_payers.add(raw)
+
+    imported = skipped = 0
+    with get_db() as conn:
+        for row in rows:
+            payer = row['payer_raw']
+            if unique_payers and payer not in include_payers:
+                skipped += 1
+                continue
+            branch_id = branch_map.get(row['branch_raw'])
+            if not branch_id:
+                skipped += 1
+                continue
+            supplier = supplier_map.get(row['supplier_raw'], row['supplier_raw'])
+            if not supplier:
+                skipped += 1
+                continue
+            conn.execute(
+                'INSERT INTO purchases (branch_id, supplier, amount, date, invoice_number, payer, created_by) VALUES (?,?,?,?,?,?,?)',
+                (branch_id, supplier, row['amount'], row['date'],
+                 row['invoice_number'] or None, payer or None, session.get('user_id'))
+            )
+            conn.execute('INSERT OR IGNORE INTO purchase_suppliers (name) VALUES (?)', (supplier,))
+            imported += 1
+        conn.commit()
+
+    try:
+        os.remove(temp_path)
+    except Exception:
+        pass
+    session.pop('inv_import_key', None)
+
+    flash(f'Импортировано {imported} накладных' + (f', пропущено {skipped}' if skipped else ''),
+          'success' if imported > 0 else 'warning')
     return redirect(url_for('purchases'))
 
 
