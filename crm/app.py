@@ -1618,7 +1618,10 @@ def reassign_and_delete_employee(emp_id):
         shift_count = conn.execute(
             'SELECT COUNT(*) FROM employee_shifts WHERE employee_id=?', (emp_id,)
         ).fetchone()[0]
-        conn.execute('UPDATE employee_shifts SET employee_id=? WHERE employee_id=?', (target_id, emp_id))
+        conn.execute(
+            'UPDATE employee_shifts SET employee_id=?, full_name_snapshot=? WHERE employee_id=?',
+            (target_id, target['full_name'], emp_id)
+        )
         conn.execute('UPDATE salary_payments SET employee_id=? WHERE employee_id=?', (target_id, emp_id))
         conn.execute('UPDATE taxi_trip_employees SET employee_id=? WHERE employee_id=?', (target_id, emp_id))
         conn.execute('DELETE FROM employee_rate_history WHERE employee_id=?', (emp_id,))
@@ -2392,29 +2395,32 @@ def reports():
         sal_having = 'HAVING SUM(es.total_amount) > SUM(es.paid_amount)' if s_unpaid == '1' else ''
 
         sal_report = conn.execute(f'''
-            SELECT es.full_name_snapshot  AS name,
-                   es.role_snapshot       AS role,
-                   b.name                 AS branch_name,
-                   COUNT(*)               AS shifts_count,
-                   COALESCE(SUM(es.total_amount), 0)  AS earned,
-                   COALESCE(SUM(es.paid_amount),  0)  AS paid,
+            SELECT COALESCE(e.full_name, es.full_name_snapshot) AS name,
+                   COALESCE(e.role, es.role_snapshot)           AS role,
+                   b.name                                        AS branch_name,
+                   COUNT(*)                                      AS shifts_count,
+                   COALESCE(SUM(es.total_amount), 0)             AS earned,
+                   COALESCE(SUM(es.paid_amount),  0)             AS paid,
                    COALESCE(SUM(es.total_amount - es.paid_amount), 0) AS debt
             FROM employee_shifts es
             JOIN shifts    s ON s.id    = es.shift_id
             JOIN branches  b ON b.id    = s.branch_id
+            LEFT JOIN employees e ON e.id = es.employee_id
             WHERE {sal_where}
-            GROUP BY es.full_name_snapshot, es.role_snapshot, b.id
+            GROUP BY COALESCE(CAST(es.employee_id AS TEXT), es.full_name_snapshot),
+                     es.role_snapshot, b.id
             {sal_having}
-            ORDER BY b.name, es.role_snapshot, es.full_name_snapshot
+            ORDER BY b.name, es.role_snapshot, COALESCE(e.full_name, es.full_name_snapshot)
         ''', sal_params).fetchall()
 
         # Список всех сотрудников в периоде (для дропдауна выбора)
         all_sal_emps = conn.execute(f'''
-            SELECT DISTINCT es.full_name_snapshot AS name
+            SELECT DISTINCT COALESCE(e3.full_name, es.full_name_snapshot) AS name
             FROM employee_shifts es
             JOIN shifts s ON s.id = es.shift_id
+            LEFT JOIN employees e3 ON e3.id = es.employee_id
             WHERE {sal_where}
-            ORDER BY es.full_name_snapshot
+            ORDER BY 1
         ''', sal_params).fetchall()
         all_sal_emps = [r['name'] for r in all_sal_emps]
 
@@ -2427,17 +2433,19 @@ def reports():
             emp_filter_sql = ''
             if s_emps:
                 placeholders = ','.join('?' * len(s_emps))
-                emp_filter_sql = f'AND es.full_name_snapshot IN ({placeholders})'
+                emp_filter_sql = f'AND COALESCE(e2.full_name, es.full_name_snapshot) IN ({placeholders})'
                 raw_params = raw_params + s_emps
 
             raw_rows = conn.execute(f'''
-                SELECT s.date, es.full_name_snapshot AS name,
+                SELECT s.date,
+                       COALESCE(e2.full_name, es.full_name_snapshot) AS name,
                        COALESCE(es.total_amount, 0) AS earned,
                        COALESCE(es.paid_amount,  0) AS paid
                 FROM employee_shifts es
                 JOIN shifts s ON s.id = es.shift_id
+                LEFT JOIN employees e2 ON e2.id = es.employee_id
                 WHERE {sal_where} {emp_filter_sql}
-                ORDER BY s.date, es.full_name_snapshot
+                ORDER BY s.date, COALESCE(e2.full_name, es.full_name_snapshot)
             ''', raw_params).fetchall()
 
             def _period_key(date_str):
