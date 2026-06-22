@@ -198,6 +198,18 @@
 <!-- ══════════ LEFT COLUMN ══════════ -->
 <div class="col-left">
 
+  <!-- BLOCK: РАЗМЕН В КАССЕ -->
+  {% if prev_cash %}
+  <div style="display:flex; align-items:center; gap:10px; background:#dbeafe; border:1.5px solid #93c5fd; border-radius:10px; padding:10px 16px; margin-bottom:14px;">
+    <span style="font-size:18px;">🪙</span>
+    <div>
+      <div style="font-size:10px; color:#1d4ed8; font-weight:700; text-transform:uppercase; letter-spacing:.5px;">Размен в кассе</div>
+      <div style="font-size:20px; font-weight:800; color:#1e40af; line-height:1.2;">{{ (prev_cash.actual_cash)|int }} ₽</div>
+    </div>
+    <div style="margin-left:auto; font-size:11px; color:#6b7280; text-align:right;">остаток<br>{{ prev_cash.date | date_fmt }}</div>
+  </div>
+  {% endif %}
+
   <!-- BLOCK: ВЫРУЧКА -->
   <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:stretch;">
 
