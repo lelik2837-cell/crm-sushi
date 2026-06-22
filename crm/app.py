@@ -1394,6 +1394,34 @@ def reopen_shift(shift_id):
     return redirect(url_for('shift_view', shift_id=shift_id))
 
 
+@app.route('/shift/<int:shift_id>/delete', methods=['POST'])
+@login_required
+@owner_required
+def delete_shift(shift_id):
+    with get_db() as conn:
+        shift = conn.execute('SELECT * FROM shifts WHERE id=?', (shift_id,)).fetchone()
+        if not shift:
+            flash('Смена не найдена', 'danger')
+            return redirect(url_for('dashboard'))
+        branch_date = f'{shift["date"]} · {shift["branch_id"]}'
+        conn.execute(
+            'DELETE FROM salary_payments WHERE employee_shift_id IN (SELECT id FROM employee_shifts WHERE shift_id=?)',
+            (shift_id,)
+        )
+        conn.execute('DELETE FROM employee_shifts WHERE shift_id=?', (shift_id,))
+        conn.execute('DELETE FROM expenses WHERE shift_id=?', (shift_id,))
+        conn.execute(
+            'DELETE FROM taxi_trip_employees WHERE trip_id IN (SELECT id FROM taxi_trips WHERE shift_id=?)',
+            (shift_id,)
+        )
+        conn.execute('DELETE FROM taxi_trips WHERE shift_id=?', (shift_id,))
+        conn.execute('DELETE FROM shift_revenue WHERE shift_id=?', (shift_id,))
+        conn.execute('DELETE FROM shifts WHERE id=?', (shift_id,))
+        conn.commit()
+    flash(f'Смена #{shift_id} удалена', 'success')
+    return redirect(url_for('shifts_archive'))
+
+
 # ─── EMPLOYEES ────────────────────────────────────────────────────────────────
 
 @app.route('/employees')
@@ -2753,6 +2781,18 @@ def cash_flow_report():
             GROUP BY sp.payment_date, s.branch_id
         ''', (date_from, date_to)).fetchall()
 
+        expense_items_rows = conn.execute(f'''
+            SELECT e.shift_id,
+                   COALESCE(ec.label, e.category) AS cat_label,
+                   e.description,
+                   e.amount_cash
+            FROM expenses e
+            JOIN shifts s ON s.id = e.shift_id
+            LEFT JOIN expense_categories ec ON ec.code = e.category AND ec.is_active = 1
+            WHERE s.date BETWEEN ? AND ? {bf} AND e.amount_cash > 0
+            ORDER BY e.id
+        ''', (date_from, date_to)).fetchall()
+
     exp_map = defaultdict(float)
     for r in expense_rows:
         exp_map[(r['date'], r['branch_id'])] += r['expenses_cash']
@@ -2760,6 +2800,14 @@ def cash_flow_report():
     sal_map = defaultdict(float)
     for r in salary_rows:
         sal_map[(r['payment_date'], r['branch_id'])] += r['salary_paid']
+
+    items_by_shift = defaultdict(list)
+    for r in expense_items_rows:
+        items_by_shift[r['shift_id']].append({
+            'cat_label': r['cat_label'],
+            'description': r['description'] or '',
+            'amount_cash': r['amount_cash'],
+        })
 
     days = {}
     for r in revenue_rows:
@@ -2778,6 +2826,7 @@ def cash_flow_report():
             'salary_paid':  sal,
             'actual_cash':  r['actual_cash'],
             'actual_cash_comment': r['actual_cash_comment'],
+            'expense_items': items_by_shift.get(r['shift_id'], []),
         })
         days[d]['cash_revenue']  += r['cash_revenue']
         days[d]['expenses_cash'] += exp

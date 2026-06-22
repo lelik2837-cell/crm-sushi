@@ -184,6 +184,11 @@
       <button class="ph-btn ph-btn-warning" onclick="return confirm('Переоткрыть смену?')">🔓 Переоткрыть</button>
     </form>
     {% endif %}
+    {% if is_owner %}
+    <form method="POST" action="{{ url_for('delete_shift', shift_id=shift.id) }}" style="display:inline" onsubmit="return confirm('Удалить смену безвозвратно? Все данные (выручка, расходы, сотрудники) будут удалены.')">
+      <button class="ph-btn" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;" type="submit">🗑 Удалить смену</button>
+    </form>
+    {% endif %}
   </div>
 </div>
 
