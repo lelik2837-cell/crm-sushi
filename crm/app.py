@@ -3549,8 +3549,10 @@ def report_reconciliation():
         ).fetchall()
 
         contractor = None
-        purchases_rows = []
-        payment_rows   = []
+        rows = []
+        opening_balance = 0.0
+        total_debit = 0.0
+        total_credit = 0.0
 
         if contractor_id.isdigit():
             contractor = conn.execute(
@@ -3558,7 +3560,26 @@ def report_reconciliation():
             ).fetchone()
 
         if contractor:
-            # Накладные: совпадение по имени контрагента (case-insensitive)
+            # Сальдо начальное: накладные и оплаты ДО начала периода
+            ob_purchases = conn.execute('''
+                SELECT COALESCE(SUM(amount), 0)
+                FROM purchases
+                WHERE LOWER(TRIM(supplier)) = LOWER(TRIM(?))
+                  AND date < ?
+            ''', (contractor['name'], date_from)).fetchone()[0] or 0.0
+
+            ob_payments = conn.execute('''
+                SELECT COALESCE(SUM(amount), 0)
+                FROM bank_transactions
+                WHERE contractor_id = ?
+                  AND txn_date < ?
+                  AND is_ignored = 0
+            ''', (contractor['id'], date_from)).fetchone()[0] or 0.0
+
+            # payments хранятся как отрицательные (расход), поэтому суммируем
+            opening_balance = ob_purchases + ob_payments
+
+            # Накладные за период → Дебет (нам поставили, мы должны)
             purchases_rows = conn.execute('''
                 SELECT p.date, p.invoice_number, p.supplier, p.amount,
                        b.name AS branch_name
@@ -3569,33 +3590,53 @@ def report_reconciliation():
                 ORDER BY p.date, p.id
             ''', (contractor['name'], date_from, date_to)).fetchall()
 
-            # Оплаты из банковских выписок: по contractor_id
+            # Оплаты из банковских выписок → Кредит (мы заплатили)
             payment_rows = conn.execute('''
                 SELECT bt.txn_date AS date, bt.description,
-                       bt.counterparty, bt.amount, bt.category,
+                       bt.counterparty, bt.amount,
                        ba.name AS account_name
                 FROM bank_transactions bt
-                JOIN bank_statements   bs ON bs.id  = bt.statement_id
-                JOIN bank_accounts     ba ON ba.id  = bt.bank_account_id
+                JOIN bank_accounts ba ON ba.id = bt.bank_account_id
                 WHERE bt.contractor_id = ?
                   AND bt.txn_date BETWEEN ? AND ?
                   AND bt.is_ignored = 0
                 ORDER BY bt.txn_date, bt.id
             ''', (contractor['id'], date_from, date_to)).fetchall()
 
-    total_purchases = sum(r['amount'] for r in purchases_rows)
-    total_payments  = sum(r['amount'] for r in payment_rows)
-    balance         = total_purchases + total_payments  # payments обычно отрицательные (расход)
+            for r in purchases_rows:
+                rows.append({
+                    'date': r['date'],
+                    'doc': 'Накладная №' + (r['invoice_number'] or '—') + ' (' + r['branch_name'] + ')',
+                    'debit': r['amount'],
+                    'credit': None,
+                })
+                total_debit += r['amount']
+
+            for r in payment_rows:
+                amt = abs(r['amount'])
+                desc = r['description'] or r['counterparty'] or 'Оплата'
+                rows.append({
+                    'date': r['date'],
+                    'doc': desc,
+                    'debit': None,
+                    'credit': amt,
+                })
+                total_credit += amt
+
+            rows.sort(key=lambda x: x['date'])
+
+    # Сальдо конечное: сальдо начальное + обороты по дебету − обороты по кредиту
+    closing_balance = opening_balance + total_debit - total_credit
 
     return render_template('report_reconciliation.html',
         contractors=contractors,
         contractor=contractor,
         contractor_id=contractor_id,
-        purchases=purchases_rows,
-        payments=payment_rows,
-        total_purchases=total_purchases,
-        total_payments=total_payments,
-        balance=balance,
+        rows=rows,
+        opening_balance=opening_balance,
+        total_debit=total_debit,
+        total_credit=total_credit,
+        closing_balance=closing_balance,
         date_from=date_from,
         date_to=date_to)
 

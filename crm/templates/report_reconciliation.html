@@ -63,185 +63,108 @@
 
 {% if contractor %}
 
-<!-- Шапка акта сверки -->
+<!-- Заголовок акта -->
 <div class="card mb-3">
-    <div class="card-body py-3 d-flex align-items-center justify-content-between flex-wrap gap-2">
-        <div>
-            <div class="text-muted small">Контрагент</div>
-            <div class="fw-bold fs-5">{{ contractor.name }}</div>
-        </div>
-        <div class="text-center">
-            <div class="text-muted small">Период</div>
-            <div class="fw-semibold">{{ date_from | datefmt }} — {{ date_to | datefmt }}</div>
-        </div>
-        <div class="text-end">
-            {% set abs_balance = balance | abs %}
-            {% if balance > 0.005 %}
-            <div class="text-muted small">Баланс (долг поставщику)</div>
-            <div class="fw-bold fs-5 text-danger">{{ '{:,.2f}'.format(abs_balance) }} ₽</div>
-            {% elif balance < -0.005 %}
-            <div class="text-muted small">Баланс (переплата)</div>
-            <div class="fw-bold fs-5 text-success">{{ '{:,.2f}'.format(abs_balance) }} ₽</div>
-            {% else %}
-            <div class="text-muted small">Баланс</div>
-            <div class="fw-bold fs-5 text-secondary">0,00 ₽ — закрыто</div>
-            {% endif %}
-        </div>
+    <div class="card-body py-3">
+        <div class="fw-semibold">По данным {{ contractor.name }}, руб.</div>
+        <div class="text-muted small">Период: {{ date_from | datefmt }} — {{ date_to | datefmt }}</div>
     </div>
 </div>
 
-<!-- Итоговые карточки -->
-<div class="row g-3 mb-4">
-    <div class="col-md-4">
-        <div class="card p-3 h-100" style="border-left:4px solid #0d6efd">
-            <div class="text-muted small">Накладные (поставки)</div>
-            <div class="fw-bold fs-4">{{ '{:,.2f}'.format(total_purchases) }} ₽</div>
-            <div class="text-muted small mt-1">{{ purchases | length }} накладных</div>
-        </div>
-    </div>
-    <div class="col-md-4">
-        <div class="card p-3 h-100" style="border-left:4px solid #198754">
-            <div class="text-muted small">Оплачено (выписки)</div>
-            <div class="fw-bold fs-4">{{ '{:,.2f}'.format(total_payments | abs) }} ₽</div>
-            <div class="text-muted small mt-1">{{ payments | length }} транзакций</div>
-        </div>
-    </div>
-    <div class="col-md-4">
-        <div class="card p-3 h-100" style="border-left:4px solid {% if balance > 0.005 %}#dc3545{% elif balance < -0.005 %}#198754{% else %}#6c757d{% endif %}">
-            <div class="text-muted small">Остаток долга</div>
-            <div class="fw-bold fs-4 {% if balance > 0.005 %}text-danger{% elif balance < -0.005 %}text-success{% endif %}">
-                {{ '{:,.2f}'.format(balance | abs) }} ₽
-            </div>
-            <div class="text-muted small mt-1">
-                {% if balance > 0.005 %}задолженность нам{% elif balance < -0.005 %}переплата{% else %}расчёт закрыт{% endif %}
-            </div>
-        </div>
-    </div>
-</div>
+<!-- Единая таблица сверки -->
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-sm table-bordered mb-0 align-middle" style="font-size:13px">
+            <thead class="table-light">
+                <tr>
+                    <th style="width:95px">Дата</th>
+                    <th>Документ</th>
+                    <th class="text-end" style="width:140px">Дебет</th>
+                    <th class="text-end" style="width:140px">Кредит</th>
+                </tr>
+            </thead>
+            <tbody>
 
-<!-- Две таблицы: накладные и оплаты -->
-<div class="row g-3">
+                <!-- Сальдо начальное -->
+                <tr class="fw-bold table-secondary">
+                    <td></td>
+                    <td>Сальдо начальное</td>
+                    <td class="text-end">
+                        {% if opening_balance > 0.005 %}
+                            {{ '{:,.2f}'.format(opening_balance) }}
+                        {% endif %}
+                    </td>
+                    <td class="text-end">
+                        {% if opening_balance < -0.005 %}
+                            {{ '{:,.2f}'.format(opening_balance | abs) }}
+                        {% endif %}
+                    </td>
+                </tr>
 
-    <!-- Накладные -->
-    <div class="col-lg-6">
-        <div class="card h-100">
-            <div class="card-header bg-primary text-white fw-semibold d-flex justify-content-between align-items-center">
-                <span><i class="bi bi-box-seam me-1"></i>Накладные (поставки)</span>
-                <span class="badge bg-white text-primary">{{ purchases | length }}</span>
-            </div>
-            {% if purchases %}
-            <div class="table-responsive">
-                <table class="table table-sm table-hover mb-0 align-middle" style="font-size:13px">
-                    <thead class="table-light">
-                        <tr>
-                            <th style="width:90px">Дата</th>
-                            <th>Накладная №</th>
-                            <th>Филиал</th>
-                            <th class="text-end">Сумма</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                    {% for r in purchases %}
+                <!-- Строки периода -->
+                {% if rows %}
+                    {% for r in rows %}
                     <tr>
                         <td class="text-nowrap">{{ r.date | datefmt }}</td>
-                        <td class="text-muted small">{{ r.invoice_number or '—' }}</td>
-                        <td class="text-muted small">{{ r.branch_name }}</td>
-                        <td class="text-end fw-semibold">{{ '{:,.2f}'.format(r.amount) }} ₽</td>
-                    </tr>
-                    {% endfor %}
-                    </tbody>
-                    <tfoot class="table-light fw-bold">
-                        <tr>
-                            <td colspan="3">Итого накладных</td>
-                            <td class="text-end">{{ '{:,.2f}'.format(total_purchases) }} ₽</td>
-                        </tr>
-                    </tfoot>
-                </table>
-            </div>
-            {% else %}
-            <div class="card-body text-center text-muted py-4">
-                <i class="bi bi-inbox fs-2 d-block mb-2 opacity-25"></i>
-                Накладных за период не найдено
-            </div>
-            {% endif %}
-        </div>
-    </div>
-
-    <!-- Оплаты из выписок -->
-    <div class="col-lg-6">
-        <div class="card h-100">
-            <div class="card-header bg-success text-white fw-semibold d-flex justify-content-between align-items-center">
-                <span><i class="bi bi-bank me-1"></i>Оплаты (банковские выписки)</span>
-                <span class="badge bg-white text-success">{{ payments | length }}</span>
-            </div>
-            {% if payments %}
-            <div class="table-responsive">
-                <table class="table table-sm table-hover mb-0 align-middle" style="font-size:13px">
-                    <thead class="table-light">
-                        <tr>
-                            <th style="width:90px">Дата</th>
-                            <th>Описание</th>
-                            <th>Счёт</th>
-                            <th class="text-end">Сумма</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                    {% for r in payments %}
-                    <tr>
-                        <td class="text-nowrap">{{ r.date | datefmt }}</td>
-                        <td class="text-muted small" style="max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
-                            title="{{ r.description }}">{{ r.description or r.counterparty or '—' }}</td>
-                        <td class="text-muted small text-nowrap">{{ r.account_name }}</td>
-                        <td class="text-end fw-semibold {% if r.amount < 0 %}text-danger{% else %}text-success{% endif %}">
-                            {{ '{:,.2f}'.format(r.amount) }} ₽
+                        <td style="max-width:400px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ r.doc }}">{{ r.doc }}</td>
+                        <td class="text-end">
+                            {% if r.debit is not none %}{{ '{:,.2f}'.format(r.debit) }}{% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if r.credit is not none %}{{ '{:,.2f}'.format(r.credit) }}{% endif %}
                         </td>
                     </tr>
                     {% endfor %}
-                    </tbody>
-                    <tfoot class="table-light fw-bold">
-                        <tr>
-                            <td colspan="3">Итого оплат</td>
-                            <td class="text-end {% if total_payments < 0 %}text-danger{% endif %}">
-                                {{ '{:,.2f}'.format(total_payments) }} ₽
-                            </td>
-                        </tr>
-                    </tfoot>
-                </table>
-            </div>
-            {% else %}
-            <div class="card-body text-center text-muted py-4">
-                <i class="bi bi-credit-card fs-2 d-block mb-2 opacity-25"></i>
-                Платежей в выписках не найдено.<br>
-                <span class="small">Убедитесь, что транзакции в банке привязаны к контрагенту «{{ contractor.name }}»</span>
-            </div>
-            {% endif %}
-        </div>
-    </div>
+                {% else %}
+                    <tr>
+                        <td colspan="4" class="text-center text-muted py-3">Операций за период не найдено</td>
+                    </tr>
+                {% endif %}
 
+            </tbody>
+            <tfoot>
+                <!-- Обороты за период -->
+                <tr class="fw-bold table-light">
+                    <td></td>
+                    <td>Обороты за период</td>
+                    <td class="text-end">{{ '{:,.2f}'.format(total_debit) }}</td>
+                    <td class="text-end">{{ '{:,.2f}'.format(total_credit) }}</td>
+                </tr>
+
+                <!-- Сальдо конечное -->
+                <tr class="fw-bold table-secondary">
+                    <td></td>
+                    <td>Сальдо конечное</td>
+                    <td class="text-end {% if closing_balance > 0.005 %}text-danger{% endif %}">
+                        {% if closing_balance > 0.005 %}
+                            {{ '{:,.2f}'.format(closing_balance) }}
+                        {% endif %}
+                    </td>
+                    <td class="text-end {% if closing_balance < -0.005 %}text-success{% endif %}">
+                        {% if closing_balance < -0.005 %}
+                            {{ '{:,.2f}'.format(closing_balance | abs) }}
+                        {% endif %}
+                    </td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
 </div>
 
-<!-- Итоговая строка сверки -->
-<div class="card mt-3">
-    <div class="card-body py-3">
-        <div class="row align-items-center text-center">
-            <div class="col-md-3">
-                <div class="text-muted small">Поставлено товара</div>
-                <div class="fw-bold fs-5">{{ '{:,.2f}'.format(total_purchases) }} ₽</div>
-            </div>
-            <div class="col-md-1 text-muted fs-4">−</div>
-            <div class="col-md-3">
-                <div class="text-muted small">Оплачено</div>
-                <div class="fw-bold fs-5">{{ '{:,.2f}'.format(total_payments | abs) }} ₽</div>
-            </div>
-            <div class="col-md-1 text-muted fs-4">=</div>
-            <div class="col-md-4">
-                <div class="text-muted small">Остаток долга</div>
-                <div class="fw-bold fs-4 {% if balance > 0.005 %}text-danger{% elif balance < -0.005 %}text-success{% else %}text-secondary{% endif %}">
-                    {% if balance > 0.005 %}+{% endif %}{{ '{:,.2f}'.format(balance) }} ₽
-                </div>
-            </div>
-        </div>
-    </div>
+<!-- Итоговая подпись -->
+<div class="mt-3 text-muted small">
+    {% set abs_bal = closing_balance | abs %}
+    {% if closing_balance > 0.005 %}
+    По данным <strong>{{ contractor.name }}</strong> на {{ date_to | datefmt }}
+    задолженность в пользу <strong>{{ contractor.name }}</strong>
+    составляет <strong class="text-danger">{{ '{:,.2f}'.format(abs_bal) }} руб.</strong>
+    {% elif closing_balance < -0.005 %}
+    По данным <strong>{{ contractor.name }}</strong> на {{ date_to | datefmt }}
+    переплата составляет <strong class="text-success">{{ '{:,.2f}'.format(abs_bal) }} руб.</strong>
+    {% else %}
+    По данным <strong>{{ contractor.name }}</strong> на {{ date_to | datefmt }}
+    расчёты закрыты — задолженности нет.
+    {% endif %}
 </div>
 
 {% elif contractor_id %}
