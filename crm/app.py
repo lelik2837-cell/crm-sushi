@@ -26,6 +26,18 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 DATABASE = os.environ.get('DATABASE_PATH', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'crm.db'))
 
+
+@app.template_filter('datefmt')
+def datefmt(val):
+    """Конвертирует YYYY-MM-DD → DD-MM-YYYY для отображения."""
+    if not val:
+        return ''
+    try:
+        return datetime.strptime(str(val)[:10], '%Y-%m-%d').strftime('%d-%m-%Y')
+    except Exception:
+        return str(val)
+
+
 ROLE_LABELS = {
     'admin': 'Администратор',
     'sushi': 'Сушист',
@@ -3036,16 +3048,18 @@ def purchases():
     role = session.get('role')
     with get_db() as conn:
         if role == 'owner':
-            all_branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+            all_branches  = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+            branch_groups = get_branch_groups(conn)
         else:
-            all_branches = []
+            all_branches  = []
+            branch_groups = []
 
-        today = date.today().isoformat()
+        today     = date.today().isoformat()
         first_day = date.today().replace(day=1).isoformat()
-        date_from  = request.args.get('p_date_from', first_day)
-        date_to    = request.args.get('p_date_to',   today)
-        branch_flt = request.args.get('p_branch_id', '')
-        supp_flt   = request.args.get('p_supplier',  '').strip()
+        date_from       = request.args.get('p_date_from', first_day)
+        date_to         = request.args.get('p_date_to',   today)
+        branch_flt_ids  = [b for b in request.args.getlist('p_branch_ids')      if b.isdigit()]
+        supp_flt_names  = request.args.getlist('p_supplier_names')
 
         where  = ['p.date >= ?', 'p.date <= ?']
         params = [date_from, date_to]
@@ -3054,13 +3068,15 @@ def purchases():
             bids = _session_branch_ids()
             if bids:
                 where.append(f"p.branch_id IN ({','.join(str(b) for b in bids)})")
-        elif branch_flt:
-            where.append('p.branch_id = ?')
-            params.append(int(branch_flt))
+        elif branch_flt_ids:
+            ph = ','.join('?' * len(branch_flt_ids))
+            where.append(f'p.branch_id IN ({ph})')
+            params.extend(int(b) for b in branch_flt_ids)
 
-        if supp_flt:
-            where.append('p.supplier LIKE ?')
-            params.append(f'%{supp_flt}%')
+        if supp_flt_names:
+            ph = ','.join('?' * len(supp_flt_names))
+            where.append(f'p.supplier IN ({ph})')
+            params.extend(supp_flt_names)
 
         sql_where = ' AND '.join(where)
 
@@ -3092,11 +3108,12 @@ def purchases():
                            by_supplier=by_supplier,
                            suppliers=suppliers,
                            all_branches=all_branches,
+                           branch_groups=branch_groups,
                            is_owner=(role == 'owner'),
                            date_from=date_from,
                            date_to=date_to,
-                           branch_flt=branch_flt,
-                           supp_flt=supp_flt,
+                           branch_flt_ids=branch_flt_ids,
+                           supp_flt_names=supp_flt_names,
                            today=today)
 
 
@@ -3349,17 +3366,17 @@ def purchases_import_excel():
     import json, uuid, os
 
     with get_db() as conn:
-        branches  = conn.execute('SELECT id, name FROM branches WHERE is_active=1 ORDER BY name').fetchall()
-        suppliers = [r['name'] for r in conn.execute('SELECT name FROM purchase_suppliers ORDER BY name').fetchall()]
+        branches    = conn.execute('SELECT id, name FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        contractors = conn.execute('SELECT id, name FROM contractors WHERE is_active=1 ORDER BY name').fetchall()
 
     if request.method == 'GET':
         return render_template('purchases_import_excel.html',
-            step=1, branches=branches, suppliers=suppliers)
+            step=1, branches=branches, contractors=contractors)
 
     file = request.files.get('excel_file')
     if not file or file.filename == '':
         flash('Выберите файл', 'danger')
-        return render_template('purchases_import_excel.html', step=1, branches=branches, suppliers=suppliers)
+        return render_template('purchases_import_excel.html', step=1, branches=branches, contractors=contractors)
 
     file_bytes = file.read()
     fname = file.filename.lower()
@@ -3371,14 +3388,14 @@ def purchases_import_excel():
             rows = _xlsx_parse_invoices(file_bytes)
         else:
             flash('Поддерживаются только .xls и .xlsx файлы', 'danger')
-            return render_template('purchases_import_excel.html', step=1, branches=branches, suppliers=suppliers)
+            return render_template('purchases_import_excel.html', step=1, branches=branches, contractors=contractors)
     except Exception as e:
         flash(f'Ошибка чтения файла: {e}', 'danger')
-        return render_template('purchases_import_excel.html', step=1, branches=branches, suppliers=suppliers)
+        return render_template('purchases_import_excel.html', step=1, branches=branches, contractors=contractors)
 
     if not rows:
         flash('Не найдено строк с данными (сумма > 0 и указан филиал)', 'warning')
-        return render_template('purchases_import_excel.html', step=1, branches=branches, suppliers=suppliers)
+        return render_template('purchases_import_excel.html', step=1, branches=branches, contractors=contractors)
 
     unique_branches  = sorted(set(r['branch_raw']  for r in rows if r['branch_raw']))
     unique_suppliers = sorted(set(r['supplier_raw'] for r in rows if r['supplier_raw']))
@@ -3414,7 +3431,7 @@ def purchases_import_excel():
     date_max = max(r['date'] for r in rows)
 
     return render_template('purchases_import_excel.html',
-        step=2, branches=branches, suppliers=suppliers,
+        step=2, branches=branches, contractors=contractors,
         preview=rows[:15], total_rows=len(rows),
         already_count=already_count,
         unique_branches=unique_branches,
@@ -3496,6 +3513,8 @@ def purchases_import_excel_confirm():
                  row['invoice_number'] or None, payer or None, h, session.get('user_id'))
             )
             conn.execute('INSERT OR IGNORE INTO purchase_suppliers (name) VALUES (?)', (supplier,))
+            if not conn.execute('SELECT id FROM contractors WHERE LOWER(name)=LOWER(?)', (supplier,)).fetchone():
+                conn.execute('INSERT INTO contractors (name, keywords) VALUES (?,?)', (supplier, supplier))
             imported += 1
         conn.commit()
 

@@ -12,36 +12,99 @@
 <!-- Фильтры -->
 <div class="card mb-4">
     <div class="card-body">
-        <form method="GET" class="row g-2 align-items-end">
+        <form method="GET" class="row g-2 align-items-end" id="purch-filter-form">
             <div class="col-6 col-md-2">
                 <label class="form-label small fw-semibold">С</label>
-                <input type="date" name="p_date_from" value="{{ date_from }}" class="form-control">
+                <input type="date" name="p_date_from" value="{{ date_from }}" class="form-control form-control-sm">
             </div>
             <div class="col-6 col-md-2">
                 <label class="form-label small fw-semibold">По</label>
-                <input type="date" name="p_date_to" value="{{ date_to }}" class="form-control">
+                <input type="date" name="p_date_to" value="{{ date_to }}" class="form-control form-control-sm">
             </div>
+
             {% if is_owner %}
-            <div class="col-6 col-md-2">
+            <!-- Мультивыбор филиалов -->
+            <div class="col-6 col-md-auto">
                 <label class="form-label small fw-semibold">Филиал</label>
-                <select name="p_branch_id" class="form-select">
-                    <option value="">Все</option>
-                    {% for b in all_branches %}
-                    <option value="{{ b.id }}" {% if branch_flt == b.id|string %}selected{% endif %}>{{ b.name }}</option>
-                    {% endfor %}
-                </select>
+                <div class="dropdown">
+                    <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle"
+                        data-bs-toggle="dropdown" data-bs-auto-close="outside"
+                        style="min-width:150px; text-align:left;">
+                        <span id="branch-btn-label">{% if branch_flt_ids %}Выбрано: {{ branch_flt_ids|length }}{% else %}Все филиалы{% endif %}</span>
+                    </button>
+                    <ul class="dropdown-menu p-2" style="min-width:220px;">
+                        {% if branch_groups %}
+                        <li><div class="text-muted px-1 mb-1" style="font-size:0.75rem">ГРУППЫ</div></li>
+                        {% for g in branch_groups %}
+                        <li class="mb-1">
+                            <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1"
+                                    onclick="selectBranchGroup({{ g.branch_ids | tojson }})">
+                                <i class="bi bi-collection me-1"></i>{{ g.name }}
+                                <span class="text-muted small">({{ g.branch_ids | length }})</span>
+                            </button>
+                        </li>
+                        {% endfor %}
+                        <li><hr class="dropdown-divider my-1"></li>
+                        {% endif %}
+                        <li class="mb-1">
+                            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                                <input type="checkbox" id="branch-all-cb" onchange="toggleAllBranches(this)"
+                                    {% if not branch_flt_ids %}checked{% endif %}>
+                                <span class="fw-semibold small">Все филиалы</span>
+                            </label>
+                        </li>
+                        <li><hr class="dropdown-divider my-1"></li>
+                        {% for b in all_branches %}
+                        <li>
+                            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                                <input type="checkbox" class="branch-cb" name="p_branch_ids" value="{{ b.id }}"
+                                    {% if b.id|string in branch_flt_ids %}checked{% endif %}
+                                    onchange="onBranchCbChange()">
+                                <span class="small">{{ b.name }}</span>
+                            </label>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
             </div>
             {% endif %}
-            <div class="col-6 col-md-3">
+
+            <!-- Мультивыбор контрагентов с поиском -->
+            <div class="col-6 col-md-auto">
                 <label class="form-label small fw-semibold">Поставщик</label>
-                <input type="text" name="p_supplier" value="{{ supp_flt }}" class="form-control" placeholder="Поиск по поставщику" list="supp-list-flt">
-                <datalist id="supp-list-flt">
-                    {% for s in suppliers %}<option value="{{ s }}">{% endfor %}
-                </datalist>
+                <div class="dropdown">
+                    <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle"
+                        data-bs-toggle="dropdown" data-bs-auto-close="outside"
+                        style="min-width:160px; text-align:left;">
+                        <span id="supp-btn-label">{% if supp_flt_names %}Выбрано: {{ supp_flt_names|length }}{% else %}Все поставщики{% endif %}</span>
+                    </button>
+                    <div class="dropdown-menu p-2" style="min-width:260px;">
+                        <input type="text" class="form-control form-control-sm mb-2"
+                               id="supp-search" placeholder="Поиск..." oninput="filterSuppliers(this.value)" autocomplete="off">
+                        <div style="max-height:280px; overflow-y:auto;">
+                            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                                <input type="checkbox" id="supp-all-cb" onchange="toggleAllSuppliers(this)"
+                                    {% if not supp_flt_names %}checked{% endif %}>
+                                <span class="fw-semibold small">Все поставщики</span>
+                            </label>
+                            <hr class="dropdown-divider my-1">
+                            {% for s in suppliers %}
+                            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2 supp-item"
+                                   style="cursor:pointer;" data-name="{{ s|lower }}">
+                                <input type="checkbox" class="supp-cb" name="p_supplier_names" value="{{ s }}"
+                                    {% if s in supp_flt_names %}checked{% endif %}
+                                    onchange="onSuppCbChange()">
+                                <span class="small">{{ s }}</span>
+                            </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
             </div>
+
             <div class="col-auto">
-                <button type="submit" class="btn btn-primary">Применить</button>
-                <a href="{{ url_for('purchases') }}" class="btn btn-outline-secondary ms-1">Сброс</a>
+                <button type="submit" class="btn btn-primary btn-sm">Применить</button>
+                <a href="{{ url_for('purchases') }}" class="btn btn-outline-secondary btn-sm ms-1">Сброс</a>
             </div>
         </form>
     </div>
@@ -75,7 +138,7 @@
 <div class="card mb-4">
     <div class="card-header bg-light fw-semibold d-flex justify-content-between">
         <span>Список накладных</span>
-        <span class="text-muted small">{{ date_from }} — {{ date_to }}</span>
+        <span class="text-muted small">{{ date_from | datefmt }} — {{ date_to | datefmt }}</span>
     </div>
     <div class="table-responsive">
         <table class="table table-hover mb-0 align-middle" id="purchTable">
@@ -86,8 +149,8 @@
                     {% if is_owner %}
                     <th class="purch-sort" style="cursor:pointer;user-select:none">Филиал <span class="purch-arrow text-muted small"></span></th>
                     {% endif %}
-                    <th class="purch-sort text-end" style="cursor:pointer;user-select:none">Сумма ₽ <span class="purch-arrow text-muted small"></span></th>
                     <th>Накладная №</th>
+                    <th class="purch-sort text-end" style="cursor:pointer;user-select:none">Сумма ₽ <span class="purch-arrow text-muted small"></span></th>
                     <th>Заметка</th>
                     <th></th>
                 </tr>
@@ -95,13 +158,13 @@
             <tbody id="purchTbody">
             {% for r in rows %}
             <tr>
-                <td data-val="{{ r.date }}">{{ r.date }}</td>
+                <td data-val="{{ r.date }}">{{ r.date | datefmt }}</td>
                 <td class="fw-semibold" data-val="{{ r.supplier }}">{{ r.supplier }}</td>
                 {% if is_owner %}
                 <td class="text-muted small" data-val="{{ r.branch_name }}">{{ r.branch_name }}</td>
                 {% endif %}
-                <td class="text-end fw-semibold" data-val="{{ r.amount }}">{{ '{:,.0f}'.format(r.amount) }} ₽</td>
                 <td class="text-muted small">{{ r.invoice_number or '—' }}</td>
+                <td class="text-end fw-semibold" data-val="{{ r.amount }}">{{ '{:,.0f}'.format(r.amount) }} ₽</td>
                 <td class="text-muted small">{{ r.note or '' }}</td>
                 <td class="text-end" style="white-space:nowrap">
                     <button class="btn btn-sm btn-outline-secondary me-1"
@@ -118,9 +181,9 @@
             </tbody>
             <tfoot class="table-light fw-bold">
                 <tr>
-                    <td colspan="{{ 3 if is_owner else 2 }}">Итого</td>
+                    <td colspan="{{ 4 if is_owner else 3 }}">Итого</td>
                     <td class="text-end">{{ '{:,.0f}'.format(total_sum) }} ₽</td>
-                    <td colspan="3"></td>
+                    <td colspan="2"></td>
                 </tr>
             </tfoot>
         </table>
@@ -147,7 +210,7 @@
             {% set pct = (s.total / total_sum * 100) if total_sum > 0 else 0 %}
             <tr>
                 <td class="fw-semibold" data-val="{{ s.supplier }}">
-                    <a href="{{ url_for('purchases') }}?p_date_from={{ date_from }}&p_date_to={{ date_to }}&p_supplier={{ s.supplier }}" class="text-decoration-none text-dark">
+                    <a href="{{ url_for('purchases') }}?p_date_from={{ date_from }}&p_date_to={{ date_to }}&p_supplier_names={{ s.supplier }}" class="text-decoration-none text-dark">
                         {{ s.supplier }}
                     </a>
                 </td>
@@ -218,17 +281,17 @@
                     </div>
                     <div class="row g-2 mb-3">
                         <div class="col-6">
+                            <label class="form-label fw-semibold">Номер накладной</label>
+                            <input type="text" name="invoice_number" class="form-control" placeholder="№ 12345 от ...">
+                        </div>
+                        <div class="col-6">
                             <label class="form-label fw-semibold">Сумма * ₽</label>
                             <input type="number" name="amount" class="form-control" step="0.01" min="0.01" required placeholder="0">
                         </div>
-                        <div class="col-6">
-                            <label class="form-label fw-semibold">Дата прихода *</label>
-                            <input type="date" name="date" class="form-control" value="{{ today }}" required>
-                        </div>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label fw-semibold">Номер накладной</label>
-                        <input type="text" name="invoice_number" class="form-control" placeholder="№ 12345 от ...">
+                        <label class="form-label fw-semibold">Дата прихода *</label>
+                        <input type="date" name="date" class="form-control" value="{{ today }}" required>
                     </div>
                     <div class="mb-1">
                         <label class="form-label fw-semibold">Заметка</label>
@@ -275,17 +338,17 @@
                     </div>
                     <div class="row g-2 mb-3">
                         <div class="col-6">
+                            <label class="form-label fw-semibold">Номер накладной</label>
+                            <input type="text" name="invoice_number" class="form-control" value="{{ r.invoice_number or '' }}" placeholder="№ 12345 от ...">
+                        </div>
+                        <div class="col-6">
                             <label class="form-label fw-semibold">Сумма * ₽</label>
                             <input type="number" name="amount" class="form-control" step="0.01" min="0.01" required value="{{ r.amount }}">
                         </div>
-                        <div class="col-6">
-                            <label class="form-label fw-semibold">Дата прихода *</label>
-                            <input type="date" name="date" class="form-control" value="{{ r.date }}" required>
-                        </div>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label fw-semibold">Номер накладной</label>
-                        <input type="text" name="invoice_number" class="form-control" value="{{ r.invoice_number or '' }}" placeholder="№ 12345 от ...">
+                        <label class="form-label fw-semibold">Дата прихода *</label>
+                        <input type="date" name="date" class="form-control" value="{{ r.date }}" required>
                     </div>
                     <div class="mb-1">
                         <label class="form-label fw-semibold">Заметка</label>
@@ -307,6 +370,57 @@
 {% block scripts %}
 <script>
 (function () {
+    /* ── Мультивыбор филиалов ── */
+    function onBranchCbChange() {
+        const cbs = document.querySelectorAll('.branch-cb');
+        const checked = [...cbs].filter(c => c.checked);
+        const allCb = document.getElementById('branch-all-cb');
+        if (allCb) allCb.checked = checked.length === 0;
+        const label = document.getElementById('branch-btn-label');
+        if (label) label.textContent = checked.length === 0 ? 'Все филиалы' : 'Выбрано: ' + checked.length;
+    }
+    window.toggleAllBranches = function(cb) {
+        if (cb.checked) {
+            document.querySelectorAll('.branch-cb').forEach(c => c.checked = false);
+            const label = document.getElementById('branch-btn-label');
+            if (label) label.textContent = 'Все филиалы';
+        }
+    };
+    window.onBranchCbChange = onBranchCbChange;
+    window.selectBranchGroup = function(ids) {
+        const allCb = document.getElementById('branch-all-cb');
+        if (allCb) allCb.checked = false;
+        document.querySelectorAll('.branch-cb').forEach(function(cb) {
+            cb.checked = ids.indexOf(parseInt(cb.value)) >= 0;
+        });
+        onBranchCbChange();
+    };
+
+    /* ── Мультивыбор поставщиков с поиском ── */
+    window.filterSuppliers = function(q) {
+        const lq = q.toLowerCase();
+        document.querySelectorAll('.supp-item').forEach(function(el) {
+            el.style.display = el.dataset.name.indexOf(lq) >= 0 ? '' : 'none';
+        });
+    };
+    function onSuppCbChange() {
+        const cbs = document.querySelectorAll('.supp-cb');
+        const checked = [...cbs].filter(c => c.checked);
+        const allCb = document.getElementById('supp-all-cb');
+        if (allCb) allCb.checked = checked.length === 0;
+        const label = document.getElementById('supp-btn-label');
+        if (label) label.textContent = checked.length === 0 ? 'Все поставщики' : 'Выбрано: ' + checked.length;
+    }
+    window.onSuppCbChange = onSuppCbChange;
+    window.toggleAllSuppliers = function(cb) {
+        if (cb.checked) {
+            document.querySelectorAll('.supp-cb').forEach(c => c.checked = false);
+            const label = document.getElementById('supp-btn-label');
+            if (label) label.textContent = 'Все поставщики';
+        }
+    };
+
+    /* ── Сортировка таблиц ── */
     function makeTableSortable(tableId, tbodyId, thClass, arrowClass) {
         var table = document.getElementById(tableId);
         if (!table) return;
