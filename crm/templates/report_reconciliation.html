@@ -14,33 +14,22 @@
             <!-- Контрагент -->
             <div class="col-md-4">
                 <label class="form-label small fw-semibold mb-1">Контрагент</label>
-                <div class="dropdown" id="ctr-dropdown">
+                <div class="dropdown">
                     <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle w-100 text-start"
-                            data-bs-toggle="dropdown" data-bs-auto-close="outside"
-                            style="min-width:220px;">
-                        <span id="ctr-btn-label">
-                            {% if contractor %}{{ contractor.name }}{% else %}— выберите контрагента —{% endif %}
-                        </span>
+                            data-bs-toggle="dropdown" data-bs-auto-close="outside" id="ctr-btn">
+                        <span id="ctr-btn-label">{% if contractor %}{{ contractor.name }}{% else %}— выберите контрагента —{% endif %}</span>
                     </button>
-                    <div class="dropdown-menu p-2" style="min-width:300px; max-height:400px; display:flex; flex-direction:column;">
-                        <input type="text" class="form-control form-control-sm mb-2"
-                               id="ctr-search" placeholder="Поиск контрагента..."
-                               oninput="filterCtrs(this.value)" autocomplete="off">
-                        <div id="ctr-list" style="overflow-y:auto; flex:1;">
-                            <div class="dropdown-item rounded px-2 py-1 ctr-item"
-                                 style="cursor:pointer; font-size:0.85rem;"
-                                 data-name="" data-label="— все контрагенты —"
-                                 onclick="selectCtr('', '— выберите контрагента —')">
-                                <span class="text-muted">— все / сбросить —</span>
-                            </div>
+                    <div class="dropdown-menu p-2" style="min-width:300px;">
+                        <input type="text" class="form-control form-control-sm mb-1"
+                               id="ctr-search" placeholder="Поиск..." oninput="filterCtrs(this.value)" autocomplete="off">
+                        <div style="max-height:300px; overflow-y:auto;">
+                            <button type="button" class="dropdown-item rounded small py-1 text-muted ctr-opt" data-name=""
+                                    onclick="pickCtr('', '— выберите контрагента —')">— сбросить —</button>
                             {% for c in contractors %}
-                            <div class="dropdown-item rounded px-2 py-1 ctr-item {% if contractor_id == c.id|string %}active{% endif %}"
-                                 style="cursor:pointer; font-size:0.85rem;"
-                                 data-name="{{ c.name|lower }}"
-                                 data-label="{{ c.name }}"
-                                 onclick="selectCtr('{{ c.id }}', '{{ c.name }}')">
-                                {{ c.name }}
-                            </div>
+                            <button type="button"
+                                    class="dropdown-item rounded small py-1 ctr-opt {% if contractor_id == c.id|string %}active{% endif %}"
+                                    data-name="{{ c.name|lower }}"
+                                    onclick="pickCtr('{{ c.id }}', {{ c.name|tojson }})">{{ c.name }}</button>
                             {% endfor %}
                         </div>
                     </div>
@@ -271,32 +260,25 @@
 {% block scripts %}
 <script>
 function filterCtrs(q) {
-    const lq = q.toLowerCase();
-    document.querySelectorAll('#ctr-list .ctr-item').forEach(function(el) {
-        const name = el.dataset.name || '';
-        el.style.display = name === '' || name.indexOf(lq) >= 0 ? '' : 'none';
+    var lq = q.toLowerCase();
+    document.querySelectorAll('.ctr-opt[data-name]').forEach(function(el) {
+        var name = el.dataset.name;
+        el.style.display = (!lq || name === '' || name.indexOf(lq) >= 0) ? '' : 'none';
     });
 }
 
-function selectCtr(id, label) {
+function pickCtr(id, label) {
     document.getElementById('ctr-hidden').value = id;
-    document.getElementById('ctr-btn-label').textContent = label || '— выберите контрагента —';
-    document.querySelectorAll('#ctr-list .ctr-item').forEach(function(el) {
-        el.classList.toggle('active', el.dataset.label === label && id !== '');
-    });
-    // Закрыть dropdown
-    const dd = document.getElementById('ctr-dropdown');
-    const btn = dd.querySelector('[data-bs-toggle="dropdown"]');
-    const bsDropdown = bootstrap.Dropdown.getInstance(btn);
-    if (bsDropdown) bsDropdown.hide();
-    // Авто-сабмит
-    document.querySelector('form').submit();
+    document.getElementById('ctr-btn-label').textContent = label;
+    bootstrap.Dropdown.getOrCreateInstance(document.getElementById('ctr-btn')).hide();
+    setTimeout(function() { document.querySelector('form').submit(); }, 100);
 }
 
-// Фокус на поиск при открытии dropdown
-document.addEventListener('shown.bs.dropdown', function(e) {
-    const search = e.target.querySelector('#ctr-search');
-    if (search) search.focus();
+document.getElementById('ctr-btn').addEventListener('shown.bs.dropdown', function() {
+    var s = document.getElementById('ctr-search');
+    s.value = '';
+    filterCtrs('');
+    s.focus();
 });
 </script>
 {% endblock %}
