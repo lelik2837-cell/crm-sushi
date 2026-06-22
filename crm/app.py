@@ -1086,15 +1086,6 @@ def shift_view(shift_id):
         expense_cats_groups = build_cats_groups(expense_cats)
         expense_cats_flat = [(c['code'], c['label']) for c in expense_cats]
         can_edit = (role == 'owner') or (shift['status'] == 'open')
-        # Размен = итого нал в кассе предыдущей смены того же филиала
-        prev_cash_row = conn.execute('''
-            SELECT r.actual_cash, s.date
-            FROM shifts s
-            JOIN shift_revenue r ON r.shift_id = s.id
-            WHERE s.branch_id = ? AND s.date < ? AND r.actual_cash > 0
-            ORDER BY s.date DESC LIMIT 1
-        ''', (shift['branch_id'], shift['date'])).fetchone()
-        prev_cash = dict(prev_cash_row) if prev_cash_row else None
         return render_template('shift.html',
             shift=shift, revenue=revenue, expenses=expenses,
             staff=staff, employees=employees,
@@ -1104,8 +1095,7 @@ def shift_view(shift_id):
             expense_cats_groups=expense_cats_groups,
             role_labels=ROLE_LABELS,
             can_edit=can_edit,
-            is_owner=(role == 'owner'),
-            prev_cash=prev_cash)
+            is_owner=(role == 'owner'))
 
 
 @app.route('/shift/<int:shift_id>/save-revenue', methods=['POST'])
