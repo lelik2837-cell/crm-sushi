@@ -4,9 +4,16 @@
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="fw-bold mb-0"><i class="bi bi-box-seam"></i> Накладные</h4>
-    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addModal">
-        <i class="bi bi-plus"></i> Добавить накладную
-    </button>
+    <div class="d-flex gap-2">
+        {% if is_owner %}
+        <a href="{{ url_for('purchases_import_excel') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-file-earmark-spreadsheet me-1"></i>Импорт из Excel
+        </a>
+        {% endif %}
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addModal">
+            <i class="bi bi-plus"></i> Добавить накладную
+        </button>
+    </div>
 </div>
 
 <!-- Фильтры -->

@@ -3533,6 +3533,73 @@ def purchases_import_excel_confirm():
     return redirect(url_for('purchases'))
 
 
+@app.route('/report/reconciliation')
+@login_required
+@owner_required
+def report_reconciliation():
+    today      = date.today().isoformat()
+    month_start = date.today().replace(day=1).isoformat()
+    date_from      = request.args.get('date_from', month_start)
+    date_to        = request.args.get('date_to',   today)
+    contractor_id  = request.args.get('contractor_id', '').strip()
+
+    with get_db() as conn:
+        contractors = conn.execute(
+            'SELECT id, name FROM contractors WHERE is_active=1 ORDER BY name'
+        ).fetchall()
+
+        contractor = None
+        purchases_rows = []
+        payment_rows   = []
+
+        if contractor_id.isdigit():
+            contractor = conn.execute(
+                'SELECT * FROM contractors WHERE id=?', (int(contractor_id),)
+            ).fetchone()
+
+        if contractor:
+            # Накладные: совпадение по имени контрагента (case-insensitive)
+            purchases_rows = conn.execute('''
+                SELECT p.date, p.invoice_number, p.supplier, p.amount,
+                       b.name AS branch_name
+                FROM purchases p
+                JOIN branches b ON b.id = p.branch_id
+                WHERE LOWER(TRIM(p.supplier)) = LOWER(TRIM(?))
+                  AND p.date BETWEEN ? AND ?
+                ORDER BY p.date, p.id
+            ''', (contractor['name'], date_from, date_to)).fetchall()
+
+            # Оплаты из банковских выписок: по contractor_id
+            payment_rows = conn.execute('''
+                SELECT bt.txn_date AS date, bt.description,
+                       bt.counterparty, bt.amount, bt.category,
+                       ba.name AS account_name
+                FROM bank_transactions bt
+                JOIN bank_statements   bs ON bs.id  = bt.statement_id
+                JOIN bank_accounts     ba ON ba.id  = bt.bank_account_id
+                WHERE bt.contractor_id = ?
+                  AND bt.txn_date BETWEEN ? AND ?
+                  AND bt.is_ignored = 0
+                ORDER BY bt.txn_date, bt.id
+            ''', (contractor['id'], date_from, date_to)).fetchall()
+
+    total_purchases = sum(r['amount'] for r in purchases_rows)
+    total_payments  = sum(r['amount'] for r in payment_rows)
+    balance         = total_purchases + total_payments  # payments обычно отрицательные (расход)
+
+    return render_template('report_reconciliation.html',
+        contractors=contractors,
+        contractor=contractor,
+        contractor_id=contractor_id,
+        purchases=purchases_rows,
+        payments=payment_rows,
+        total_purchases=total_purchases,
+        total_payments=total_payments,
+        balance=balance,
+        date_from=date_from,
+        date_to=date_to)
+
+
 @app.route('/report/expenses')
 @login_required
 @owner_required

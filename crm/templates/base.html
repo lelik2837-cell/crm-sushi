@@ -48,7 +48,7 @@
                         <i class="bi bi-house"></i> Главная
                     </a>
                 </li>
-                {% set reports_active = request.endpoint in ('reports', 'shifts_archive', 'expenses_report') or (request.endpoint and request.endpoint.startswith('bank')) %}
+                {% set reports_active = request.endpoint in ('reports', 'shifts_archive', 'expenses_report', 'cash_flow_report', 'purchases', 'report_reconciliation') or (request.endpoint and (request.endpoint.startswith('bank') or 'purchases_import' in (request.endpoint or ''))) %}
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle {% if reports_active %}active{% endif %}"
                        href="#" data-bs-toggle="dropdown" aria-expanded="false">
@@ -82,14 +82,14 @@
                             </a>
                         </li>
                         <li>
-                            <a class="dropdown-item {% if request.endpoint=='purchases' %}active{% endif %}" href="{{ url_for('purchases') }}">
+                            <a class="dropdown-item {% if request.endpoint=='report_reconciliation' %}active{% endif %}" href="{{ url_for('report_reconciliation') }}">
+                                <i class="bi bi-arrow-left-right me-2"></i>Сверка итогов
+                            </a>
+                        </li>
+                        <li>
+                            <a class="dropdown-item {% if request.endpoint=='purchases' or (request.endpoint and 'purchases_import' in request.endpoint) %}active{% endif %}" href="{{ url_for('purchases') }}">
                                 <i class="bi bi-box-seam me-2"></i>Накладные
                             </a>
-                            {% if session.get('role') == 'owner' %}
-                            <a class="dropdown-item {% if request.endpoint and 'purchases_import' in request.endpoint %}active{% endif %}" href="{{ url_for('purchases_import_excel') }}">
-                                <i class="bi bi-file-earmark-spreadsheet me-2"></i>Импорт накладных
-                            </a>
-                            {% endif %}
                         </li>
                         <li>
                             <a class="dropdown-item {% if request.endpoint and request.endpoint.startswith('bank') %}active{% endif %}" href="{{ url_for('bank') }}">
