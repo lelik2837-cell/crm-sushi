@@ -131,6 +131,10 @@
                             </a>
                         </li>
                         <li>
+                            <a class="dropdown-item {% if request.endpoint=='settings' and request.args.get('tab')=='api' %}active{% endif %}" href="{{ url_for('settings') }}?tab=api">
+                                <i class="bi bi-plug me-2"></i>Интеграция 1С
+                            </a>
+                            <li><hr class="dropdown-divider my-1"></li>
                             <a class="dropdown-item {% if request.endpoint=='settings' and request.args.get('tab','categories')=='categories' %}active{% endif %}" href="{{ url_for('settings') }}?tab=categories">
                                 <i class="bi bi-tags me-2"></i>Категории расходов
                             </a>

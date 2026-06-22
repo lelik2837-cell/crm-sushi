@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% set active_tab = request.args.get('tab', 'categories') %}
-{% set tab_titles = {'categories': 'Категории расходов / доходов', 'kpi': 'КПИ блоки дашборда', 'bonuses': 'Премии', 'vars': 'Переменные формул', 'rates': 'Ставки сотрудников'} %}
+{% set tab_titles = {'categories': 'Категории расходов / доходов', 'kpi': 'КПИ блоки дашборда', 'bonuses': 'Премии', 'vars': 'Переменные формул', 'rates': 'Ставки сотрудников', 'api': 'Интеграция 1С / накладные'} %}
 {% block title %}Настройки — {{ tab_titles.get(active_tab, '') }}{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -629,6 +629,155 @@
         {% endfor %}
     </div>{% endif %}
 
+    <!-- ══ API 1С ИНТЕГРАЦИЯ ══ -->
+    {% if active_tab == 'api' %}<div>
+
+    {% set base_url = request.host_url.rstrip('/') %}
+
+    <div class="row g-4">
+
+        <!-- Создать токен -->
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-header bg-light fw-semibold"><i class="bi bi-key me-1"></i>Добавить токен для филиала</div>
+                <div class="card-body">
+                    <form method="POST" action="{{ url_for('api_token_add') }}">
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Филиал</label>
+                            <select name="branch_id" class="form-select" required>
+                                <option value="">— выберите —</option>
+                                {% for b in branches %}
+                                <option value="{{ b.id }}">{{ b.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Описание</label>
+                            <input type="text" name="description" class="form-control" placeholder="напр. Авиаторов накладные">
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">Создать токен</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Активные токены -->
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header bg-light fw-semibold"><i class="bi bi-link-45deg me-1"></i>Активные токены и настройки для программы</div>
+                {% if api_tokens %}
+                <div class="table-responsive">
+                    <table class="table mb-0 align-middle">
+                        <thead class="table-light">
+                            <tr><th>Филиал</th><th>Описание</th><th>URL для программы</th><th></th></tr>
+                        </thead>
+                        <tbody>
+                        {% for t in api_tokens %}
+                        <tr>
+                            <td class="fw-semibold">{{ t.branch_name }}</td>
+                            <td class="text-muted small">{{ t.description or '—' }}</td>
+                            <td>
+                                <div class="input-group input-group-sm">
+                                    <input type="text" class="form-control form-control-sm font-monospace"
+                                           value="{{ base_url }}/api/1c/{{ t.token }}" readonly
+                                           id="url_{{ t.id }}">
+                                    <button class="btn btn-outline-secondary" type="button"
+                                            onclick="copyUrl('url_{{ t.id }}')">
+                                        <i class="bi bi-copy"></i>
+                                    </button>
+                                </div>
+                                <div class="text-muted" style="font-size:0.7rem;margin-top:2px">
+                                    Логин: <code>crmpapa</code> · Пароль: <code>{{ t.token[:8] }}...</code>
+                                </div>
+                            </td>
+                            <td>
+                                <form method="POST" action="{{ url_for('api_token_delete', tid=t.id) }}"
+                                      onsubmit="return confirm('Удалить токен?')">
+                                    <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="card-body pt-2 pb-3">
+                    <div class="alert alert-info py-2 mb-0 small">
+                        <i class="bi bi-info-circle me-1"></i>
+                        В программе укажите <strong>URL</strong> из таблицы.
+                        <strong>Логин</strong> и <strong>Пароль</strong> — любые (авторизация по токену в URL).
+                        <strong>1С GUID</strong> — не важен, можно оставить любой.
+                    </div>
+                </div>
+                {% else %}
+                <div class="card-body text-center text-muted py-4">
+                    <i class="bi bi-key fs-2 d-block mb-2 opacity-25"></i>
+                    Создайте токен для каждого филиала
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Лог запросов -->
+    <div class="card mt-4">
+        <div class="card-header bg-light fw-semibold d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-terminal me-1"></i>Лог входящих запросов (последние 50)</span>
+            {% if api_log %}
+            <form method="POST" action="{{ url_for('api_log_clear') }}"
+                  onsubmit="return confirm('Очистить лог?')">
+                <button class="btn btn-sm btn-outline-danger">Очистить</button>
+            </form>
+            {% endif %}
+        </div>
+        {% if api_log %}
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 align-middle" style="font-size:0.82rem">
+                <thead class="table-light">
+                    <tr>
+                        <th>Время</th><th>Филиал</th><th>Метод</th><th>Статус</th><th>Тело запроса</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for l in api_log %}
+                <tr class="{{ 'table-success' if l.parsed_ok else '' }}">
+                    <td style="white-space:nowrap">{{ l.created_at[:16] }}</td>
+                    <td>{{ l.branch_name or '?' }}</td>
+                    <td><span class="badge bg-secondary">{{ l.method }}</span></td>
+                    <td>
+                        {% if l.parsed_ok %}
+                        <span class="badge bg-success">{{ l.status }}</span>
+                        {% else %}
+                        <span class="badge bg-{{ 'danger' if l.status and 'ошибка' in l.status else 'secondary' }}">
+                            {{ l.status or 'получено' }}
+                        </span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if l.body %}
+                        <details>
+                            <summary class="text-muted" style="cursor:pointer">показать ({{ l.body|length }} байт)</summary>
+                            <pre class="mt-1 p-2 bg-light rounded" style="max-height:200px;overflow:auto;font-size:0.75rem;white-space:pre-wrap">{{ l.body[:3000] }}</pre>
+                        </details>
+                        {% else %}
+                        <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="card-body text-center text-muted py-4">
+            <i class="bi bi-inbox fs-2 d-block mb-2 opacity-25"></i>
+            Запросов пока не было. Настройте программу и сделайте тестовую выгрузку.
+        </div>
+        {% endif %}
+    </div>
+
+    </div>{% endif %}
+
 </div>
 
 <!-- Modal: редактировать правило премирования -->
@@ -755,5 +904,14 @@ function onCatTypeChange() {
 }
 // Init on load
 onCatTypeChange();
+
+function copyUrl(inputId) {
+    var el = document.getElementById(inputId);
+    if (!el) return;
+    navigator.clipboard.writeText(el.value).then(function() {
+        var btn = el.nextElementSibling;
+        if (btn) { btn.innerHTML = '<i class="bi bi-check"></i>'; setTimeout(function(){ btn.innerHTML = '<i class="bi bi-copy"></i>'; }, 1500); }
+    });
+}
 </script>
 {% endblock %}
