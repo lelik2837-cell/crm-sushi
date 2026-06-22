@@ -1416,6 +1416,7 @@ def delete_shift(shift_id):
         )
         conn.execute('DELETE FROM taxi_trips WHERE shift_id=?', (shift_id,))
         conn.execute('DELETE FROM shift_revenue WHERE shift_id=?', (shift_id,))
+        conn.execute('DELETE FROM change_log WHERE shift_id=?', (shift_id,))
         conn.execute('DELETE FROM shifts WHERE id=?', (shift_id,))
         conn.commit()
     flash(f'Смена #{shift_id} удалена', 'success')
