@@ -2,16 +2,16 @@
 {% block title %}Накладные{% endblock %}
 {% block content %}
 
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <div class="page-heading"><i class="bi bi-box-seam" style="color:var(--brand)"></i> Накладные</div>
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="fw-bold mb-0"><i class="bi bi-box-seam"></i> Накладные</h4>
     <div class="d-flex gap-2">
         {% if is_owner %}
         <a href="{{ url_for('purchases_import_excel') }}" class="btn btn-outline-secondary">
-            <i class="bi bi-file-earmark-spreadsheet"></i>Импорт из Excel
+            <i class="bi bi-file-earmark-spreadsheet me-1"></i>Импорт из Excel
         </a>
         {% endif %}
         <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addModal">
-            <i class="bi bi-plus-lg"></i> Добавить накладную
+            <i class="bi bi-plus"></i> Добавить накладную
         </button>
     </div>
 </div>

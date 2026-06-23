@@ -3,7 +3,7 @@
 {% block content %}
 
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <div class="page-heading"><i class="bi bi-calendar3" style="color:var(--brand)"></i> Архив смен</div>
+    <h4 class="fw-bold mb-0"><i class="bi bi-calendar3"></i> Архив смен</h4>
 </div>
 
 <!-- Фильтры -->
@@ -86,28 +86,30 @@
 {% if shifts %}
 <div class="row g-3 mb-4">
     <div class="col-sm-3 col-6">
-        <div class="card p-4" style="border-top:3px solid var(--brand)">
-            <div style="font-size:0.72rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Смен</div>
-            <div style="font-size:1.6rem;font-weight:800;color:var(--text);letter-spacing:-.02em">{{ shifts | length }}</div>
+        <div class="card text-center py-3">
+            <div class="text-muted small">Смен</div>
+            <div class="fw-bold fs-4">{{ shifts | length }}</div>
         </div>
     </div>
     <div class="col-sm-3 col-6">
-        <div class="card p-4" style="border-top:3px solid #3b82f6">
-            <div style="font-size:0.72rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Выручка</div>
-            <div style="font-size:1.6rem;font-weight:800;color:var(--text);letter-spacing:-.02em">{{ "{:,.0f}".format(total_revenue).replace(',', ' ') }} ₽</div>
+        <div class="card text-center py-3">
+            <div class="text-muted small">Выручка</div>
+            <div class="fw-bold fs-4">{{ "{:,.0f}".format(total_revenue).replace(',', ' ') }} ₽</div>
         </div>
     </div>
     <div class="col-sm-3 col-6">
-        <div class="card p-4" style="border-top:3px solid #f59e0b">
-            <div style="font-size:0.72rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Заказов</div>
-            <div style="font-size:1.6rem;font-weight:800;color:var(--text);letter-spacing:-.02em">{{ total_orders }}</div>
+        <div class="card text-center py-3">
+            <div class="text-muted small">Заказов</div>
+            <div class="fw-bold fs-4">{{ total_orders }}</div>
         </div>
     </div>
     <div class="col-sm-3 col-6">
-        <div class="card p-4" style="border-top:3px solid #22c55e">
-            <div style="font-size:0.72rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Средний чек</div>
-            <div style="font-size:1.6rem;font-weight:800;color:var(--text);letter-spacing:-.02em">
-                {% if total_orders > 0 %}{{ "{:,.0f}".format(total_revenue / total_orders).replace(',', ' ') }} ₽{% else %}—{% endif %}
+        <div class="card text-center py-3">
+            <div class="text-muted small">Средний чек</div>
+            <div class="fw-bold fs-4">
+                {% if total_orders > 0 %}
+                    {{ "{:,.0f}".format(total_revenue / total_orders).replace(',', ' ') }} ₽
+                {% else %}—{% endif %}
             </div>
         </div>
     </div>
@@ -115,7 +117,7 @@
 
 <!-- Таблица смен -->
 <div class="card">
-    <div style="padding:0">
+    <div class="card-body p-0">
         <div class="table-responsive">
             <table class="table table-hover mb-0">
                 <thead class="table-light">
@@ -139,9 +141,9 @@
                     {% if is_owner %}<td class="text-muted">{{ s.branch_name }}</td>{% endif %}
                     <td class="text-center">
                         {% if s.status == 'open' %}
-                            <span style="background:#dcfce7;color:#166534;border-radius:20px;font-size:0.68rem;font-weight:700;padding:3px 10px;white-space:nowrap">● Открыта</span>
+                            <span class="badge bg-success">Открыта</span>
                         {% else %}
-                            <span style="background:#f1f5f9;color:#64748b;border-radius:20px;font-size:0.68rem;font-weight:700;padding:3px 10px">Закрыта</span>
+                            <span class="badge bg-secondary">Закрыта</span>
                         {% endif %}
                     </td>
                     <td class="text-end fw-semibold">
@@ -185,9 +187,9 @@
 
 {% else %}
 <div class="card">
-    <div class="card-body text-center py-5" style="color:var(--text-light)">
-        <i class="bi bi-calendar-x" style="font-size:2.5rem;display:block;margin-bottom:12px;opacity:0.4"></i>
-        <div style="font-size:0.9rem;font-weight:600">Смен за выбранный период не найдено</div>
+    <div class="card-body text-center py-5 text-muted">
+        <i class="bi bi-calendar-x fs-1 d-block mb-3"></i>
+        Смен за выбранный период не найдено
     </div>
 </div>
 {% endif %}

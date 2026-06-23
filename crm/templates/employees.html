@@ -1,10 +1,10 @@
 {% extends 'base.html' %}
 {% block title %}Сотрудники{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <div class="page-heading"><i class="bi bi-person-badge" style="color:var(--brand)"></i> Сотрудники</div>
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="fw-bold mb-0"><i class="bi bi-person-badge"></i> Сотрудники</h4>
     <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addEmpModal">
-        <i class="bi bi-plus-lg"></i> Добавить сотрудника
+        <i class="bi bi-plus"></i> Добавить сотрудника
     </button>
 </div>
 
@@ -65,7 +65,7 @@
 {% set branch_emps = employees | selectattr('branch_id', 'equalto', branch.id) | list %}
 {% if branch_emps %}
 <div class="card mb-4">
-    <div class="card-header">
+    <div class="card-header bg-light fw-bold">
         <i class="bi bi-shop"></i> {{ branch.name }}
     </div>
     <div class="card-body p-0">
@@ -89,7 +89,7 @@
                     <td class="fw-semibold">{{ emp.last_name or emp.full_name }}</td>
                     <td>{{ emp.first_name or '' }}</td>
                     <td>
-                        <span class="badge badge-role-{{ emp.role }}">
+                        <span class="badge" style="background:{% if emp.role=='admin' %}#6f42c1{% elif emp.role=='sushi' %}#0d6efd{% elif emp.role=='packer' %}#198754{% elif emp.role=='courier' %}#fd7e14{% elif emp.role=='cleaner' %}#6c757d{% else %}#dc3545{% endif %}">
                             {{ role_labels.get(emp.role, emp.role) }}
                         </span>
                     </td>
@@ -97,11 +97,8 @@
                     <td class="text-end text-muted">{% if emp.role == 'courier' %}{{ emp.rate_per_km }}{% else %}—{% endif %}</td>
                     <td class="text-end text-muted">{% if emp.role == 'courier' %}{{ emp.rate_per_order }}{% else %}—{% endif %}</td>
                     <td class="text-center">
-                        {% if emp.is_active %}
-                        <span style="background:#dcfce7;color:#166534;border-radius:20px;font-size:0.68rem;font-weight:700;padding:3px 9px">Активен</span>
-                        {% else %}
-                        <span style="background:#f1f5f9;color:#64748b;border-radius:20px;font-size:0.68rem;font-weight:700;padding:3px 9px">Неактивен</span>
-                        {% endif %}
+                        {% if emp.is_active %}<span class="badge bg-success">Активен</span>
+                        {% else %}<span class="badge bg-secondary">Неактивен</span>{% endif %}
                     </td>
                     <td class="text-end">
                         <button class="btn btn-sm btn-outline-primary me-1" data-bs-toggle="modal"
