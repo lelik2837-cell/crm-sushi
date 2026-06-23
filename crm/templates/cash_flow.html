@@ -31,6 +31,7 @@
     <thead class="table-light">
         <tr>
             <th style="min-width:130px">Дата</th>
+            <th style="min-width:160px">Филиал</th>
             <th class="text-end" style="min-width:110px">Размен</th>
             <th class="text-end" style="min-width:120px">Выручка нал</th>
             <th class="text-end" style="min-width:120px">Расходы нал</th>
@@ -41,12 +42,15 @@
     </thead>
     <tbody>
     {% for day in days %}
-    {% set idx = loop.index %}
-    <!-- Строка-заголовок дня (кликабельна) -->
-    <tr class="day-header" style="cursor:pointer" onclick="toggleDay({{ idx }})">
-        <td class="fw-bold">{{ day.date | date_fmt }}</td>
+    {% set di = loop.index %}
+
+    {% if day.shifts | length > 1 %}
+    <!-- Строка-итог дня — кликабельна, разворачивает строки филиалов -->
+    <tr class="table-secondary" style="cursor:pointer" onclick="toggleDay({{ di }})">
+        <td class="fw-bold">{{ day.date | datefmt }}</td>
+        <td class="text-muted small">{{ day.shifts | length }} филиала</td>
         <td class="text-end text-muted fw-semibold">
-            {% if day.morning_cash %}{{ '{:,.0f}'.format(day.morning_cash) }} ₽{% else %}<span class="text-muted">—</span>{% endif %}
+            {% if day.morning_cash %}{{ '{:,.0f}'.format(day.morning_cash) }} ₽{% else %}—{% endif %}
         </td>
         <td class="text-end text-primary fw-semibold">+{{ '{:,.0f}'.format(day.cash_revenue) }} ₽</td>
         <td class="text-end fw-semibold {% if day.expenses_cash %}text-warning{% else %}text-muted{% endif %}">
@@ -59,105 +63,60 @@
             {% if day.actual_cash %}{{ '{:,.0f}'.format(day.actual_cash) }} ₽{% else %}—{% endif %}
         </td>
         <td class="text-center">
-            <i class="bi bi-chevron-down day-chevron" id="chv{{ idx }}" style="transition:transform .2s"></i>
+            <i class="bi bi-chevron-down" id="chv{{ di }}" style="transition:transform .2s"></i>
         </td>
     </tr>
+    {% endif %}
 
-    <!-- Строка с деталями (скрыта по умолчанию) -->
-    <tr id="day_detail_{{ idx }}" class="d-none">
-        <td colspan="7" class="p-0 border-top-0">
-            <div class="bg-light border-bottom px-3 py-3">
-
-                <!-- Карточка "Размен в кассе" -->
-                {% if day.morning_cash %}
-                <div class="d-inline-flex align-items-center gap-2 mb-3 px-3 py-2 rounded"
-                     style="background:#dbeafe;border:1px solid #93c5fd;">
-                    <i class="bi bi-coin text-primary"></i>
-                    <span class="small fw-semibold text-primary">Размен в кассе:</span>
-                    <span class="fw-bold text-primary fs-6">{{ '{:,.0f}'.format(day.morning_cash) }} ₽</span>
-                    <span class="small text-muted">(итого нал предыдущего дня)</span>
-                </div>
-                {% endif %}
-
-                <!-- Таблица по филиалам -->
-                <div class="table-responsive">
-                    <table class="table table-sm mb-0 align-middle bg-white rounded">
-                        <thead class="table-light">
-                            <tr>
-                                <th>Филиал</th>
-                                <th class="text-end">Выручка нал</th>
-                                <th class="text-end">Расходы нал</th>
-                                <th class="text-end">ФОТ</th>
-                                <th class="text-end">Вечером</th>
-                                <th class="text-center">Смена</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                        {% for s in day.shifts %}
-                        <tr>
-                            <td class="fw-semibold">{{ s.branch_name }}</td>
-                            <td class="text-end text-primary">+{{ '{:,.0f}'.format(s.cash_revenue) }} ₽</td>
-                            <td class="text-end {% if s.expenses_cash %}text-warning{% else %}text-muted{% endif %}">
-                                {% if s.expenses_cash %}−{{ '{:,.0f}'.format(s.expenses_cash) }} ₽{% else %}—{% endif %}
-                            </td>
-                            <td class="text-end {% if s.salary_paid %}text-danger{% else %}text-muted{% endif %}">
-                                {% if s.salary_paid %}−{{ '{:,.0f}'.format(s.salary_paid) }} ₽{% else %}—{% endif %}
-                            </td>
-                            <td class="text-end fw-semibold {% if s.actual_cash %}text-success{% else %}text-muted{% endif %}">
-                                {% if s.actual_cash %}{{ '{:,.0f}'.format(s.actual_cash) }} ₽{% else %}—{% endif %}
-                                {% if s.actual_cash_comment %}
-                                <div class="text-muted fw-normal" style="font-size:0.75rem">{{ s.actual_cash_comment }}</div>
-                                {% endif %}
-                            </td>
-                            <td class="text-center">
-                                <a href="{{ url_for('shift_view', shift_id=s.shift_id) }}" target="_blank"
-                                   class="btn btn-sm btn-outline-secondary py-0 px-2">
-                                    <i class="bi bi-box-arrow-up-right"></i>
-                                </a>
-                            </td>
-                        </tr>
-                        {% if s.expense_items %}
-                        <tr style="background:#fffbeb;">
-                            <td colspan="6" class="py-1 ps-4">
-                                <small class="text-muted d-flex flex-wrap gap-2 align-items-center">
-                                    <span class="fw-semibold text-warning me-1"><i class="bi bi-receipt me-1"></i>Расходы нал:</span>
-                                    {% for item in s.expense_items %}
-                                    <span class="d-flex align-items-center gap-1">
-                                        <span class="text-dark">{{ item.cat_label }}{% if item.description %} ({{ item.description }}){% endif %}</span>
-                                        <span class="fw-semibold text-warning">{{ '{:,.0f}'.format(item.amount_cash) }} ₽</span>
-                                        {% if not loop.last %}<span class="text-muted">·</span>{% endif %}
-                                    </span>
-                                    {% endfor %}
-                                </small>
-                            </td>
-                        </tr>
-                        {% endif %}
-                        {% endfor %}
-                        </tbody>
-                        {% if day.shifts | length > 1 %}
-                        <tfoot class="table-light fw-bold">
-                            <tr>
-                                <td>Итого</td>
-                                <td class="text-end text-primary">+{{ '{:,.0f}'.format(day.cash_revenue) }} ₽</td>
-                                <td class="text-end {% if day.expenses_cash %}text-warning{% else %}text-muted{% endif %}">
-                                    {% if day.expenses_cash %}−{{ '{:,.0f}'.format(day.expenses_cash) }} ₽{% else %}—{% endif %}
-                                </td>
-                                <td class="text-end {% if day.salary_paid %}text-danger{% else %}text-muted{% endif %}">
-                                    {% if day.salary_paid %}−{{ '{:,.0f}'.format(day.salary_paid) }} ₽{% else %}—{% endif %}
-                                </td>
-                                <td class="text-end {% if day.actual_cash %}text-success{% else %}text-muted{% endif %}">
-                                    {% if day.actual_cash %}{{ '{:,.0f}'.format(day.actual_cash) }} ₽{% else %}—{% endif %}
-                                </td>
-                                <td></td>
-                            </tr>
-                        </tfoot>
-                        {% endif %}
-                    </table>
-                </div>
-
-            </div>
+    <!-- Строки по каждому филиалу -->
+    {% for s in day.shifts %}
+    <tr class="day-detail-{{ di }}" {% if day.shifts | length > 1 %}style="display:none"{% endif %}>
+        <td class="{% if day.shifts | length == 1 %}fw-bold{% else %}text-muted ps-4 small{% endif %}">
+            {% if loop.first %}{{ day.date | datefmt }}{% endif %}
+        </td>
+        <td class="fw-semibold">{{ s.branch_name }}</td>
+        <td class="text-end text-muted">
+            {% if loop.first and day.morning_cash %}{{ '{:,.0f}'.format(day.morning_cash) }} ₽{% else %}—{% endif %}
+        </td>
+        <td class="text-end text-primary">+{{ '{:,.0f}'.format(s.cash_revenue) }} ₽</td>
+        <td class="text-end {% if s.expenses_cash %}text-warning{% else %}text-muted{% endif %}">
+            {% if s.expenses_cash %}−{{ '{:,.0f}'.format(s.expenses_cash) }} ₽{% else %}—{% endif %}
+        </td>
+        <td class="text-end {% if s.salary_paid %}text-danger{% else %}text-muted{% endif %}">
+            {% if s.salary_paid %}−{{ '{:,.0f}'.format(s.salary_paid) }} ₽{% else %}—{% endif %}
+        </td>
+        <td class="text-end {% if s.actual_cash %}text-success fw-semibold{% else %}text-muted{% endif %}">
+            {% if s.actual_cash %}{{ '{:,.0f}'.format(s.actual_cash) }} ₽{% else %}—{% endif %}
+            {% if s.actual_cash_comment %}
+            <div class="text-muted fw-normal" style="font-size:0.75rem">{{ s.actual_cash_comment }}</div>
+            {% endif %}
+        </td>
+        <td class="text-center">
+            <a href="{{ url_for('shift_view', shift_id=s.shift_id) }}" target="_blank"
+               class="btn btn-sm btn-outline-secondary py-0 px-2">
+                <i class="bi bi-box-arrow-up-right"></i>
+            </a>
         </td>
     </tr>
+    {% if s.expense_items %}
+    <tr class="day-detail-{{ di }}" style="background:#fffbeb;{% if day.shifts | length > 1 %}display:none{% endif %}">
+        <td></td>
+        <td colspan="7" class="py-1 ps-3">
+            <small class="text-muted d-flex flex-wrap gap-2 align-items-center">
+                <span class="fw-semibold text-warning me-1"><i class="bi bi-receipt me-1"></i>{{ s.branch_name }}:</span>
+                {% for item in s.expense_items %}
+                <span class="d-flex align-items-center gap-1">
+                    <span class="text-dark">{{ item.cat_label }}{% if item.description %} ({{ item.description }}){% endif %}</span>
+                    <span class="fw-semibold text-warning">{{ '{:,.0f}'.format(item.amount_cash) }} ₽</span>
+                    {% if not loop.last %}<span class="text-muted">·</span>{% endif %}
+                </span>
+                {% endfor %}
+            </small>
+        </td>
+    </tr>
+    {% endif %}
+    {% endfor %}
+
     {% endfor %}
     </tbody>
 </table>
@@ -175,16 +134,12 @@
 
 {% block scripts %}
 <script>
-function toggleDay(idx) {
-    const detail = document.getElementById('day_detail_' + idx);
-    const chv    = document.getElementById('chv' + idx);
-    if (detail.classList.contains('d-none')) {
-        detail.classList.remove('d-none');
-        chv.style.transform = 'rotate(180deg)';
-    } else {
-        detail.classList.add('d-none');
-        chv.style.transform = '';
-    }
+function toggleDay(di) {
+    const rows = document.querySelectorAll('.day-detail-' + di);
+    const chv  = document.getElementById('chv' + di);
+    const hidden = rows.length > 0 && rows[0].style.display === 'none';
+    rows.forEach(r => r.style.display = hidden ? '' : 'none');
+    if (chv) chv.style.transform = hidden ? 'rotate(180deg)' : '';
 }
 </script>
 {% endblock %}

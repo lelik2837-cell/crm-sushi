@@ -2831,12 +2831,12 @@ def cash_flow_report():
         ''', (date_from, date_to)).fetchall()
 
         salary_rows = conn.execute(f'''
-            SELECT sp.payment_date, s.branch_id, COALESCE(SUM(sp.amount), 0) AS salary_paid
+            SELECT s.date, s.branch_id, COALESCE(SUM(sp.amount), 0) AS salary_paid
             FROM salary_payments sp
             JOIN employee_shifts es ON es.id = sp.employee_shift_id
             JOIN shifts s ON s.id = es.shift_id
-            WHERE sp.payment_date BETWEEN ? AND ? {bf}
-            GROUP BY sp.payment_date, s.branch_id
+            WHERE s.date BETWEEN ? AND ? {bf}
+            GROUP BY s.date, s.branch_id
         ''', (date_from, date_to)).fetchall()
 
         expense_items_rows = conn.execute(f'''
@@ -2857,7 +2857,7 @@ def cash_flow_report():
 
     sal_map = defaultdict(float)
     for r in salary_rows:
-        sal_map[(r['payment_date'], r['branch_id'])] += r['salary_paid']
+        sal_map[(r['date'], r['branch_id'])] += r['salary_paid']
 
     items_by_shift = defaultdict(list)
     for r in expense_items_rows:
@@ -5309,7 +5309,10 @@ def delete_import_batch(batch_id):
             conn.execute(f'DELETE FROM salary_payments WHERE employee_shift_id IN (SELECT id FROM employee_shifts WHERE shift_id IN ({ids_str}))')
             conn.execute(f'DELETE FROM employee_shifts WHERE shift_id IN ({ids_str})')
             conn.execute(f'DELETE FROM expenses WHERE shift_id IN ({ids_str})')
+            conn.execute(f'DELETE FROM taxi_trip_employees WHERE trip_id IN (SELECT id FROM taxi_trips WHERE shift_id IN ({ids_str}))')
+            conn.execute(f'DELETE FROM taxi_trips WHERE shift_id IN ({ids_str})')
             conn.execute(f'DELETE FROM shift_revenue WHERE shift_id IN ({ids_str})')
+            conn.execute(f'DELETE FROM change_log WHERE shift_id IN ({ids_str})')
             conn.execute(f'DELETE FROM shifts WHERE id IN ({ids_str})')
 
         conn.execute('DELETE FROM import_batches WHERE id=?', (batch_id,))
