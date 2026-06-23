@@ -180,9 +180,7 @@
     <button class="ph-btn ph-btn-outline" onclick="saveAllRevenue()">Сохранить выручку</button>
     <button class="ph-btn ph-btn-primary" onclick="openCloseModal()">🔒 Закрыть смену</button>
     {% elif is_owner and shift.status == 'closed' %}
-    <form method="POST" action="{{ url_for('reopen_shift', shift_id=shift.id) }}" style="display:inline">
-      <button class="ph-btn ph-btn-warning" onclick="return confirm('Переоткрыть смену?')">🔓 Переоткрыть</button>
-    </form>
+    <button id="unlock-edit-btn" class="ph-btn ph-btn-warning" onclick="unlockShiftEdit()">✏️ Редактировать</button>
     {% endif %}
     {% if is_owner %}
     <form method="POST" action="{{ url_for('delete_shift', shift_id=shift.id) }}" style="display:inline" onsubmit="return confirm('Удалить смену безвозвратно? Все данные (выручка, расходы, сотрудники) будут удалены.')">
@@ -463,10 +461,14 @@
       {% if can_edit %}<div class="bonus-btns"><button class="bonus-btn-prem" onclick="toggleBonus(this,'prem')">▲ Премия</button><button class="bonus-btn-fine" onclick="toggleBonus(this,'fine')">▼ Штраф</button></div>{% else %}<div></div>{% endif %}
       <div class="field-calc sf-auto-bonus">{{ (s.auto_bonus or 0)|int if (s.auto_bonus or 0) > 0 else '—' }}</div>
       <div class="field-calc sf-total">{{ (s.total_amount or 0)|int }} ₽</div>
+      {% if s.pay_monthly %}
+      <div class="paid-select paid-monthly" title="ЗП выплачивается ежемесячно" style="font-size:10px;padding:0 4px;text-align:center;border-radius:6px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;display:flex;align-items:center;justify-content:center;white-space:nowrap;">Ежемес.</div>
+      {% else %}
       <select class="paid-select {% if s.is_paid %}paid-yes{% else %}paid-no{% endif %} sf-paid" onchange="onPaidChange(this)" {% if not can_edit %}disabled{% endif %}>
         <option value="no" {% if not s.is_paid %}selected{% endif %}>Нет</option>
         <option value="yes" {% if s.is_paid %}selected{% endif %}>Да</option>
       </select>
+      {% endif %}
       {% if can_edit %}<button class="staff-del" onclick="deleteStaff(this, {{ s.id }})">✕</button>{% else %}<div></div>{% endif %}
     </div>
     <div class="staff-bonus-row" {% if hb %}style="display:flex"{% endif %}>
@@ -565,11 +567,15 @@
           <div class="bonus-btns"><button class="bonus-btn-prem" onclick="toggleBonus(this,'prem')">▲ Премия</button><button class="bonus-btn-fine" onclick="toggleBonus(this,'fine')">▼ Штраф</button></div>
           {% else %}<div></div>{% endif %}
           <div class="field-calc sf-total">{{ (s.total_amount or 0)|int }} ₽</div>
+          {% if s.pay_monthly %}
+          <div class="paid-select paid-monthly" title="ЗП выплачивается ежемесячно" style="font-size:10px;padding:0 4px;text-align:center;border-radius:6px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;display:flex;align-items:center;justify-content:center;white-space:nowrap;">Ежемес.</div>
+          {% else %}
           <select class="paid-select {% if s.is_paid %}paid-yes{% else %}paid-no{% endif %} sf-paid"
             onchange="onPaidChange(this)" {% if not can_edit %}disabled{% endif %}>
             <option value="no" {% if not s.is_paid %}selected{% endif %}>Нет</option>
             <option value="yes" {% if s.is_paid %}selected{% endif %}>Да</option>
           </select>
+          {% endif %}
           {% if can_edit %}
           <button class="staff-del" onclick="deleteStaff(this, {{ s.id }})">✕</button>
           {% else %}<div></div>{% endif %}
@@ -679,6 +685,9 @@
 <script>
 const SHIFT_ID = {{ shift.id }};
 const CAN_EDIT = {{ 'true' if can_edit else 'false' }};
+const SHIFT_IS_CLOSED = {{ 'true' if shift.status == 'closed' else 'false' }};
+const IS_OWNER = {{ 'true' if is_owner else 'false' }};
+const SHIFT_WEEKDAY = {{ shift_weekday }};  // 0=Пн, 4=Пт, 5=Сб
 const EXPENSE_CATS_GROUPS = {{ expense_cats_groups | tojson }};
 function getFirstCatCode() {
   if (!EXPENSE_CATS_GROUPS.length) return 'other';
@@ -1167,9 +1176,10 @@ function addStaffByNameInline(btn, type) {
 
 function _postStaff(empId, name, role, rate, rateKm) {
   const isCourier = role === 'courier';
-  const defStart = isCourier ? '' : '09:00';
-  const defEnd   = isCourier ? '' : '19:00';
-  const defHours = isCourier ? 0  : 10;
+  const isFriSat = (SHIFT_WEEKDAY === 4 || SHIFT_WEEKDAY === 5);
+  const defStart = isCourier ? '' : '10:00';
+  const defEnd   = isCourier ? '' : (isFriSat ? '23:00' : '22:00');
+  const defHours = isCourier ? 0  : (isFriSat ? 13 : 12);
   const defBase  = Math.round(rate * defHours);
   fetch(`/shift/${SHIFT_ID}/save-staff`, {
     method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -1491,5 +1501,37 @@ function openCloseModal() {
 
   syncHidden();
 })();
+
+// ── Блокировка закрытой смены (task 1+5) ────────────────────────────────────
+function lockClosedShift() {
+  document.querySelectorAll(
+    'input:not([type="hidden"]):not([id="unlock-edit-btn"]), select, textarea'
+  ).forEach(el => { el.disabled = true; el.dataset.closedLock = '1'; });
+  document.querySelectorAll(
+    'button.btn-add, button.staff-del, button.bonus-btn-prem, button.bonus-btn-fine, ' +
+    'button.bonus-save, button.bonus-cancel, button.bonus-del-btn, button.bonus-edit-btn, ' +
+    'button.ph-btn-outline'
+  ).forEach(el => { el.disabled = true; el.dataset.closedLock = '1'; });
+}
+
+function unlockShiftEdit() {
+  document.querySelectorAll('[data-closed-lock]').forEach(el => {
+    el.disabled = false;
+    delete el.dataset.closedLock;
+  });
+  const btn = document.getElementById('unlock-edit-btn');
+  if (btn) btn.style.display = 'none';
+  // Показать кнопку "Сохранить выручку" для владельца в нижней панели
+  const closeBar = document.querySelector('.close-bar');
+  if (closeBar && !closeBar.querySelector('.save-rev-owner')) {
+    const sb = document.createElement('button');
+    sb.className = 'ph-btn ph-btn-outline save-rev-owner';
+    sb.textContent = 'Сохранить выручку';
+    sb.onclick = saveAllRevenue;
+    closeBar.appendChild(sb);
+  }
+}
+
+if (SHIFT_IS_CLOSED && IS_OWNER) lockClosedShift();
 </script>
 {% endblock %}

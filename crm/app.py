@@ -839,6 +839,15 @@ def init_db():
         if 'fired_comment' not in _emp_cols2:
             conn.execute("ALTER TABLE employees ADD COLUMN fired_comment TEXT DEFAULT ''")
 
+        # Feature: monthly salary flag
+        if 'pay_monthly' not in _emp_cols2:
+            conn.execute("ALTER TABLE employees ADD COLUMN pay_monthly INTEGER DEFAULT 0")
+
+        # One shift per branch per day: unique index
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_shifts_branch_date ON shifts(branch_id, date)"
+        )
+
         conn.commit()
 
 
@@ -1044,11 +1053,22 @@ def open_shift():
             'SELECT id FROM shifts WHERE branch_id=? AND date=?', (branch_id, today)
         ).fetchone()
         if existing:
+            flash('Смена на этот день уже существует', 'warning')
             return redirect(url_for('shift_view', shift_id=existing['id']))
-        conn.execute(
-            'INSERT INTO shifts (branch_id, date, opened_by) VALUES (?,?,?)',
-            (branch_id, today, session['user_id'])
-        )
+        try:
+            conn.execute(
+                'INSERT INTO shifts (branch_id, date, opened_by) VALUES (?,?,?)',
+                (branch_id, today, session['user_id'])
+            )
+        except Exception:
+            # Race condition: another request created the shift simultaneously
+            existing2 = conn.execute(
+                'SELECT id FROM shifts WHERE branch_id=? AND date=?', (branch_id, today)
+            ).fetchone()
+            if existing2:
+                flash('Смена на этот день уже существует', 'warning')
+                return redirect(url_for('shift_view', shift_id=existing2['id']))
+            raise
         shift_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
         conn.execute('INSERT INTO shift_revenue (shift_id) VALUES (?)', (shift_id,))
         conn.commit()
@@ -1075,7 +1095,10 @@ def shift_view(shift_id):
         revenue = conn.execute('SELECT * FROM shift_revenue WHERE shift_id=?', (shift_id,)).fetchone()
         expenses = conn.execute('SELECT * FROM expenses WHERE shift_id=? ORDER BY id', (shift_id,)).fetchall()
         staff = conn.execute(
-            'SELECT * FROM employee_shifts WHERE shift_id=? ORDER BY role_snapshot, full_name_snapshot',
+            '''SELECT es.*, COALESCE(e.pay_monthly, 0) as pay_monthly
+               FROM employee_shifts es
+               LEFT JOIN employees e ON e.id = es.employee_id
+               WHERE es.shift_id=? ORDER BY es.role_snapshot, es.full_name_snapshot''',
             (shift_id,)
         ).fetchall()
         employees = conn.execute(
@@ -1109,6 +1132,10 @@ def shift_view(shift_id):
         expense_cats_groups = build_cats_groups(expense_cats)
         expense_cats_flat = [(c['code'], c['label']) for c in expense_cats]
         can_edit = (role == 'owner') or (shift['status'] == 'open')
+        try:
+            shift_weekday = date.fromisoformat(shift['date']).weekday()  # 0=Mon, 4=Fri, 5=Sat
+        except Exception:
+            shift_weekday = 0
         return render_template('shift.html',
             shift=shift, revenue=revenue, expenses=expenses,
             staff=staff, employees=employees,
@@ -1118,7 +1145,8 @@ def shift_view(shift_id):
             expense_cats_groups=expense_cats_groups,
             role_labels=ROLE_LABELS,
             can_edit=can_edit,
-            is_owner=(role == 'owner'))
+            is_owner=(role == 'owner'),
+            shift_weekday=shift_weekday)
 
 
 @app.route('/shift/<int:shift_id>/save-revenue', methods=['POST'])
@@ -1335,6 +1363,10 @@ def pay_staff(shift_id, staff_id):
         ).fetchone()
         if not row:
             return jsonify({'error': 'Не найдено'}), 404
+        if row['employee_id']:
+            emp = conn.execute('SELECT pay_monthly FROM employees WHERE id=?', (row['employee_id'],)).fetchone()
+            if emp and emp['pay_monthly']:
+                return jsonify({'error': 'pay_monthly'}), 400
         conn.execute(
             'UPDATE employee_shifts SET is_paid=1, paid_amount=? WHERE id=?',
             (amount, staff_id)
@@ -1590,13 +1622,14 @@ def add_employee():
     rate_km = float(request.form.get('rate_per_km', 10) or 10)
     rate_ord = float(request.form.get('rate_per_order', 100) or 100)
     effective_from = request.form.get('effective_from') or date.today().isoformat()
+    pay_monthly = 1 if request.form.get('pay_monthly') else 0
     if not full_name:
         flash('Введите фамилию сотрудника', 'danger')
         return redirect(url_for('employees'))
     with get_db() as conn:
         conn.execute(
-            'INSERT INTO employees (branch_id, full_name, last_name, first_name, role, rate, rate_per_km, rate_per_order) VALUES (?,?,?,?,?,?,?,?)',
-            (branch_id, full_name, last_name, first_name, emp_role, rate, rate_km, rate_ord)
+            'INSERT INTO employees (branch_id, full_name, last_name, first_name, role, rate, rate_per_km, rate_per_order, pay_monthly) VALUES (?,?,?,?,?,?,?,?,?)',
+            (branch_id, full_name, last_name, first_name, emp_role, rate, rate_km, rate_ord, pay_monthly)
         )
         emp_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
         conn.execute(
@@ -1711,6 +1744,7 @@ def edit_employee(emp_id):
     rate_km   = float(request.form.get('rate_per_km', 10) or 10)
     rate_ord  = float(request.form.get('rate_per_order', 100) or 100)
     rate_from = request.form.get('rate_from') or date.today().isoformat()
+    pay_monthly = 1 if request.form.get('pay_monthly') else 0
     with get_db() as conn:
         emp = conn.execute('SELECT * FROM employees WHERE id=?', (emp_id,)).fetchone()
         if not emp:
@@ -1718,8 +1752,8 @@ def edit_employee(emp_id):
             return redirect(url_for('employees'))
         if full_name:
             conn.execute(
-                'UPDATE employees SET full_name=?, last_name=?, first_name=? WHERE id=?',
-                (full_name, last_name, first_name, emp_id)
+                'UPDATE employees SET full_name=?, last_name=?, first_name=?, pay_monthly=? WHERE id=?',
+                (full_name, last_name, first_name, pay_monthly, emp_id)
             )
         if session.get('role') == 'owner':
             branch_ids_form = [bid for bid in request.form.getlist('branch_ids') if bid.isdigit()]
