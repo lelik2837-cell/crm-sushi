@@ -2814,11 +2814,16 @@ def cash_flow_report():
     month_start = date.today().replace(day=1).isoformat()
     date_from  = request.args.get('date_from', month_start)
     date_to    = request.args.get('date_to',   today)
-    branch_id  = request.args.get('branch_id', '')
+    branch_ids = [b for b in request.args.getlist('branch_ids') if b.isdigit()]
 
     with get_db() as conn:
-        branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
-        bf = f'AND s.branch_id = {int(branch_id)}' if branch_id.isdigit() else ''
+        branches      = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        branch_groups = get_branch_groups(conn)
+        if branch_ids:
+            bf_ids = ','.join(branch_ids)
+            bf = f'AND s.branch_id IN ({bf_ids})'
+        else:
+            bf = ''
 
         revenue_rows = conn.execute(f'''
             SELECT s.date, s.id AS shift_id, b.id AS branch_id, b.name AS branch_name,
@@ -2902,12 +2907,21 @@ def cash_flow_report():
     for day in sorted_days:
         day['morning_cash'] = prev_cash.get(day['date'], 0.0)
 
+    totals = {
+        'razmen':       sum(d['razmen']       for d in sorted_days),
+        'plus_amount':  sum(d['plus_amount']  for d in sorted_days),
+        'cash_revenue': sum(d['cash_revenue'] for d in sorted_days),
+        'expenses_cash':sum(d['expenses_cash']for d in sorted_days),
+        'salary_paid':  sum(d['salary_paid']  for d in sorted_days),
+    }
+
     return render_template('cash_flow.html',
         days=sorted_days,
+        totals=totals,
         branches=branches,
-        date_from=date_from, date_to=date_to,
-        branch_id=branch_id,
-        branch_groups=get_branch_groups(conn))
+        branch_groups=branch_groups,
+        branch_ids=[str(b) for b in branch_ids],
+        date_from=date_from, date_to=date_to)
 
 
 # ─── API 1C ИНТЕГРАЦИЯ ────────────────────────────────────────────────────────
