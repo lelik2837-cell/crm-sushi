@@ -1,109 +1,115 @@
 {% extends 'base.html' %}
-{% block title %}Массовое удаление смен{% endblock %}
+{% block title %}Удаление смен — CRM Суши{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h4 class="mb-0"><i class="bi bi-trash3 text-danger me-2"></i>Массовое удаление смен</h4>
-</div>
+<div class="container-fluid">
+    <div class="row mb-3">
+        <div class="col">
+            <h4 class="mb-0"><i class="bi bi-trash3 me-2 text-danger"></i>Массовое удаление смен</h4>
+            <p class="text-muted mt-1 mb-0">Выберите период и филиал, чтобы найти и удалить смены вместе со всеми связанными данными.</p>
+        </div>
+    </div>
 
-{% with messages = get_flashed_messages(with_categories=true) %}
-    {% for cat, msg in messages %}
-    <div class="alert alert-{{ cat }} alert-dismissible fade show">
-        {{ msg }}
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-    </div>
-    {% endfor %}
-{% endwith %}
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for cat, msg in messages %}
+        <div class="alert alert-{{ 'success' if cat == 'success' else cat }} alert-dismissible fade show">
+            {{ msg }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        {% endfor %}
+    {% endwith %}
 
-<div class="card mb-4">
-    <div class="card-header bg-danger text-white fw-semibold">
-        <i class="bi bi-funnel me-1"></i> Фильтр смен для удаления
+    <div class="card mb-3">
+        <div class="card-header bg-danger text-white">
+            <i class="bi bi-funnel me-1"></i> Фильтр смен для удаления
+        </div>
+        <div class="card-body">
+            <form method="POST">
+                <div class="row g-3 align-items-end">
+                    <div class="col-sm-3">
+                        <label class="form-label fw-semibold">Дата с</label>
+                        <input type="date" name="date_from" value="{{ date_from }}" class="form-control">
+                    </div>
+                    <div class="col-sm-3">
+                        <label class="form-label fw-semibold">Дата по</label>
+                        <input type="date" name="date_to" value="{{ date_to }}" class="form-control">
+                    </div>
+                    <div class="col-sm-4">
+                        <label class="form-label fw-semibold">Филиал</label>
+                        <select name="branch_id" class="form-select">
+                            <option value="">Все филиалы</option>
+                            {% for b in branches %}
+                            <option value="{{ b[0] }}" {% if b[0]|string == branch_id %}selected{% endif %}>{{ b[1] }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-sm-2">
+                        <button type="submit" name="action" value="preview" class="btn btn-outline-danger w-100">
+                            <i class="bi bi-search me-1"></i> Найти
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
     </div>
-    <div class="card-body">
-        <form method="POST" id="filterForm">
-            <div class="row g-3 align-items-end">
-                <div class="col-sm-3">
-                    <label class="form-label fw-semibold small">Дата с</label>
-                    <input type="date" name="date_from" value="{{ date_from }}" class="form-control">
-                </div>
-                <div class="col-sm-3">
-                    <label class="form-label fw-semibold small">Дата по</label>
-                    <input type="date" name="date_to" value="{{ date_to }}" class="form-control">
-                </div>
-                <div class="col-sm-4">
-                    <label class="form-label fw-semibold small">Филиал</label>
-                    <select name="branch_id" class="form-select">
-                        <option value="">Все филиалы</option>
-                        {% for b in branches %}
-                        <option value="{{ b[0] }}" {% if b[0]|string == branch_id %}selected{% endif %}>{{ b[1] }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div class="col-sm-2">
-                    <button type="submit" name="action" value="preview" class="btn btn-outline-danger w-100">
-                        <i class="bi bi-search me-1"></i> Найти
-                    </button>
-                </div>
-            </div>
-        </form>
-    </div>
-</div>
 
-{% if preview_shifts %}
-<div class="card border-danger">
-    <div class="card-header bg-danger bg-opacity-10 text-danger fw-semibold d-flex justify-content-between align-items-center">
-        <span><i class="bi bi-exclamation-triangle me-1"></i> Найдено смен: {{ preview_shifts | length }}</span>
-        <span class="small fw-normal text-muted">Проверьте список перед удалением</span>
-    </div>
-    <div class="table-responsive">
-        <table class="table table-hover align-middle mb-0" style="font-size:0.9rem">
-            <thead class="table-light">
+    {% if preview_shifts %}
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-exclamation-triangle text-danger me-1"></i> Найдено смен: <strong>{{ preview_shifts | length }}</strong></span>
+            <span class="small text-muted">Проверьте список перед удалением</span>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0" style="font-size:0.9rem">
+                <thead class="table-light">
+                    <tr>
+                        <th>Дата</th>
+                        <th>Филиал</th>
+                        <th>Статус</th>
+                        <th class="text-center">Сотрудников</th>
+                        <th class="text-center">Расходов</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for s in preview_shifts %}
                 <tr>
-                    <th>Дата</th>
-                    <th>Филиал</th>
-                    <th>Статус</th>
-                    <th class="text-center">Сотрудников</th>
-                    <th class="text-center">Расходов</th>
+                    <td class="fw-semibold">{{ s.date | date_fmt }}</td>
+                    <td>{{ s.branch_name }}</td>
+                    <td>
+                        {% if s.status == 'open' %}
+                        <span class="badge bg-success">Открыта</span>
+                        {% else %}
+                        <span class="badge bg-secondary">Закрыта</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-center">{{ s.staff_count }}</td>
+                    <td class="text-center">{{ s.expense_count }}</td>
                 </tr>
-            </thead>
-            <tbody>
-            {% for s in preview_shifts %}
-            <tr>
-                <td class="fw-semibold">{{ s.date | date_fmt }}</td>
-                <td>{{ s.branch_name }}</td>
-                <td>
-                    {% if s.status == 'open' %}
-                    <span class="badge bg-success">Открыта</span>
-                    {% else %}
-                    <span class="badge bg-secondary">Закрыта</span>
-                    {% endif %}
-                </td>
-                <td class="text-center">{{ s.staff_count }}</td>
-                <td class="text-center">{{ s.expense_count }}</td>
-            </tr>
-            {% endfor %}
-            </tbody>
-        </table>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="card-footer">
+            <form method="POST"
+                  onsubmit="return confirm('Удалить {{ preview_shifts | length }} смен(ы)?\n\nТакже будут удалены все записи ЗП и расходов этих смен.\nДействие нельзя отменить!')">
+                <input type="hidden" name="date_from" value="{{ date_from }}">
+                <input type="hidden" name="date_to" value="{{ date_to }}">
+                <input type="hidden" name="branch_id" value="{{ branch_id }}">
+                <button type="submit" name="action" value="delete" class="btn btn-danger px-4">
+                    <i class="bi bi-trash3 me-1"></i> Удалить все {{ preview_shifts | length }} смен(ы)
+                </button>
+                <span class="ms-3 text-muted small">Будут удалены смены, записи зарплат и расходов</span>
+            </form>
+        </div>
     </div>
-    <div class="card-footer bg-danger bg-opacity-10">
-        <form method="POST" onsubmit="return confirm('Удалить {{ preview_shifts | length }} смен(ы)?\n\nЭто также удалит все записи ЗП и расходов этих смен.\nДействие нельзя отменить!')">
-            <input type="hidden" name="date_from" value="{{ date_from }}">
-            <input type="hidden" name="date_to" value="{{ date_to }}">
-            <input type="hidden" name="branch_id" value="{{ branch_id }}">
-            <button type="submit" name="action" value="delete" class="btn btn-danger px-4">
-                <i class="bi bi-trash3 me-1"></i> Удалить все {{ preview_shifts | length }} смен(ы)
-            </button>
-            <span class="ms-3 text-muted small">Будут удалены смены, записи зарплат и расходов</span>
-        </form>
+    {% elif date_from or date_to %}
+    <div class="card">
+        <div class="card-body text-center py-5 text-muted">
+            <i class="bi bi-check-circle fs-1 d-block mb-2 text-success opacity-50"></i>
+            <div class="fw-semibold">Смен за выбранный период не найдено</div>
+        </div>
     </div>
-</div>
-{% elif date_from or date_to %}
-<div class="card">
-    <div class="card-body text-center py-5 text-muted">
-        <i class="bi bi-check-circle fs-1 d-block mb-2 text-success opacity-50"></i>
-        <div class="fw-semibold">Смен за выбранный период не найдено</div>
-    </div>
-</div>
-{% endif %}
+    {% endif %}
 
+</div>
 {% endblock %}
