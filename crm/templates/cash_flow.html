@@ -32,6 +32,7 @@
         <tr>
             <th style="min-width:130px">Дата</th>
             <th style="min-width:160px">Филиал</th>
+            <th class="text-end" style="min-width:110px">Утром</th>
             <th class="text-end" style="min-width:110px">Размен</th>
             <th class="text-end" style="min-width:110px">Плюсы</th>
             <th class="text-end" style="min-width:120px">Выручка нал</th>
@@ -50,6 +51,9 @@
     <tr class="table-secondary" style="cursor:pointer" onclick="toggleDay({{ di }})">
         <td class="fw-bold">{{ day.date | datefmt }}</td>
         <td class="text-muted small">{{ day.shifts | length }} филиала</td>
+        <td class="text-end text-muted fw-semibold">
+            {% if day.morning_cash %}{{ '{:,.0f}'.format(day.morning_cash) }} ₽{% else %}—{% endif %}
+        </td>
         <td class="text-end text-muted fw-semibold">
             {% if day.razmen %}{{ '{:,.0f}'.format(day.razmen) }} ₽{% else %}—{% endif %}
         </td>
@@ -79,6 +83,9 @@
             {% if loop.first %}{{ day.date | datefmt }}{% endif %}
         </td>
         <td class="fw-semibold">{{ s.branch_name }}</td>
+        <td class="text-end text-muted">
+            {% if s.morning_cash %}{{ '{:,.0f}'.format(s.morning_cash) }} ₽{% else %}—{% endif %}
+        </td>
         <td class="text-end text-muted">
             {% if s.razmen %}{{ '{:,.0f}'.format(s.razmen) }} ₽{% else %}—{% endif %}
         </td>

@@ -689,6 +689,11 @@ def init_db():
             pass
 
         try:
+            conn.execute("ALTER TABLE shift_revenue ADD COLUMN morning_cash REAL DEFAULT 0")
+        except Exception:
+            pass
+
+        try:
             conn.execute("ALTER TABLE purchases ADD COLUMN payer TEXT DEFAULT ''")
         except Exception:
             pass
@@ -2821,7 +2826,8 @@ def cash_flow_report():
                    COALESCE(r.actual_cash, 0)    AS actual_cash,
                    COALESCE(r.actual_cash_comment, '') AS actual_cash_comment,
                    COALESCE(r.change_amount, 0)  AS razmen,
-                   COALESCE(r.plus_amount, 0)    AS plus_amount
+                   COALESCE(r.plus_amount, 0)    AS plus_amount,
+                   COALESCE(r.morning_cash, 0)   AS morning_cash
             FROM shifts s
             JOIN branches b ON b.id = s.branch_id
             LEFT JOIN shift_revenue r ON r.shift_id = s.id
@@ -2862,10 +2868,11 @@ def cash_flow_report():
         sal  = sal_map.get((d, bid), 0)
         raz  = r['razmen']
         plus = r['plus_amount']
+        mrn = r['morning_cash']
         if d not in days:
             days[d] = {'date': d, 'shifts': [], 'cash_revenue': 0.0,
                        'expenses_cash': 0.0, 'razmen': 0.0, 'plus_amount': 0.0,
-                       'salary_paid': 0.0, 'actual_cash': 0.0}
+                       'morning_cash': 0.0, 'salary_paid': 0.0, 'actual_cash': 0.0}
         days[d]['shifts'].append({
             'shift_id':    r['shift_id'],
             'branch_name': r['branch_name'],
@@ -2873,6 +2880,7 @@ def cash_flow_report():
             'expenses_cash': exp,
             'razmen':       raz,
             'plus_amount':  plus,
+            'morning_cash': mrn,
             'salary_paid':  sal,
             'actual_cash':  r['actual_cash'],
             'actual_cash_comment': r['actual_cash_comment'],
@@ -2881,6 +2889,7 @@ def cash_flow_report():
         days[d]['expenses_cash'] += exp
         days[d]['razmen']        += raz
         days[d]['plus_amount']   += plus
+        days[d]['morning_cash']  += mrn
         days[d]['salary_paid']   += sal
         days[d]['actual_cash']   += r['actual_cash']
 
@@ -5121,7 +5130,8 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
             if c:
                 terminal_codes.append(c)
 
-    # D31 = размен (change_amount), D33:D36 = плюсы в кассу (plus_amount)
+    # D3 = утром в кассе, D31 = размен (change_amount), D33:D36 = плюсы в кассу (plus_amount)
+    morning_cash  = _xf(rows[2][3]) if len(rows) > 2 else 0.0
     change_amount = _xf(rows[30][3]) if len(rows) > 30 else 0.0
     plus_amount   = sum(_xf(rows[i][3]) for i in range(32, 36) if len(rows) > i)
 
@@ -5146,12 +5156,12 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
                (shift_id, total_revenue, delivery_revenue, delivery_orders,
                 pickup_revenue, pickup_orders, cash_amount, card_amount,
                 online_amount, terminal_last3, terminal_amount, actual_cash,
-                change_amount, plus_amount)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                change_amount, plus_amount, morning_cash)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (shift_id, total_revenue, delivery_rev, delivery_ord,
              pickup_rev, pickup_ord, cash_amount, card_amount,
              online_amount, ','.join(terminal_codes), terminal_amount, actual_cash,
-             change_amount, plus_amount)
+             change_amount, plus_amount, morning_cash)
         )
 
     cur_cat = None
