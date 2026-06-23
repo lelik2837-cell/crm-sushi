@@ -43,7 +43,7 @@
   .field-input-sm { padding: 6px 10px; font-size: 13px; }
   .field-select { width: 100%; padding: 7px 28px 7px 11px; border: 1.5px solid #e5e7eb; border-radius: 8px; font-size: 13px; color: #374151; background: #f9fafb; appearance: none; background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%236B7280' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; }
   .field-select:focus { outline: none; border-color: #e94560; }
-  .field-calc { width: 100%; padding: 6px 9px; border: 1.5px solid #e5e7eb; border-radius: 7px; font-size: 13px; background: #f0f2f7; color: #6b7280; font-weight: 600; text-align: right; white-space: nowrap; overflow: hidden; }
+  .field-calc { width: 100%; padding: 5px 7px; border: 1.5px solid #e5e7eb; border-radius: 7px; font-size: 12px; background: #f0f2f7; color: #6b7280; font-weight: 600; text-align: right; white-space: nowrap; overflow: hidden; height: 28px; box-sizing: border-box; display: flex; align-items: center; justify-content: flex-end; }
   .sf-auto-bonus { background: #ecfdf5 !important; color: #059669 !important; font-size: 12px; }
   .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
   .dot-blue { background: #3b82f6; } .dot-green { background: #10b981; }
@@ -55,7 +55,7 @@
 
   /* STAFF ROWS */
   .staff-header-row, .staff-row {
-    display: grid; grid-template-columns: 2fr 68px 68px 52px 116px 68px 82px 90px 28px;
+    display: grid; grid-template-columns: 2fr 68px 68px 52px 116px 68px 82px 68px 28px;
     align-items: center; gap: 7px;
   }
   .staff-header-row { padding-bottom: 5px; border-bottom: 1.5px solid #e5e7eb; margin-bottom: 4px; }
@@ -64,16 +64,16 @@
   .staff-row .sf-name, .courier-row .sf-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .col-label { font-size: 10px; color: #9ca3af; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; }
   .staff-del { width: 28px; height: 28px; border-radius: 6px; background: #fee2e2; color: #ef4444; border: none; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-  .paid-select { width: 100%; padding: 5px 28px 5px 8px; border-radius: 7px; font-size: 11px; font-weight: 700; border: none; cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23666' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; transition: all .15s; }
+  .paid-select { width: 100%; padding: 5px 20px 5px 6px; border-radius: 7px; font-size: 11px; font-weight: 700; border: none; cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23666' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 5px center; transition: all .15s; height: 28px; box-sizing: border-box; }
   .paid-no  { background: #fee2e2; color: #dc2626; }
   .paid-yes { background: #d1fae5; color: #059669; }
-  .time-sel { padding: 5px 6px !important; font-size: 12px !important; }
+  .time-sel { padding: 5px 4px !important; font-size: 12px !important; height: 28px; box-sizing: border-box; }
   .role-group-title { font-size: 10px; font-weight: 700; color: #9ca3af; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
   .role-group { margin-bottom: 14px; }
 
   /* BONUS ROW */
-  .bonus-btns { display: flex; gap: 4px; width: 100%; align-items: stretch; overflow: hidden; }
-  .bonus-btn-prem, .bonus-btn-fine { flex:1; min-width:0; padding: 5px 2px; border-radius: 6px; font-size: 10px; font-weight: 700; cursor: pointer; white-space: nowrap; text-align:center; display:flex; align-items:center; justify-content:center; line-height:1; }
+  .bonus-btns { display: flex; gap: 4px; width: 100%; align-items: stretch; overflow: hidden; height: 28px; }
+  .bonus-btn-prem, .bonus-btn-fine { flex:1; min-width:0; padding: 0 2px; border-radius: 6px; font-size: 10px; font-weight: 700; cursor: pointer; white-space: nowrap; text-align:center; display:flex; align-items:center; justify-content:center; line-height:1; }
   .bonus-btn-prem { background: #f3f4f6; color: #374151; border: 1.5px solid #d1d5db; }
   .bonus-btn-fine { background: #f3f4f6; color: #374151; border: 1.5px solid #d1d5db; }
   .staff-bonus-row { display: none; align-items: center; gap: 6px; padding: 3px 0 8px 10px; border-bottom: 1px solid #f3f4f6; }
@@ -456,7 +456,7 @@
       data-rate="{{ s.rate_snapshot }}" data-rate-km="{{ s.rate_per_km_snapshot }}" data-rate-ord="{{ s.rate_per_order_snapshot }}"
       data-name="{{ s.full_name_snapshot }}" data-role="{{ s.role_snapshot }}"
       data-auto-bonus="{{ (s.auto_bonus or 0)|int }}">
-      <div class="field-input-sm sf-name" style="font-size:12px; padding:5px 8px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ s.full_name_snapshot }}</div>
+      <div class="field-input-sm sf-name" style="font-size:12px; padding:5px 8px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; height:28px; box-sizing:border-box; display:flex; align-items:center;">{{ s.full_name_snapshot }}</div>
       <select class="mini-input field-select time-sel sf-start" data-val="{{ s.shift_start or '09:00' }}" {% if not can_edit %}disabled{% endif %}></select>
       <select class="mini-input field-select time-sel sf-end" data-val="{{ s.shift_end or '19:00' }}" {% if not can_edit %}disabled{% endif %}></select>
       <div class="field-calc sf-hours">{{ s.hours_worked or 0 }} ч</div>
@@ -557,7 +557,7 @@
           data-rate="{{ s.rate_snapshot }}" data-rate-km="{{ s.rate_per_km_snapshot }}" data-rate-ord="{{ s.rate_per_order_snapshot }}"
           data-name="{{ s.full_name_snapshot }}" data-role="{{ s.role_snapshot }}"
           data-auto-bonus="{{ (s.auto_bonus or 0)|int }}">
-          <div class="field-input-sm sf-name" style="font-size:12px; padding:5px 8px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ s.full_name_snapshot }}</div>
+          <div class="field-input-sm sf-name" style="font-size:12px; padding:5px 8px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; height:28px; box-sizing:border-box; display:flex; align-items:center;">{{ s.full_name_snapshot }}</div>
           <input class="mini-input sf-km" type="number" min="0" step="0.1" placeholder="0" value="{{ (s.km or 0)|int }}" {% if not can_edit %}disabled{% endif %}>
           <input class="mini-input sf-orders" type="number" min="0" placeholder="0" value="{{ s.orders or 0 }}" {% if not can_edit %}disabled{% endif %}>
           <input class="mini-input sf-hours" type="number" min="0" step="0.5" placeholder="0" value="{{ s.hours_worked or 0 }}" {% if not can_edit %}disabled{% endif %}>
