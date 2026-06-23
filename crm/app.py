@@ -1146,6 +1146,14 @@ def shift_view(shift_id):
             shift_weekday = date.fromisoformat(shift['date']).weekday()  # 0=Mon, 4=Fri, 5=Sat
         except Exception:
             shift_weekday = 0
+        # Утром в кассе: факт в кассе предыдущего дня по этому филиалу
+        prev_day_row = conn.execute('''
+            SELECT r.actual_cash FROM shifts s
+            JOIN shift_revenue r ON r.shift_id = s.id
+            WHERE s.branch_id = ? AND s.date < ?
+            ORDER BY s.date DESC LIMIT 1
+        ''', (shift['branch_id'], shift['date'])).fetchone()
+        prev_actual_cash = prev_day_row['actual_cash'] if prev_day_row else None
         return render_template('shift.html',
             shift=shift, revenue=revenue, expenses=expenses,
             staff=staff, employees=employees,
@@ -1156,7 +1164,8 @@ def shift_view(shift_id):
             role_labels=ROLE_LABELS,
             can_edit=can_edit,
             is_owner=(role == 'owner'),
-            shift_weekday=shift_weekday)
+            shift_weekday=shift_weekday,
+            prev_actual_cash=prev_actual_cash)
 
 
 @app.route('/shift/<int:shift_id>/save-revenue', methods=['POST'])

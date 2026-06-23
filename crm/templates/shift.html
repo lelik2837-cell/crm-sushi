@@ -199,6 +199,29 @@
     <!-- Нал / Безнал / Онлайн + Общая выручка -->
     <div class="s-card">
       <div class="s-card-body">
+
+        <!-- Строка: Утром в кассе (слева) + Кол-во заказов (справа от центра) -->
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px;">
+          <!-- Утром в кассе — зелёный градиент, предыдущий день -->
+          <div style="background:linear-gradient(135deg,#f0fdf4 0%,#bbf7d0 100%); border-radius:10px; padding:11px 14px; border-left:4px solid #22c55e;">
+            <div style="font-size:10px; color:#166534; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px;">Утром в кассе</div>
+            {% if prev_actual_cash %}
+            <div style="font-size:clamp(13px,2.4vw,22px); font-weight:800; color:#15803d; letter-spacing:-.5px; line-height:1; white-space:nowrap;">{{ prev_actual_cash|int }} ₽</div>
+            {% else %}
+            <div style="font-size:14px; font-weight:600; color:#86efac; line-height:1;">—</div>
+            {% endif %}
+            <div style="font-size:10px; color:#4ade80; margin-top:3px;">← вчера факт</div>
+          </div>
+          <!-- Кол-во заказов -->
+          <div style="background:#f9fafb; border:1.5px solid #e5e7eb; border-radius:10px; padding:11px 14px;">
+            <div class="mini-label" style="margin-bottom:5px;">Кол-во заказов</div>
+            <input class="mini-input rev-field" data-field="delivery_orders" type="number" min="0" step="1" placeholder="0"
+              value="{{ ((revenue.delivery_orders or 0) + (revenue.pickup_orders or 0)) }}" {% if not can_edit %}disabled{% endif %}
+              style="font-size:18px; font-weight:700;">
+          </div>
+        </div>
+
+        <!-- Нал/Безнал/Онлайн + Общая выручка -->
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
           <div style="background:#f9fafb; border:1.5px solid #e5e7eb; border-radius:10px; padding:12px 14px;">
             <div style="margin-bottom:9px;">
@@ -217,20 +240,15 @@
                 value="{{ (revenue.online_amount or 0)|int }}" {% if not can_edit %}disabled{% endif %}>
             </div>
           </div>
-          <div style="display:flex; flex-direction:column; gap:10px;">
+          <div style="display:flex; flex-direction:column;">
             <div style="background:linear-gradient(135deg,#eff6ff 0%,#dbeafe 100%); border-radius:10px; padding:14px 16px; border-left:4px solid #3b82f6; flex:1;">
               <div style="font-size:10px; color:#6b7280; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px;">Общая выручка</div>
               <div id="total-revenue-display" style="font-size:clamp(14px,2.8vw,26px); font-weight:800; color:#1e40af; letter-spacing:-.5px; line-height:1; white-space:nowrap; overflow:hidden;">{{ (revenue.total_revenue or 0)|int }} ₽</div>
               <input type="hidden" class="rev-field" data-field="total_revenue" id="total-revenue-input" value="{{ (revenue.total_revenue or 0)|int }}">
             </div>
-            <div style="background:#f9fafb; border:1.5px solid #e5e7eb; border-radius:10px; padding:10px 14px;">
-              <div class="mini-label" style="margin-bottom:5px;">Кол-во заказов</div>
-              <input class="mini-input rev-field" data-field="delivery_orders" type="number" min="0" step="1" placeholder="0"
-                value="{{ ((revenue.delivery_orders or 0) + (revenue.pickup_orders or 0)) }}" {% if not can_edit %}disabled{% endif %}
-                style="font-size:16px; font-weight:700;">
-            </div>
           </div>
         </div>
+
       </div>
     </div>
 
