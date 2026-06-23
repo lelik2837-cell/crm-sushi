@@ -2,8 +2,8 @@
 {% block title %}Движение наличных{% endblock %}
 
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h4 class="fw-bold mb-0"><i class="bi bi-cash-stack me-2"></i>Движение наличных</h4>
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div class="page-heading"><i class="bi bi-cash-stack" style="color:var(--brand)"></i> Движение наличных</div>
 </div>
 
 <!-- Фильтры -->
@@ -26,6 +26,7 @@
 </div>
 
 {% if days %}
+<div class="card" style="overflow:hidden">
 <div class="table-responsive">
 <table class="table table-hover align-middle mb-0" id="cashTable">
     <thead class="table-light">
@@ -48,14 +49,14 @@
         <td class="text-end text-muted fw-semibold">
             {% if day.morning_cash %}{{ '{:,.0f}'.format(day.morning_cash) }} ₽{% else %}<span class="text-muted">—</span>{% endif %}
         </td>
-        <td class="text-end text-primary fw-semibold">+{{ '{:,.0f}'.format(day.cash_revenue) }} ₽</td>
-        <td class="text-end fw-semibold {% if day.expenses_cash %}text-warning{% else %}text-muted{% endif %}">
+        <td class="text-end fw-semibold" style="color:#3b82f6">+{{ '{:,.0f}'.format(day.cash_revenue) }} ₽</td>
+        <td class="text-end fw-semibold" style="color:{% if day.expenses_cash %}#f59e0b{% else %}var(--text-light){% endif %}">
             {% if day.expenses_cash %}−{{ '{:,.0f}'.format(day.expenses_cash) }} ₽{% else %}—{% endif %}
         </td>
-        <td class="text-end fw-semibold {% if day.salary_paid %}text-danger{% else %}text-muted{% endif %}">
+        <td class="text-end fw-semibold" style="color:{% if day.salary_paid %}#ef4444{% else %}var(--text-light){% endif %}">
             {% if day.salary_paid %}−{{ '{:,.0f}'.format(day.salary_paid) }} ₽{% else %}—{% endif %}
         </td>
-        <td class="text-end fw-bold {% if day.actual_cash %}text-success{% else %}text-muted{% endif %}">
+        <td class="text-end fw-bold" style="color:{% if day.actual_cash %}#22c55e{% else %}var(--text-light){% endif %}">
             {% if day.actual_cash %}{{ '{:,.0f}'.format(day.actual_cash) }} ₽{% else %}—{% endif %}
         </td>
         <td class="text-center">
@@ -66,7 +67,7 @@
     <!-- Строка с деталями (скрыта по умолчанию) -->
     <tr id="day_detail_{{ idx }}" class="d-none">
         <td colspan="7" class="p-0 border-top-0">
-            <div class="bg-light border-bottom px-3 py-3">
+            <div style="background:var(--bg2);border-bottom:1px solid var(--border)" class="px-3 py-3">
 
                 <!-- Карточка "Размен в кассе" -->
                 {% if day.morning_cash %}
@@ -96,14 +97,14 @@
                         {% for s in day.shifts %}
                         <tr>
                             <td class="fw-semibold">{{ s.branch_name }}</td>
-                            <td class="text-end text-primary">+{{ '{:,.0f}'.format(s.cash_revenue) }} ₽</td>
-                            <td class="text-end {% if s.expenses_cash %}text-warning{% else %}text-muted{% endif %}">
+                            <td class="text-end fw-semibold" style="color:#3b82f6">+{{ '{:,.0f}'.format(s.cash_revenue) }} ₽</td>
+                            <td class="text-end" style="color:{% if s.expenses_cash %}#f59e0b{% else %}var(--text-light){% endif %}">
                                 {% if s.expenses_cash %}−{{ '{:,.0f}'.format(s.expenses_cash) }} ₽{% else %}—{% endif %}
                             </td>
-                            <td class="text-end {% if s.salary_paid %}text-danger{% else %}text-muted{% endif %}">
+                            <td class="text-end" style="color:{% if s.salary_paid %}#ef4444{% else %}var(--text-light){% endif %}">
                                 {% if s.salary_paid %}−{{ '{:,.0f}'.format(s.salary_paid) }} ₽{% else %}—{% endif %}
                             </td>
-                            <td class="text-end fw-semibold {% if s.actual_cash %}text-success{% else %}text-muted{% endif %}">
+                            <td class="text-end fw-semibold" style="color:{% if s.actual_cash %}#22c55e{% else %}var(--text-light){% endif %}">
                                 {% if s.actual_cash %}{{ '{:,.0f}'.format(s.actual_cash) }} ₽{% else %}—{% endif %}
                                 {% if s.actual_cash_comment %}
                                 <div class="text-muted fw-normal" style="font-size:0.75rem">{{ s.actual_cash_comment }}</div>
@@ -162,11 +163,12 @@
     </tbody>
 </table>
 </div>
+</div>
 {% else %}
 <div class="card">
-    <div class="card-body text-center text-muted py-5">
-        <i class="bi bi-cash-stack fs-1 d-block mb-2 opacity-25"></i>
-        <div class="fw-semibold">Нет данных за выбранный период</div>
+    <div class="card-body text-center py-5" style="color:var(--text-light)">
+        <i class="bi bi-cash-stack" style="font-size:2.5rem;display:block;margin-bottom:12px;opacity:0.35"></i>
+        <div style="font-size:0.9rem;font-weight:600">Нет данных за выбранный период</div>
     </div>
 </div>
 {% endif %}

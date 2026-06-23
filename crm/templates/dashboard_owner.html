@@ -1,76 +1,322 @@
 {% extends 'base.html' %}
 {% block title %}Панель директора{% endblock %}
 {% block content %}
+<style>
+/* ── Dashboard-specific styles ─────────────────────────────── */
+.dash-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+.dash-greeting {
+    font-size: 1.5rem;
+    font-weight: 800;
+    color: var(--text);
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+}
+.dash-date {
+    font-size: 0.82rem;
+    color: var(--text-light);
+    font-weight: 500;
+    margin-top: 4px;
+}
 
-<div class="d-flex justify-content-between align-items-center mb-3">
+/* KPI filter bar */
+.kpi-bar {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 20px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    box-shadow: var(--shadow-sm);
+}
+.kpi-bar-title {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+.kpi-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* KPI card */
+.kpi-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px 16px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    transition: box-shadow 0.2s, transform 0.2s;
+    box-shadow: var(--shadow-sm);
+}
+.kpi-card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
+.kpi-card-label {
+    font-size: 0.73rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    line-height: 1.3;
+}
+.kpi-card-value {
+    font-size: 1.6rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+}
+.kpi-card-unit { font-size: 0.9rem; font-weight: 600; opacity: 0.7; }
+
+/* Weekly metric cards */
+.metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+.m-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 20px 18px;
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    transition: box-shadow 0.2s, transform 0.2s;
+    position: relative;
+    overflow: hidden;
+}
+.m-card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
+.m-card-accent {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+}
+.m-card-icon {
+    width: 38px; height: 38px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 17px;
+    margin-bottom: 10px;
+    flex-shrink: 0;
+}
+.m-card-label {
+    font-size: 0.73rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.m-card-value {
+    font-size: 1.5rem;
+    font-weight: 800;
+    color: var(--text);
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+}
+.m-card-sub {
+    font-size: 0.75rem;
+    color: var(--text-light);
+    margin-top: 2px;
+    font-weight: 500;
+}
+
+/* Open shifts */
+.open-shift-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border2);
+    transition: background 0.12s;
+    text-decoration: none;
+    color: var(--text);
+}
+.open-shift-item:last-child { border-bottom: none; }
+.open-shift-item:hover { background: var(--bg2); }
+.open-shift-branch { font-weight: 600; font-size: 0.875rem; display: flex; align-items: center; gap: 8px; }
+.open-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    background: #fef3c7;
+    color: #92400e;
+    border-radius: 20px;
+    font-size: 0.7rem;
+    font-weight: 700;
+}
+.open-badge::before {
+    content: '';
+    display: inline-block;
+    width: 6px; height: 6px;
+    background: #f59e0b;
+    border-radius: 50%;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+/* Open shift form */
+.open-shift-form {
+    background: var(--bg2);
+    border-radius: 0 0 var(--radius) var(--radius);
+    padding: 20px;
+    border-top: 1px solid var(--border);
+}
+
+/* Recent shifts table */
+.shifts-table .branch-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 9px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-2);
+}
+.shifts-table .rev-value {
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: var(--text);
+}
+.badge-open-sm {
+    background: #fef9c3;
+    color: #78350f;
+    border-radius: 20px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    padding: 3px 9px;
+}
+.badge-closed-sm {
+    background: #f1f5f9;
+    color: #64748b;
+    border-radius: 20px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    padding: 3px 9px;
+}
+
+/* Period buttons */
+.period-btn {
+    padding: 5px 14px;
+    border-radius: 7px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    border: 1.5px solid var(--border);
+    background: var(--surface);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.14s;
+    font-family: 'Inter', system-ui, sans-serif;
+}
+.period-btn.active {
+    background: var(--navy);
+    border-color: var(--navy);
+    color: #fff;
+}
+.period-btn:hover:not(.active) { border-color: #94a3b8; color: var(--text); }
+
+@media (max-width: 900px) {
+    .metric-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 480px) {
+    .metric-grid { grid-template-columns: 1fr; }
+    .dash-greeting { font-size: 1.2rem; }
+    .kpi-bar { flex-direction: column; align-items: flex-start; }
+}
+</style>
+
+<!-- Page header -->
+<div class="dash-header">
     <div>
-        <h4 class="fw-bold mb-0">📊 Панель директора</h4>
-        <small class="text-muted">{{ now().strftime('%d %B %Y') if now else '' }}</small>
+        <div class="dash-greeting">Панель директора</div>
+        <div class="dash-date">
+            <i class="bi bi-calendar3 me-1"></i>
+            {{ now().strftime('%d-%m-%Y') if now else '' }}
+        </div>
     </div>
 </div>
 
 <!-- ══ KPI BLOCKS ══ -->
 {% if kpi_blocks %}
-<div class="card mb-4">
-    <div class="card-header bg-light d-flex align-items-center justify-content-between flex-wrap gap-2">
-        <span class="fw-bold"><i class="bi bi-graph-up"></i> КПИ показатели</span>
-        <div class="d-flex align-items-center gap-2 flex-wrap">
-            <select id="kpi-branch" class="form-select form-select-sm" style="width:150px">
-                <option value="">Все филиалы</option>
-                {% for b in branches %}
-                <option value="{{ b.id }}">{{ b.name }}</option>
-                {% endfor %}
-            </select>
-            <div class="btn-group btn-group-sm" role="group">
-                <button type="button" class="btn btn-outline-secondary kpi-period active" data-period="today">Сегодня</button>
-                <button type="button" class="btn btn-outline-secondary kpi-period" data-period="week">Неделя</button>
-                <button type="button" class="btn btn-outline-secondary kpi-period" data-period="month">Месяц</button>
-                <button type="button" class="btn btn-outline-secondary kpi-period" data-period="custom">Период</button>
-            </div>
-            <div id="custom-range" class="d-none d-flex gap-1">
-                <input type="date" id="kpi-from" class="form-control form-control-sm" style="width:130px">
-                <input type="date" id="kpi-to" class="form-control form-control-sm" style="width:130px">
-                <button class="btn btn-sm btn-primary" onclick="loadKpi()">OK</button>
-            </div>
+<div class="kpi-bar">
+    <div class="kpi-bar-title"><i class="bi bi-lightning-charge-fill" style="color:#f59e0b"></i> КПИ показатели</div>
+    <div class="kpi-controls">
+        <select id="kpi-branch" class="form-select form-select-sm" style="width:160px">
+            <option value="">Все филиалы</option>
+            {% for b in branches %}
+            <option value="{{ b.id }}">{{ b.name }}</option>
+            {% endfor %}
+        </select>
+        <div style="display:flex;gap:4px;">
+            <button type="button" class="period-btn active" data-period="today">Сегодня</button>
+            <button type="button" class="period-btn" data-period="week">Неделя</button>
+            <button type="button" class="period-btn" data-period="month">Месяц</button>
+            <button type="button" class="period-btn" data-period="custom">Период</button>
+        </div>
+        <div id="custom-range" class="d-none d-flex gap-1 align-items-center">
+            <input type="date" id="kpi-from" class="form-control form-control-sm" style="width:135px">
+            <span style="color:var(--text-light);font-size:12px">—</span>
+            <input type="date" id="kpi-to" class="form-control form-control-sm" style="width:135px">
+            <button class="btn btn-sm btn-primary" onclick="loadKpi()">Показать</button>
         </div>
     </div>
-    <div class="card-body">
-        <div class="row g-3" id="kpi-blocks-row">
-            <!-- populated by JS -->
-            <div class="col-12 text-center text-muted py-3" id="kpi-loading">
-                <div class="spinner-border spinner-border-sm"></div> Загрузка...
-            </div>
-        </div>
+</div>
+<div class="row g-3 mb-4" id="kpi-blocks-row">
+    <div class="col-12 text-center py-4 text-muted" id="kpi-loading">
+        <div class="spinner-border spinner-border-sm me-2"></div>Загрузка КПИ…
     </div>
 </div>
 {% endif %}
 
 <!-- ══ WEEKLY STATS ══ -->
 {% if weekly %}
-<div class="row g-3 mb-4">
-    <div class="col-6 col-md-3">
-        <div class="card metric-card p-3">
-            <div class="text-muted small">Выручка за 7 дней</div>
-            <div class="fw-bold fs-4 metric-value">{{ '{:,.0f}'.format(weekly.total or 0) }} ₽</div>
-        </div>
+<div class="metric-grid mb-4">
+    <div class="m-card">
+        <div class="m-card-accent" style="background:linear-gradient(90deg,#e94560,#c73652)"></div>
+        <div class="m-card-icon" style="background:#fff1f2;color:#e94560"><i class="bi bi-graph-up-arrow"></i></div>
+        <div class="m-card-label">Выручка за 7 дней</div>
+        <div class="m-card-value">{{ '{:,.0f}'.format(weekly.total or 0) }} ₽</div>
+        <div class="m-card-sub">Все филиалы</div>
     </div>
-    <div class="col-6 col-md-3">
-        <div class="card p-3" style="border-left: 4px solid #0d6efd">
-            <div class="text-muted small">Доставка</div>
-            <div class="fw-bold fs-4">{{ '{:,.0f}'.format(weekly.delivery or 0) }} ₽</div>
-        </div>
+    <div class="m-card">
+        <div class="m-card-accent" style="background:linear-gradient(90deg,#3b82f6,#2563eb)"></div>
+        <div class="m-card-icon" style="background:#eff6ff;color:#3b82f6"><i class="bi bi-bicycle"></i></div>
+        <div class="m-card-label">Доставка</div>
+        <div class="m-card-value">{{ '{:,.0f}'.format(weekly.delivery or 0) }} ₽</div>
+        <div class="m-card-sub">За 7 дней</div>
     </div>
-    <div class="col-6 col-md-3">
-        <div class="card p-3" style="border-left: 4px solid #198754">
-            <div class="text-muted small">Самовывоз</div>
-            <div class="fw-bold fs-4">{{ '{:,.0f}'.format(weekly.pickup or 0) }} ₽</div>
-        </div>
+    <div class="m-card">
+        <div class="m-card-accent" style="background:linear-gradient(90deg,#22c55e,#16a34a)"></div>
+        <div class="m-card-icon" style="background:#f0fdf4;color:#22c55e"><i class="bi bi-bag-check"></i></div>
+        <div class="m-card-label">Самовывоз</div>
+        <div class="m-card-value">{{ '{:,.0f}'.format(weekly.pickup or 0) }} ₽</div>
+        <div class="m-card-sub">За 7 дней</div>
     </div>
-    <div class="col-6 col-md-3">
-        <div class="card p-3" style="border-left: 4px solid #fd7e14">
-            <div class="text-muted small">Заказов за 7 дней</div>
-            <div class="fw-bold fs-4">{{ weekly.orders or 0 }}</div>
-        </div>
+    <div class="m-card">
+        <div class="m-card-accent" style="background:linear-gradient(90deg,#f59e0b,#d97706)"></div>
+        <div class="m-card-icon" style="background:#fffbeb;color:#f59e0b"><i class="bi bi-receipt-cutoff"></i></div>
+        <div class="m-card-label">Заказов</div>
+        <div class="m-card-value">{{ weekly.orders or 0 }}</div>
+        <div class="m-card-sub">За 7 дней</div>
     </div>
 </div>
 {% endif %}
@@ -78,41 +324,44 @@
 <!-- ══ OPEN SHIFTS ══ -->
 {% if open_shifts %}
 <div class="card mb-4">
-    <div class="card-header bg-warning text-dark">
-        <i class="bi bi-clock"></i> Открытые смены сегодня ({{ open_shifts|length }})
+    <div class="card-header" style="background:#fef9c3;border-color:#fde68a;color:#78350f;">
+        <i class="bi bi-clock-fill" style="color:#f59e0b"></i>
+        Открытые смены сегодня
+        <span style="background:#f59e0b;color:#fff;font-size:0.7rem;font-weight:700;padding:2px 8px;border-radius:20px;margin-left:auto;">{{ open_shifts|length }}</span>
     </div>
-    <div class="card-body p-0">
-        <div class="list-group list-group-flush">
+    <div style="padding: 0;">
         {% for s in open_shifts %}
-        <a href="{{ url_for('shift_view', shift_id=s.id) }}"
-           class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
-            <span><i class="bi bi-shop"></i> {{ s.branch_name }}</span>
-            <span class="badge bg-warning text-dark">Открыта</span>
+        <a href="{{ url_for('shift_view', shift_id=s.id) }}" class="open-shift-item">
+            <div class="open-shift-branch">
+                <i class="bi bi-shop" style="color:var(--text-muted)"></i>
+                {{ s.branch_name }}
+            </div>
+            <div class="open-badge">Открыта</div>
         </a>
         {% endfor %}
-        </div>
     </div>
 </div>
 {% endif %}
 
 <!-- ══ OPEN SHIFT FORM ══ -->
 <div class="card mb-4">
-    <div class="card-header bg-light">
-        <i class="bi bi-plus-circle"></i> Открыть смену сегодня
+    <div class="card-header">
+        <i class="bi bi-plus-circle-fill" style="color:var(--brand)"></i>
+        Открыть смену на сегодня
     </div>
-    <div class="card-body">
-        <form method="POST" action="{{ url_for('open_shift') }}" class="row g-2 align-items-end">
-            <div class="col-md-4">
-                <label class="form-label fw-semibold small">Филиал</label>
+    <div class="open-shift-form">
+        <form method="POST" action="{{ url_for('open_shift') }}" class="d-flex gap-3 align-items-end flex-wrap">
+            <div style="flex:1;min-width:200px;">
+                <label class="form-label">Выберите филиал</label>
                 <select name="branch_id" class="form-select" required>
                     {% for b in branches %}
                     <option value="{{ b.id }}">{{ b.name }}</option>
                     {% endfor %}
                 </select>
             </div>
-            <div class="col-md-3">
-                <button type="submit" class="btn btn-primary w-100">
-                    <i class="bi bi-play-circle"></i> Открыть смену
+            <div>
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-play-circle-fill"></i> Открыть смену
                 </button>
             </div>
         </form>
@@ -120,46 +369,53 @@
 </div>
 
 <!-- ══ RECENT SHIFTS ══ -->
-<div class="card">
-    <div class="card-header bg-light">
-        <i class="bi bi-calendar3"></i> Смены за последние 7 дней
+<div class="card shifts-table">
+    <div class="card-header">
+        <i class="bi bi-calendar-week" style="color:var(--text-muted)"></i>
+        Смены за последние 7 дней
     </div>
-    <div class="card-body p-0">
-        <div class="table-responsive">
-            <table class="table table-hover mb-0">
-                <thead class="table-light">
-                    <tr>
-                        <th>Дата</th>
-                        <th>Филиал</th>
-                        <th class="text-end">Выручка</th>
-                        <th class="text-center">Заказов</th>
-                        <th class="text-center">Статус</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>
-                {% for s in stats %}
-                {% if s.shift_id %}
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead>
                 <tr>
-                    <td class="fw-semibold">{{ s.date }}</td>
-                    <td>{{ s.name }}</td>
-                    <td class="text-end fw-semibold">{{ '{:,.0f}'.format(s.revenue) }} ₽</td>
-                    <td class="text-center">{{ s.orders }}</td>
-                    <td class="text-center">
-                        {% if s.status == 'open' %}
-                        <span class="badge bg-warning text-dark">Открыта</span>
-                        {% else %}
-                        <span class="badge bg-secondary">Закрыта</span>
-                        {% endif %}
-                    </td>
-                    <td><a href="{{ url_for('shift_view', shift_id=s.shift_id) }}"
-                           class="btn btn-sm btn-outline-primary">Открыть</a></td>
+                    <th>Дата</th>
+                    <th>Филиал</th>
+                    <th class="text-end">Выручка</th>
+                    <th class="text-center">Заказов</th>
+                    <th class="text-center">Статус</th>
+                    <th></th>
                 </tr>
-                {% endif %}
-                {% endfor %}
-                </tbody>
-            </table>
-        </div>
+            </thead>
+            <tbody>
+            {% for s in stats %}
+            {% if s.shift_id %}
+            <tr>
+                <td class="fw-semibold" style="font-size:0.82rem;color:var(--text-muted)">{{ s.date }}</td>
+                <td>
+                    <div class="branch-chip"><i class="bi bi-shop" style="opacity:0.5"></i>{{ s.name }}</div>
+                </td>
+                <td class="text-end">
+                    <span class="rev-value">{{ '{:,.0f}'.format(s.revenue) }} ₽</span>
+                </td>
+                <td class="text-center fw-semibold">{{ s.orders }}</td>
+                <td class="text-center">
+                    {% if s.status == 'open' %}
+                    <span class="badge-open-sm">● Открыта</span>
+                    {% else %}
+                    <span class="badge-closed-sm">Закрыта</span>
+                    {% endif %}
+                </td>
+                <td class="text-end">
+                    <a href="{{ url_for('shift_view', shift_id=s.shift_id) }}"
+                       class="btn btn-sm btn-outline-primary">
+                        Открыть →
+                    </a>
+                </td>
+            </tr>
+            {% endif %}
+            {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 
@@ -167,9 +423,13 @@
 {% block scripts %}
 {% if kpi_blocks %}
 <script>
-const KPI_COLORS = {
-    primary: '#0d6efd', success: '#198754', danger: '#dc3545',
-    warning: '#ffc107', info: '#0dcaf0', dark: '#212529'
+const KPI_PALETTES = {
+    primary: { bg: '#fff1f2', color: '#e94560', accent: 'linear-gradient(90deg,#e94560,#c73652)' },
+    success:  { bg: '#f0fdf4', color: '#22c55e', accent: 'linear-gradient(90deg,#22c55e,#16a34a)' },
+    danger:   { bg: '#fef2f2', color: '#ef4444', accent: 'linear-gradient(90deg,#ef4444,#dc2626)' },
+    warning:  { bg: '#fffbeb', color: '#f59e0b', accent: 'linear-gradient(90deg,#f59e0b,#d97706)' },
+    info:     { bg: '#eff6ff', color: '#3b82f6', accent: 'linear-gradient(90deg,#3b82f6,#2563eb)' },
+    dark:     { bg: '#f1f5f9', color: '#334155', accent: 'linear-gradient(90deg,#334155,#1e293b)' },
 };
 
 let currentPeriod = 'today';
@@ -177,14 +437,9 @@ let currentPeriod = 'today';
 function getPeriodDates(period) {
     const today = new Date();
     const fmt = d => d.toISOString().split('T')[0];
-    if (period === 'today') return [fmt(today), fmt(today)];
-    if (period === 'week') {
-        const d = new Date(today); d.setDate(d.getDate() - 6);
-        return [fmt(d), fmt(today)];
-    }
-    if (period === 'month') {
-        return [fmt(today).slice(0,7) + '-01', fmt(today)];
-    }
+    if (period === 'today')  return [fmt(today), fmt(today)];
+    if (period === 'week')   { const d = new Date(today); d.setDate(d.getDate() - 6); return [fmt(d), fmt(today)]; }
+    if (period === 'month')  return [fmt(today).slice(0, 7) + '-01', fmt(today)];
     if (period === 'custom') {
         const f = document.getElementById('kpi-from').value;
         const t = document.getElementById('kpi-to').value;
@@ -199,35 +454,41 @@ function loadKpi() {
     let url = `/api/kpi-values?date_from=${dateFrom}&date_to=${dateTo}`;
     if (branchId) url += `&branch_id=${branchId}`;
 
-    document.getElementById('kpi-loading').classList.remove('d-none');
-    document.getElementById('kpi-blocks-row').innerHTML =
-        '<div class="col-12 text-center text-muted py-3" id="kpi-loading"><div class="spinner-border spinner-border-sm"></div> Загрузка...</div>';
+    const row = document.getElementById('kpi-blocks-row');
+    row.innerHTML = `<div class="col-12 text-center py-4 text-muted">
+        <div class="spinner-border spinner-border-sm me-2"></div>Загрузка КПИ…
+    </div>`;
 
     fetch(url).then(r => r.json()).then(data => {
         if (!data.ok) return;
-        const row = document.getElementById('kpi-blocks-row');
         row.innerHTML = '';
         data.blocks.forEach(b => {
-            const val = b.value !== null ? b.value.toLocaleString('ru-RU', {maximumFractionDigits: 0}) : '—';
-            const color = KPI_COLORS[b.color] || '#0d6efd';
-            const div = document.createElement('div');
-            div.className = 'col-6 col-md-3 col-lg-2';
-            div.innerHTML = `
-                <div class="card p-3 h-100" style="border-left:4px solid ${color}">
-                    <div class="text-muted small mb-1">${b.title}</div>
-                    <div class="fw-bold fs-5" style="color:${color}">${val} ${b.unit}</div>
+            const val = b.value !== null
+                ? Math.round(b.value).toLocaleString('ru-RU')
+                : '—';
+            const pal = KPI_PALETTES[b.color] || KPI_PALETTES.primary;
+            const col = document.createElement('div');
+            col.className = 'col-6 col-md-4 col-lg-3 col-xl-2';
+            col.innerHTML = `
+                <div class="kpi-card" style="border-top:3px solid ${pal.color};">
+                    <div class="kpi-card-label">${b.title}</div>
+                    <div class="kpi-card-value" style="color:${pal.color}">
+                        ${val}<span class="kpi-card-unit"> ${b.unit}</span>
+                    </div>
                 </div>`;
-            row.appendChild(div);
+            row.appendChild(col);
         });
         if (data.blocks.length === 0) {
-            row.innerHTML = '<div class="col-12 text-center text-muted py-2">Нет активных блоков. Добавьте в <a href="/settings#tab-kpi">Настройках</a>.</div>';
+            row.innerHTML = `<div class="col-12 text-center text-muted py-3" style="font-size:0.85rem">
+                Нет активных блоков. Добавьте в <a href="/settings?tab=kpi" style="color:var(--brand)">Настройках</a>.
+            </div>`;
         }
     });
 }
 
-document.querySelectorAll('.kpi-period').forEach(btn => {
+document.querySelectorAll('.period-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-        document.querySelectorAll('.kpi-period').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         currentPeriod = btn.dataset.period;
         document.getElementById('custom-range').classList.toggle('d-none', currentPeriod !== 'custom');
@@ -237,7 +498,6 @@ document.querySelectorAll('.kpi-period').forEach(btn => {
 
 document.getElementById('kpi-branch').addEventListener('change', loadKpi);
 
-// Init today's dates for custom range
 const today = new Date().toISOString().split('T')[0];
 document.getElementById('kpi-from').value = today;
 document.getElementById('kpi-to').value = today;

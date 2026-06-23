@@ -2,15 +2,15 @@
 {% block title %}{{ emp.full_name }} — ЗП{% endblock %}
 
 {% block content %}
-<div class="d-flex align-items-center gap-3 mb-3 flex-wrap">
+<div class="d-flex align-items-center gap-3 mb-4 flex-wrap">
     <a href="{{ url_for('reports') }}?tab=salary&s_date_from={{ date_from }}&s_date_to={{ date_to }}"
-       class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i> Назад к отчёту</a>
-    <h4 class="fw-bold mb-0">
-        <i class="bi bi-person-circle me-2"></i>{{ emp.full_name }}
-        <span class="badge badge-role-{{ emp.role }} text-white ms-2 fw-normal">
+       class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i> Назад</a>
+    <div class="page-heading">
+        <i class="bi bi-person-circle" style="color:var(--brand)"></i>{{ emp.full_name }}
+        <span class="badge badge-role-{{ emp.role }} ms-1">
             {{ role_labels.get(emp.role, emp.role) }}
         </span>
-    </h4>
+    </div>
 </div>
 
 <!-- Период -->

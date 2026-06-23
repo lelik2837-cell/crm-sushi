@@ -1,20 +1,64 @@
 {% extends 'base.html' %}
 {% block title %}Главная{% endblock %}
 {% block content %}
+<style>
+.shift-card {
+    border: none;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
+    transition: box-shadow 0.2s, transform 0.2s;
+}
+.shift-card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
+.shift-card.is-open { border-top: 3px solid #22c55e; }
+.shift-card.is-closed { border-top: 3px solid #94a3b8; }
+.shift-card.is-empty { border-top: 3px solid #e2e8f0; }
+.shift-status-open {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: #dcfce7; color: #166534;
+    border-radius: 20px; font-size: 0.72rem; font-weight: 700;
+    padding: 4px 12px;
+}
+.shift-status-open::before {
+    content: ''; display: inline-block;
+    width: 6px; height: 6px; background: #22c55e; border-radius: 50%;
+    animation: blink 1.4s ease-in-out infinite;
+}
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+.shift-status-closed {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: #f1f5f9; color: #64748b;
+    border-radius: 20px; font-size: 0.72rem; font-weight: 700;
+    padding: 4px 12px;
+}
+.no-shift-icon {
+    width: 56px; height: 56px; border-radius: 16px;
+    background: var(--bg2); display: flex; align-items: center; justify-content: center;
+    font-size: 24px; margin: 0 auto 14px;
+}
+</style>
 
-<div class="d-flex justify-content-between align-items-center mb-3">
+<div class="d-flex justify-content-between align-items-center mb-4">
     <div>
-        <h4 class="fw-bold mb-0"><i class="bi bi-shop"></i>
+        <div class="page-heading">
+            <i class="bi bi-shop" style="color:var(--brand)"></i>
             {% if branches_shifts|length == 1 %}{{ branches_shifts[0].branch.name }}
-            {% elif branches_shifts|length > 1 %}Мои филиалы ({{ branches_shifts|length }})
+            {% elif branches_shifts|length > 1 %}Мои филиалы
             {% else %}Нет филиала{% endif %}
-        </h4>
-        <small class="text-muted">{{ today }}</small>
+        </div>
+        <div class="page-heading-sub" style="margin-top:5px">{{ today }}</div>
     </div>
+    {% if branches_shifts|length > 1 %}
+    <span class="badge" style="background:var(--brand-light);color:var(--brand);font-size:0.78rem;padding:6px 12px;">
+        {{ branches_shifts|length }} филиала
+    </span>
+    {% endif %}
 </div>
 
 {% if not branches_shifts %}
-<div class="alert alert-warning">У вашего аккаунта не назначен филиал. Обратитесь к владельцу.</div>
+<div class="alert alert-warning">
+    У вашего аккаунта не назначен филиал. Обратитесь к владельцу.
+</div>
 
 {% else %}
 
@@ -23,39 +67,37 @@
 {% set branch = bs.branch %}
 {% set shift  = bs.shift %}
 <div class="col-12 {% if branches_shifts|length > 1 %}col-md-6{% endif %}">
-    <div class="card h-100 {% if shift and shift.status == 'open' %}border-success{% elif shift %}border-secondary{% endif %}">
+    <div class="card shift-card {% if shift and shift.status == 'open' %}is-open{% elif shift %}is-closed{% else %}is-empty{% endif %}">
         {% if branches_shifts|length > 1 %}
-        <div class="card-header bg-light fw-semibold py-2">
+        <div class="card-header">
             <i class="bi bi-shop"></i> {{ branch.name }}
         </div>
         {% endif %}
         <div class="card-body">
             {% if not shift %}
-            <div class="text-center py-3">
-                <div style="font-size:3rem">📋</div>
-                <p class="fw-semibold mt-2 mb-1">Смена не открыта</p>
+            <div class="text-center py-4">
+                <div class="no-shift-icon">📋</div>
+                <div class="fw-semibold mb-1" style="color:var(--text)">Смена не открыта</div>
+                <div class="text-muted small mb-4" style="font-size:0.8rem">Нажмите кнопку чтобы начать смену</div>
                 <form method="POST" action="{{ url_for('open_shift') }}">
                     <input type="hidden" name="branch_id" value="{{ branch.id }}">
                     <button type="submit" class="btn btn-primary">
-                        <i class="bi bi-play-circle"></i> Открыть смену
+                        <i class="bi bi-play-circle-fill"></i> Открыть смену
                     </button>
                 </form>
             </div>
             {% else %}
-            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
                 <div>
-                    <span class="fw-bold fs-6">Смена {{ shift.date }}</span>
+                    <div class="fw-bold mb-2" style="font-size:1rem;color:var(--text)">Смена {{ shift.date }}</div>
                     {% if shift.status == 'open' %}
-                    <span class="badge bg-success ms-2">🟢 Открыта</span>
+                    <div class="shift-status-open">Открыта</div>
                     {% else %}
-                    <span class="badge bg-secondary ms-2">🔒 Закрыта</span>
-                    {% if shift.closed_by_name %}
-                    <small class="text-muted ms-2">{{ shift.closed_by_name }}</small>
-                    {% endif %}
+                    <div class="shift-status-closed">🔒 Закрыта{% if shift.closed_by_name %} · {{ shift.closed_by_name }}{% endif %}</div>
                     {% endif %}
                 </div>
-                <a href="{{ url_for('shift_view', shift_id=shift.id) }}" class="btn btn-primary btn-sm">
-                    <i class="bi bi-pencil-square"></i>
+                <a href="{{ url_for('shift_view', shift_id=shift.id) }}" class="btn btn-primary">
+                    <i class="bi bi-{% if shift.status == 'open' %}pencil-square{% else %}eye{% endif %}"></i>
                     {% if shift.status == 'open' %}Внести данные{% else %}Просмотреть{% endif %}
                 </a>
             </div>
@@ -68,43 +110,42 @@
 
 {% endif %}
 
-<!-- Recent shifts -->
 {% if recent %}
-<div class="card mt-2">
-    <div class="card-header bg-light fw-semibold">
+<div class="card">
+    <div class="card-header">
         <i class="bi bi-clock-history"></i> Последние смены
     </div>
-    <div class="card-body p-0">
-        <div class="table-responsive">
-            <table class="table table-hover mb-0">
-                <thead class="table-light">
-                    <tr>
-                        <th>Дата</th>
-                        {% if branches_shifts|length > 1 %}<th>Филиал</th>{% endif %}
-                        <th class="text-end">Выручка</th>
-                        <th class="text-center">Статус</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>
-                {% for r in recent %}
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead>
                 <tr>
-                    <td class="fw-semibold">{{ r.date }}</td>
-                    {% if branches_shifts|length > 1 %}<td class="text-muted small">{{ r.branch_name }}</td>{% endif %}
-                    <td class="text-end">{{ '{:,.0f}'.format(r.revenue) }} ₽</td>
-                    <td class="text-center">
-                        {% if r.status == 'open' %}
-                        <span class="badge bg-warning text-dark">Открыта</span>
-                        {% else %}
-                        <span class="badge bg-secondary">Закрыта</span>
-                        {% endif %}
-                    </td>
-                    <td><a href="{{ url_for('shift_view', shift_id=r.id) }}" class="btn btn-sm btn-outline-secondary">Открыть</a></td>
+                    <th>Дата</th>
+                    {% if branches_shifts|length > 1 %}<th>Филиал</th>{% endif %}
+                    <th class="text-end">Выручка</th>
+                    <th class="text-center">Статус</th>
+                    <th></th>
                 </tr>
-                {% endfor %}
-                </tbody>
-            </table>
-        </div>
+            </thead>
+            <tbody>
+            {% for r in recent %}
+            <tr>
+                <td class="fw-semibold" style="font-size:0.82rem;color:var(--text-muted)">{{ r.date }}</td>
+                {% if branches_shifts|length > 1 %}<td style="font-size:0.82rem;color:var(--text-muted)">{{ r.branch_name }}</td>{% endif %}
+                <td class="text-end fw-bold">{{ '{:,.0f}'.format(r.revenue) }} ₽</td>
+                <td class="text-center">
+                    {% if r.status == 'open' %}
+                    <span style="background:#dcfce7;color:#166534;border-radius:20px;font-size:0.68rem;font-weight:700;padding:3px 9px;">Открыта</span>
+                    {% else %}
+                    <span style="background:#f1f5f9;color:#64748b;border-radius:20px;font-size:0.68rem;font-weight:700;padding:3px 9px;">Закрыта</span>
+                    {% endif %}
+                </td>
+                <td class="text-end">
+                    <a href="{{ url_for('shift_view', shift_id=r.id) }}" class="btn btn-sm btn-outline-primary">Открыть →</a>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 {% endif %}
