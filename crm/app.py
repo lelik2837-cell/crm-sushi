@@ -1180,7 +1180,8 @@ def save_revenue(shift_id):
                 total_revenue=?, delivery_revenue=?, delivery_orders=?,
                 pickup_revenue=?, pickup_orders=?,
                 cash_amount=?, card_amount=?, online_amount=?,
-                change_amount=?, actual_cash=?, terminal_last3=?, terminal_amount=?
+                change_amount=?, actual_cash=?, terminal_last3=?, terminal_amount=?,
+                morning_cash=?
             WHERE shift_id=?
         ''', (
             _f(data, 'total_revenue'), _f(data, 'delivery_revenue'), _i(data, 'delivery_orders'),
@@ -1188,6 +1189,7 @@ def save_revenue(shift_id):
             _f(data, 'cash_amount'), _f(data, 'card_amount'), _f(data, 'online_amount'),
             _f(data, 'change_amount'), _f(data, 'actual_cash'),
             data.get('terminal_last3', ''), _f(data, 'terminal_amount'),
+            _f(data, 'morning_cash'),
             shift_id
         ))
         desc = (f"нал {_fmt_money(data.get('cash_amount'))}, "
