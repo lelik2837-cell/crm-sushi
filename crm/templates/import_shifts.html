@@ -28,40 +28,39 @@
         </div>
         <div class="card-body">
 
-            <!-- API ключ -->
+            <!-- Сервисный аккаунт -->
             <div class="mb-3 pb-3 border-bottom">
                 <div class="d-flex align-items-center gap-3 flex-wrap">
-                    <span class="small fw-semibold">Google Drive API ключ:</span>
-                    {% if api_key %}
+                    <span class="small fw-semibold">Сервисный аккаунт Google:</span>
+                    {% if sa_json %}
                         <span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Настроен</span>
                     {% else %}
                         <span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>Не настроен</span>
                     {% endif %}
                     <button class="btn btn-sm btn-outline-secondary" type="button"
-                            onclick="document.getElementById('keyForm').classList.toggle('d-none')">
-                        {% if api_key %}Изменить ключ{% else %}Настроить{% endif %}
+                            onclick="document.getElementById('saForm').classList.toggle('d-none')">
+                        {% if sa_json %}Изменить{% else %}Настроить{% endif %}
                     </button>
                 </div>
-                <form method="POST" id="keyForm" class="mt-2 {% if api_key %}d-none{% endif %}">
-                    <input type="hidden" name="action" value="save_key">
-                    <div class="row g-2 align-items-end">
-                        <div class="col-sm-7">
-                            <input type="text" name="api_key" class="form-control"
-                                   placeholder="AIzaSy..." value="{{ api_key or '' }}" required>
-                            <div class="form-text">
-                                Создать ключ:
-                                <a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Console</a>
-                                → Create API key → включить Google Drive API
-                            </div>
-                        </div>
-                        <div class="col-sm-auto">
-                            <button type="submit" class="btn btn-primary">Сохранить</button>
+                <form method="POST" id="saForm" class="mt-2 {% if sa_json %}d-none{% endif %}">
+                    <input type="hidden" name="action" value="save_sa">
+                    <div class="mb-2">
+                        <label class="form-label fw-semibold">JSON ключ сервисного аккаунта</label>
+                        <textarea name="sa_json" class="form-control font-monospace" rows="4"
+                                  placeholder='{"type": "service_account", "project_id": "...", ...}' required></textarea>
+                        <div class="form-text">
+                            <strong>Как получить:</strong><br>
+                            1. <a href="https://console.cloud.google.com/iam-admin/serviceaccounts" target="_blank">Google Console → Service Accounts</a> → <strong>Create Service Account</strong><br>
+                            2. Actions → Manage keys → Add key → <strong>JSON</strong> → скачать файл<br>
+                            3. Открыть скачанный файл блокнотом, скопировать <strong>всё содержимое</strong> и вставить сюда<br>
+                            4. <strong>Поделиться папкой</strong> на Google Диске с email сервисного аккаунта (вида <code>name@project.iam.gserviceaccount.com</code>)
                         </div>
                     </div>
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
                 </form>
             </div>
 
-            {% if api_key %}
+            {% if sa_json %}
             <!-- Ссылка на папку -->
             <form method="POST">
                 <input type="hidden" name="action" value="list">
@@ -71,7 +70,7 @@
                         <input type="url" name="folder_url" class="form-control"
                                placeholder="https://drive.google.com/drive/folders/..."
                                value="{{ folder_url or '' }}" required>
-                        <div class="form-text">Папка должна быть открыта «Всем, у кого есть ссылка»</div>
+                        <div class="form-text">Папка должна быть расшарена с email сервисного аккаунта</div>
                     </div>
                     <div class="col-sm-auto">
                         <button type="submit" class="btn btn-outline-primary">
@@ -138,11 +137,11 @@
                 </div>
             </form>
             {% elif folder_url %}
-            <p class="text-muted mb-0"><i class="bi bi-info-circle me-1"></i>В папке нет .xlsx файлов</p>
+            <p class="text-muted mb-0"><i class="bi bi-info-circle me-1"></i>В папке нет файлов Google Таблиц или .xlsx</p>
             {% endif %}
 
             {% else %}
-            <p class="text-muted mb-0"><i class="bi bi-arrow-up me-1"></i>Настройте API ключ выше чтобы использовать Google Drive</p>
+            <p class="text-muted mb-0"><i class="bi bi-arrow-up me-1"></i>Настройте сервисный аккаунт выше чтобы использовать Google Drive</p>
             {% endif %}
 
         </div>

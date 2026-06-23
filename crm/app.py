@@ -5352,45 +5352,78 @@ def shifts_bulk_delete():
 @login_required
 @owner_required
 def gdrive_import():
-    import urllib.request, urllib.parse, json, io as _io
+    import urllib.request, urllib.parse, json, io as _io, time
 
     def _get_ctx():
         with get_db() as conn:
             branches = conn.execute(
                 "SELECT id, name FROM branches WHERE is_active=1 ORDER BY name"
             ).fetchall()
-            row = conn.execute("SELECT value FROM api_settings WHERE key='gdrive_api_key'").fetchone()
-            api_key = row[0] if row else ''
+            row = conn.execute("SELECT value FROM api_settings WHERE key='gdrive_sa_json'").fetchone()
+            sa_json = row[0] if row else ''
             import_batches = conn.execute('''
                 SELECT ib.*, b.name as branch_name
                 FROM import_batches ib
                 JOIN branches b ON b.id = ib.branch_id
                 ORDER BY ib.imported_at DESC LIMIT 50
             ''').fetchall()
-        return branches, api_key, import_batches
+        return branches, sa_json, import_batches
+
+    def _get_access_token(sa_json_str):
+        import jwt as _jwt
+        sa = json.loads(sa_json_str)
+        now = int(time.time())
+        payload = {
+            'iss': sa['client_email'],
+            'scope': 'https://www.googleapis.com/auth/drive.readonly',
+            'aud': 'https://oauth2.googleapis.com/token',
+            'iat': now,
+            'exp': now + 3600,
+        }
+        signed = _jwt.encode(payload, sa['private_key'], algorithm='RS256')
+        post_data = urllib.parse.urlencode({
+            'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+            'assertion': signed,
+        }).encode('utf-8')
+        req = urllib.request.Request(
+            'https://oauth2.googleapis.com/token', data=post_data, method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read())['access_token']
+
+    def _drive_request(url, token):
+        req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.read()
 
     action     = request.form.get('action', '')
     folder_url = request.form.get('folder_url', '').strip()
     branch_id  = request.form.get('branch_id', '')
 
-    # ── Сохранить API ключ ───────────────────────────────────────────────────
-    if action == 'save_key':
-        new_key = request.form.get('api_key', '').strip()
-        with get_db() as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO api_settings (key, value) VALUES ('gdrive_api_key', ?)",
-                (new_key,)
-            )
-        flash('API ключ сохранён', 'success')
+    # ── Сохранить сервисный аккаунт ──────────────────────────────────────────
+    if action == 'save_sa':
+        sa_text = request.form.get('sa_json', '').strip()
+        try:
+            parsed = json.loads(sa_text)
+            if parsed.get('type') != 'service_account':
+                raise ValueError('Не сервисный аккаунт')
+            with get_db() as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO api_settings (key, value) VALUES ('gdrive_sa_json', ?)",
+                    (sa_text,)
+                )
+            flash(f'Сервисный аккаунт сохранён: {parsed.get("client_email", "")}', 'success')
+        except Exception as e:
+            flash(f'Ошибка в JSON: {e}', 'danger')
         return redirect(url_for('gdrive_import'))
 
     drive_files = []
 
     # ── Показать файлы в папке ───────────────────────────────────────────────
     if action == 'list':
-        branches, api_key, import_batches = _get_ctx()
-        if not api_key:
-            flash('Сначала сохраните Google Drive API ключ', 'danger')
+        branches, sa_json, import_batches = _get_ctx()
+        if not sa_json:
+            flash('Сначала настройте сервисный аккаунт', 'danger')
         elif not folder_url:
             flash('Введите ссылку на папку', 'danger')
         else:
@@ -5400,45 +5433,44 @@ def gdrive_import():
                 flash('Не удалось определить ID папки из ссылки', 'danger')
             else:
                 folder_id = m.group(1)
-                q = f"'{folder_id}' in parents and trashed=false"
-                api_url = (
-                    'https://www.googleapis.com/drive/v3/files'
-                    '?q=' + urllib.parse.quote(q) +
-                    '&fields=files(id,name,mimeType,modifiedTime)' +
-                    '&orderBy=name&pageSize=100' +
-                    '&key=' + api_key
-                )
                 try:
-                    with urllib.request.urlopen(api_url, timeout=10) as resp:
-                        data = json.loads(resp.read())
+                    token = _get_access_token(sa_json)
+                    q = f"'{folder_id}' in parents and trashed=false"
+                    api_url = (
+                        'https://www.googleapis.com/drive/v3/files'
+                        '?q=' + urllib.parse.quote(q) +
+                        '&fields=files(id,name,mimeType,modifiedTime)' +
+                        '&orderBy=name&pageSize=100'
+                    )
+                    data = json.loads(_drive_request(api_url, token))
                     all_files = data.get('files', [])
                     _SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
                     drive_files = [f for f in all_files
                                    if f['name'].lower().endswith('.xlsx')
                                    or f.get('mimeType') == _SHEET_MIME]
                     if not all_files:
-                        flash('API вернул пустую папку. Убедитесь что папка открыта по ссылке («Все, у кого есть ссылка»)', 'warning')
+                        flash('Папка пуста или сервисный аккаунт не имеет к ней доступа. Поделитесь папкой с email сервисного аккаунта.', 'warning')
                     elif not drive_files:
-                        flash(f'В папке {len(all_files)} файл(ов), но нет Google Таблиц или .xlsx. Типы файлов: {", ".join(set(f.get("mimeType","?") for f in all_files))}', 'warning')
+                        flash(f'В папке {len(all_files)} файл(ов), но нет Google Таблиц или .xlsx.', 'warning')
                 except urllib.error.HTTPError as e:
                     body = e.read().decode('utf-8', errors='ignore')
-                    flash(f'Ошибка Google Drive API {e.code}: {body[:300]}', 'danger')
+                    flash(f'Ошибка Drive API {e.code}: {body[:300]}', 'danger')
                 except Exception as e:
-                    flash(f'Ошибка подключения: {e}', 'danger')
+                    flash(f'Ошибка: {e}', 'danger')
         return render_template('import_shifts.html',
-                               branches=branches, api_key=api_key,
+                               branches=branches, sa_json=sa_json,
                                import_batches=import_batches,
                                folder_url=folder_url, branch_id=branch_id,
                                drive_files=drive_files)
 
     # ── Импортировать из Google Drive ────────────────────────────────────────
     elif action == 'gdrive_import':
-        branches, api_key, import_batches = _get_ctx()
+        branches, sa_json, import_batches = _get_ctx()
         file_data_list = request.form.getlist('file_data')
         branch_id_int  = int(branch_id) if branch_id else None
 
-        if not api_key:
-            flash('API ключ не настроен', 'danger')
+        if not sa_json:
+            flash('Сервисный аккаунт не настроен', 'danger')
         elif not branch_id_int:
             flash('Выберите филиал', 'danger')
         elif not file_data_list:
@@ -5453,6 +5485,12 @@ def gdrive_import():
             _SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
             _XLSX_MIME  = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
+            try:
+                token = _get_access_token(sa_json)
+            except Exception as e:
+                flash(f'Ошибка авторизации: {e}', 'danger')
+                return redirect(url_for('gdrive_import'))
+
             with get_db() as conn:
                 for file_data in file_data_list:
                     parts = file_data.split('|||')
@@ -5463,16 +5501,12 @@ def gdrive_import():
                     if is_sheet:
                         dl_url = (
                             f'https://www.googleapis.com/drive/v3/files/{fid}/export'
-                            f'?mimeType={urllib.parse.quote(_XLSX_MIME)}&key={api_key}'
+                            f'?mimeType={urllib.parse.quote(_XLSX_MIME)}'
                         )
                     else:
-                        dl_url = (
-                            f'https://www.googleapis.com/drive/v3/files/{fid}'
-                            f'?alt=media&key={api_key}'
-                        )
+                        dl_url = f'https://www.googleapis.com/drive/v3/files/{fid}?alt=media'
                     try:
-                        with urllib.request.urlopen(dl_url, timeout=30) as resp:
-                            file_bytes = resp.read()
+                        file_bytes = _drive_request(dl_url, token)
                     except Exception as e:
                         flash(f'Ошибка скачивания «{fname}»: {e}', 'danger')
                         continue
@@ -5557,9 +5591,9 @@ def gdrive_import():
                     )
         return redirect(url_for('gdrive_import'))
 
-    branches, api_key, import_batches = _get_ctx()
+    branches, sa_json, import_batches = _get_ctx()
     return render_template('import_shifts.html',
-                           branches=branches, api_key=api_key,
+                           branches=branches, sa_json=sa_json,
                            import_batches=import_batches,
                            folder_url=folder_url, branch_id=branch_id,
                            drive_files=drive_files)
