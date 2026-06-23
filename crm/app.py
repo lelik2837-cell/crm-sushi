@@ -5411,15 +5411,18 @@ def gdrive_import():
                 try:
                     with urllib.request.urlopen(api_url, timeout=10) as resp:
                         data = json.loads(resp.read())
+                    all_files = data.get('files', [])
                     _SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
-                    drive_files = [f for f in data.get('files', [])
+                    drive_files = [f for f in all_files
                                    if f['name'].lower().endswith('.xlsx')
                                    or f.get('mimeType') == _SHEET_MIME]
-                    if not drive_files:
-                        flash('В папке нет файлов Excel или Google Таблиц', 'warning')
+                    if not all_files:
+                        flash('API вернул пустую папку. Убедитесь что папка открыта по ссылке («Все, у кого есть ссылка»)', 'warning')
+                    elif not drive_files:
+                        flash(f'В папке {len(all_files)} файл(ов), но нет Google Таблиц или .xlsx. Типы файлов: {", ".join(set(f.get("mimeType","?") for f in all_files))}', 'warning')
                 except urllib.error.HTTPError as e:
                     body = e.read().decode('utf-8', errors='ignore')
-                    flash(f'Ошибка Google Drive API: {e.code} — {body[:200]}', 'danger')
+                    flash(f'Ошибка Google Drive API {e.code}: {body[:300]}', 'danger')
                 except Exception as e:
                     flash(f'Ошибка подключения: {e}', 'danger')
         return render_template('import_shifts.html',
