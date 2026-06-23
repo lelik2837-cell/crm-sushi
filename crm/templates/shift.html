@@ -156,6 +156,7 @@
   @media (max-width: 900px) {
     .grid-main { grid-template-columns: 1fr; }
     .page-body { padding: 14px 12px; }
+    .page-body > div:first-child { grid-template-columns: 1fr !important; }
     .staff-header-row, .staff-row { grid-template-columns: 2fr 60px 60px 44px 90px 72px 80px 24px; gap: 4px; }
     .courier-header-row, .courier-row { grid-template-columns: 2fr 50px 50px 44px 90px 62px 80px 24px; gap: 4px; }
   }
@@ -191,19 +192,14 @@
 </div>
 
 <div class="page-body">
-<div class="grid-main">
 
-<!-- ══════════ LEFT COLUMN ══════════ -->
-<div class="col-left">
+  <!-- ══════ TOP ROW: 3 КАРТОЧКИ ВЫРУЧКИ ══════ -->
+  <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:20px; margin-bottom:20px; align-items:stretch;">
 
-  <!-- BLOCK: ВЫРУЧКА -->
-  <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; align-items:stretch;">
-
+    <!-- Нал / Безнал / Онлайн + Общая выручка -->
     <div class="s-card">
       <div class="s-card-body">
-        <!-- Нал/Безнал/Онлайн + Выручка -->
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
-
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
           <div style="background:#f9fafb; border:1.5px solid #e5e7eb; border-radius:10px; padding:12px 14px;">
             <div style="margin-bottom:9px;">
               <div class="mini-label">Наличные</div>
@@ -221,11 +217,10 @@
                 value="{{ (revenue.online_amount or 0)|int }}" {% if not can_edit %}disabled{% endif %}>
             </div>
           </div>
-
           <div style="display:flex; flex-direction:column; gap:10px;">
             <div style="background:linear-gradient(135deg,#eff6ff 0%,#dbeafe 100%); border-radius:10px; padding:14px 16px; border-left:4px solid #3b82f6; flex:1;">
               <div style="font-size:10px; color:#6b7280; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px;">Общая выручка</div>
-              <div id="total-revenue-display" style="font-size:clamp(14px,3.2vw,28px); font-weight:800; color:#1e40af; letter-spacing:-.5px; line-height:1; white-space:nowrap; overflow:hidden;">{{ (revenue.total_revenue or 0)|int }} ₽</div>
+              <div id="total-revenue-display" style="font-size:clamp(14px,2.8vw,26px); font-weight:800; color:#1e40af; letter-spacing:-.5px; line-height:1; white-space:nowrap; overflow:hidden;">{{ (revenue.total_revenue or 0)|int }} ₽</div>
               <input type="hidden" class="rev-field" data-field="total_revenue" id="total-revenue-input" value="{{ (revenue.total_revenue or 0)|int }}">
             </div>
             <div style="background:#f9fafb; border:1.5px solid #e5e7eb; border-radius:10px; padding:10px 14px;">
@@ -236,8 +231,12 @@
             </div>
           </div>
         </div>
+      </div>
+    </div>
 
-        <!-- Доставка / Самовывоз -->
+    <!-- Доставка / Самовывоз -->
+    <div class="s-card">
+      <div class="s-card-body" style="height:100%; display:flex; flex-direction:column; justify-content:center;">
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
           <div class="sub-section">
             <div class="sub-section-title"><span class="dot dot-blue"></span>Доставка</div>
@@ -269,12 +268,12 @@
       </div>
     </div>
 
-    <!-- КАССОВЫЕ ИТОГИ -->
-    <div class="s-card" style="display:flex; flex-direction:column; justify-content:flex-end;">
-      <div class="s-card-body">
+    <!-- Кассовые итоги -->
+    <div class="s-card">
+      <div class="s-card-body" style="height:100%; display:flex; flex-direction:column; justify-content:center; gap:12px;">
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
           <div style="background:#fff1f2; border:1.5px solid #fecdd3; border-radius:10px; padding:14px;">
-            <div style="font-size:10px; color:#9f1239; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px;">Итого нал в кассе</div>
+            <div style="font-size:10px; color:#9f1239; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px;">Итого нал</div>
             <div id="kassa-nал" style="font-size:22px; font-weight:800; color:#be123c; line-height:1;">{{ (revenue.cash_amount or 0)|int }} ₽</div>
           </div>
           <div style="background:#f0fdf4; border:1.5px solid #bbf7d0; border-radius:10px; padding:14px;">
@@ -282,23 +281,24 @@
             <div id="kassa-beznal" style="font-size:22px; font-weight:800; color:#15803d; line-height:1;">{{ (revenue.card_amount or 0)|int }} ₽</div>
           </div>
         </div>
-        <!-- Факт в кассе -->
-        <div style="margin-top:10px; display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-          <div style="background:#f1f5f9; border:1.5px solid #cbd5e1; border-radius:8px; padding:5px 12px; display:flex; align-items:center; gap:6px;">
-            <span style="font-size:11px; color:#475569; font-weight:600; flex:1; white-space:nowrap;">Факт в кассе</span>
-            <input type="text" inputmode="numeric" id="actual-cash-input"
-                   class="mini-input money-field rev-field" data-field="actual_cash"
-                   value="{{ (revenue.actual_cash or 0)|int if revenue and revenue.actual_cash else '' }}"
-                   placeholder="0"
-                   style="font-size:15px; font-weight:800; color:#334155; background:transparent; border:none; padding:0; width:72px; text-align:right; outline:none;"
-                   {% if not can_edit %}disabled{% endif %}>
-            <span style="font-size:13px; color:#475569; font-weight:600;">₽</span>
-          </div>
-          <div></div>
+        <div style="background:#f1f5f9; border:1.5px solid #cbd5e1; border-radius:8px; padding:8px 14px; display:flex; align-items:center; gap:6px;">
+          <span style="font-size:11px; color:#475569; font-weight:600; flex:1; white-space:nowrap;">Факт в кассе</span>
+          <input type="text" inputmode="numeric" id="actual-cash-input"
+                 class="mini-input money-field rev-field" data-field="actual_cash"
+                 value="{{ (revenue.actual_cash or 0)|int if revenue and revenue.actual_cash else '' }}"
+                 placeholder="0"
+                 style="font-size:15px; font-weight:800; color:#334155; background:transparent; border:none; padding:0; width:80px; text-align:right; outline:none;"
+                 {% if not can_edit %}disabled{% endif %}>
+          <span style="font-size:13px; color:#475569; font-weight:600;">₽</span>
         </div>
       </div>
     </div>
-  </div>
+
+  </div><!-- /top-row -->
+
+  <!-- ══════ BOTTOM ROW: Расходы + Такси | Сотрудники ══════ -->
+  <div class="grid-main">
+  <div class="col-left">
 
   <!-- BLOCK: РАСХОДЫ -->
   <div class="s-card">
@@ -443,7 +443,7 @@
 
 </div><!-- /col-left -->
 
-<!-- ══════════ RIGHT COLUMN ══════════ -->
+<!-- ══════════ RIGHT: СОТРУДНИКИ ══════════ -->
 <div class="col-right">
 
   {# Макрос: повторяющаяся строка сотрудника кухни #}
