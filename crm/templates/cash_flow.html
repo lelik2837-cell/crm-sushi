@@ -53,7 +53,7 @@
             {% if day.morning_cash %}{{ '{:,.0f}'.format(day.morning_cash) }} ₽{% else %}—{% endif %}
         </td>
         <td class="text-end text-primary fw-semibold">+{{ '{:,.0f}'.format(day.cash_revenue) }} ₽</td>
-        <td class="text-end fw-semibold {% if day.expenses_cash %}text-warning{% else %}text-muted{% endif %}">
+        <td class="text-end fw-semibold {% if day.expenses_cash %}text-danger{% else %}text-muted{% endif %}">
             {% if day.expenses_cash %}−{{ '{:,.0f}'.format(day.expenses_cash) }} ₽{% else %}—{% endif %}
         </td>
         <td class="text-end fw-semibold {% if day.salary_paid %}text-danger{% else %}text-muted{% endif %}">
@@ -79,7 +79,7 @@
             {% if loop.first and day.morning_cash %}{{ '{:,.0f}'.format(day.morning_cash) }} ₽{% else %}—{% endif %}
         </td>
         <td class="text-end text-primary">+{{ '{:,.0f}'.format(s.cash_revenue) }} ₽</td>
-        <td class="text-end {% if s.expenses_cash %}text-warning{% else %}text-muted{% endif %}">
+        <td class="text-end {% if s.expenses_cash %}text-danger{% else %}text-muted{% endif %}">
             {% if s.expenses_cash %}−{{ '{:,.0f}'.format(s.expenses_cash) }} ₽{% else %}—{% endif %}
         </td>
         <td class="text-end {% if s.salary_paid %}text-danger{% else %}text-muted{% endif %}">
@@ -98,23 +98,6 @@
             </a>
         </td>
     </tr>
-    {% if s.expense_items %}
-    <tr class="day-detail-{{ di }}" style="background:#fffbeb;{% if day.shifts | length > 1 %}display:none{% endif %}">
-        <td></td>
-        <td colspan="7" class="py-1 ps-3">
-            <small class="text-muted d-flex flex-wrap gap-2 align-items-center">
-                <span class="fw-semibold text-warning me-1"><i class="bi bi-receipt me-1"></i>{{ s.branch_name }}:</span>
-                {% for item in s.expense_items %}
-                <span class="d-flex align-items-center gap-1">
-                    <span class="text-dark">{{ item.cat_label }}{% if item.description %} ({{ item.description }}){% endif %}</span>
-                    <span class="fw-semibold text-warning">{{ '{:,.0f}'.format(item.amount_cash) }} ₽</span>
-                    {% if not loop.last %}<span class="text-muted">·</span>{% endif %}
-                </span>
-                {% endfor %}
-            </small>
-        </td>
-    </tr>
-    {% endif %}
     {% endfor %}
 
     {% endfor %}

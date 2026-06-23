@@ -2831,11 +2831,10 @@ def cash_flow_report():
         ''', (date_from, date_to)).fetchall()
 
         salary_rows = conn.execute(f'''
-            SELECT s.date, s.branch_id, COALESCE(SUM(sp.amount), 0) AS salary_paid
-            FROM salary_payments sp
-            JOIN employee_shifts es ON es.id = sp.employee_shift_id
+            SELECT s.date, s.branch_id, COALESCE(SUM(es.paid_amount), 0) AS salary_paid
+            FROM employee_shifts es
             JOIN shifts s ON s.id = es.shift_id
-            WHERE s.date BETWEEN ? AND ? {bf}
+            WHERE s.date BETWEEN ? AND ? {bf} AND es.is_paid = 1
             GROUP BY s.date, s.branch_id
         ''', (date_from, date_to)).fetchall()
 
