@@ -5404,17 +5404,19 @@ def gdrive_import():
                 api_url = (
                     'https://www.googleapis.com/drive/v3/files'
                     '?q=' + urllib.parse.quote(q) +
-                    '&fields=files(id,name,modifiedTime)' +
+                    '&fields=files(id,name,mimeType,modifiedTime)' +
                     '&orderBy=name&pageSize=100' +
                     '&key=' + api_key
                 )
                 try:
                     with urllib.request.urlopen(api_url, timeout=10) as resp:
                         data = json.loads(resp.read())
+                    _SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
                     drive_files = [f for f in data.get('files', [])
-                                   if f['name'].lower().endswith('.xlsx')]
+                                   if f['name'].lower().endswith('.xlsx')
+                                   or f.get('mimeType') == _SHEET_MIME]
                     if not drive_files:
-                        flash('В папке нет .xlsx файлов', 'warning')
+                        flash('В папке нет файлов Excel или Google Таблиц', 'warning')
                 except urllib.error.HTTPError as e:
                     body = e.read().decode('utf-8', errors='ignore')
                     flash(f'Ошибка Google Drive API: {e.code} — {body[:200]}', 'danger')
@@ -5429,15 +5431,14 @@ def gdrive_import():
     # ── Импортировать из Google Drive ────────────────────────────────────────
     elif action == 'gdrive_import':
         branches, api_key, import_batches = _get_ctx()
-        file_ids   = request.form.getlist('file_ids')
-        file_names = request.form.getlist('file_names')
-        branch_id_int = int(branch_id) if branch_id else None
+        file_data_list = request.form.getlist('file_data')
+        branch_id_int  = int(branch_id) if branch_id else None
 
         if not api_key:
             flash('API ключ не настроен', 'danger')
         elif not branch_id_int:
             flash('Выберите филиал', 'danger')
-        elif not file_ids:
+        elif not file_data_list:
             flash('Выберите хотя бы один файл', 'danger')
         else:
             try:
@@ -5446,12 +5447,26 @@ def gdrive_import():
                 flash('Библиотека openpyxl не установлена на сервере', 'danger')
                 return redirect(url_for('gdrive_import'))
 
+            _SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
+            _XLSX_MIME  = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
             with get_db() as conn:
-                for fid, fname in zip(file_ids, file_names):
-                    dl_url = (
-                        f'https://www.googleapis.com/drive/v3/files/{fid}'
-                        f'?alt=media&key={api_key}'
-                    )
+                for file_data in file_data_list:
+                    parts = file_data.split('|||')
+                    if len(parts) != 3:
+                        continue
+                    fid, fname, fmime = parts
+                    is_sheet = fmime == _SHEET_MIME
+                    if is_sheet:
+                        dl_url = (
+                            f'https://www.googleapis.com/drive/v3/files/{fid}/export'
+                            f'?mimeType={urllib.parse.quote(_XLSX_MIME)}&key={api_key}'
+                        )
+                    else:
+                        dl_url = (
+                            f'https://www.googleapis.com/drive/v3/files/{fid}'
+                            f'?alt=media&key={api_key}'
+                        )
                     try:
                         with urllib.request.urlopen(dl_url, timeout=30) as resp:
                             file_bytes = resp.read()

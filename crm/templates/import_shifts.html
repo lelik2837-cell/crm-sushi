@@ -101,11 +101,18 @@
                         {% for f in drive_files %}
                         <tr style="cursor:pointer" onclick="toggleRow(this)">
                             <td>
-                                <input type="checkbox" name="file_ids" value="{{ f.id }}"
+                                <input type="checkbox" name="file_data"
+                                       value="{{ f.id }}|||{{ f.name }}|||{{ f.mimeType }}"
                                        class="form-check-input file-cb" onclick="event.stopPropagation()">
-                                <input type="hidden" name="file_names" value="{{ f.name }}">
                             </td>
-                            <td><i class="bi bi-file-earmark-excel text-success me-1"></i>{{ f.name }}</td>
+                            <td>
+                                {% if f.mimeType == 'application/vnd.google-apps.spreadsheet' %}
+                                <i class="bi bi-file-earmark-spreadsheet text-success me-1"></i>{{ f.name }}
+                                <span class="badge bg-secondary ms-1" style="font-size:0.7rem">Google Таблица</span>
+                                {% else %}
+                                <i class="bi bi-file-earmark-excel text-success me-1"></i>{{ f.name }}
+                                {% endif %}
+                            </td>
                             <td class="text-muted small">{{ f.modifiedTime[:10] if f.modifiedTime else '—' }}</td>
                         </tr>
                         {% endfor %}
