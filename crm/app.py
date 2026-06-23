@@ -5357,6 +5357,69 @@ def delete_import_batch(batch_id):
     return redirect(url_for('excel_import'))
 
 
+@app.route('/shifts/bulk-delete', methods=['GET', 'POST'])
+@login_required
+@owner_required
+def shifts_bulk_delete():
+    with get_db() as conn:
+        branches = conn.execute(
+            "SELECT id, name FROM branches WHERE is_active=1 ORDER BY name"
+        ).fetchall()
+
+    date_from = request.values.get('date_from', '')
+    date_to   = request.values.get('date_to', '')
+    branch_id = request.values.get('branch_id', '')
+    action    = request.values.get('action', '')
+
+    preview_shifts = []
+    if (date_from or date_to) and action in ('preview', 'delete'):
+        conditions = []
+        params = []
+        if date_from:
+            conditions.append('s.date >= ?')
+            params.append(date_from)
+        if date_to:
+            conditions.append('s.date <= ?')
+            params.append(date_to)
+        if branch_id:
+            conditions.append('s.branch_id = ?')
+            params.append(int(branch_id))
+        where = 'WHERE ' + ' AND '.join(conditions) if conditions else ''
+
+        with get_db() as conn:
+            preview_shifts = conn.execute(f'''
+                SELECT s.id, s.date, s.status, b.name as branch_name,
+                       COUNT(DISTINCT es.id) as staff_count,
+                       COUNT(DISTINCT e.id)  as expense_count
+                FROM shifts s
+                JOIN branches b ON b.id = s.branch_id
+                LEFT JOIN employee_shifts es ON es.shift_id = s.id
+                LEFT JOIN expenses e ON e.shift_id = s.id
+                {where}
+                GROUP BY s.id
+                ORDER BY s.date DESC, b.name
+            ''', params).fetchall()
+
+            if action == 'delete' and preview_shifts:
+                shift_ids = [r['id'] for r in preview_shifts]
+                ids_str = ','.join(str(i) for i in shift_ids)
+                conn.execute(f'DELETE FROM salary_payments WHERE employee_shift_id IN (SELECT id FROM employee_shifts WHERE shift_id IN ({ids_str}))')
+                conn.execute(f'DELETE FROM employee_shifts WHERE shift_id IN ({ids_str})')
+                conn.execute(f'DELETE FROM expenses WHERE shift_id IN ({ids_str})')
+                conn.execute(f'DELETE FROM shift_revenue WHERE shift_id IN ({ids_str})')
+                conn.execute(f'DELETE FROM shifts WHERE id IN ({ids_str})')
+                conn.commit()
+                flash(f'Удалено {len(shift_ids)} смен(ы)', 'success')
+                return redirect(url_for('shifts_bulk_delete'))
+
+    return render_template('bulk_delete_shifts.html',
+                           branches=branches,
+                           date_from=date_from,
+                           date_to=date_to,
+                           branch_id=branch_id,
+                           preview_shifts=preview_shifts)
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 
 init_db()
