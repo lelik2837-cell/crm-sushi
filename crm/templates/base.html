@@ -119,8 +119,8 @@
                         {% if session.get('role') == 'owner' %}
                         <li><hr class="dropdown-divider"></li>
                         <li>
-                            <a class="dropdown-item {% if request.endpoint=='excel_import' %}active{% endif %}" href="{{ url_for('excel_import') }}">
-                                <i class="bi bi-file-earmark-excel me-2 text-success"></i>Импорт Excel
+                            <a class="dropdown-item {% if request.endpoint in ('gdrive_import','excel_import') %}active{% endif %}" href="{{ url_for('gdrive_import') }}">
+                                <i class="bi bi-cloud-upload me-2 text-primary"></i>Импорт смен
                             </a>
                         </li>
                         <li>

@@ -5253,79 +5253,7 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
 @login_required
 @owner_required
 def excel_import():
-    with get_db() as conn:
-        branches = conn.execute(
-            "SELECT id, name FROM branches WHERE is_active=1 ORDER BY name"
-        ).fetchall()
-        import_batches = conn.execute('''
-            SELECT ib.*, b.name as branch_name
-            FROM import_batches ib
-            JOIN branches b ON b.id = ib.branch_id
-            ORDER BY ib.imported_at DESC LIMIT 50
-        ''').fetchall()
-
-    if request.method == 'POST':
-        branch_id = request.form.get('branch_id', '').strip()
-        if not branch_id:
-            flash('Выберите филиал', 'danger')
-            return render_template('import_excel.html', branches=branches, import_batches=import_batches)
-
-        branch_id = int(branch_id)
-        files = request.files.getlist('files')
-        if not files or all(f.filename == '' for f in files):
-            flash('Выберите хотя бы один файл', 'danger')
-            return render_template('import_excel.html', branches=branches, import_batches=import_batches)
-
-        try:
-            import openpyxl
-            import io as _io
-        except ImportError:
-            flash('Библиотека openpyxl не установлена на сервере', 'danger')
-            return render_template('import_excel.html', branches=branches, import_batches=import_batches)
-
-        with get_db() as conn:
-            for file in files:
-                if not file.filename.lower().endswith('.xlsx'):
-                    continue
-                data = file.read()
-                wb = openpyxl.load_workbook(_io.BytesIO(data), data_only=True)
-
-                file_stats = {'shifts': 0, 'expenses': 0, 'employees': 0, 'employee_shifts': 0}
-
-                # Create batch record for this file
-                conn.execute(
-                    'INSERT INTO import_batches (branch_id, filename, imported_by) VALUES (?,?,?)',
-                    (branch_id, file.filename, session.get('user_id'))
-                )
-                batch_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
-
-                for sheet_name in wb.sheetnames:
-                    if sheet_name not in _XL_DAY_SHEETS:
-                        continue
-                    ws = wb[sheet_name]
-                    stats = {'shifts': 0, 'expenses': 0, 'employees': 0, 'employee_shifts': 0}
-                    _xl_process_sheet(ws, branch_id, conn, stats, batch_id=batch_id)
-                    for k in file_stats:
-                        file_stats[k] += stats[k]
-
-                conn.execute(
-                    '''UPDATE import_batches SET shifts_created=?, expenses_created=?,
-                       employees_created=?, employee_shifts_created=? WHERE id=?''',
-                    (file_stats['shifts'], file_stats['expenses'],
-                     file_stats['employees'], file_stats['employee_shifts'], batch_id)
-                )
-
-                flash(
-                    f'Файл «{file.filename}»: смен +{file_stats["shifts"]}, '
-                    f'расходов +{file_stats["expenses"]}, '
-                    f'сотрудников +{file_stats["employees"]}, '
-                    f'записей зарплаты +{file_stats["employee_shifts"]}',
-                    'success'
-                )
-
-        return redirect(url_for('excel_import'))
-
-    return render_template('import_excel.html', branches=branches, import_batches=import_batches)
+    return redirect(url_for('gdrive_import'))
 
 
 @app.route('/excel-import/batch/<int:batch_id>/delete', methods=['POST'])
@@ -5354,7 +5282,7 @@ def delete_import_batch(batch_id):
         conn.commit()
 
     flash(f'Импорт «{batch["filename"]}» удалён ({len(shift_ids)} смен)', 'success')
-    return redirect(url_for('excel_import'))
+    return redirect(url_for('gdrive_import'))
 
 
 @app.route('/shifts/bulk-delete', methods=['GET', 'POST'])
@@ -5418,6 +5346,205 @@ def shifts_bulk_delete():
                            date_to=date_to,
                            branch_id=branch_id,
                            preview_shifts=preview_shifts)
+
+
+@app.route('/gdrive-import', methods=['GET', 'POST'])
+@login_required
+@owner_required
+def gdrive_import():
+    import urllib.request, urllib.parse, json, io as _io
+
+    def _get_ctx():
+        with get_db() as conn:
+            branches = conn.execute(
+                "SELECT id, name FROM branches WHERE is_active=1 ORDER BY name"
+            ).fetchall()
+            row = conn.execute("SELECT value FROM api_settings WHERE key='gdrive_api_key'").fetchone()
+            api_key = row[0] if row else ''
+            import_batches = conn.execute('''
+                SELECT ib.*, b.name as branch_name
+                FROM import_batches ib
+                JOIN branches b ON b.id = ib.branch_id
+                ORDER BY ib.imported_at DESC LIMIT 50
+            ''').fetchall()
+        return branches, api_key, import_batches
+
+    action     = request.form.get('action', '')
+    folder_url = request.form.get('folder_url', '').strip()
+    branch_id  = request.form.get('branch_id', '')
+
+    # ── Сохранить API ключ ───────────────────────────────────────────────────
+    if action == 'save_key':
+        new_key = request.form.get('api_key', '').strip()
+        with get_db() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO api_settings (key, value) VALUES ('gdrive_api_key', ?)",
+                (new_key,)
+            )
+        flash('API ключ сохранён', 'success')
+        return redirect(url_for('gdrive_import'))
+
+    drive_files = []
+
+    # ── Показать файлы в папке ───────────────────────────────────────────────
+    if action == 'list':
+        branches, api_key, import_batches = _get_ctx()
+        if not api_key:
+            flash('Сначала сохраните Google Drive API ключ', 'danger')
+        elif not folder_url:
+            flash('Введите ссылку на папку', 'danger')
+        else:
+            import re
+            m = re.search(r'/folders/([a-zA-Z0-9_-]+)', folder_url)
+            if not m:
+                flash('Не удалось определить ID папки из ссылки', 'danger')
+            else:
+                folder_id = m.group(1)
+                q = f"'{folder_id}' in parents and trashed=false"
+                api_url = (
+                    'https://www.googleapis.com/drive/v3/files'
+                    '?q=' + urllib.parse.quote(q) +
+                    '&fields=files(id,name,modifiedTime)' +
+                    '&orderBy=name&pageSize=100' +
+                    '&key=' + api_key
+                )
+                try:
+                    with urllib.request.urlopen(api_url, timeout=10) as resp:
+                        data = json.loads(resp.read())
+                    drive_files = [f for f in data.get('files', [])
+                                   if f['name'].lower().endswith('.xlsx')]
+                    if not drive_files:
+                        flash('В папке нет .xlsx файлов', 'warning')
+                except urllib.error.HTTPError as e:
+                    body = e.read().decode('utf-8', errors='ignore')
+                    flash(f'Ошибка Google Drive API: {e.code} — {body[:200]}', 'danger')
+                except Exception as e:
+                    flash(f'Ошибка подключения: {e}', 'danger')
+        return render_template('import_shifts.html',
+                               branches=branches, api_key=api_key,
+                               import_batches=import_batches,
+                               folder_url=folder_url, branch_id=branch_id,
+                               drive_files=drive_files)
+
+    # ── Импортировать из Google Drive ────────────────────────────────────────
+    elif action == 'gdrive_import':
+        branches, api_key, import_batches = _get_ctx()
+        file_ids   = request.form.getlist('file_ids')
+        file_names = request.form.getlist('file_names')
+        branch_id_int = int(branch_id) if branch_id else None
+
+        if not api_key:
+            flash('API ключ не настроен', 'danger')
+        elif not branch_id_int:
+            flash('Выберите филиал', 'danger')
+        elif not file_ids:
+            flash('Выберите хотя бы один файл', 'danger')
+        else:
+            try:
+                import openpyxl
+            except ImportError:
+                flash('Библиотека openpyxl не установлена на сервере', 'danger')
+                return redirect(url_for('gdrive_import'))
+
+            with get_db() as conn:
+                for fid, fname in zip(file_ids, file_names):
+                    dl_url = (
+                        f'https://www.googleapis.com/drive/v3/files/{fid}'
+                        f'?alt=media&key={api_key}'
+                    )
+                    try:
+                        with urllib.request.urlopen(dl_url, timeout=30) as resp:
+                            file_bytes = resp.read()
+                    except Exception as e:
+                        flash(f'Ошибка скачивания «{fname}»: {e}', 'danger')
+                        continue
+
+                    wb = openpyxl.load_workbook(_io.BytesIO(file_bytes), data_only=True)
+                    file_stats = {'shifts': 0, 'expenses': 0, 'employees': 0, 'employee_shifts': 0}
+                    conn.execute(
+                        'INSERT INTO import_batches (branch_id, filename, imported_by) VALUES (?,?,?)',
+                        (branch_id_int, fname, session.get('user_id'))
+                    )
+                    batch_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                    for sheet_name in wb.sheetnames:
+                        if sheet_name not in _XL_DAY_SHEETS:
+                            continue
+                        ws = wb[sheet_name]
+                        stats = {'shifts': 0, 'expenses': 0, 'employees': 0, 'employee_shifts': 0}
+                        _xl_process_sheet(ws, branch_id_int, conn, stats, batch_id=batch_id)
+                        for k in file_stats:
+                            file_stats[k] += stats[k]
+                    conn.execute(
+                        '''UPDATE import_batches SET shifts_created=?, expenses_created=?,
+                           employees_created=?, employee_shifts_created=? WHERE id=?''',
+                        (file_stats['shifts'], file_stats['expenses'],
+                         file_stats['employees'], file_stats['employee_shifts'], batch_id)
+                    )
+                    flash(
+                        f'«{fname}»: смен +{file_stats["shifts"]}, '
+                        f'расходов +{file_stats["expenses"]}, '
+                        f'записей ЗП +{file_stats["employee_shifts"]}',
+                        'success'
+                    )
+        return redirect(url_for('gdrive_import'))
+
+    # ── Загрузить файл вручную ───────────────────────────────────────────────
+    elif action == 'upload':
+        branches, api_key, import_batches = _get_ctx()
+        branch_id_int = int(branch_id) if branch_id else None
+        files = request.files.getlist('files')
+
+        if not branch_id_int:
+            flash('Выберите филиал', 'danger')
+        elif not files or all(f.filename == '' for f in files):
+            flash('Выберите хотя бы один файл', 'danger')
+        else:
+            try:
+                import openpyxl
+            except ImportError:
+                flash('Библиотека openpyxl не установлена на сервере', 'danger')
+                return redirect(url_for('gdrive_import'))
+
+            with get_db() as conn:
+                for file in files:
+                    if not file.filename.lower().endswith('.xlsx'):
+                        continue
+                    data = file.read()
+                    wb = openpyxl.load_workbook(_io.BytesIO(data), data_only=True)
+                    file_stats = {'shifts': 0, 'expenses': 0, 'employees': 0, 'employee_shifts': 0}
+                    conn.execute(
+                        'INSERT INTO import_batches (branch_id, filename, imported_by) VALUES (?,?,?)',
+                        (branch_id_int, file.filename, session.get('user_id'))
+                    )
+                    batch_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                    for sheet_name in wb.sheetnames:
+                        if sheet_name not in _XL_DAY_SHEETS:
+                            continue
+                        ws = wb[sheet_name]
+                        stats = {'shifts': 0, 'expenses': 0, 'employees': 0, 'employee_shifts': 0}
+                        _xl_process_sheet(ws, branch_id_int, conn, stats, batch_id=batch_id)
+                        for k in file_stats:
+                            file_stats[k] += stats[k]
+                    conn.execute(
+                        '''UPDATE import_batches SET shifts_created=?, expenses_created=?,
+                           employees_created=?, employee_shifts_created=? WHERE id=?''',
+                        (file_stats['shifts'], file_stats['expenses'],
+                         file_stats['employees'], file_stats['employee_shifts'], batch_id)
+                    )
+                    flash(
+                        f'«{file.filename}»: смен +{file_stats["shifts"]}, '
+                        f'расходов +{file_stats["expenses"]}, '
+                        f'записей ЗП +{file_stats["employee_shifts"]}',
+                        'success'
+                    )
+        return redirect(url_for('gdrive_import'))
+
+    branches, api_key, import_batches = _get_ctx()
+    return render_template('import_shifts.html',
+                           branches=branches, api_key=api_key,
+                           import_batches=import_batches,
+                           folder_url=folder_url, branch_id=branch_id,
+                           drive_files=drive_files)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

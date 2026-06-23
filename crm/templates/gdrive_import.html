@@ -1,0 +1,178 @@
+{% extends 'base.html' %}
+{% block title %}Импорт из Google Drive{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0"><i class="bi bi-google me-2" style="color:#4285f4"></i>Импорт смен из Google Drive</h4>
+</div>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in messages %}
+    <div class="alert alert-{{ cat }} alert-dismissible fade show">
+        {{ msg }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endfor %}
+{% endwith %}
+
+<!-- API Ключ -->
+<div class="card mb-4">
+    <div class="card-header fw-semibold">
+        <i class="bi bi-key me-1"></i> Google Drive API ключ
+    </div>
+    <div class="card-body">
+        {% if api_key %}
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+            <span class="badge bg-success fs-6 px-3 py-2"><i class="bi bi-check-circle me-1"></i>Ключ настроен</span>
+            <button class="btn btn-sm btn-outline-secondary" type="button"
+                    onclick="document.getElementById('keyForm').classList.toggle('d-none')">
+                Изменить ключ
+            </button>
+        </div>
+        {% endif %}
+        <form method="POST" id="keyForm" class="{% if api_key %}d-none{% endif %} mt-3">
+            <input type="hidden" name="action" value="save_key">
+            <div class="row g-2 align-items-end">
+                <div class="col-sm-8">
+                    <label class="form-label small fw-semibold">API ключ</label>
+                    <input type="text" name="api_key" class="form-control font-monospace"
+                           placeholder="AIzaSy..." value="{{ api_key or '' }}" required>
+                    <div class="form-text">
+                        Создать ключ:
+                        <a href="https://console.cloud.google.com/apis/credentials" target="_blank">
+                            Google Console → Credentials → Create API key
+                        </a>
+                        → включить <strong>Google Drive API</strong>
+                    </div>
+                </div>
+                <div class="col-sm-4">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-save me-1"></i> Сохранить ключ
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if api_key %}
+<!-- Шаг 1: показать файлы -->
+<div class="card mb-4">
+    <div class="card-header fw-semibold">
+        <i class="bi bi-folder2-open me-1"></i> Папка на Google Drive
+    </div>
+    <div class="card-body">
+        <form method="POST" id="listForm">
+            <input type="hidden" name="action" value="list">
+            <div class="row g-2 align-items-end">
+                <div class="col-sm-8">
+                    <label class="form-label small fw-semibold">Ссылка на папку</label>
+                    <input type="url" name="folder_url" class="form-control"
+                           placeholder="https://drive.google.com/drive/folders/..."
+                           value="{{ folder_url or '' }}" required>
+                    <div class="form-text">Откройте папку на Google Диске → правая кнопка → «Открыть доступ» → «Все, у кого есть ссылка»</div>
+                </div>
+                <div class="col-sm-4">
+                    <button type="submit" class="btn btn-outline-primary">
+                        <i class="bi bi-search me-1"></i> Показать файлы
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Шаг 2: выбрать файлы и импортировать -->
+{% if drive_files %}
+<div class="card border-primary">
+    <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-file-earmark-excel me-1 text-success"></i>
+            Файлы в папке — {{ drive_files | length }} шт.
+        </span>
+        <button class="btn btn-sm btn-outline-secondary" onclick="toggleAll(this)">Выбрать все</button>
+    </div>
+    <form method="POST" id="importForm">
+        <input type="hidden" name="action" value="import">
+        <input type="hidden" name="folder_url" value="{{ folder_url }}">
+
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0" style="font-size:0.9rem">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width:40px"></th>
+                        <th>Файл</th>
+                        <th>Изменён</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for f in drive_files %}
+                <tr onclick="toggleRow(this)" style="cursor:pointer">
+                    <td>
+                        <input type="checkbox" name="file_ids" value="{{ f.id }}"
+                               class="form-check-input file-cb" onclick="event.stopPropagation()">
+                        <input type="hidden" name="file_names" value="{{ f.name }}">
+                    </td>
+                    <td><i class="bi bi-file-earmark-excel text-success me-1"></i>{{ f.name }}</td>
+                    <td class="text-muted small">{{ f.modifiedTime[:10] if f.modifiedTime else '—' }}</td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="card-footer d-flex align-items-center gap-3 flex-wrap">
+            <div>
+                <label class="form-label small fw-semibold mb-1">Филиал</label>
+                <select name="branch_id" class="form-select form-select-sm" style="min-width:180px" required>
+                    <option value="">— выберите филиал —</option>
+                    {% for b in branches %}
+                    <option value="{{ b[0] }}" {% if b[0]|string == branch_id %}selected{% endif %}>{{ b[1] }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="mt-auto">
+                <button type="submit" class="btn btn-success px-4"
+                        onclick="return confirmImport()">
+                    <i class="bi bi-cloud-download me-1"></i> Импортировать выбранные
+                </button>
+            </div>
+        </div>
+    </form>
+</div>
+{% elif folder_url %}
+<div class="card">
+    <div class="card-body text-center py-4 text-muted">
+        <i class="bi bi-folder2 fs-1 d-block mb-2 opacity-25"></i>
+        <div class="fw-semibold">В папке нет .xlsx файлов</div>
+    </div>
+</div>
+{% endif %}
+
+{% else %}
+<div class="alert alert-warning">
+    <i class="bi bi-exclamation-triangle me-1"></i>
+    Сначала настройте API ключ выше.
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleRow(tr) {
+    const cb = tr.querySelector('.file-cb');
+    cb.checked = !cb.checked;
+}
+function toggleAll(btn) {
+    const cbs = document.querySelectorAll('.file-cb');
+    const allChecked = Array.from(cbs).every(c => c.checked);
+    cbs.forEach(c => c.checked = !allChecked);
+    btn.textContent = allChecked ? 'Выбрать все' : 'Снять все';
+}
+function confirmImport() {
+    const count = document.querySelectorAll('.file-cb:checked').length;
+    if (count === 0) { alert('Выберите хотя бы один файл'); return false; }
+    return confirm(`Импортировать ${count} файл(ов)?`);
+}
+</script>
+{% endblock %}
