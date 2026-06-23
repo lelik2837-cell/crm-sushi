@@ -33,6 +33,7 @@
             <th style="min-width:130px">Дата</th>
             <th style="min-width:160px">Филиал</th>
             <th class="text-end" style="min-width:110px">Размен</th>
+            <th class="text-end" style="min-width:110px">Плюсы</th>
             <th class="text-end" style="min-width:120px">Выручка нал</th>
             <th class="text-end" style="min-width:120px">Расходы нал</th>
             <th class="text-end" style="min-width:110px">ФОТ</th>
@@ -50,7 +51,10 @@
         <td class="fw-bold">{{ day.date | datefmt }}</td>
         <td class="text-muted small">{{ day.shifts | length }} филиала</td>
         <td class="text-end text-muted fw-semibold">
-            {% if day.morning_cash %}{{ '{:,.0f}'.format(day.morning_cash) }} ₽{% else %}—{% endif %}
+            {% if day.razmen %}{{ '{:,.0f}'.format(day.razmen) }} ₽{% else %}—{% endif %}
+        </td>
+        <td class="text-end text-success fw-semibold">
+            {% if day.plus_amount %}+{{ '{:,.0f}'.format(day.plus_amount) }} ₽{% else %}—{% endif %}
         </td>
         <td class="text-end text-primary fw-semibold">+{{ '{:,.0f}'.format(day.cash_revenue) }} ₽</td>
         <td class="text-end fw-semibold {% if day.expenses_cash %}text-danger{% else %}text-muted{% endif %}">
@@ -76,7 +80,10 @@
         </td>
         <td class="fw-semibold">{{ s.branch_name }}</td>
         <td class="text-end text-muted">
-            {% if loop.first and day.morning_cash %}{{ '{:,.0f}'.format(day.morning_cash) }} ₽{% else %}—{% endif %}
+            {% if s.razmen %}{{ '{:,.0f}'.format(s.razmen) }} ₽{% else %}—{% endif %}
+        </td>
+        <td class="text-end text-success">
+            {% if s.plus_amount %}+{{ '{:,.0f}'.format(s.plus_amount) }} ₽{% else %}—{% endif %}
         </td>
         <td class="text-end text-primary">+{{ '{:,.0f}'.format(s.cash_revenue) }} ₽</td>
         <td class="text-end {% if s.expenses_cash %}text-danger{% else %}text-muted{% endif %}">

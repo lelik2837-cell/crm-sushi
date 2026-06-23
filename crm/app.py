@@ -684,6 +684,11 @@ def init_db():
             pass
 
         try:
+            conn.execute("ALTER TABLE shift_revenue ADD COLUMN plus_amount REAL DEFAULT 0")
+        except Exception:
+            pass
+
+        try:
             conn.execute("ALTER TABLE purchases ADD COLUMN payer TEXT DEFAULT ''")
         except Exception:
             pass
@@ -2812,9 +2817,11 @@ def cash_flow_report():
 
         revenue_rows = conn.execute(f'''
             SELECT s.date, s.id AS shift_id, b.id AS branch_id, b.name AS branch_name,
-                   COALESCE(r.cash_amount, 0)  AS cash_revenue,
-                   COALESCE(r.actual_cash, 0)  AS actual_cash,
-                   COALESCE(r.actual_cash_comment, '') AS actual_cash_comment
+                   COALESCE(r.cash_amount, 0)    AS cash_revenue,
+                   COALESCE(r.actual_cash, 0)    AS actual_cash,
+                   COALESCE(r.actual_cash_comment, '') AS actual_cash_comment,
+                   COALESCE(r.change_amount, 0)  AS razmen,
+                   COALESCE(r.plus_amount, 0)    AS plus_amount
             FROM shifts s
             JOIN branches b ON b.id = s.branch_id
             LEFT JOIN shift_revenue r ON r.shift_id = s.id
@@ -2823,7 +2830,8 @@ def cash_flow_report():
         ''', (date_from, date_to)).fetchall()
 
         expense_rows = conn.execute(f'''
-            SELECT s.date, s.branch_id, COALESCE(SUM(e.amount_cash), 0) AS expenses_cash
+            SELECT s.date, s.branch_id,
+                COALESCE(SUM(e.amount_cash), 0) AS expenses_cash
             FROM expenses e
             JOIN shifts s ON s.id = e.shift_id
             WHERE s.date BETWEEN ? AND ? {bf}
@@ -2838,18 +2846,6 @@ def cash_flow_report():
             GROUP BY s.date, s.branch_id
         ''', (date_from, date_to)).fetchall()
 
-        expense_items_rows = conn.execute(f'''
-            SELECT e.shift_id,
-                   COALESCE(ec.label, e.category) AS cat_label,
-                   e.description,
-                   e.amount_cash
-            FROM expenses e
-            JOIN shifts s ON s.id = e.shift_id
-            LEFT JOIN expense_categories ec ON ec.code = e.category AND ec.is_active = 1
-            WHERE s.date BETWEEN ? AND ? {bf} AND e.amount_cash > 0
-            ORDER BY e.id
-        ''', (date_from, date_to)).fetchall()
-
     exp_map = defaultdict(float)
     for r in expense_rows:
         exp_map[(r['date'], r['branch_id'])] += r['expenses_cash']
@@ -2858,35 +2854,33 @@ def cash_flow_report():
     for r in salary_rows:
         sal_map[(r['date'], r['branch_id'])] += r['salary_paid']
 
-    items_by_shift = defaultdict(list)
-    for r in expense_items_rows:
-        items_by_shift[r['shift_id']].append({
-            'cat_label': r['cat_label'],
-            'description': r['description'] or '',
-            'amount_cash': r['amount_cash'],
-        })
-
     days = {}
     for r in revenue_rows:
         d = r['date']
         bid = r['branch_id']
-        exp = exp_map.get((d, bid), 0)
-        sal = sal_map.get((d, bid), 0)
+        exp  = exp_map.get((d, bid), 0)
+        sal  = sal_map.get((d, bid), 0)
+        raz  = r['razmen']
+        plus = r['plus_amount']
         if d not in days:
             days[d] = {'date': d, 'shifts': [], 'cash_revenue': 0.0,
-                       'expenses_cash': 0.0, 'salary_paid': 0.0, 'actual_cash': 0.0}
+                       'expenses_cash': 0.0, 'razmen': 0.0, 'plus_amount': 0.0,
+                       'salary_paid': 0.0, 'actual_cash': 0.0}
         days[d]['shifts'].append({
-            'shift_id':   r['shift_id'],
+            'shift_id':    r['shift_id'],
             'branch_name': r['branch_name'],
             'cash_revenue': r['cash_revenue'],
             'expenses_cash': exp,
+            'razmen':       raz,
+            'plus_amount':  plus,
             'salary_paid':  sal,
             'actual_cash':  r['actual_cash'],
             'actual_cash_comment': r['actual_cash_comment'],
-            'expense_items': items_by_shift.get(r['shift_id'], []),
         })
         days[d]['cash_revenue']  += r['cash_revenue']
         days[d]['expenses_cash'] += exp
+        days[d]['razmen']        += raz
+        days[d]['plus_amount']   += plus
         days[d]['salary_paid']   += sal
         days[d]['actual_cash']   += r['actual_cash']
 
@@ -5127,6 +5121,10 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
             if c:
                 terminal_codes.append(c)
 
+    # D31 = размен (change_amount), D33:D36 = плюсы в кассу (plus_amount)
+    change_amount = _xf(rows[30][3]) if len(rows) > 30 else 0.0
+    plus_amount   = sum(_xf(rows[i][3]) for i in range(32, 36) if len(rows) > i)
+
     existing = conn.execute(
         "SELECT id FROM shifts WHERE branch_id=? AND date=?",
         (branch_id, shift_date.isoformat())
@@ -5147,11 +5145,13 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
             """INSERT INTO shift_revenue
                (shift_id, total_revenue, delivery_revenue, delivery_orders,
                 pickup_revenue, pickup_orders, cash_amount, card_amount,
-                online_amount, terminal_last3, terminal_amount, actual_cash)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                online_amount, terminal_last3, terminal_amount, actual_cash,
+                change_amount, plus_amount)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (shift_id, total_revenue, delivery_rev, delivery_ord,
              pickup_rev, pickup_ord, cash_amount, card_amount,
-             online_amount, ','.join(terminal_codes), terminal_amount, actual_cash)
+             online_amount, ','.join(terminal_codes), terminal_amount, actual_cash,
+             change_amount, plus_amount)
         )
 
     cur_cat = None
