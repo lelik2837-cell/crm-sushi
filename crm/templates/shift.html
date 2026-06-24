@@ -311,18 +311,18 @@
                    {% if not can_edit %}disabled{% endif %}>
             <span style="font-size:13px; color:#475569; font-weight:600;">₽</span>
           </div>
-          <!-- Факт безнал — разворачивается по клику, показывает терминалы -->
-          <div style="background:#f0fdf4; border:1.5px solid #bbf7d0; border-radius:10px; overflow:visible;">
+          <!-- Факт безнал — выпадающий список поверх контента -->
+          <div style="position:relative; background:#f1f5f9; border:1.5px solid #cbd5e1; border-radius:10px;">
             <div onclick="toggleBeznalFact()" style="padding:14px; cursor:pointer; display:flex; align-items:center; gap:6px; user-select:none;">
-              <span style="font-size:10px; color:#166534; font-weight:700; text-transform:uppercase; letter-spacing:.5px; flex:1;">Факт безнал</span>
-              <span id="beznal-fact-total" style="font-size:22px; font-weight:800; color:#15803d; line-height:1;">0 ₽</span>
-              <i class="bi bi-chevron-down" id="beznal-fact-chevron" style="font-size:11px; color:#166534; transition:transform .2s;"></i>
+              <span style="font-size:10px; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:.5px; flex:1; white-space:nowrap;">Факт безнал</span>
+              <span id="beznal-fact-total" style="font-size:15px; font-weight:800; color:#334155; line-height:1; white-space:nowrap;">0 ₽</span>
+              <i class="bi bi-chevron-down" id="beznal-fact-chevron" style="font-size:11px; color:#6b7280; transition:transform .2s; flex-shrink:0;"></i>
             </div>
-            <div id="beznal-fact-list" style="display:none; padding:0 14px 14px;">
+            <div id="beznal-fact-list" style="display:none; position:absolute; top:calc(100% + 4px); left:0; right:0; z-index:300; background:#fff; border:1.5px solid #cbd5e1; border-radius:10px; padding:12px; box-shadow:0 4px 20px rgba(0,0,0,.13);">
               <div id="beznal-fact-rows" style="display:flex; flex-direction:column; gap:6px;"></div>
               {% if can_edit %}
               <button type="button" onclick="addBeznalRow()"
-                      style="margin-top:8px; font-size:11px; padding:5px 0; border:1.5px dashed #bbf7d0; background:transparent; border-radius:6px; color:#166534; font-weight:600; cursor:pointer; width:100%;">
+                      style="margin-top:8px; font-size:11px; padding:5px 0; border:1.5px dashed #cbd5e1; background:transparent; border-radius:6px; color:#475569; font-weight:600; cursor:pointer; width:100%;">
                 + Добавить терминал
               </button>
               {% endif %}
@@ -1642,15 +1642,15 @@ function saveBeznalTerminals() {
   });
 }
 
-// Инициализация: загружаем сохранённые терминалы или рисуем 5 пустых строк
+// Инициализация: загружаем сохранённые терминалы или рисуем 3 пустых строки
 (function initBeznalTerminals() {
   const saved = INIT_TERMINALS;
   if (saved && saved.length) {
     saved.forEach(t => addBeznalRow(t.terminal_number, t.amount));
-    const need = 5 - saved.length;
+    const need = 3 - saved.length;
     for (let i = 0; i < need; i++) addBeznalRow();
   } else {
-    for (let i = 0; i < 5; i++) addBeznalRow();
+    for (let i = 0; i < 3; i++) addBeznalRow();
   }
   updateBeznalTotal();
 })();
