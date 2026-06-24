@@ -141,7 +141,9 @@
                     <span style="color:#d1d5db; font-size:13px;">—</span>
                     {% endif %}
                   {% else %}
-                  <div class="change-cell" data-shift-id="{{ cell.shift_id }}">
+                  <div class="change-cell"
+                    {% if cell.status == 'future' %}data-mode="future" data-branch-id="{{ cell.branch_id }}" data-date="{{ cell.date }}"
+                    {% else %}data-shift-id="{{ cell.shift_id }}"{% endif %}>
                     <div class="change-view d-flex align-items-center justify-content-center gap-1">
                       {% if cell.change_amount %}<span class="change-val" style="font-size:13px; color:#374151;">{{ cell.change_amount | money }}</span>{% endif %}
                       <i class="bi bi-pencil-square change-edit-btn" style="color:#9ca3af; font-size:13px; cursor:pointer;" onclick="startEdit(this.closest('.change-cell'))"></i>
@@ -159,11 +161,7 @@
                   </div>
                   {% endif %}
                 {% else %}
-                  {% if day.iso >= today %}
-                  <i class="bi bi-pencil-square" style="color:#d1d5db; font-size:16px;" title="Смена ещё не открыта"></i>
-                  {% else %}
-                  <span style="color:#d1d5db; font-size:13px;">—</span>
-                  {% endif %}
+                <span style="color:#d1d5db; font-size:13px;">—</span>
                 {% endif %}
               </td>
               {% endfor %}
@@ -355,15 +353,23 @@ function startEdit(cell) {
 }
 
 function saveEdit(cell) {
-  const shiftId = cell.dataset.shiftId;
   const inp = cell.querySelector('.change-input');
   const val = inp.value.trim();
   const amount = val === '' ? 0 : parseInt(val) || 0;
 
-  fetch('/settings/change/manual/save', {
+  let url, body;
+  if (cell.dataset.mode === 'future') {
+    url = '/settings/change/future/save';
+    body = {branch_id: parseInt(cell.dataset.branchId), date: cell.dataset.date, amount};
+  } else {
+    url = '/settings/change/manual/save';
+    body = {[cell.dataset.shiftId]: amount};
+  }
+
+  fetch(url, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({[shiftId]: amount})
+    body: JSON.stringify(body)
   }).then(r => r.json()).then(d => {
     if (!d.ok) return;
     const view = cell.querySelector('.change-view');

@@ -870,6 +870,14 @@ def init_db():
                 label TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS change_date_overrides (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                branch_id INTEGER NOT NULL REFERENCES branches(id),
+                date TEXT NOT NULL,
+                amount REAL NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(branch_id, date)
+            );
         ''')
 
         conn.commit()
@@ -909,11 +917,19 @@ def get_client_ip():
 
 
 def _apply_change_amount_to_shift(conn, shift_id, branch_id, shift_date):
-    """Find best matching change schedule and apply change_amount to the shift."""
+    """Apply change_amount to shift: override table first, then schedule rules."""
     try:
         d = date.fromisoformat(shift_date) if isinstance(shift_date, str) else shift_date
-        weekday = d.weekday()  # 0=Mon..6=Sun
+        weekday = d.weekday()
+        shift_date = d.isoformat()
     except Exception:
+        return
+    override = conn.execute(
+        'SELECT amount FROM change_date_overrides WHERE branch_id=? AND date=?',
+        (branch_id, shift_date)
+    ).fetchone()
+    if override:
+        conn.execute('UPDATE shift_revenue SET change_amount=? WHERE shift_id=?', (override['amount'], shift_id))
         return
     row = conn.execute(
         '''SELECT amount FROM change_schedule
@@ -5737,9 +5753,25 @@ def gdrive_import():
 @owner_required
 def change_settings():
     WD_LABELS = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']
+    today_str = date.today().isoformat()
     date_from = request.args.get('date_from', (date.today() - timedelta(days=6)).isoformat())
     date_to   = request.args.get('date_to',   date.today().isoformat())
     branch_ids_filter = request.args.getlist('branch_ids')
+
+    # Build full date range list first
+    dates_list = []
+    try:
+        d_cur = date.fromisoformat(date_from)
+        d_end = date.fromisoformat(date_to)
+        while d_cur <= d_end:
+            wd = d_cur.weekday()
+            dates_list.append({'iso': d_cur.isoformat(), 'weekday': wd,
+                                'wd_label': WD_LABELS[wd], 'is_weekend': wd >= 5})
+            d_cur += timedelta(days=1)
+        dates_list.reverse()
+    except Exception:
+        pass
+
     with get_db() as conn:
         branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
         branch_groups_raw = conn.execute('SELECT * FROM branch_groups ORDER BY name').fetchall()
@@ -5747,11 +5779,12 @@ def change_settings():
         for m in conn.execute('SELECT * FROM branch_group_members').fetchall():
             branch_group_members.setdefault(m['group_id'], []).append(m['branch_id'])
         q_branches = branch_ids_filter if branch_ids_filter else [str(b['id']) for b in branches]
+        q_branch_ids = [int(x) for x in q_branches]
+        sel_branches = [b for b in branches if b['id'] in q_branch_ids]
         placeholders = ','.join('?' * len(q_branches))
         rows = conn.execute(f'''
-            SELECT s.id as shift_id, s.date, b.name as branch_name, b.id as branch_id,
-                   s.status,
-                   COALESCE(r.change_amount, 0) as change_amount
+            SELECT s.id as shift_id, s.date, b.id as branch_id,
+                   s.status, COALESCE(r.change_amount, 0) as change_amount
             FROM shifts s
             JOIN branches b ON b.id = s.branch_id
             LEFT JOIN shift_revenue r ON r.shift_id = s.id
@@ -5760,48 +5793,57 @@ def change_settings():
             ORDER BY s.date DESC, b.name
         ''', [date_from, date_to] + list(q_branches)).fetchall()
         schedules = conn.execute('''
-            SELECT cs.*, b.name AS branch_name
-            FROM change_schedule cs
-            LEFT JOIN branches b ON b.id = cs.branch_id
-            ORDER BY cs.id DESC
+            SELECT cs.*, b.name AS branch_name FROM change_schedule cs
+            LEFT JOIN branches b ON b.id = cs.branch_id ORDER BY cs.id DESC
         ''').fetchall()
 
-    # Build cross-tab grid: {date_iso: {branch_id: cell_dict}}
-    grid = {}
-    for r in rows:
-        grid.setdefault(r['date'], {})[r['branch_id']] = {
-            'shift_id': r['shift_id'],
-            'change_amount': r['change_amount'],
-            'status': r['status'],
-        }
+        # Build cross-tab grid
+        grid = {}
+        for r in rows:
+            grid.setdefault(r['date'], {})[r['branch_id']] = {
+                'shift_id': r['shift_id'], 'change_amount': r['change_amount'], 'status': r['status'],
+            }
 
-    # Selected branches in display order
-    q_branch_ids = [int(x) for x in q_branches]
-    sel_branches = [b for b in branches if b['id'] in q_branch_ids]
+        # Add future "no-shift" cells (today and forward) with override or schedule amounts
+        future_days = [d for d in dates_list if d['iso'] >= today_str]
+        if future_days and sel_branches:
+            b_ids = [b['id'] for b in sel_branches]
+            fd_isos = [d['iso'] for d in future_days]
+            ph_fd = ','.join('?' * len(fd_isos))
+            ph_b  = ','.join('?' * len(b_ids))
+            ov_rows = conn.execute(
+                f'SELECT branch_id, date, amount FROM change_date_overrides WHERE date IN ({ph_fd}) AND branch_id IN ({ph_b})',
+                fd_isos + b_ids
+            ).fetchall()
+            overrides = {(o['branch_id'], o['date']): o['amount'] for o in ov_rows}
 
-    # Branch totals (sum of change_amount in period)
+            for day in future_days:
+                day_iso, weekday = day['iso'], day['weekday']
+                for b in sel_branches:
+                    if b['id'] not in grid.get(day_iso, {}):
+                        amount = overrides.get((b['id'], day_iso))
+                        if amount is None:
+                            srow = conn.execute(
+                                '''SELECT amount FROM change_schedule
+                                   WHERE (branch_id IS NULL OR branch_id=?)
+                                     AND (weekday IS NULL OR weekday=?)
+                                     AND valid_from <= ? AND (valid_to IS NULL OR valid_to >= ?)
+                                   ORDER BY branch_id DESC NULLS LAST, weekday DESC NULLS LAST, id DESC
+                                   LIMIT 1''',
+                                (b['id'], weekday, day_iso, day_iso)
+                            ).fetchone()
+                            amount = srow['amount'] if srow else 0
+                        grid.setdefault(day_iso, {})[b['id']] = {
+                            'shift_id': None, 'status': 'future',
+                            'change_amount': amount, 'branch_id': b['id'], 'date': day_iso,
+                        }
+
+    # Branch totals — real shifts only
     branch_totals = {}
     for cells in grid.values():
         for bid, cell in cells.items():
-            branch_totals[bid] = branch_totals.get(bid, 0) + (cell['change_amount'] or 0)
-
-    # Full date range list (DESC)
-    dates_list = []
-    try:
-        d_cur = date.fromisoformat(date_from)
-        d_end = date.fromisoformat(date_to)
-        while d_cur <= d_end:
-            wd = d_cur.weekday()
-            dates_list.append({
-                'iso':        d_cur.isoformat(),
-                'weekday':    wd,
-                'wd_label':   WD_LABELS[wd],
-                'is_weekend': wd >= 5,
-            })
-            d_cur += timedelta(days=1)
-        dates_list.reverse()
-    except Exception:
-        pass
+            if cell.get('status') != 'future':
+                branch_totals[bid] = branch_totals.get(bid, 0) + (cell['change_amount'] or 0)
 
     return render_template('change_settings.html',
         branches=branches, branch_groups=branch_groups_raw,
@@ -5812,7 +5854,7 @@ def change_settings():
         date_from=date_from, date_to=date_to,
         branch_ids_filter=branch_ids_filter,
         weekday_labels=WD_LABELS,
-        today=date.today().isoformat())
+        today=today_str)
 
 
 @app.route('/settings/change/manual/save', methods=['POST'])
@@ -5831,6 +5873,26 @@ def change_manual_save():
             if not shift or shift['status'] == 'closed':
                 continue
             conn.execute('UPDATE shift_revenue SET change_amount=? WHERE shift_id=?', (amt, sid))
+        conn.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/settings/change/future/save', methods=['POST'])
+@login_required
+@owner_required
+def change_future_save():
+    data = request.json or {}
+    try:
+        branch_id = int(data['branch_id'])
+        date_str  = str(data['date'])
+        amount    = float(str(data.get('amount', 0)).replace(' ', '').replace(',', '.') or 0)
+    except (KeyError, ValueError, TypeError):
+        return jsonify({'ok': False}), 400
+    with get_db() as conn:
+        conn.execute('''
+            INSERT OR REPLACE INTO change_date_overrides (branch_id, date, amount)
+            VALUES (?, ?, ?)
+        ''', (branch_id, date_str, amount))
         conn.commit()
     return jsonify({'ok': True})
 
