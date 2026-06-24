@@ -930,13 +930,13 @@ def _apply_change_amount_to_shift(conn, shift_id, branch_id, shift_date):
 
 
 def _apply_all_change_schedules(conn):
-    """Apply all change schedules to matching existing shifts."""
+    """Apply all change schedules to matching existing OPEN shifts only."""
     schedules = conn.execute(
         'SELECT * FROM change_schedule ORDER BY branch_id NULLS FIRST, weekday NULLS FIRST, id'
     ).fetchall()
     for sched in schedules:
         params = [sched['amount'], sched['valid_from']]
-        clauses = ['s.date >= ?']
+        clauses = ["s.date >= ?", "s.status != 'closed'"]
         if sched['valid_to']:
             clauses.append('s.date <= ?')
             params.append(sched['valid_to'])
@@ -5736,6 +5736,7 @@ def gdrive_import():
 @login_required
 @owner_required
 def change_settings():
+    WD_LABELS = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']
     date_from = request.args.get('date_from', (date.today() - timedelta(days=6)).isoformat())
     date_to   = request.args.get('date_to',   date.today().isoformat())
     branch_ids_filter = request.args.getlist('branch_ids')
@@ -5747,8 +5748,9 @@ def change_settings():
             branch_group_members.setdefault(m['group_id'], []).append(m['branch_id'])
         q_branches = branch_ids_filter if branch_ids_filter else [str(b['id']) for b in branches]
         placeholders = ','.join('?' * len(q_branches))
-        shifts_data = conn.execute(f'''
+        rows = conn.execute(f'''
             SELECT s.id as shift_id, s.date, b.name as branch_name, b.id as branch_id,
+                   s.status,
                    COALESCE(r.change_amount, 0) as change_amount
             FROM shifts s
             JOIN branches b ON b.id = s.branch_id
@@ -5763,14 +5765,53 @@ def change_settings():
             LEFT JOIN branches b ON b.id = cs.branch_id
             ORDER BY cs.id DESC
         ''').fetchall()
-    weekday_labels = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']
+
+    # Build cross-tab grid: {date_iso: {branch_id: cell_dict}}
+    grid = {}
+    for r in rows:
+        grid.setdefault(r['date'], {})[r['branch_id']] = {
+            'shift_id': r['shift_id'],
+            'change_amount': r['change_amount'],
+            'status': r['status'],
+        }
+
+    # Selected branches in display order
+    q_branch_ids = [int(x) for x in q_branches]
+    sel_branches = [b for b in branches if b['id'] in q_branch_ids]
+
+    # Branch totals (sum of change_amount in period)
+    branch_totals = {}
+    for cells in grid.values():
+        for bid, cell in cells.items():
+            branch_totals[bid] = branch_totals.get(bid, 0) + (cell['change_amount'] or 0)
+
+    # Full date range list (DESC)
+    dates_list = []
+    try:
+        d_cur = date.fromisoformat(date_from)
+        d_end = date.fromisoformat(date_to)
+        while d_cur <= d_end:
+            wd = d_cur.weekday()
+            dates_list.append({
+                'iso':        d_cur.isoformat(),
+                'weekday':    wd,
+                'wd_label':   WD_LABELS[wd],
+                'is_weekend': wd >= 5,
+            })
+            d_cur += timedelta(days=1)
+        dates_list.reverse()
+    except Exception:
+        pass
+
     return render_template('change_settings.html',
         branches=branches, branch_groups=branch_groups_raw,
         branch_group_members=branch_group_members,
-        shifts_data=shifts_data, schedules=schedules,
+        sel_branches=sel_branches, grid=grid,
+        branch_totals=branch_totals, dates_list=dates_list,
+        schedules=schedules,
         date_from=date_from, date_to=date_to,
         branch_ids_filter=branch_ids_filter,
-        weekday_labels=weekday_labels,
+        weekday_labels=WD_LABELS,
         today=date.today().isoformat())
 
 
@@ -5779,6 +5820,7 @@ def change_settings():
 @owner_required
 def change_manual_save():
     data = request.json or {}
+    skipped = 0
     with get_db() as conn:
         for shift_id_str, amount_str in data.items():
             try:
@@ -5786,9 +5828,13 @@ def change_manual_save():
                 amt = float(str(amount_str).replace(' ', '').replace(',', '.') or 0)
             except (ValueError, TypeError):
                 continue
+            shift = conn.execute('SELECT status FROM shifts WHERE id=?', (sid,)).fetchone()
+            if not shift or shift['status'] == 'closed':
+                skipped += 1
+                continue
             conn.execute('UPDATE shift_revenue SET change_amount=? WHERE shift_id=?', (amt, sid))
         conn.commit()
-    return jsonify({'ok': True})
+    return jsonify({'ok': True, 'skipped': skipped})
 
 
 @app.route('/settings/change/schedule/add', methods=['POST'])

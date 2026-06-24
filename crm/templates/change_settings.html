@@ -102,36 +102,56 @@
       </div>
     </div>
 
-    <!-- Shifts table -->
+    <!-- Таблица: строки = даты, столбцы = филиалы -->
     <div class="card">
       <div class="card-header py-2 d-flex align-items-center justify-content-between">
-        <span class="fw-semibold small text-uppercase text-muted">Смены — Размен</span>
-        <button class="btn btn-success btn-sm" onclick="saveChangeAmounts()">
+        <span class="fw-semibold small text-uppercase text-muted">Размен по дням</span>
+        <button class="btn btn-success btn-sm" onclick="saveChangeAmounts()" id="save-btn">
           <i class="bi bi-floppy me-1"></i>Сохранить
         </button>
       </div>
-      <div class="card-body p-0">
-        {% if shifts_data %}
-        <table class="table table-sm table-hover mb-0">
+      <div class="card-body p-0" style="overflow-x:auto;">
+        {% if dates_list %}
+        <table class="table table-sm table-bordered mb-0" style="min-width:300px;">
           <thead class="table-light">
             <tr>
-              <th class="px-3 py-2">Дата</th>
-              <th class="px-3 py-2">Филиал</th>
-              <th class="px-3 py-2" style="width:160px;">Размен (₽)</th>
+              <th class="px-3 py-2" style="min-width:130px; white-space:nowrap;">Дата</th>
+              {% for b in sel_branches %}
+              <th class="px-3 py-2 text-center" style="min-width:130px;">
+                <div style="font-size:13px; font-weight:700;">{{ b.name }}</div>
+                <div style="font-size:11px; color:#6b7280; font-weight:400;">
+                  {{ (branch_totals.get(b.id, 0))|int }} ₽
+                </div>
+              </th>
+              {% endfor %}
             </tr>
           </thead>
           <tbody>
-            {% for row in shifts_data %}
-            <tr>
-              <td class="px-3 py-2">{{ row.date | datefmt }}</td>
-              <td class="px-3 py-2">{{ row.branch_name }}</td>
-              <td class="px-3 py-2">
-                <input type="number" class="form-control form-control-sm change-input"
-                       style="width:120px;"
-                       data-shift-id="{{ row.shift_id }}"
-                       value="{{ row.change_amount | int }}"
-                       min="0" step="1">
+            {% for day in dates_list %}
+            <tr {% if day.is_weekend %}style="background:#f4f4f5;"{% endif %}>
+              <td class="px-3 py-1" style="white-space:nowrap; font-size:13px; {% if day.is_weekend %}color:#71717a;{% endif %}">
+                {{ day.iso | datefmt }}
+                <span style="color:#a1a1aa; font-size:11px;">({{ day.wd_label }})</span>
               </td>
+              {% for b in sel_branches %}
+              {% set cell = grid.get(day.iso, {}).get(b.id) %}
+              <td class="px-2 py-1 text-center">
+                {% if cell %}
+                  {% if cell.status == 'closed' %}
+                  <span style="font-size:13px; color:#6b7280;">{{ cell.change_amount|int }} ₽</span>
+                  <span title="Смена закрыта" style="font-size:10px; color:#9ca3af; margin-left:2px;">🔒</span>
+                  {% else %}
+                  <input type="number" class="form-control form-control-sm change-input"
+                         data-shift-id="{{ cell.shift_id }}"
+                         value="{{ cell.change_amount|int }}"
+                         min="0" step="1"
+                         style="width:100px; font-size:13px; margin:0 auto;">
+                  {% endif %}
+                {% else %}
+                  <span style="color:#d1d5db; font-size:13px;">—</span>
+                {% endif %}
+              </td>
+              {% endfor %}
             </tr>
             {% endfor %}
           </tbody>
@@ -139,11 +159,11 @@
         {% else %}
         <div class="text-center text-muted py-5">
           <i class="bi bi-inbox" style="font-size:2rem;"></i>
-          <div class="mt-2">Нет смен в выбранном периоде</div>
+          <div class="mt-2">Нет данных в выбранном периоде</div>
         </div>
         {% endif %}
       </div>
-      {% if shifts_data %}
+      {% if dates_list %}
       <div class="card-footer py-2 d-flex justify-content-end">
         <button class="btn btn-success btn-sm" onclick="saveChangeAmounts()">
           <i class="bi bi-floppy me-1"></i>Сохранить
@@ -308,10 +328,11 @@ function updateBranchLabel() {
 }
 
 // ─── Toast ──────────────────────────────────────────────────────────────────
-function showToast(msg) {
+function showToast(msg, type) {
   const toastEl = document.getElementById('changeToast');
+  toastEl.className = 'toast align-items-center border-0 text-bg-' + (type || 'success');
   document.getElementById('changeToastMsg').textContent = msg;
-  const t = bootstrap.Toast.getOrCreateInstance(toastEl, {delay: 2500});
+  const t = bootstrap.Toast.getOrCreateInstance(toastEl, {delay: 3000});
   t.show();
 }
 
@@ -320,15 +341,24 @@ function saveChangeAmounts() {
   const data = {};
   document.querySelectorAll('.change-input').forEach(el => {
     const val = el.value.trim();
-    if (val !== '') data[el.dataset.shiftId] = val;
+    data[el.dataset.shiftId] = val === '' ? 0 : parseInt(val) || 0;
   });
+  const btn = document.getElementById('save-btn');
+  if (btn) btn.disabled = true;
   fetch('/settings/change/manual/save', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(data)
   }).then(r => r.json()).then(d => {
-    if (d.ok) showToast('Сохранено ✓');
-  }).catch(() => showToast('Ошибка сохранения'));
+    if (btn) btn.disabled = false;
+    if (d.ok) {
+      if (d.skipped > 0) {
+        showToast(`Сохранено ✓ (закрытые смены: ${d.skipped} пропущено)`, 'warning');
+      } else {
+        showToast('Сохранено ✓');
+      }
+    }
+  }).catch(() => { if (btn) btn.disabled = false; showToast('Ошибка сохранения', 'danger'); });
 }
 
 // ─── Tab activation via URL hash ────────────────────────────────────────────
