@@ -199,76 +199,86 @@
     <!-- Карточка 1: Нал/Безнал/Онлайн + Доставка/Самовывоз -->
     <div class="s-card">
       <div class="s-card-body">
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+        <!-- Левая колонка ~25% (нал/безнал), правая ~75% (доставка/самовывоз) -->
+        <div style="display:grid; grid-template-columns:1fr 3fr; gap:16px; align-items:stretch;">
 
-          <!-- Левая половина: [Утром в кассе | Кол-во заказов] + Нал/Безнал/Онлайн -->
-          <div>
-            <!-- Утром в кассе (50%) | Кол-во заказов (50%) — делят 50/50 блок над выручкой нал -->
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px;">
-              <!-- Утром в кассе — зелёный градиент, автоимпорт из предыдущего дня -->
-              <div style="background:linear-gradient(135deg,#f0fdf4 0%,#bbf7d0 100%); border-radius:10px; padding:9px 12px; border-left:4px solid #22c55e;">
+          <!-- Левая колонка: [Утром в кассе 60% | Кол-во заказов 40%] + Нал/Безнал/Онлайн -->
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            <!-- Утром в кассе (60%) | Кол-во заказов (40%) -->
+            <div style="display:grid; grid-template-columns:3fr 2fr; gap:8px;">
+              <div style="background:linear-gradient(135deg,#f0fdf4 0%,#bbf7d0 100%); border-radius:10px; padding:9px 10px; border-left:4px solid #22c55e;">
                 <div style="font-size:10px; color:#166534; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:3px;">Утром в кассе</div>
                 <input class="rev-field money-field" data-field="morning_cash" type="text" inputmode="numeric" placeholder="0"
                   value="{{ ((revenue.morning_cash if revenue and revenue.morning_cash else prev_actual_cash) or 0)|int }}"
                   {% if not can_edit %}disabled{% endif %}
-                  style="font-size:16px; font-weight:800; color:#15803d; background:transparent; border:none; padding:0; width:100%; outline:none; letter-spacing:-.3px; line-height:1.2;">
+                  style="font-size:13px; font-weight:800; color:#15803d; background:transparent; border:none; padding:0; width:100%; outline:none; line-height:1.3;">
                 <div style="font-size:10px; color:#4ade80; margin-top:2px;">← вчера факт</div>
               </div>
-              <!-- Кол-во заказов -->
-              <div style="background:#f9fafb; border:1.5px solid #e5e7eb; border-radius:10px; padding:9px 12px;">
-                <div class="mini-label" style="margin-bottom:4px;">Кол-во заказов</div>
+              <div style="background:#f9fafb; border:1.5px solid #e5e7eb; border-radius:10px; padding:9px 8px;">
+                <div class="mini-label" style="margin-bottom:4px;">Заказов</div>
                 <input class="mini-input rev-field" data-field="delivery_orders" type="number" min="0" step="1" placeholder="0"
                   value="{{ ((revenue.delivery_orders or 0) + (revenue.pickup_orders or 0)) }}" {% if not can_edit %}disabled{% endif %}
-                  style="font-size:16px; font-weight:700;">
+                  style="font-size:13px; font-weight:700; padding:4px 6px;">
               </div>
             </div>
 
             <!-- Нал/Безнал/Онлайн -->
-            <div style="background:#f9fafb; border:1.5px solid #e5e7eb; border-radius:10px; padding:12px 14px;">
-              <div style="margin-bottom:9px;">
+            <div style="background:#f9fafb; border:1.5px solid #e5e7eb; border-radius:10px; padding:11px 12px; flex:1;">
+              <div style="margin-bottom:8px;">
                 <div class="mini-label">Наличные</div>
                 <input class="mini-input rev-field money-field" data-field="cash_amount" type="text" inputmode="numeric" placeholder="0"
-                  value="{{ (revenue.cash_amount or 0)|int }}" {% if not can_edit %}disabled{% endif %}>
+                  value="{{ (revenue.cash_amount or 0)|int }}" {% if not can_edit %}disabled{% endif %}
+                  style="font-size:13px;">
               </div>
-              <div style="margin-bottom:9px;">
+              <div style="margin-bottom:8px;">
                 <div class="mini-label">Безналичные</div>
                 <input class="mini-input rev-field money-field" data-field="card_amount" type="text" inputmode="numeric" placeholder="0"
-                  value="{{ (revenue.card_amount or 0)|int }}" {% if not can_edit %}disabled{% endif %}>
+                  value="{{ (revenue.card_amount or 0)|int }}" {% if not can_edit %}disabled{% endif %}
+                  style="font-size:13px;">
               </div>
               <div>
                 <div class="mini-label">Онлайн</div>
                 <input class="mini-input rev-field money-field" data-field="online_amount" type="text" inputmode="numeric" placeholder="0"
-                  value="{{ (revenue.online_amount or 0)|int }}" {% if not can_edit %}disabled{% endif %}>
+                  value="{{ (revenue.online_amount or 0)|int }}" {% if not can_edit %}disabled{% endif %}
+                  style="font-size:13px;">
               </div>
             </div>
           </div>
 
-          <!-- Правая половина: Доставка / Самовывоз стопкой -->
+          <!-- Правая колонка: Доставка / Самовывоз — высота = левая колонка, шрифт одинаковый -->
           <div style="display:flex; flex-direction:column; gap:10px;">
-            <div class="sub-section" style="flex:1;">
+            <div class="sub-section" style="flex:1; display:flex; flex-direction:column; justify-content:center;">
               <div class="sub-section-title"><span class="dot dot-blue"></span>Доставка</div>
-              <div class="field-group">
-                <div class="field-label">Выручка</div>
-                <input class="field-input field-input-sm rev-field money-field" data-field="delivery_revenue" type="text" inputmode="numeric" placeholder="0"
-                  value="{{ (revenue.delivery_revenue or 0)|int }}" {% if not can_edit %}disabled{% endif %}>
-              </div>
-              <div class="field-group">
-                <div class="field-label">Заказов</div>
-                <input class="field-input field-input-sm rev-field" data-field="delivery_orders_real" type="number" min="0" placeholder="0"
-                  value="{{ revenue.delivery_orders or 0 }}" {% if not can_edit %}disabled{% endif %}>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                <div>
+                  <div class="mini-label">Выручка</div>
+                  <input class="mini-input rev-field money-field" data-field="delivery_revenue" type="text" inputmode="numeric" placeholder="0"
+                    value="{{ (revenue.delivery_revenue or 0)|int }}" {% if not can_edit %}disabled{% endif %}
+                    style="font-size:13px;">
+                </div>
+                <div>
+                  <div class="mini-label">Заказов</div>
+                  <input class="mini-input rev-field" data-field="delivery_orders_real" type="number" min="0" placeholder="0"
+                    value="{{ revenue.delivery_orders or 0 }}" {% if not can_edit %}disabled{% endif %}
+                    style="font-size:13px;">
+                </div>
               </div>
             </div>
-            <div class="sub-section" style="flex:1;">
+            <div class="sub-section" style="flex:1; display:flex; flex-direction:column; justify-content:center;">
               <div class="sub-section-title"><span class="dot dot-green"></span>Самовывоз</div>
-              <div class="field-group">
-                <div class="field-label">Выручка</div>
-                <input class="field-input field-input-sm rev-field money-field" data-field="pickup_revenue" type="text" inputmode="numeric" placeholder="0"
-                  value="{{ (revenue.pickup_revenue or 0)|int }}" {% if not can_edit %}disabled{% endif %}>
-              </div>
-              <div class="field-group">
-                <div class="field-label">Заказов</div>
-                <input class="field-input field-input-sm rev-field" data-field="pickup_orders" type="number" min="0" placeholder="0"
-                  value="{{ revenue.pickup_orders or 0 }}" {% if not can_edit %}disabled{% endif %}>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                <div>
+                  <div class="mini-label">Выручка</div>
+                  <input class="mini-input rev-field money-field" data-field="pickup_revenue" type="text" inputmode="numeric" placeholder="0"
+                    value="{{ (revenue.pickup_revenue or 0)|int }}" {% if not can_edit %}disabled{% endif %}
+                    style="font-size:13px;">
+                </div>
+                <div>
+                  <div class="mini-label">Заказов</div>
+                  <input class="mini-input rev-field" data-field="pickup_orders" type="number" min="0" placeholder="0"
+                    value="{{ revenue.pickup_orders or 0 }}" {% if not can_edit %}disabled{% endif %}
+                    style="font-size:13px;">
+                </div>
               </div>
             </div>
           </div>
