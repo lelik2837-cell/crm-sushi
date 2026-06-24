@@ -5820,7 +5820,6 @@ def change_settings():
 @owner_required
 def change_manual_save():
     data = request.json or {}
-    skipped = 0
     with get_db() as conn:
         for shift_id_str, amount_str in data.items():
             try:
@@ -5828,13 +5827,12 @@ def change_manual_save():
                 amt = float(str(amount_str).replace(' ', '').replace(',', '.') or 0)
             except (ValueError, TypeError):
                 continue
-            shift = conn.execute('SELECT status FROM shifts WHERE id=?', (sid,)).fetchone()
-            if not shift or shift['status'] == 'closed':
-                skipped += 1
+            exists = conn.execute('SELECT id FROM shifts WHERE id=?', (sid,)).fetchone()
+            if not exists:
                 continue
             conn.execute('UPDATE shift_revenue SET change_amount=? WHERE shift_id=?', (amt, sid))
         conn.commit()
-    return jsonify({'ok': True, 'skipped': skipped})
+    return jsonify({'ok': True})
 
 
 @app.route('/settings/change/schedule/add', methods=['POST'])

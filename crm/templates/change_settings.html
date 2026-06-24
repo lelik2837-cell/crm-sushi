@@ -104,11 +104,8 @@
 
     <!-- Таблица: строки = даты, столбцы = филиалы -->
     <div class="card">
-      <div class="card-header py-2 d-flex align-items-center justify-content-between">
+      <div class="card-header py-2">
         <span class="fw-semibold small text-uppercase text-muted">Размен по дням</span>
-        <button class="btn btn-success btn-sm" onclick="saveChangeAmounts()" id="save-btn">
-          <i class="bi bi-floppy me-1"></i>Сохранить
-        </button>
       </div>
       <div class="card-body p-0" style="overflow-x:auto;">
         {% if dates_list %}
@@ -128,29 +125,23 @@
           </thead>
           <tbody>
             {% for day in dates_list %}
-            <tr {% if day.is_weekend %}style="background:#dde0e7;"{% endif %}>
-              <td class="px-3 py-1" style="white-space:nowrap; font-size:13px; {% if day.is_weekend %}color:#52525b; font-weight:600;{% endif %}">
+            <tr>
+              <td class="px-3 py-1" style="white-space:nowrap; font-size:13px;">
                 {{ day.iso | datefmt }}
                 <span style="color:#9ca3af; font-size:11px;">({{ day.wd_label }})</span>
               </td>
               {% for b in sel_branches %}
               {% set cell = grid.get(day.iso, {}).get(b.id) %}
-              <td class="px-2 py-1 text-center" {% if day.is_weekend %}style="background:#dde0e7;"{% endif %}>
+              <td class="px-2 py-1 text-center">
                 {% if cell %}
-                  {% if cell.status == 'closed' %}
-                  {% if cell.change_amount %}
-                  <span style="font-size:13px; color:#6b7280;">{{ cell.change_amount | money }} ₽</span>
-                  {% endif %}
-                  <span title="Смена закрыта" style="font-size:10px; color:#9ca3af; margin-left:2px;">🔒</span>
-                  {% else %}
-                  <input type="number" class="form-control form-control-sm change-input"
-                         data-shift-id="{{ cell.shift_id }}"
-                         value="{{ cell.change_amount|int if cell.change_amount else '' }}"
-                         placeholder="" min="0" step="1"
-                         style="width:110px; font-size:13px; margin:0 auto; text-align:right;">
-                  {% endif %}
+                <input type="number" class="form-control form-control-sm change-input"
+                       data-shift-id="{{ cell.shift_id }}"
+                       value="{{ cell.change_amount|int if cell.change_amount else '' }}"
+                       placeholder="" min="0" step="1"
+                       onblur="autoSaveSingle(this)"
+                       style="width:110px; font-size:13px; margin:0 auto; text-align:right;">
                 {% else %}
-                  <span style="color:#d1d5db; font-size:13px;">—</span>
+                <span style="color:#d1d5db; font-size:16px;"><i class="bi bi-pencil-square"></i></span>
                 {% endif %}
               </td>
               {% endfor %}
@@ -165,13 +156,6 @@
         </div>
         {% endif %}
       </div>
-      {% if dates_list %}
-      <div class="card-footer py-2 d-flex justify-content-end">
-        <button class="btn btn-success btn-sm" onclick="saveChangeAmounts()">
-          <i class="bi bi-floppy me-1"></i>Сохранить
-        </button>
-      </div>
-      {% endif %}
     </div>
 
   </div><!-- /tab-manual -->
@@ -338,29 +322,26 @@ function showToast(msg, type) {
   t.show();
 }
 
-// ─── Save manual change amounts ─────────────────────────────────────────────
-function saveChangeAmounts() {
-  const data = {};
-  document.querySelectorAll('.change-input').forEach(el => {
-    const val = el.value.trim();
-    data[el.dataset.shiftId] = val === '' ? 0 : parseInt(val) || 0;
-  });
-  const btn = document.getElementById('save-btn');
-  if (btn) btn.disabled = true;
+// ─── Auto-save single input on blur ─────────────────────────────────────────
+function autoSaveSingle(input) {
+  const shiftId = input.dataset.shiftId;
+  const val = input.value.trim();
+  const amount = val === '' ? 0 : parseInt(val) || 0;
   fetch('/settings/change/manual/save', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(data)
+    body: JSON.stringify({[shiftId]: amount})
   }).then(r => r.json()).then(d => {
-    if (btn) btn.disabled = false;
     if (d.ok) {
-      if (d.skipped > 0) {
-        showToast(`Сохранено ✓ (закрытые смены: ${d.skipped} пропущено)`, 'warning');
-      } else {
-        showToast('Сохранено ✓');
-      }
+      input.style.transition = 'border-color .2s';
+      input.style.borderColor = '#22c55e';
+      setTimeout(() => { input.style.borderColor = ''; }, 900);
     }
-  }).catch(() => { if (btn) btn.disabled = false; showToast('Ошибка сохранения', 'danger'); });
+  }).catch(() => {
+    input.style.borderColor = '#ef4444';
+    setTimeout(() => { input.style.borderColor = ''; }, 900);
+    showToast('Ошибка сохранения', 'danger');
+  });
 }
 
 // ─── Tab activation via URL hash ────────────────────────────────────────────
