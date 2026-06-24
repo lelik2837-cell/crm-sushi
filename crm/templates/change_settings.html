@@ -134,14 +134,27 @@
               {% set cell = grid.get(day.iso, {}).get(b.id) %}
               <td class="px-2 py-1 text-center">
                 {% if cell %}
-                <input type="number" class="form-control form-control-sm change-input"
-                       data-shift-id="{{ cell.shift_id }}"
-                       value="{{ cell.change_amount|int if cell.change_amount else '' }}"
-                       placeholder="" min="0" step="1"
-                       onblur="autoSaveSingle(this)"
-                       style="width:110px; font-size:13px; margin:0 auto; text-align:right;">
+                  {% if cell.status == 'closed' %}
+                    {% if cell.change_amount %}
+                    <span style="font-size:13px; color:#6b7280;">{{ cell.change_amount | money }}</span>
+                    {% endif %}
+                  {% else %}
+                  <div class="d-flex align-items-center justify-content-center gap-1">
+                    <input type="number" class="form-control form-control-sm change-input"
+                           data-shift-id="{{ cell.shift_id }}"
+                           value="{{ cell.change_amount|int if cell.change_amount else '' }}"
+                           placeholder="" min="0" step="1"
+                           onblur="autoSaveSingle(this)"
+                           style="width:95px; font-size:13px; text-align:right;">
+                    <i class="bi bi-pencil-square" style="color:#9ca3af; font-size:13px; flex-shrink:0;"></i>
+                  </div>
+                  {% endif %}
                 {% else %}
-                <span style="color:#d1d5db; font-size:16px;"><i class="bi bi-pencil-square"></i></span>
+                  {% if day.iso >= today %}
+                  <i class="bi bi-pencil-square" style="color:#d1d5db; font-size:16px;"></i>
+                  {% else %}
+                  <span style="color:#d1d5db; font-size:13px;">—</span>
+                  {% endif %}
                 {% endif %}
               </td>
               {% endfor %}

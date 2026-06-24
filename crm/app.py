@@ -5827,8 +5827,8 @@ def change_manual_save():
                 amt = float(str(amount_str).replace(' ', '').replace(',', '.') or 0)
             except (ValueError, TypeError):
                 continue
-            exists = conn.execute('SELECT id FROM shifts WHERE id=?', (sid,)).fetchone()
-            if not exists:
+            shift = conn.execute('SELECT status FROM shifts WHERE id=?', (sid,)).fetchone()
+            if not shift or shift['status'] == 'closed':
                 continue
             conn.execute('UPDATE shift_revenue SET change_amount=? WHERE shift_id=?', (amt, sid))
         conn.commit()
