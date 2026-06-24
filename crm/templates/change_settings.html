@@ -117,10 +117,10 @@
             <tr>
               <th class="px-3 py-2" style="min-width:130px; white-space:nowrap;">Дата</th>
               {% for b in sel_branches %}
-              <th class="px-3 py-2 text-center" style="min-width:130px;">
+              <th class="px-3 py-2 text-center" style="min-width:140px;">
                 <div style="font-size:13px; font-weight:700;">{{ b.name }}</div>
-                <div style="font-size:11px; color:#6b7280; font-weight:400;">
-                  {{ (branch_totals.get(b.id, 0))|int }} ₽
+                <div style="font-size:17px; font-weight:800; color:#1e40af; letter-spacing:-.3px; margin-top:2px;">
+                  {{ branch_totals.get(b.id, 0) | money }} ₽
                 </div>
               </th>
               {% endfor %}
@@ -128,24 +128,26 @@
           </thead>
           <tbody>
             {% for day in dates_list %}
-            <tr {% if day.is_weekend %}style="background:#f4f4f5;"{% endif %}>
-              <td class="px-3 py-1" style="white-space:nowrap; font-size:13px; {% if day.is_weekend %}color:#71717a;{% endif %}">
+            <tr {% if day.is_weekend %}style="background:#dde0e7;"{% endif %}>
+              <td class="px-3 py-1" style="white-space:nowrap; font-size:13px; {% if day.is_weekend %}color:#52525b; font-weight:600;{% endif %}">
                 {{ day.iso | datefmt }}
-                <span style="color:#a1a1aa; font-size:11px;">({{ day.wd_label }})</span>
+                <span style="color:#9ca3af; font-size:11px;">({{ day.wd_label }})</span>
               </td>
               {% for b in sel_branches %}
               {% set cell = grid.get(day.iso, {}).get(b.id) %}
-              <td class="px-2 py-1 text-center">
+              <td class="px-2 py-1 text-center" {% if day.is_weekend %}style="background:#dde0e7;"{% endif %}>
                 {% if cell %}
                   {% if cell.status == 'closed' %}
-                  <span style="font-size:13px; color:#6b7280;">{{ cell.change_amount|int }} ₽</span>
+                  {% if cell.change_amount %}
+                  <span style="font-size:13px; color:#6b7280;">{{ cell.change_amount | money }} ₽</span>
+                  {% endif %}
                   <span title="Смена закрыта" style="font-size:10px; color:#9ca3af; margin-left:2px;">🔒</span>
                   {% else %}
                   <input type="number" class="form-control form-control-sm change-input"
                          data-shift-id="{{ cell.shift_id }}"
-                         value="{{ cell.change_amount|int }}"
-                         min="0" step="1"
-                         style="width:100px; font-size:13px; margin:0 auto;">
+                         value="{{ cell.change_amount|int if cell.change_amount else '' }}"
+                         placeholder="" min="0" step="1"
+                         style="width:110px; font-size:13px; margin:0 auto; text-align:right;">
                   {% endif %}
                 {% else %}
                   <span style="color:#d1d5db; font-size:13px;">—</span>
@@ -212,7 +214,7 @@
           </div>
           <div class="col-sm-4 col-md-2">
             <label class="form-label small fw-semibold mb-1">Действует с</label>
-            <input type="date" name="valid_from" class="form-control form-control-sm" value="{{ today }}" required>
+            <input type="date" name="valid_from" class="form-control form-control-sm" value="{{ today }}" min="{{ today }}" required>
           </div>
           <div class="col-sm-4 col-md-2">
             <label class="form-label small fw-semibold mb-1">Действует по <span class="text-muted fw-normal">(бессрочно)</span></label>

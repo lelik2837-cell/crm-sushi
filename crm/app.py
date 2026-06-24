@@ -5848,6 +5848,9 @@ def change_schedule_add():
     valid_from = request.form.get('valid_from')
     valid_to   = request.form.get('valid_to') or None
     label      = request.form.get('label', '').strip()
+    if valid_from and valid_from < date.today().isoformat():
+        flash('Дата начала не может быть в прошлом', 'danger')
+        return redirect(url_for('change_settings') + '#tab-schedule')
     with get_db() as conn:
         conn.execute(
             'INSERT INTO change_schedule (branch_id, weekday, amount, valid_from, valid_to, label) VALUES (?,?,?,?,?,?)',
