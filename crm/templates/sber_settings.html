@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% block title %}Сбербанк API — CRM Суши{% endblock %}
 {% block content %}
-<div class="container-fluid py-3" style="max-width:700px">
+<div class="container-fluid py-3" style="max-width:800px">
 
   <div class="d-flex align-items-center gap-3 mb-4">
     <a href="{{ url_for('bank') }}" class="btn btn-outline-secondary btn-sm">
@@ -59,7 +59,7 @@
     </div>
     <div class="card-body">
       <form method="post">
-        <div class="row g-2 mb-2">
+        <div class="row g-2 mb-3">
           <div class="col-md-4">
             <label class="form-label small fw-medium mb-1">Client ID</label>
             <input type="text" class="form-control form-control-sm" name="client_id"
@@ -72,30 +72,83 @@
             <div class="form-text">Генерируется в личном кабинете СберБизнес → Sber API</div>
           </div>
         </div>
-        <div class="mb-3">
-          <label class="form-label small fw-medium mb-1">Номер расчётного счёта</label>
-          <input type="text" class="form-control form-control-sm font-monospace"
-                 name="account_number" value="{{ cfg.account_number }}"
-                 placeholder="40802810538030021114">
-        </div>
-        <div class="form-check mb-3">
-          <input class="form-check-input" type="checkbox" name="auto_sync" id="autoSync"
-                 {% if cfg.auto_sync == '1' %}checked{% endif %}>
-          <label class="form-check-label small" for="autoSync">
-            Автоматически загружать за последние 7 дней при открытии раздела «Банк»
-          </label>
-        </div>
         <button type="submit" class="btn btn-primary btn-sm">
           <i class="bi bi-save me-1"></i>Сохранить
         </button>
+        <button type="button" class="btn btn-outline-secondary btn-sm ms-2" onclick="testConnection()">
+          <i class="bi bi-wifi me-1"></i>Проверить соединение
+        </button>
       </form>
+      <div id="testStatus" class="mt-2" style="display:none"></div>
     </div>
   </div>
 
-  <!-- Ручная загрузка -->
+  <!-- Счета с авто-синхронизацией -->
+  <div class="card shadow-sm mb-4">
+    <div class="card-header py-2 fw-semibold small d-flex align-items-center gap-2">
+      <i class="bi bi-arrow-repeat me-1"></i>Счета — автозагрузка
+      <span class="badge bg-secondary ms-auto" id="autoCount">
+        {{ accounts | selectattr('sber_auto_sync') | list | length }} включено
+      </span>
+    </div>
+    <div class="card-body p-0">
+      {% if not accounts %}
+      <div class="text-muted small p-3">Нет активных счетов. Добавьте счёт в разделе «Банк».</div>
+      {% else %}
+      <table class="table table-sm mb-0">
+        <thead class="table-light">
+          <tr>
+            <th class="ps-3">Счёт</th>
+            <th>Номер счёта</th>
+            <th>Последняя загрузка</th>
+            <th class="text-center">Авто</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for acc in accounts %}
+          <tr id="row-{{ acc.id }}">
+            <td class="ps-3 fw-medium">{{ acc.name }}</td>
+            <td class="font-monospace small text-muted">
+              {% if acc.account_number %}{{ acc.account_number }}{% else %}<span class="text-danger">не указан</span>{% endif %}
+            </td>
+            <td class="small text-muted">
+              {% if acc.sber_last_sync %}
+                {{ acc.sber_last_sync }}<br>
+                <span class="{% if 'Ошибка' in (acc.sber_last_result or '') %}text-danger{% else %}text-success{% endif %}">
+                  {{ acc.sber_last_result }}
+                </span>
+              {% else %}—{% endif %}
+            </td>
+            <td class="text-center">
+              <div class="form-check form-switch d-flex justify-content-center mb-0">
+                <input class="form-check-input" type="checkbox" role="switch"
+                       id="auto-{{ acc.id }}"
+                       {% if acc.sber_auto_sync %}checked{% endif %}
+                       {% if not acc.account_number %}disabled title="Сначала укажите номер счёта"{% endif %}
+                       onchange="toggleAuto({{ acc.id }}, this)">
+              </div>
+            </td>
+            <td>
+              <button class="btn btn-outline-primary btn-sm"
+                      {% if not acc.account_number or not cfg.has_token %}disabled{% endif %}
+                      onclick="syncOne({{ acc.id }}, '{{ acc.name }}', this)">
+                <i class="bi bi-cloud-download"></i>
+              </button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Ручная загрузка всех авто-счетов -->
+  {% if cfg.has_token %}
   <div class="card shadow-sm mb-4">
     <div class="card-header py-2 fw-semibold small">
-      <i class="bi bi-cloud-download me-1"></i>Загрузить выписку
+      <i class="bi bi-cloud-download me-1"></i>Загрузить все включённые счета
     </div>
     <div class="card-body">
       <div class="row g-2 align-items-end">
@@ -107,18 +160,16 @@
           <label class="form-label small mb-1">По дату</label>
           <input type="date" class="form-control form-control-sm" id="syncTo">
         </div>
-        <div class="col-auto d-flex gap-2">
-          <button class="btn btn-success btn-sm" onclick="runSync()">
-            <i class="bi bi-play-fill me-1"></i>Загрузить
-          </button>
-          <button class="btn btn-outline-secondary btn-sm" onclick="testConnection()" title="Проверить соединение">
-            <i class="bi bi-wifi"></i>
+        <div class="col-auto">
+          <button class="btn btn-success btn-sm" onclick="runSyncAll()">
+            <i class="bi bi-play-fill me-1"></i>Загрузить все
           </button>
         </div>
       </div>
       <div id="syncStatus" class="mt-2" style="display:none"></div>
     </div>
   </div>
+  {% endif %}
 
   <!-- Инструкция -->
   <div class="card border-0 bg-light">
@@ -128,7 +179,7 @@
         <li>Войдите в <a href="https://www.sberbank.ru/ru/s_m_business/bankingservice/sber-api" target="_blank">личный кабинет СберБизнес</a> → Sber API → сгенерируйте Client Secret</li>
         <li>Введите Client ID <strong>71154</strong> и Client Secret → нажмите «Сохранить»</li>
         <li>Нажмите «Подключить СберБизнес» — откроется страница Сбербанка, войдите и разрешите доступ</li>
-        <li>После авторизации нажмите «Загрузить» — транзакции появятся в разделе «Банк»</li>
+        <li>Для каждого счёта включите переключатель «Авто» — при открытии раздела «Банк» выписки будут загружаться автоматически за последние 7 дней</li>
       </ol>
       <div class="mt-2 text-muted">
         <strong>Redirect URI</strong> (уже настроен в портале):
@@ -150,54 +201,110 @@
 })();
 
 async function testConnection() {
-  showStatus('info', '<span class="spinner-border spinner-border-sm me-1"></span>Проверка соединения...');
+  var el = document.getElementById('testStatus');
+  el.style.display = '';
+  el.innerHTML = '<div class="alert alert-info py-2 mb-0"><span class="spinner-border spinner-border-sm me-1"></span>Проверка...</div>';
   try {
     var r = await fetch('/bank/sber/test', { method: 'POST' });
     var j = await r.json();
     if (j.ok) {
-      showStatus('success', '✓ Соединение работает! Токен получен (действует ~5 минут)');
+      el.innerHTML = '<div class="alert alert-success py-2 mb-0">✓ Соединение работает! Токен действителен.</div>';
     } else {
-      showStatus('danger', '✗ ' + j.error);
+      el.innerHTML = '<div class="alert alert-danger py-2 mb-0">✗ ' + j.error + '</div>';
     }
   } catch(e) {
-    showStatus('danger', '✗ ' + e.message);
+    el.innerHTML = '<div class="alert alert-danger py-2 mb-0">✗ ' + e.message + '</div>';
   }
 }
 
-async function runSync() {
+async function toggleAuto(accId, checkbox) {
+  checkbox.disabled = true;
+  try {
+    var r = await fetch('/bank/accounts/' + accId + '/sber-toggle', { method: 'POST' });
+    var j = await r.json();
+    if (j.ok) {
+      checkbox.checked = !!j.auto_sync;
+      updateAutoCount();
+    } else {
+      alert('Ошибка: ' + j.error);
+      checkbox.checked = !checkbox.checked;
+    }
+  } catch(e) {
+    alert('Ошибка: ' + e.message);
+    checkbox.checked = !checkbox.checked;
+  }
+  checkbox.disabled = false;
+}
+
+function updateAutoCount() {
+  var cnt = document.querySelectorAll('input[id^="auto-"]:checked:not(:disabled)').length;
+  var badge = document.getElementById('autoCount');
+  if (badge) badge.textContent = cnt + ' включено';
+}
+
+async function syncOne(accId, name, btn) {
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+  try {
+    var r = await fetch('/bank/sber/sync', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ bank_account_id: accId })
+    });
+    var j = await r.json();
+    if (j.ok) {
+      btn.innerHTML = '<i class="bi bi-check-lg text-success"></i>';
+      // Обновляем строку статуса
+      var row = document.getElementById('row-' + accId);
+      if (row) {
+        var cells = row.querySelectorAll('td');
+        if (cells[2]) {
+          var now = new Date().toLocaleString('ru-RU', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}).replace(',','');
+          cells[2].innerHTML = now + '<br><span class="text-success">+' + j.added + ' новых</span>';
+        }
+      }
+      setTimeout(() => { btn.innerHTML = '<i class="bi bi-cloud-download"></i>'; btn.disabled = false; }, 2000);
+    } else {
+      btn.innerHTML = '<i class="bi bi-x-lg text-danger"></i>';
+      alert('Ошибка (' + name + '): ' + j.error);
+      setTimeout(() => { btn.innerHTML = '<i class="bi bi-cloud-download"></i>'; btn.disabled = false; }, 2000);
+    }
+  } catch(e) {
+    btn.innerHTML = '<i class="bi bi-x-lg text-danger"></i>';
+    alert('Ошибка: ' + e.message);
+    setTimeout(() => { btn.innerHTML = '<i class="bi bi-cloud-download"></i>'; btn.disabled = false; }, 2000);
+  }
+}
+
+async function runSyncAll() {
   var btn = event.target.closest('button');
   btn.disabled = true;
-  showStatus('info', '<span class="spinner-border spinner-border-sm me-1"></span>Загружаю выписку...');
+  var el = document.getElementById('syncStatus');
+  el.style.display = '';
+  el.innerHTML = '<div class="alert alert-info py-2 mb-0"><span class="spinner-border spinner-border-sm me-1"></span>Загружаю все счета...</div>';
   var dateFrom = document.getElementById('syncFrom').value;
   var dateTo   = document.getElementById('syncTo').value;
   try {
-    var r = await fetch('/bank/sber/sync', {
+    var r = await fetch('/bank/sber/sync-all', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ date_from: dateFrom, date_to: dateTo })
     });
     var j = await r.json();
     if (j.ok) {
-      if (j.added > 0) {
-        showStatus('success',
-          '✓ Загружено +' + j.added + ' новых транзакций' +
-          ' &nbsp;<a href="/bank/statement/' + j.stmt_id + '" class="btn btn-sm btn-outline-success ms-2">Открыть →</a>');
-      } else {
-        showStatus('info', 'Нет новых транзакций за выбранный период.');
-      }
+      var lines = (j.results || []).map(function(res) {
+        if (res.ok) return '✓ ' + res.name + ': +' + res.added + ' новых';
+        return '✗ ' + res.name + ': ' + res.error;
+      });
+      var msg = lines.length ? lines.join('<br>') : j.message || 'Нет счетов с авто-загрузкой';
+      el.innerHTML = '<div class="alert alert-success py-2 mb-0">' + msg + '</div>';
     } else {
-      showStatus('danger', '✗ ' + j.error);
+      el.innerHTML = '<div class="alert alert-danger py-2 mb-0">✗ ' + j.error + '</div>';
     }
   } catch(e) {
-    showStatus('danger', '✗ ' + e.message);
+    el.innerHTML = '<div class="alert alert-danger py-2 mb-0">✗ ' + e.message + '</div>';
   }
   btn.disabled = false;
-}
-
-function showStatus(type, html) {
-  var el = document.getElementById('syncStatus');
-  el.style.display = '';
-  el.innerHTML = '<div class="alert alert-' + type + ' py-2 mb-0">' + html + '</div>';
 }
 </script>
 {% endblock %}
