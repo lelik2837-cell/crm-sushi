@@ -858,6 +858,20 @@ def init_db():
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_shifts_branch_date ON shifts(branch_id, date)"
         )
 
+        # Feature: change schedules
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS change_schedule (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                branch_id INTEGER REFERENCES branches(id),
+                weekday INTEGER,
+                amount REAL NOT NULL DEFAULT 0,
+                valid_from TEXT NOT NULL,
+                valid_to TEXT,
+                label TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        ''')
+
         conn.commit()
 
 
@@ -892,6 +906,51 @@ def get_client_ip():
     if xff:
         return xff.split(',')[0].strip()
     return request.remote_addr
+
+
+def _apply_change_amount_to_shift(conn, shift_id, branch_id, shift_date):
+    """Find best matching change schedule and apply change_amount to the shift."""
+    try:
+        d = date.fromisoformat(shift_date) if isinstance(shift_date, str) else shift_date
+        weekday = d.weekday()  # 0=Mon..6=Sun
+    except Exception:
+        return
+    row = conn.execute(
+        '''SELECT amount FROM change_schedule
+           WHERE (branch_id IS NULL OR branch_id=?)
+             AND (weekday IS NULL OR weekday=?)
+             AND valid_from <= ?
+             AND (valid_to IS NULL OR valid_to >= ?)
+           ORDER BY branch_id DESC NULLS LAST, weekday DESC NULLS LAST, id DESC
+           LIMIT 1''',
+        (branch_id, weekday, shift_date, shift_date)
+    ).fetchone()
+    if row:
+        conn.execute('UPDATE shift_revenue SET change_amount=? WHERE shift_id=?', (row['amount'], shift_id))
+
+
+def _apply_all_change_schedules(conn):
+    """Apply all change schedules to matching existing shifts."""
+    schedules = conn.execute(
+        'SELECT * FROM change_schedule ORDER BY branch_id NULLS FIRST, weekday NULLS FIRST, id'
+    ).fetchall()
+    for sched in schedules:
+        params = [sched['amount'], sched['valid_from']]
+        clauses = ['s.date >= ?']
+        if sched['valid_to']:
+            clauses.append('s.date <= ?')
+            params.append(sched['valid_to'])
+        if sched['branch_id']:
+            clauses.append('s.branch_id = ?')
+            params.append(sched['branch_id'])
+        if sched['weekday'] is not None:
+            clauses.append("CAST(strftime('%u', s.date) AS INTEGER) - 1 = ?")
+            params.append(sched['weekday'])
+        where = ' AND '.join(clauses)
+        conn.execute(f'''
+            UPDATE shift_revenue SET change_amount = ?
+            WHERE shift_id IN (SELECT s.id FROM shifts s WHERE {where})
+        ''', params)
 
 
 # ─── AUTH ─────────────────────────────────────────────────────────────────────
@@ -1081,6 +1140,7 @@ def open_shift():
             raise
         shift_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
         conn.execute('INSERT INTO shift_revenue (shift_id) VALUES (?)', (shift_id,))
+        _apply_change_amount_to_shift(conn, shift_id, int(branch_id), today)
         conn.commit()
     return redirect(url_for('shift_view', shift_id=shift_id))
 
@@ -5668,6 +5728,111 @@ def gdrive_import():
                            import_batches=import_batches,
                            folder_url=folder_url, branch_id=branch_id,
                            drive_files=drive_files)
+
+
+# ─── CHANGE (РАЗМЕН) SETTINGS ────────────────────────────────────────────────
+
+@app.route('/settings/change')
+@login_required
+@owner_required
+def change_settings():
+    date_from = request.args.get('date_from', (date.today() - timedelta(days=6)).isoformat())
+    date_to   = request.args.get('date_to',   date.today().isoformat())
+    branch_ids_filter = request.args.getlist('branch_ids')
+    with get_db() as conn:
+        branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        branch_groups_raw = conn.execute('SELECT * FROM branch_groups ORDER BY name').fetchall()
+        branch_group_members = {}
+        for m in conn.execute('SELECT * FROM branch_group_members').fetchall():
+            branch_group_members.setdefault(m['group_id'], []).append(m['branch_id'])
+        q_branches = branch_ids_filter if branch_ids_filter else [str(b['id']) for b in branches]
+        placeholders = ','.join('?' * len(q_branches))
+        shifts_data = conn.execute(f'''
+            SELECT s.id as shift_id, s.date, b.name as branch_name, b.id as branch_id,
+                   COALESCE(r.change_amount, 0) as change_amount
+            FROM shifts s
+            JOIN branches b ON b.id = s.branch_id
+            LEFT JOIN shift_revenue r ON r.shift_id = s.id
+            WHERE s.date BETWEEN ? AND ?
+              AND s.branch_id IN ({placeholders})
+            ORDER BY s.date DESC, b.name
+        ''', [date_from, date_to] + list(q_branches)).fetchall()
+        schedules = conn.execute('''
+            SELECT cs.*, b.name AS branch_name
+            FROM change_schedule cs
+            LEFT JOIN branches b ON b.id = cs.branch_id
+            ORDER BY cs.id DESC
+        ''').fetchall()
+    weekday_labels = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']
+    return render_template('change_settings.html',
+        branches=branches, branch_groups=branch_groups_raw,
+        branch_group_members=branch_group_members,
+        shifts_data=shifts_data, schedules=schedules,
+        date_from=date_from, date_to=date_to,
+        branch_ids_filter=branch_ids_filter,
+        weekday_labels=weekday_labels,
+        today=date.today().isoformat())
+
+
+@app.route('/settings/change/manual/save', methods=['POST'])
+@login_required
+@owner_required
+def change_manual_save():
+    data = request.json or {}
+    with get_db() as conn:
+        for shift_id_str, amount_str in data.items():
+            try:
+                sid = int(shift_id_str)
+                amt = float(str(amount_str).replace(' ', '').replace(',', '.') or 0)
+            except (ValueError, TypeError):
+                continue
+            conn.execute('UPDATE shift_revenue SET change_amount=? WHERE shift_id=?', (amt, sid))
+        conn.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/settings/change/schedule/add', methods=['POST'])
+@login_required
+@owner_required
+def change_schedule_add():
+    branch_id  = request.form.get('branch_id') or None
+    weekday    = request.form.get('weekday')
+    weekday    = int(weekday) if weekday and weekday.strip() else None
+    amount     = float(request.form.get('amount') or 0)
+    valid_from = request.form.get('valid_from')
+    valid_to   = request.form.get('valid_to') or None
+    label      = request.form.get('label', '').strip()
+    with get_db() as conn:
+        conn.execute(
+            'INSERT INTO change_schedule (branch_id, weekday, amount, valid_from, valid_to, label) VALUES (?,?,?,?,?,?)',
+            (branch_id, weekday, amount, valid_from, valid_to, label)
+        )
+        _apply_all_change_schedules(conn)
+        conn.commit()
+    flash('Расписание сохранено и применено к сменам', 'success')
+    return redirect(url_for('change_settings') + '#tab-schedule')
+
+
+@app.route('/settings/change/schedule/delete/<int:schedule_id>', methods=['POST'])
+@login_required
+@owner_required
+def change_schedule_delete(schedule_id):
+    with get_db() as conn:
+        conn.execute('DELETE FROM change_schedule WHERE id=?', (schedule_id,))
+        conn.commit()
+    flash('Расписание удалено', 'success')
+    return redirect(url_for('change_settings') + '#tab-schedule')
+
+
+@app.route('/settings/change/schedule/apply', methods=['POST'])
+@login_required
+@owner_required
+def change_schedule_apply():
+    with get_db() as conn:
+        _apply_all_change_schedules(conn)
+        conn.commit()
+    flash('Расписание применено ко всем подходящим сменам', 'success')
+    return redirect(url_for('change_settings') + '#tab-schedule')
 
 
 # ──────────────────────────────────────────────────────────────────────────────
