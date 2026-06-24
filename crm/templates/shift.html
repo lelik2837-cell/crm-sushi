@@ -157,8 +157,8 @@
     .grid-main { grid-template-columns: 1fr; }
     .page-body { padding: 14px 12px; }
     .page-body > div:first-child { grid-template-columns: 1fr !important; }
-    .staff-header-row, .staff-row { grid-template-columns: 2fr 60px 60px 44px 90px 72px 80px 24px; gap: 4px; }
-    .courier-header-row, .courier-row { grid-template-columns: 2fr 50px 50px 44px 90px 62px 80px 24px; gap: 4px; }
+    .staff-header-row, .staff-row { grid-template-columns: 2fr 60px 60px 44px 90px 72px 48px 24px; gap: 4px; }
+    .courier-header-row, .courier-row { grid-template-columns: 2fr 50px 50px 44px 90px 62px 48px 24px; gap: 4px; }
   }
 </style>
 
@@ -991,9 +991,21 @@ function deleteStaff(btn, id) {
     });
 }
 
+// round HH:MM to nearest 15 minutes
+function roundTime15(val) {
+  const m = val.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return val;
+  let h = parseInt(m[1]), min = parseInt(m[2]);
+  min = Math.round(min / 15) * 15;
+  if (min === 60) { min = 0; h += 1; }
+  if (h > 24) h = 24;
+  return (h < 10 ? '0' : '') + h + ':' + (min < 10 ? '0' : '') + min;
+}
+
 // wire time inputs (kitchen) and courier inputs to auto-calc + save
 document.querySelectorAll('.staff-row .sf-start, .staff-row .sf-end').forEach(el => {
   el.addEventListener('blur', () => {
+    el.value = roundTime15(el.value);
     const row = el.closest('[data-id]');
     calcStaffTotal(row);
     autoSaveStaffRow(row);
