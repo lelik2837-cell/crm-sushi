@@ -136,22 +136,31 @@
                 {% if cell %}
                   {% if cell.status == 'closed' %}
                     {% if cell.change_amount %}
-                    <span style="font-size:13px; color:#6b7280;">{{ cell.change_amount | money }}</span>
+                    <span style="font-size:13px; color:#9ca3af;">{{ cell.change_amount | money }}</span>
+                    {% else %}
+                    <span style="color:#d1d5db; font-size:13px;">—</span>
                     {% endif %}
                   {% else %}
-                  <div class="d-flex align-items-center justify-content-center gap-1">
-                    <input type="number" class="form-control form-control-sm change-input"
-                           data-shift-id="{{ cell.shift_id }}"
-                           value="{{ cell.change_amount|int if cell.change_amount else '' }}"
-                           placeholder="" min="0" step="1"
-                           onblur="autoSaveSingle(this)"
-                           style="width:95px; font-size:13px; text-align:right;">
-                    <i class="bi bi-pencil-square" style="color:#9ca3af; font-size:13px; flex-shrink:0;"></i>
+                  <div class="change-cell" data-shift-id="{{ cell.shift_id }}">
+                    <div class="change-view d-flex align-items-center justify-content-center gap-1">
+                      {% if cell.change_amount %}<span class="change-val" style="font-size:13px; color:#374151;">{{ cell.change_amount | money }}</span>{% endif %}
+                      <i class="bi bi-pencil-square change-edit-btn" style="color:#9ca3af; font-size:13px; cursor:pointer;" onclick="startEdit(this.closest('.change-cell'))"></i>
+                    </div>
+                    <div class="change-edit d-none d-flex align-items-center justify-content-center gap-1">
+                      <input type="number" class="form-control form-control-sm change-input" min="0" step="1"
+                             value="{{ cell.change_amount|int if cell.change_amount else '' }}"
+                             placeholder="" style="width:88px; font-size:13px; text-align:right;"
+                             onkeydown="if(event.key==='Enter') saveEdit(this.closest('.change-cell'))">
+                      <button type="button" class="btn btn-success btn-sm py-0 px-1"
+                              onclick="saveEdit(this.closest('.change-cell'))" title="Сохранить">
+                        <i class="bi bi-check-lg"></i>
+                      </button>
+                    </div>
                   </div>
                   {% endif %}
                 {% else %}
                   {% if day.iso >= today %}
-                  <i class="bi bi-pencil-square" style="color:#d1d5db; font-size:16px;"></i>
+                  <i class="bi bi-pencil-square" style="color:#d1d5db; font-size:16px;" title="Смена ещё не открыта"></i>
                   {% else %}
                   <span style="color:#d1d5db; font-size:13px;">—</span>
                   {% endif %}
@@ -335,26 +344,46 @@ function showToast(msg, type) {
   t.show();
 }
 
-// ─── Auto-save single input on blur ─────────────────────────────────────────
-function autoSaveSingle(input) {
-  const shiftId = input.dataset.shiftId;
-  const val = input.value.trim();
+// ─── Click-to-edit ───────────────────────────────────────────────────────────
+function startEdit(cell) {
+  cell.querySelector('.change-view').classList.add('d-none');
+  const edit = cell.querySelector('.change-edit');
+  edit.classList.remove('d-none');
+  const inp = edit.querySelector('input');
+  inp.focus();
+  inp.select();
+}
+
+function saveEdit(cell) {
+  const shiftId = cell.dataset.shiftId;
+  const inp = cell.querySelector('.change-input');
+  const val = inp.value.trim();
   const amount = val === '' ? 0 : parseInt(val) || 0;
+
   fetch('/settings/change/manual/save', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({[shiftId]: amount})
   }).then(r => r.json()).then(d => {
-    if (d.ok) {
-      input.style.transition = 'border-color .2s';
-      input.style.borderColor = '#22c55e';
-      setTimeout(() => { input.style.borderColor = ''; }, 900);
+    if (!d.ok) return;
+    const view = cell.querySelector('.change-view');
+    let span = view.querySelector('.change-val');
+    if (amount > 0) {
+      const formatted = amount.toLocaleString('ru-RU');
+      if (span) { span.textContent = formatted; }
+      else {
+        span = document.createElement('span');
+        span.className = 'change-val';
+        span.style.cssText = 'font-size:13px; color:#374151;';
+        span.textContent = formatted;
+        view.insertBefore(span, view.querySelector('.change-edit-btn'));
+      }
+    } else {
+      if (span) span.remove();
     }
-  }).catch(() => {
-    input.style.borderColor = '#ef4444';
-    setTimeout(() => { input.style.borderColor = ''; }, 900);
-    showToast('Ошибка сохранения', 'danger');
-  });
+    cell.querySelector('.change-edit').classList.add('d-none');
+    view.classList.remove('d-none');
+  }).catch(() => showToast('Ошибка сохранения', 'danger'));
 }
 
 // ─── Tab activation via URL hash ────────────────────────────────────────────
