@@ -867,6 +867,17 @@ def init_db():
         if 'sber_last_result' not in _ba_cols:
             conn.execute("ALTER TABLE bank_accounts ADD COLUMN sber_last_result TEXT DEFAULT ''")
 
+        # Per-shift terminal breakdown for beznal
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS shift_terminals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                shift_id INTEGER NOT NULL REFERENCES shifts(id) ON DELETE CASCADE,
+                terminal_number TEXT DEFAULT '',
+                amount REAL DEFAULT 0,
+                sort_order INTEGER DEFAULT 0
+            );
+        ''')
+
         # Feature: change schedules
         conn.executescript('''
             CREATE TABLE IF NOT EXISTS change_schedule (
@@ -1223,6 +1234,10 @@ def shift_view(shift_id):
                 (t['id'],)
             ).fetchall()
             taxi_trip_emps[t['id']] = tte
+        shift_terminals_rows = conn.execute(
+            'SELECT terminal_number, amount FROM shift_terminals WHERE shift_id=? ORDER BY sort_order, id',
+            (shift_id,)
+        ).fetchall()
         expense_cats = get_expense_categories(conn)
         expense_cats_groups = build_cats_groups(expense_cats)
         expense_cats_flat = [(c['code'], c['label']) for c in expense_cats]
@@ -1250,7 +1265,9 @@ def shift_view(shift_id):
             can_edit=can_edit,
             is_owner=(role == 'owner'),
             shift_weekday=shift_weekday,
-            prev_actual_cash=prev_actual_cash)
+            prev_actual_cash=prev_actual_cash,
+            shift_terminals=[{'terminal_number': r['terminal_number'], 'amount': r['amount']}
+                             for r in shift_terminals_rows])
 
 
 @app.route('/shift/<int:shift_id>/save-revenue', methods=['POST'])
@@ -1285,6 +1302,31 @@ def save_revenue(shift_id):
         auto_bonuses = calculate_bonuses(conn, shift_id)
         conn.commit()
     return jsonify({'ok': True, 'auto_bonuses': auto_bonuses})
+
+
+@app.route('/shift/<int:shift_id>/save-terminals', methods=['POST'])
+@login_required
+def save_terminals(shift_id):
+    if not _can_edit_shift(shift_id):
+        return jsonify({'error': 'Нет доступа'}), 403
+    data = request.json or {}
+    terminals = data.get('terminals', [])
+    with get_db() as conn:
+        conn.execute('DELETE FROM shift_terminals WHERE shift_id=?', (shift_id,))
+        for i, t in enumerate(terminals):
+            tn = str(t.get('terminal_number', '')).strip()
+            raw = str(t.get('amount', 0)).replace(' ', '').replace(' ', '').replace(',', '.')
+            try:
+                amt = float(raw)
+            except ValueError:
+                amt = 0.0
+            if tn or amt:
+                conn.execute(
+                    'INSERT INTO shift_terminals (shift_id, terminal_number, amount, sort_order) VALUES (?,?,?,?)',
+                    (shift_id, tn, amt, i)
+                )
+        conn.commit()
+    return jsonify({'ok': True})
 
 
 @app.route('/shift/<int:shift_id>/save-expense', methods=['POST'])

@@ -290,8 +290,8 @@
           <div id="total-revenue-display" style="font-size:clamp(14px,2.8vw,26px); font-weight:800; color:#1e40af; letter-spacing:-.5px; line-height:1; white-space:nowrap; overflow:hidden;">{{ (revenue.total_revenue or 0)|int }} ₽</div>
           <input type="hidden" class="rev-field" data-field="total_revenue" id="total-revenue-input" value="{{ (revenue.total_revenue or 0)|int }}">
         </div>
-        <!-- Итого нал | Итого безнал | Факт в кассе -->
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+        <!-- Итого нал | Итого безнал | Факт в кассе | Факт безнал -->
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:start;">
           <div style="background:#fff1f2; border:1.5px solid #fecdd3; border-radius:10px; padding:14px;">
             <div style="font-size:10px; color:#9f1239; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px;">Итого нал</div>
             <div id="kassa-nал" style="font-size:22px; font-weight:800; color:#be123c; line-height:1;">{{ (revenue.cash_amount or 0)|int }} ₽</div>
@@ -300,7 +300,7 @@
             <div style="font-size:10px; color:#166534; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px;">Итого безнал</div>
             <div id="kassa-beznal" style="font-size:22px; font-weight:800; color:#15803d; line-height:1;">{{ (revenue.card_amount or 0)|int }} ₽</div>
           </div>
-          <!-- Факт в кассе — та же ширина что у Итого нал -->
+          <!-- Факт в кассе -->
           <div style="background:#f1f5f9; border:1.5px solid #cbd5e1; border-radius:10px; padding:14px; display:flex; align-items:center; gap:6px;">
             <span style="font-size:10px; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:.5px; flex:1; white-space:nowrap;">Факт в кассе</span>
             <input type="text" inputmode="numeric" id="actual-cash-input"
@@ -310,6 +310,23 @@
                    style="font-size:22px; font-weight:800; color:#334155; background:transparent; border:none; padding:0; width:90px; text-align:right; outline:none; line-height:1;"
                    {% if not can_edit %}disabled{% endif %}>
             <span style="font-size:13px; color:#475569; font-weight:600;">₽</span>
+          </div>
+          <!-- Факт безнал — разворачивается по клику, показывает терминалы -->
+          <div style="background:#f0fdf4; border:1.5px solid #bbf7d0; border-radius:10px; overflow:visible;">
+            <div onclick="toggleBeznalFact()" style="padding:14px; cursor:pointer; display:flex; align-items:center; gap:6px; user-select:none;">
+              <span style="font-size:10px; color:#166534; font-weight:700; text-transform:uppercase; letter-spacing:.5px; flex:1;">Факт безнал</span>
+              <span id="beznal-fact-total" style="font-size:22px; font-weight:800; color:#15803d; line-height:1;">0 ₽</span>
+              <i class="bi bi-chevron-down" id="beznal-fact-chevron" style="font-size:11px; color:#166534; transition:transform .2s;"></i>
+            </div>
+            <div id="beznal-fact-list" style="display:none; padding:0 14px 14px;">
+              <div id="beznal-fact-rows" style="display:flex; flex-direction:column; gap:6px;"></div>
+              {% if can_edit %}
+              <button type="button" onclick="addBeznalRow()"
+                      style="margin-top:8px; font-size:11px; padding:5px 0; border:1.5px dashed #bbf7d0; background:transparent; border-radius:6px; color:#166534; font-weight:600; cursor:pointer; width:100%;">
+                + Добавить терминал
+              </button>
+              {% endif %}
+            </div>
           </div>
         </div>
       </div>
@@ -1551,5 +1568,91 @@ function unlockShiftEdit() {
 }
 
 if (SHIFT_IS_CLOSED && IS_OWNER) lockClosedShift();
+
+// ── Факт безнал (терминалы) ───────────────────────────────────────────────────
+const INIT_TERMINALS = {{ shift_terminals | tojson }};
+
+function toggleBeznalFact() {
+  const list = document.getElementById('beznal-fact-list');
+  const chevron = document.getElementById('beznal-fact-chevron');
+  const open = list.style.display !== 'none';
+  list.style.display = open ? 'none' : 'block';
+  chevron.style.transform = open ? '' : 'rotate(180deg)';
+}
+
+function addBeznalRow(termNum, amount) {
+  const row = document.createElement('div');
+  row.className = 'beznal-row';
+  row.style.cssText = 'display:flex;gap:6px;align-items:center;';
+
+  const numIn = document.createElement('input');
+  numIn.type = 'text';
+  numIn.placeholder = 'Терминал';
+  numIn.className = 'beznal-num';
+  numIn.style.cssText = 'width:76px;font-size:12px;font-weight:600;border:1.5px solid #bbf7d0;border-radius:6px;padding:5px 7px;background:#fff;color:#166534;text-align:center;outline:none;';
+  if (termNum) numIn.value = termNum;
+  numIn.addEventListener('blur', saveBeznalTerminals);
+  if (!CAN_EDIT) numIn.disabled = true;
+
+  const amtIn = document.createElement('input');
+  amtIn.type = 'text';
+  amtIn.inputMode = 'numeric';
+  amtIn.placeholder = '0';
+  amtIn.className = 'beznal-amt money-field';
+  amtIn.style.cssText = 'flex:1;font-size:15px;font-weight:800;border:1.5px solid #bbf7d0;border-radius:6px;padding:5px 7px;background:#fff;color:#15803d;text-align:right;outline:none;';
+  if (amount) amtIn.value = Math.round(amount).toLocaleString('ru-RU');
+  initMoneyField(amtIn);
+  amtIn.addEventListener('input', updateBeznalTotal);
+  amtIn.addEventListener('blur', () => { updateBeznalTotal(); saveBeznalTerminals(); });
+  if (!CAN_EDIT) amtIn.disabled = true;
+
+  const rub = document.createElement('span');
+  rub.textContent = '₽';
+  rub.style.cssText = 'font-size:12px;color:#166534;font-weight:600;flex-shrink:0;';
+
+  const del = document.createElement('button');
+  del.type = 'button';
+  del.textContent = '×';
+  del.style.cssText = 'background:none;border:none;cursor:pointer;color:#9ca3af;font-size:18px;padding:0 2px;line-height:1;flex-shrink:0;';
+  del.onclick = () => { row.remove(); updateBeznalTotal(); saveBeznalTerminals(); };
+  if (!CAN_EDIT) del.style.display = 'none';
+
+  row.append(numIn, amtIn, rub, del);
+  document.getElementById('beznal-fact-rows').appendChild(row);
+}
+
+function updateBeznalTotal() {
+  let total = 0;
+  document.querySelectorAll('.beznal-amt').forEach(el => { total += readNum(el); });
+  const el = document.getElementById('beznal-fact-total');
+  if (el) el.textContent = Math.round(total).toLocaleString('ru-RU') + ' ₽';
+}
+
+function saveBeznalTerminals() {
+  const terminals = [];
+  document.querySelectorAll('.beznal-row').forEach(row => {
+    const num = row.querySelector('.beznal-num').value.trim();
+    const amt = readNum(row.querySelector('.beznal-amt'));
+    if (num || amt) terminals.push({ terminal_number: num, amount: amt });
+  });
+  fetch(`/shift/${SHIFT_ID}/save-terminals`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ terminals })
+  });
+}
+
+// Инициализация: загружаем сохранённые терминалы или рисуем 5 пустых строк
+(function initBeznalTerminals() {
+  const saved = INIT_TERMINALS;
+  if (saved && saved.length) {
+    saved.forEach(t => addBeznalRow(t.terminal_number, t.amount));
+    const need = 5 - saved.length;
+    for (let i = 0; i < need; i++) addBeznalRow();
+  } else {
+    for (let i = 0; i < 5; i++) addBeznalRow();
+  }
+  updateBeznalTotal();
+})();
 </script>
 {% endblock %}
