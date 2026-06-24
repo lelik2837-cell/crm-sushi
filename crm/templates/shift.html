@@ -319,6 +319,10 @@
               <i class="bi bi-chevron-down" id="beznal-fact-chevron" style="font-size:11px; color:#6b7280; transition:transform .2s; flex-shrink:0;"></i>
             </div>
             <div id="beznal-fact-list" style="display:none; position:absolute; top:calc(100% + 4px); left:0; right:0; z-index:300; background:#fff; border:1.5px solid #cbd5e1; border-radius:10px; padding:12px; box-shadow:0 4px 20px rgba(0,0,0,.13);">
+              <div style="display:flex; gap:6px; margin-bottom:4px; padding-right:24px;">
+                <span style="width:66px; flex-shrink:0; font-size:9px; color:#94a3b8; font-weight:600; text-transform:uppercase; letter-spacing:.4px; text-align:center;">Терминал</span>
+                <span style="flex:1; font-size:9px; color:#94a3b8; font-weight:600; text-transform:uppercase; letter-spacing:.4px; text-align:right;">Сумма</span>
+              </div>
               <div id="beznal-fact-rows" style="display:flex; flex-direction:column; gap:6px;"></div>
               {% if can_edit %}
               <button type="button" onclick="addBeznalRow()"
