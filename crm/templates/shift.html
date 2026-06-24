@@ -55,7 +55,7 @@
 
   /* STAFF ROWS */
   .staff-header-row, .staff-row {
-    display: grid; grid-template-columns: 2fr 68px 68px 52px 116px 68px 82px 68px 28px;
+    display: grid; grid-template-columns: 2fr 68px 68px 52px 116px 68px 82px 41px 28px;
     align-items: center; gap: 7px;
   }
   .staff-header-row { padding-bottom: 5px; border-bottom: 1.5px solid #e5e7eb; margin-bottom: 4px; }
@@ -64,10 +64,10 @@
   .staff-row .sf-name, .courier-row .sf-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .col-label { font-size: 10px; color: #9ca3af; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; }
   .staff-del { width: 28px; height: 28px; border-radius: 6px; background: #fee2e2; color: #ef4444; border: none; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-  .paid-select { width: 100%; padding: 5px 20px 5px 6px; border-radius: 7px; font-size: 11px; font-weight: 700; border: none; cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23666' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 5px center; transition: all .15s; height: 28px; box-sizing: border-box; }
+  .paid-select { width: 100%; padding: 4px 2px; text-align: center; border-radius: 7px; font-size: 11px; font-weight: 700; border: none; cursor: pointer; appearance: none; transition: all .15s; height: 28px; box-sizing: border-box; }
   .paid-no  { background: #fee2e2; color: #dc2626; }
   .paid-yes { background: #d1fae5; color: #059669; }
-  .time-sel { padding: 5px 4px !important; font-size: 12px !important; height: 28px; box-sizing: border-box; }
+  .time-inp { padding: 4px 4px !important; font-size: 12px !important; height: 28px; box-sizing: border-box; text-align: center; width: 52px !important; }
   .role-group-title { font-size: 10px; font-weight: 700; color: #9ca3af; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
   .role-group { margin-bottom: 14px; }
 
@@ -95,7 +95,7 @@
 
   /* COURIERS */
   .courier-header-row, .courier-row {
-    display: grid; grid-template-columns: 2fr 58px 58px 52px 116px 72px 90px 28px;
+    display: grid; grid-template-columns: 2fr 58px 58px 52px 116px 72px 54px 28px;
     align-items: center; gap: 8px;
   }
   .courier-header-row { padding-bottom: 6px; border-bottom: 1.5px solid #e5e7eb; margin-bottom: 2px; }
@@ -476,10 +476,10 @@
       data-name="{{ s.full_name_snapshot }}" data-role="{{ s.role_snapshot }}"
       data-auto-bonus="{{ (s.auto_bonus or 0)|int }}">
       <div class="field-input-sm sf-name" style="font-size:12px; padding:5px 8px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; height:28px; box-sizing:border-box; display:flex; align-items:center;">{{ s.full_name_snapshot }}</div>
-      <select class="mini-input field-select time-sel sf-start" data-val="{{ s.shift_start or '09:00' }}" {% if not can_edit %}disabled{% endif %}></select>
-      <select class="mini-input field-select time-sel sf-end" data-val="{{ s.shift_end or '19:00' }}" {% if not can_edit %}disabled{% endif %}></select>
+      <input type="text" class="mini-input time-inp sf-start" value="{{ s.shift_start or '10:00' }}" placeholder="10:00" maxlength="5" {% if not can_edit %}disabled{% endif %}>
+      <input type="text" class="mini-input time-inp sf-end"   value="{{ s.shift_end   or '22:00' }}" placeholder="22:00" maxlength="5" {% if not can_edit %}disabled{% endif %}>
       <div class="field-calc sf-hours">{{ s.hours_worked or 0 }} ч</div>
-      {% if can_edit %}<div class="bonus-btns"><button class="bonus-btn-prem" onclick="toggleBonus(this,'prem')">▲ Премия</button><button class="bonus-btn-fine" onclick="toggleBonus(this,'fine')">▼ Штраф</button></div>{% else %}<div></div>{% endif %}
+      {% if can_edit %}<div class="bonus-btns"><button class="bonus-btn-prem" onclick="toggleBonus(this,'prem')">Премия</button><button class="bonus-btn-fine" onclick="toggleBonus(this,'fine')">Штраф</button></div>{% else %}<div></div>{% endif %}
       <div class="field-calc sf-auto-bonus">{{ (s.auto_bonus or 0)|int if (s.auto_bonus or 0) > 0 else '—' }}</div>
       <div class="field-calc sf-total">{{ (s.total_amount or 0)|int }} ₽</div>
       {% if s.pay_monthly %}
@@ -762,21 +762,6 @@ function initMoneyField(el) {
 }
 document.querySelectorAll('.money-field').forEach(initMoneyField);
 
-// ── Time selects ──────────────────────────────────────────────────────────────
-document.querySelectorAll('.time-sel').forEach(sel => {
-  const selected = sel.dataset.val || '09:00';
-  for (let h = 7; h <= 24; h++) {
-    const mins = h < 24 ? [0, 15, 30, 45] : [0];
-    mins.forEach(m => {
-      const val = (h < 10 ? '0' : '') + h + ':' + (m === 0 ? '00' : m);
-      const opt = document.createElement('option');
-      opt.value = val; opt.textContent = val;
-      if (val === selected) opt.selected = true;
-      sel.appendChild(opt);
-    });
-  }
-  if (CAN_EDIT) sel.addEventListener('change', () => autoSaveStaffRow(sel.closest('[data-id]')));
-});
 
 // ── Revenue ───────────────────────────────────────────────────────────────────
 function getRevData() {
@@ -1006,9 +991,9 @@ function deleteStaff(btn, id) {
     });
 }
 
-// wire time selects (kitchen) and courier inputs to auto-calc + save
+// wire time inputs (kitchen) and courier inputs to auto-calc + save
 document.querySelectorAll('.staff-row .sf-start, .staff-row .sf-end').forEach(el => {
-  el.addEventListener('change', () => {
+  el.addEventListener('blur', () => {
     const row = el.closest('[data-id]');
     calcStaffTotal(row);
     autoSaveStaffRow(row);
