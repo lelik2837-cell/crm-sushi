@@ -1589,17 +1589,21 @@ function addBeznalRow(termNum, amount) {
   numIn.type = 'text';
   numIn.placeholder = 'Терминал';
   numIn.className = 'beznal-num';
-  numIn.style.cssText = 'width:76px;font-size:12px;font-weight:600;border:1.5px solid #bbf7d0;border-radius:6px;padding:5px 7px;background:#fff;color:#166534;text-align:center;outline:none;';
+  numIn.style.cssText = 'width:82px;font-size:12px;font-weight:600;border:1.5px solid #e2e8f0;border-radius:6px;padding:6px 8px;background:#f8fafc;color:#374151;text-align:center;outline:none;flex-shrink:0;';
   if (termNum) numIn.value = termNum;
   numIn.addEventListener('blur', saveBeznalTerminals);
   if (!CAN_EDIT) numIn.disabled = true;
 
+  // Обёртка для суммы: инпут + ₽ внутри одного блока
+  const amtWrap = document.createElement('div');
+  amtWrap.style.cssText = 'flex:1;display:flex;align-items:center;border:1.5px solid #e2e8f0;border-radius:6px;background:#f8fafc;padding:0 8px;gap:2px;min-width:0;';
+
   const amtIn = document.createElement('input');
   amtIn.type = 'text';
   amtIn.inputMode = 'numeric';
-  amtIn.placeholder = '0';
+  amtIn.placeholder = '';
   amtIn.className = 'beznal-amt money-field';
-  amtIn.style.cssText = 'flex:1;font-size:15px;font-weight:800;border:1.5px solid #bbf7d0;border-radius:6px;padding:5px 7px;background:#fff;color:#15803d;text-align:right;outline:none;';
+  amtIn.style.cssText = 'flex:1;font-size:15px;font-weight:800;border:none;background:transparent;color:#1e293b;text-align:right;outline:none;padding:6px 0;min-width:0;';
   if (amount) amtIn.value = Math.round(amount).toLocaleString('ru-RU');
   initMoneyField(amtIn);
   amtIn.addEventListener('input', updateBeznalTotal);
@@ -1608,16 +1612,20 @@ function addBeznalRow(termNum, amount) {
 
   const rub = document.createElement('span');
   rub.textContent = '₽';
-  rub.style.cssText = 'font-size:12px;color:#166534;font-weight:600;flex-shrink:0;';
+  rub.style.cssText = 'font-size:12px;color:#94a3b8;font-weight:600;flex-shrink:0;';
+
+  amtWrap.append(amtIn, rub);
 
   const del = document.createElement('button');
   del.type = 'button';
   del.textContent = '×';
-  del.style.cssText = 'background:none;border:none;cursor:pointer;color:#9ca3af;font-size:18px;padding:0 2px;line-height:1;flex-shrink:0;';
+  del.style.cssText = 'background:none;border:none;cursor:pointer;color:#cbd5e1;font-size:18px;padding:0;line-height:1;flex-shrink:0;';
+  del.onmouseenter = () => { del.style.color = '#94a3b8'; };
+  del.onmouseleave = () => { del.style.color = '#cbd5e1'; };
   del.onclick = () => { row.remove(); updateBeznalTotal(); saveBeznalTerminals(); };
   if (!CAN_EDIT) del.style.display = 'none';
 
-  row.append(numIn, amtIn, rub, del);
+  row.append(numIn, amtWrap, del);
   document.getElementById('beznal-fact-rows').appendChild(row);
 }
 
