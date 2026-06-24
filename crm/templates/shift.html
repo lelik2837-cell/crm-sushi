@@ -291,7 +291,7 @@
           <input type="hidden" class="rev-field" data-field="total_revenue" id="total-revenue-input" value="{{ (revenue.total_revenue or 0)|int }}">
         </div>
         <!-- Итого нал | Итого безнал | Факт в кассе | Факт безнал -->
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:start;">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
           <div style="background:#fff1f2; border:1.5px solid #fecdd3; border-radius:10px; padding:14px;">
             <div style="font-size:10px; color:#9f1239; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px;">Итого нал</div>
             <div id="kassa-nал" style="font-size:22px; font-weight:800; color:#be123c; line-height:1;">{{ (revenue.cash_amount or 0)|int }} ₽</div>
