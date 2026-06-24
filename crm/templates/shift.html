@@ -290,7 +290,7 @@
           <div id="total-revenue-display" style="font-size:clamp(14px,2.8vw,26px); font-weight:800; color:#1e40af; letter-spacing:-.5px; line-height:1; white-space:nowrap; overflow:hidden;">{{ (revenue.total_revenue or 0)|int }} ₽</div>
           <input type="hidden" class="rev-field" data-field="total_revenue" id="total-revenue-input" value="{{ (revenue.total_revenue or 0)|int }}">
         </div>
-        <!-- Итого нал | Итого безнал -->
+        <!-- Итого нал | Итого безнал | Факт в кассе -->
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
           <div style="background:#fff1f2; border:1.5px solid #fecdd3; border-radius:10px; padding:14px;">
             <div style="font-size:10px; color:#9f1239; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px;">Итого нал</div>
@@ -300,17 +300,17 @@
             <div style="font-size:10px; color:#166534; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px;">Итого безнал</div>
             <div id="kassa-beznal" style="font-size:22px; font-weight:800; color:#15803d; line-height:1;">{{ (revenue.card_amount or 0)|int }} ₽</div>
           </div>
-        </div>
-        <!-- Факт в кассе -->
-        <div style="background:#f1f5f9; border:1.5px solid #cbd5e1; border-radius:8px; padding:8px 14px; display:flex; align-items:center; gap:6px;">
-          <span style="font-size:11px; color:#475569; font-weight:600; flex:1; white-space:nowrap;">Факт в кассе</span>
-          <input type="text" inputmode="numeric" id="actual-cash-input"
-                 class="mini-input money-field rev-field" data-field="actual_cash"
-                 value="{{ (revenue.actual_cash or 0)|int if revenue and revenue.actual_cash else '' }}"
-                 placeholder="0"
-                 style="font-size:15px; font-weight:800; color:#334155; background:transparent; border:none; padding:0; width:80px; text-align:right; outline:none;"
-                 {% if not can_edit %}disabled{% endif %}>
-          <span style="font-size:13px; color:#475569; font-weight:600;">₽</span>
+          <!-- Факт в кассе — та же ширина что у Итого нал -->
+          <div style="background:#f1f5f9; border:1.5px solid #cbd5e1; border-radius:10px; padding:14px; display:flex; align-items:center; gap:6px;">
+            <span style="font-size:10px; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:.5px; flex:1; white-space:nowrap;">Факт в кассе</span>
+            <input type="text" inputmode="numeric" id="actual-cash-input"
+                   class="mini-input money-field rev-field" data-field="actual_cash"
+                   value="{{ (revenue.actual_cash or 0)|int if revenue and revenue.actual_cash else '' }}"
+                   placeholder="0"
+                   style="font-size:22px; font-weight:800; color:#334155; background:transparent; border:none; padding:0; width:90px; text-align:right; outline:none; line-height:1;"
+                   {% if not can_edit %}disabled{% endif %}>
+            <span style="font-size:13px; color:#475569; font-weight:600;">₽</span>
+          </div>
         </div>
       </div>
     </div>
