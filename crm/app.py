@@ -1015,6 +1015,14 @@ def init_db():
         except Exception:
             pass
 
+        # PnL report settings storage
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS pnl_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
+        ''')
+
         conn.commit()
 
 
@@ -4020,6 +4028,253 @@ def expenses_report():
         date_from=date_from, date_to=date_to,
         branch_ids=branch_ids, cat_filter=cat_filter, pay_filter=pay_filter,
         branch_groups=get_branch_groups(conn))
+
+
+# ─── PnL REPORT ───────────────────────────────────────────────────────────────
+
+import json as _json
+
+_MONTH_NAMES_RU = {
+    1: 'Янв', 2: 'Фев', 3: 'Мар', 4: 'Апр',
+    5: 'Май', 6: 'Июн', 7: 'Июл', 8: 'Авг',
+    9: 'Сен', 10: 'Окт', 11: 'Ноя', 12: 'Дек',
+}
+
+
+def _pnl_period_label(p):
+    if p == 'total':
+        return 'Итого'
+    try:
+        dt = datetime.strptime(p, '%Y-%m')
+        return f"{_MONTH_NAMES_RU[dt.month]} {dt.year}"
+    except Exception:
+        return p
+
+
+def _pnl_load_settings(conn):
+    rows = conn.execute('SELECT key, value FROM pnl_settings').fetchall()
+    cfg = {r['key']: r['value'] for r in rows}
+    all_cats = conn.execute(
+        "SELECT code FROM expense_categories WHERE is_active=1 AND COALESCE(type,'expense')='expense' AND parent_id IS NULL ORDER BY sort_order, label"
+    ).fetchall()
+    default_cats = [c['code'] for c in all_cats]
+    raw_cats = cfg.get('expense_cats')
+    try:
+        expense_cats = _json.loads(raw_cats) if raw_cats else default_cats
+    except Exception:
+        expense_cats = default_cats
+    return {
+        'expense_cats': expense_cats,
+        'include_salary': int(cfg.get('include_salary', '1')),
+        'include_purchases': int(cfg.get('include_purchases', '0')),
+        'revenue_mode': cfg.get('revenue_mode', 'total'),
+    }
+
+
+@app.route('/report/pnl')
+@login_required
+@owner_required
+def pnl_report():
+    from collections import defaultdict
+
+    today       = date.today().isoformat()
+    month_start = date.today().replace(day=1).isoformat()
+
+    date_from  = request.args.get('date_from', month_start)
+    date_to    = request.args.get('date_to', today)
+    branch_ids = [b for b in request.args.getlist('branch_ids') if b.isdigit()]
+    group_by   = request.args.get('group_by', 'month')  # 'total' | 'month'
+
+    with get_db() as conn:
+        branches      = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        branch_groups = get_branch_groups(conn)
+        all_cats      = get_expense_categories(conn)
+        cfg           = _pnl_load_settings(conn)
+
+        if branch_ids:
+            ph  = ','.join('?' * len(branch_ids))
+            bf  = f'AND s.branch_id IN ({ph})'
+            bfp = f'AND p.branch_id IN ({ph})'
+            b_args = [int(b) for b in branch_ids]
+        else:
+            bf = bfp = ''
+            b_args = []
+
+        period_expr = "strftime('%Y-%m', s.date)" if group_by == 'month' else "'total'"
+        period_expr_p = "strftime('%Y-%m', p.date)" if group_by == 'month' else "'total'"
+
+        # Revenue
+        rev_rows = conn.execute(f'''
+            SELECT {period_expr} AS period,
+                   COALESCE(SUM(r.total_revenue), 0)    AS total_revenue,
+                   COALESCE(SUM(r.delivery_revenue), 0) AS delivery_revenue,
+                   COALESCE(SUM(r.pickup_revenue), 0)   AS pickup_revenue
+            FROM shifts s
+            LEFT JOIN shift_revenue r ON r.shift_id = s.id
+            WHERE s.date BETWEEN ? AND ? {bf}
+            GROUP BY period ORDER BY period
+        ''', [date_from, date_to] + b_args).fetchall()
+
+        # Expenses by category (batch query)
+        sel_cats = cfg['expense_cats']
+        exp_by = defaultdict(lambda: defaultdict(float))
+        if sel_cats:
+            ph_cats = ','.join('?' * len(sel_cats))
+            exp_raw = conn.execute(f'''
+                SELECT {period_expr} AS period,
+                       e.category AS cat,
+                       COALESCE(SUM(e.amount_cash + e.amount_card), 0) AS amount
+                FROM expenses e
+                JOIN shifts s ON s.id = e.shift_id
+                WHERE s.date BETWEEN ? AND ?
+                  AND e.category IN ({ph_cats}) {bf}
+                GROUP BY period, e.category
+            ''', [date_from, date_to] + sel_cats + b_args).fetchall()
+            for r in exp_raw:
+                exp_by[r['cat']][r['period']] = r['amount']
+
+        # Salary
+        sal_by_period = {}
+        if cfg['include_salary']:
+            for r in conn.execute(f'''
+                SELECT {period_expr} AS period,
+                       COALESCE(SUM(es.total_amount), 0) AS amount
+                FROM employee_shifts es
+                JOIN shifts s ON s.id = es.shift_id
+                WHERE s.date BETWEEN ? AND ? {bf}
+                GROUP BY period ORDER BY period
+            ''', [date_from, date_to] + b_args).fetchall():
+                sal_by_period[r['period']] = r['amount']
+
+        # Purchases
+        pur_by_period = {}
+        if cfg['include_purchases']:
+            for r in conn.execute(f'''
+                SELECT {period_expr_p} AS period,
+                       COALESCE(SUM(p.amount), 0) AS amount
+                FROM purchases p
+                WHERE p.date BETWEEN ? AND ? {bfp}
+                GROUP BY period ORDER BY period
+            ''', [date_from, date_to] + b_args).fetchall():
+                pur_by_period[r['period']] = r['amount']
+
+    # Collect all periods
+    all_p = set()
+    for r in rev_rows:
+        all_p.add(r['period'])
+    for cat_d in exp_by.values():
+        all_p.update(cat_d.keys())
+    all_p.update(sal_by_period.keys())
+    all_p.update(pur_by_period.keys())
+    periods = sorted(all_p) if group_by == 'month' else (['total'] if all_p else ['total'])
+
+    cat_map = {c['code']: c['label'] for c in all_cats}
+    rev_by_period = {r['period']: dict(r) for r in rev_rows}
+
+    # Build income section
+    inc_totals = defaultdict(float)
+    inc_rows = []
+
+    rev_row = {'label': 'Общая выручка', 'values': {}, 'total': 0.0, 'sub': False}
+    for p in periods:
+        v = rev_by_period.get(p, {}).get('total_revenue', 0)
+        rev_row['values'][p] = v
+        rev_row['total'] += v
+        inc_totals[p] += v
+    inc_rows.append(rev_row)
+
+    if cfg['revenue_mode'] == 'breakdown':
+        for key, label in [('delivery_revenue', 'Доставка'), ('pickup_revenue', 'Самовывоз')]:
+            sub = {'label': label, 'values': {}, 'total': 0.0, 'sub': True}
+            for p in periods:
+                v = rev_by_period.get(p, {}).get(key, 0)
+                sub['values'][p] = v
+                sub['total'] += v
+            inc_rows.append(sub)
+
+    inc_grand = sum(inc_totals[p] for p in periods)
+
+    # Build expense section
+    exp_totals = defaultdict(float)
+    exp_rows_built = []
+
+    for cat_code in sel_cats:
+        cat_row = {'label': cat_map.get(cat_code, cat_code), 'values': {}, 'total': 0.0, 'sub': False}
+        for p in periods:
+            v = exp_by[cat_code].get(p, 0)
+            cat_row['values'][p] = v
+            cat_row['total'] += v
+            exp_totals[p] += v
+        exp_rows_built.append(cat_row)
+
+    if cfg['include_salary']:
+        sal_row = {'label': 'ФОТ (зарплаты)', 'values': {}, 'total': 0.0, 'sub': False}
+        for p in periods:
+            v = sal_by_period.get(p, 0)
+            sal_row['values'][p] = v
+            sal_row['total'] += v
+            exp_totals[p] += v
+        exp_rows_built.append(sal_row)
+
+    if cfg['include_purchases']:
+        pur_row = {'label': 'Закупки', 'values': {}, 'total': 0.0, 'sub': False}
+        for p in periods:
+            v = pur_by_period.get(p, 0)
+            pur_row['values'][p] = v
+            pur_row['total'] += v
+            exp_totals[p] += v
+        exp_rows_built.append(pur_row)
+
+    exp_grand = sum(exp_totals[p] for p in periods)
+
+    # Profit
+    profit_by_period = {p: inc_totals[p] - exp_totals[p] for p in periods}
+    profit_grand = inc_grand - exp_grand
+
+    period_labels = {p: _pnl_period_label(p) for p in periods}
+
+    return render_template('pnl.html',
+        periods=periods, period_labels=period_labels,
+        inc_rows=inc_rows, inc_totals=dict(inc_totals), inc_grand=inc_grand,
+        exp_rows=exp_rows_built, exp_totals=dict(exp_totals), exp_grand=exp_grand,
+        profit_by_period=profit_by_period, profit_grand=profit_grand,
+        cfg=cfg,
+        branches=branches, branch_groups=branch_groups,
+        all_cats=all_cats, cat_map=cat_map,
+        date_from=date_from, date_to=date_to,
+        branch_ids=branch_ids, group_by=group_by,
+    )
+
+
+@app.route('/report/pnl/settings', methods=['POST'])
+@login_required
+@owner_required
+def pnl_settings_save():
+    expense_cats      = request.form.getlist('expense_cats')
+    include_salary    = '1' if request.form.get('include_salary') else '0'
+    include_purchases = '1' if request.form.get('include_purchases') else '0'
+    revenue_mode      = request.form.get('revenue_mode', 'total')
+
+    with get_db() as conn:
+        for key, val in [
+            ('expense_cats',      _json.dumps(expense_cats)),
+            ('include_salary',    include_salary),
+            ('include_purchases', include_purchases),
+            ('revenue_mode',      revenue_mode),
+        ]:
+            conn.execute(
+                'INSERT OR REPLACE INTO pnl_settings (key, value) VALUES (?, ?)',
+                (key, val)
+            )
+        conn.commit()
+
+    flash('Настройки P&L сохранены', 'success')
+    params = {k: request.form.get(k) for k in ('date_from', 'date_to', 'group_by') if request.form.get(k)}
+    for bid in request.form.getlist('branch_ids'):
+        params.setdefault('branch_ids', [])
+        if isinstance(params['branch_ids'], list):
+            params['branch_ids'].append(bid)
+    return redirect(url_for('pnl_report', **params))
 
 
 # ─── HISTORY ──────────────────────────────────────────────────────────────────
