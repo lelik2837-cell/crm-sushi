@@ -4140,21 +4140,18 @@ def pnl_report():
         if cfg['bank_income_ctr_cats'] is not None:
             if cfg['bank_income_ctr_cats']:
                 ph_c = ','.join('?' * len(cfg['bank_income_ctr_cats']))
-                _bi_filter = f"AND COALESCE(cc.name, c.category, bt.category, '') IN ({ph_c})"
+                _bi_filter = f"AND bt.category IN ({ph_c})"
                 _bi_args   = cfg['bank_income_ctr_cats']
             else:
                 _bi_filter = 'AND 0=1'  # пустой список = ничего
         for r in conn.execute(f"""
             SELECT {pe_bt} AS period,
-                   COALESCE(cc.name, c.category, bt.category) AS cat_name,
-                   COALESCE(SUM(bt.amount), 0) AS amount
+                   bt.category AS cat_name,
+                   SUM(bt.amount) AS amount
             FROM bank_transactions bt
-            LEFT JOIN contractors c ON c.id = bt.contractor_id
-            LEFT JOIN contractor_categories cc
-                   ON LOWER(TRIM(cc.name)) = LOWER(TRIM(COALESCE(c.category, '')))
             WHERE bt.txn_date BETWEEN ? AND ?
               AND bt.amount > 0 AND bt.is_ignored=0
-              AND COALESCE(cc.name, c.category, bt.category, '') != ''
+              AND bt.category IS NOT NULL AND bt.category != ''
               {_bi_filter} {bf_bt}
             GROUP BY period, cat_name
             HAVING amount > 0
@@ -4182,21 +4179,18 @@ def pnl_report():
         if cfg['bank_expense_ctr_cats'] is not None:
             if cfg['bank_expense_ctr_cats']:
                 ph_c = ','.join('?' * len(cfg['bank_expense_ctr_cats']))
-                _be_filter = f"AND COALESCE(cc.name, c.category, bt.category, '') IN ({ph_c})"
+                _be_filter = f"AND bt.category IN ({ph_c})"
                 _be_args   = cfg['bank_expense_ctr_cats']
             else:
                 _be_filter = 'AND 0=1'
         for r in conn.execute(f"""
             SELECT {pe_bt} AS period,
-                   COALESCE(cc.name, c.category, bt.category) AS cat_name,
-                   COALESCE(SUM(-bt.amount), 0) AS amount
+                   bt.category AS cat_name,
+                   SUM(-bt.amount) AS amount
             FROM bank_transactions bt
-            LEFT JOIN contractors c ON c.id = bt.contractor_id
-            LEFT JOIN contractor_categories cc
-                   ON LOWER(TRIM(cc.name)) = LOWER(TRIM(COALESCE(c.category, '')))
             WHERE bt.txn_date BETWEEN ? AND ?
               AND bt.amount < 0 AND bt.is_ignored=0
-              AND COALESCE(cc.name, c.category, bt.category, '') != ''
+              AND bt.category IS NOT NULL AND bt.category != ''
               {_be_filter} {bf_bt}
             GROUP BY period, cat_name
             HAVING amount > 0
