@@ -1737,8 +1737,6 @@ def _export_shift_to_gsheet(shift_id):
         sh    = gc.open_by_key(sheet_id)
 
         with get_db() as conn:
-            cfg = _gsheet_load_settings(conn)
-
             shift = conn.execute('''
                 SELECT s.*, b.name AS branch_name
                 FROM shifts s JOIN branches b ON b.id = s.branch_id
@@ -1747,9 +1745,13 @@ def _export_shift_to_gsheet(shift_id):
             if not shift:
                 return
 
-            rev = conn.execute(
+            rev = dict(conn.execute(
                 'SELECT * FROM shift_revenue WHERE shift_id=?', (shift_id,)
-            ).fetchone()
+            ).fetchone() or {})
+
+            all_exp_cats = conn.execute(
+                'SELECT code, label FROM expense_categories ORDER BY sort_order, label'
+            ).fetchall()
 
             exp_totals = conn.execute('''
                 SELECT COALESCE(SUM(amount_cash),0) AS cash_total,
@@ -1757,78 +1759,179 @@ def _export_shift_to_gsheet(shift_id):
                 FROM expenses WHERE shift_id=?
             ''', (shift_id,)).fetchone()
 
-            exp_cats = conn.execute('''
-                SELECT COALESCE(ec.label, e.category, '?') AS cat,
+            exp_by_cat_rows = conn.execute('''
+                SELECT e.category,
                        COALESCE(SUM(e.amount_cash),0) AS cash_amt,
                        COALESCE(SUM(e.amount_card),0) AS card_amt
+                FROM expenses e WHERE e.shift_id=?
+                GROUP BY e.category
+            ''', (shift_id,)).fetchall()
+            exp_by_cat = {r['category']: {'cash': r['cash_amt'] or 0, 'card': r['card_amt'] or 0}
+                          for r in exp_by_cat_rows}
+
+            exp_items = conn.execute('''
+                SELECT COALESCE(ec.label, e.category, '?') AS cat_label,
+                       e.description, e.amount_cash, e.amount_card
                 FROM expenses e
                 LEFT JOIN expense_categories ec ON ec.code = e.category
                 WHERE e.shift_id=?
-                GROUP BY e.category ORDER BY ec.sort_order, e.category
+                ORDER BY ec.sort_order, e.category, e.id
             ''', (shift_id,)).fetchall()
 
-            sal_total = conn.execute('''
-                SELECT COALESCE(SUM(total_amount),0) AS total
+            staff = conn.execute('''
+                SELECT full_name_snapshot, role_snapshot,
+                       shift_start, shift_end, hours_worked, km, orders,
+                       rate_snapshot, base_pay, bonus_amount, penalty_amount,
+                       auto_bonus, total_amount, is_paid, paid_amount, bonus_comment
                 FROM employee_shifts WHERE shift_id=?
-            ''', (shift_id,)).fetchone()
-
-            sal_roles = conn.execute('''
-                SELECT COALESCE(role_snapshot,'other') AS role,
-                       COALESCE(SUM(total_amount),0) AS total
-                FROM employee_shifts WHERE shift_id=?
-                GROUP BY role_snapshot
+                ORDER BY role_snapshot, full_name_snapshot
             ''', (shift_id,)).fetchall()
 
-        total_rev  = (rev['total_revenue'] if rev else 0) or 0
-        cash_rev   = (rev['cash_amount']   if rev else 0) or 0
-        card_rev   = round(total_rev - cash_rev, 2)
-        actual_cash= (rev['actual_cash']   if rev else None)
-        exp_cash   = round((exp_totals['cash_total'] if exp_totals else 0) or 0, 2)
-        exp_card   = round((exp_totals['card_total'] if exp_totals else 0) or 0, 2)
-        salary     = round((sal_total['total'] if sal_total else 0) or 0, 2)
-        profit     = round(total_rev - exp_cash - exp_card - salary, 2)
+            taxi_trips = conn.execute(
+                'SELECT * FROM taxi_trips WHERE shift_id=? ORDER BY id', (shift_id,)
+            ).fetchall()
+            taxi_emps = {}
+            for t in taxi_trips:
+                taxi_emps[t['id']] = conn.execute(
+                    'SELECT name_snapshot, address_snapshot FROM taxi_trip_employees WHERE trip_id=? ORDER BY id',
+                    (t['id'],)
+                ).fetchall()
+
+            terminals = conn.execute(
+                'SELECT terminal_number, amount FROM shift_terminals WHERE shift_id=? ORDER BY sort_order, id',
+                (shift_id,)
+            ).fetchall()
+
+        def _rv(col, default=0):
+            v = rev.get(col, default)
+            return v if v is not None else default
+
+        total_rev      = _rv('total_revenue')
+        cash_rev       = _rv('cash_amount')
+        card_rev       = _rv('card_amount')
+        online_rev     = _rv('online_amount')
+        change_amt     = _rv('change_amount')
+        morning_cash   = _rv('morning_cash', 0)
+        actual_cash    = _rv('actual_cash', '')
+        actual_cash_cmt= _rv('actual_cash_comment', '')
+        delivery_rev   = _rv('delivery_revenue')
+        delivery_orders= int(_rv('delivery_orders'))
+        pickup_rev     = _rv('pickup_revenue')
+        pickup_orders  = int(_rv('pickup_orders'))
+        exp_cash       = round((exp_totals['cash_total'] or 0) if exp_totals else 0, 2)
+        exp_card       = round((exp_totals['card_total'] or 0) if exp_totals else 0, 2)
+        salary         = round(sum((s['total_amount'] or 0) for s in staff), 2)
+        taxi_total     = round(sum((t['amount'] or 0) for t in taxi_trips), 2)
+        profit         = round(total_rev - exp_cash - exp_card - salary, 2)
 
         role_labels_map = {
             'admin': 'Администратор', 'cook': 'Повар', 'sushi': 'Сушист',
             'courier': 'Курьер', 'packer': 'Упаковщик', 'cleaner': 'Уборщица',
         }
+        all_roles = ['admin', 'cook', 'sushi', 'courier', 'packer', 'cleaner']
+        sal_by_role = {}
+        for s in staff:
+            role = s['role_snapshot'] or 'other'
+            sal_by_role[role] = sal_by_role.get(role, 0) + (s['total_amount'] or 0)
 
-        # Собираем заголовки и значения по настройкам
-        header = []
-        row    = []
+        # ─── Build header ──────────────────────────────────────────────────
+        header = [
+            'Дата', 'Филиал',
+            'Выручка итого',
+            'Доставка сумма', 'Доставка заказов',
+            'Самовывоз сумма', 'Самовывоз заказов',
+            'Наличные приход', 'Безнал приход', 'Онлайн приход',
+            'Размен', 'Утренняя касса',
+            'Факт в кассе', 'Комментарий к факту',
+            'Терминалы',
+            'Расходы нал итого', 'Расходы безнал итого',
+        ]
+        for ec in all_exp_cats:
+            header.append(f'{ec["label"]} (нал)')
+            header.append(f'{ec["label"]} (безнал)')
+        header += [
+            'Детали расходов',
+            'ФОТ итого',
+        ]
+        for role in all_roles:
+            header.append(f'ФОТ {role_labels_map[role]}')
+        header += [
+            'Такси итого',
+            'Сотрудники',
+            'Детали такси',
+            'Прибыль', 'Кто закрыл', 'Комментарий смены',
+        ]
 
-        def add(key, label, value):
-            if cfg.get(key):
-                header.append(label)
-                row.append(value)
+        # ─── Build row ─────────────────────────────────────────────────────
+        terminals_text = '; '.join(
+            f'{t["terminal_number"]}: {round(t["amount"] or 0, 2)}р' for t in terminals
+        )
 
-        add('date',           'Дата',              shift['date'])
-        add('branch',         'Филиал',             shift['branch_name'])
-        add('revenue_total',  'Выручка итого',      total_rev)
-        add('revenue_cash',   'Наличные приход',    cash_rev)
-        add('revenue_card',   'Безнал приход',      card_rev)
-        add('actual_cash',    'Факт в кассе',       actual_cash if actual_cash is not None else '')
+        exp_details = []
+        for ei in exp_items:
+            total_ei = (ei['amount_cash'] or 0) + (ei['amount_card'] or 0)
+            pay = 'нал' if (ei['amount_cash'] or 0) > 0 else 'безнал'
+            line = f'{ei["cat_label"]}: {round(total_ei, 2)}р ({pay})'
+            if ei['description']:
+                line += f' — {ei["description"]}'
+            exp_details.append(line)
 
-        add('exp_cash_total', 'Расходы нал итого',  exp_cash)
-        add('exp_card_total', 'Расходы карта итого',exp_card)
+        staff_lines = []
+        for s in staff:
+            role_lbl = role_labels_map.get(s['role_snapshot'], s['role_snapshot'] or '')
+            hours = s['hours_worked'] or 0
+            total = s['total_amount'] or 0
+            paid_mark = '✓' if s['is_paid'] else '—'
+            line = f'{s["full_name_snapshot"]} ({role_lbl}): {hours}ч → {round(total, 2)}р [{paid_mark}]'
+            if s['bonus_comment']:
+                line += f' ({s["bonus_comment"]})'
+            staff_lines.append(line)
 
-        if cfg.get('exp_by_cat'):
-            for ec in exp_cats:
-                lbl = ec['cat']
-                header.append(lbl)
-                row.append(round((ec['cash_amt'] or 0) + (ec['card_amt'] or 0), 2))
+        taxi_lines = []
+        for t in taxi_trips:
+            emps = taxi_emps.get(t['id'], [])
+            emp_names = ', '.join(e['name_snapshot'] for e in emps)
+            addrs = [e['address_snapshot'] for e in emps if e['address_snapshot']]
+            pay_type = 'нал' if (t['payment_type'] or 'cash') == 'cash' else 'безнал'
+            line = f'{round(t["amount"] or 0, 2)}р ({pay_type})'
+            if emp_names:
+                line += f': {emp_names}'
+            if addrs:
+                line += f' → {", ".join(addrs)}'
+            if t['note']:
+                line += f' [{t["note"]}]'
+            taxi_lines.append(line)
 
-        add('salary_total',   'ФОТ итого',          salary)
-
-        if cfg.get('salary_by_role'):
-            for sr in sal_roles:
-                lbl = role_labels_map.get(sr['role'], sr['role'])
-                header.append(f'ФОТ {lbl}')
-                row.append(round(sr['total'] or 0, 2))
-
-        add('profit',         'Прибыль',            profit)
-        add('closed_by',      'Кто закрыл',         shift['closed_by_name'] or '')
-        add('comment',        'Комментарий',        shift['comment'] or '')
+        row = [
+            shift['date'], shift['branch_name'],
+            round(total_rev, 2),
+            round(delivery_rev, 2), delivery_orders,
+            round(pickup_rev, 2), pickup_orders,
+            round(cash_rev, 2), round(card_rev, 2), round(online_rev, 2),
+            round(change_amt, 2), round(morning_cash, 2),
+            round(actual_cash, 2) if actual_cash != '' else '',
+            actual_cash_cmt,
+            terminals_text,
+            exp_cash, exp_card,
+        ]
+        for ec in all_exp_cats:
+            cat = exp_by_cat.get(ec['code'], {'cash': 0, 'card': 0})
+            row.append(round(cat['cash'], 2))
+            row.append(round(cat['card'], 2))
+        row += [
+            '\n'.join(exp_details),
+            salary,
+        ]
+        for role in all_roles:
+            row.append(round(sal_by_role.get(role, 0), 2))
+        row += [
+            taxi_total,
+            '\n'.join(staff_lines),
+            '\n'.join(taxi_lines),
+            profit,
+            shift['closed_by_name'] or '',
+            shift['comment'] or '',
+        ]
 
         year = (shift['date'] or '')[:4] or str(date.today().year)
         try:
@@ -1838,7 +1941,7 @@ def _export_shift_to_gsheet(shift_id):
             ws.append_row(header)
 
         ws.append_row(row, value_input_option='USER_ENTERED')
-        print(f'[GSheets] shift {shift_id} exported OK')
+        print(f'[GSheets] shift {shift_id} exported OK ({len(row)} columns)')
     except Exception as e:
         print(f'[GSheets] shift {shift_id} export error: {e}')
 
