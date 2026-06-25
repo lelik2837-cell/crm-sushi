@@ -4072,10 +4072,12 @@ def _pnl_load_settings(conn):
         "SELECT code FROM expense_categories WHERE is_active=1 AND parent_id IS NULL ORDER BY sort_order, label"
     ).fetchall()]
 
+    bi = _lst('bank_income_ctr_cats',  None)
+    be = _lst('bank_expense_ctr_cats', None)
     return {
-        'cash_expense_cats':     _lst('cash_expense_cats',     default_cash_exp),
-        'bank_income_ctr_cats':  _lst('bank_income_ctr_cats',  None),  # None = все
-        'bank_expense_ctr_cats': _lst('bank_expense_ctr_cats', None),  # None = все
+        'cash_expense_cats':     _lst('cash_expense_cats', default_cash_exp),
+        'bank_income_ctr_cats':  bi or None,   # пустой список [] → None (все)
+        'bank_expense_ctr_cats': be or None,   # пустой список [] → None (все)
         'include_salary':           int(cfg.get('include_salary', '1')),
         'include_salary_breakdown': int(cfg.get('include_salary_breakdown', '1')),
     }
