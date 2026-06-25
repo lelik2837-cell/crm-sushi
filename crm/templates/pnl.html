@@ -254,6 +254,7 @@
     с категорией вообще: <strong>{{ bt_debug.with_cat_all or 0 }}</strong> |
     за выбранный период: <strong>{{ bt_debug.total or 0 }}</strong>
     (с кат: {{ bt_debug.with_cat or 0 }}, доход: {{ bt_debug.income_rows or 0 }}, расход: {{ bt_debug.expense_rows or 0 }}) |
+    из них с кат+активные: расход <strong>{{ bt_debug.cat_exp_active or 0 }}</strong>, доход <strong>{{ bt_debug.cat_inc_active or 0 }}</strong>, проигнорированы <strong>{{ bt_debug.cat_ignored or 0 }}</strong> |
     примеры категорий в транзакциях: <strong>{{ bt_debug.sample_cats | join(', ') if bt_debug.sample_cats else 'нет' }}</strong> |
     категории контрагентов в справочнике: <strong>{{ bt_debug.ctr_cats | join(', ') if bt_debug.ctr_cats else 'нет' }}</strong>
 </div>

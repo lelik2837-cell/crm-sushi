@@ -4207,7 +4207,10 @@ def pnl_report():
             SELECT COUNT(*) AS total,
                    SUM(CASE WHEN category IS NOT NULL AND category!='' THEN 1 ELSE 0 END) AS with_cat,
                    SUM(CASE WHEN amount>0 AND is_ignored=0 THEN 1 ELSE 0 END) AS income_rows,
-                   SUM(CASE WHEN amount<0 AND is_ignored=0 THEN 1 ELSE 0 END) AS expense_rows
+                   SUM(CASE WHEN amount<0 AND is_ignored=0 THEN 1 ELSE 0 END) AS expense_rows,
+                   SUM(CASE WHEN category IS NOT NULL AND category!='' AND is_ignored=0 AND amount<0 THEN 1 ELSE 0 END) AS cat_exp_active,
+                   SUM(CASE WHEN category IS NOT NULL AND category!='' AND is_ignored=0 AND amount>0 THEN 1 ELSE 0 END) AS cat_inc_active,
+                   SUM(CASE WHEN category IS NOT NULL AND category!='' AND is_ignored=1 THEN 1 ELSE 0 END) AS cat_ignored
             FROM bank_transactions
             WHERE txn_date BETWEEN ? AND ?
         """, [date_from, date_to]).fetchone()
