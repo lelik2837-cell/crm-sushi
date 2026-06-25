@@ -348,6 +348,18 @@ def _detect_branch_card(conn, txn):
     return None
 
 
+# Слова которые нельзя использовать как ключевые — слишком общие, дают ложные совпадения
+_KW_BLACKLIST = {
+    'ооо', 'оао', 'пао', 'зао', 'ао', 'ип', 'ичп', 'гуп', 'муп', 'фгуп', 'фгбу',
+    'нко', 'ано', 'нао', 'кфх', 'тсж', 'снт', 'пк', 'пот', 'оп',
+    'llc', 'ltd', 'inc', 'corp', 'gmbh', 'ag',
+}
+
+def _filter_keywords(kw_list):
+    """Убирает из списка ключевых слов общие юридические формы."""
+    return [k for k in kw_list if k.lower() not in _KW_BLACKLIST and len(k) > 2]
+
+
 def _match_contractors(conn, txns):
     contractors = conn.execute('SELECT id, name, category, keywords, inn FROM contractors WHERE is_active=1').fetchall()
 
@@ -368,6 +380,7 @@ def _match_contractors(conn, txns):
         # Матчим только по counterparty, description — назначение платежа, не имя контрагента
         cp_text     = (txn.get('counterparty') or '').lower().strip()
         branch_card = txn.pop('_branch_card', None)  # сохраняем и убираем из dict
+        is_card     = txn.pop('is_card', False)       # флаг карточной покупки из API
 
         # 1. Матч по ИНН (наивысший приоритет)
         if inn:
@@ -385,8 +398,8 @@ def _match_contractors(conn, txns):
             raw_kw = (c['keywords'] or '').strip()
             name_lc = (c['name'] or '').lower()
             if raw_kw:
-                # Ключевые слова заданы вручную — разбиваем по запятой
-                kws = [k.strip().lower() for k in raw_kw.split(',') if k.strip()]
+                # Ключевые слова заданы вручную — разбиваем по запятой, фильтруем общие слова
+                kws = _filter_keywords([k.strip().lower() for k in raw_kw.split(',') if k.strip()])
             else:
                 # Ключевых слов нет — используем имя целиком как одну фразу
                 kws = [name_lc] if name_lc else []
@@ -403,8 +416,8 @@ def _match_contractors(conn, txns):
                 _refresh()
             continue
 
-        # 3. Расход по карте филиала — контрагента не создаём
-        if branch_card:
+        # 3. Карточная покупка или расход по карте филиала — контрагента не создаём
+        if branch_card or is_card:
             continue
 
         # 4. Новый контрагент: ищем по ИНН или имени, иначе создаём
@@ -4829,7 +4842,8 @@ def bank_ctr_cat_delete(cat_id):
 def bank_contractor_add():
     name = request.form.get('name', '').strip()
     category = request.form.get('category', '').strip()
-    keywords = request.form.get('keywords', '').strip()
+    raw_kw = request.form.get('keywords', '').strip()
+    keywords = ', '.join(_filter_keywords([k.strip() for k in raw_kw.split(',') if k.strip()])) if raw_kw else ''
     inn = re.sub(r'\D', '', request.form.get('inn', '').strip())
     next_url = request.form.get('next', '').strip()
     if not name:
@@ -4851,7 +4865,8 @@ def bank_contractor_add():
 def bank_contractor_edit(ctr_id):
     name = request.form.get('name', '').strip()
     category = request.form.get('category', '').strip()
-    keywords = request.form.get('keywords', '').strip()
+    raw_kw = request.form.get('keywords', '').strip()
+    keywords = ', '.join(_filter_keywords([k.strip() for k in raw_kw.split(',') if k.strip()])) if raw_kw else ''
     inn = re.sub(r'\D', '', request.form.get('inn', '').strip())
     with get_db() as conn:
         conn.execute(

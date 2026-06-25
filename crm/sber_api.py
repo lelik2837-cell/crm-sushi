@@ -311,5 +311,6 @@ def parse_transactions(data):
             'description':  desc,
             'counterparty': counterparty,
             'inn':          inn,
+            'is_card':      is_card,
         })
     return result

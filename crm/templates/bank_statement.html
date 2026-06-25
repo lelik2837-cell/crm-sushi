@@ -173,7 +173,8 @@
               {% if t.is_ignored %}txn-ignored table-secondary text-muted{% endif %}"
               data-id="{{ t.id }}"
               data-optype="{{ t.op_type }}"
-              data-category="{{ t.category or '' }}">
+              data-category="{{ t.category or '' }}"
+              data-contractor="{{ t.contractor_id or '' }}">
               <td class="text-nowrap">{{ t.txn_date }}</td>
               <td class="text-end fw-semibold text-nowrap
                 {% if t.is_ignored %}text-muted{% elif t.amount > 0 %}text-success{% else %}text-danger{% endif %}">
@@ -184,26 +185,8 @@
               <td>
                 {% if t.op_type == 'card' and t.terminal_branch %}
                   <span class="small text-muted">Карта {{ t.op_card4 }} ({{ t.terminal_branch }})</span>
-                {% elif t.op_type == 'contractor' %}
-                <div class="d-flex gap-1 align-items-center flex-wrap">
-                  {% if t.contractor_name %}
-                  <span class="small fw-medium me-1">{{ t.contractor_name }}</span>
-                  {% endif %}
-                  <select class="form-select form-select-sm txn-contractor" style="min-width:120px" data-id="{{ t.id }}">
-                    <option value="">—</option>
-                    {% for c in contractors %}
-                    <option value="{{ c.id }}" {% if c.id == t.contractor_id %}selected{% endif %}>{{ c.name }}</option>
-                    {% endfor %}
-                  </select>
-                  <button type="button" class="btn btn-sm btn-outline-secondary flex-shrink-0 py-0 px-1 add-ctr-btn"
-                          title="Создать контрагента"
-                          data-cp="{{ t.counterparty or '' }}"
-                          data-bs-toggle="modal" data-bs-target="#quickAddContractorModal">
-                    <i class="bi bi-plus"></i>
-                  </button>
-                </div>
                 {% elif t.contractor_name %}
-                  <span class="small text-muted">{{ t.contractor_name }}</span>
+                  <span class="small fw-medium">{{ t.contractor_name }}</span>
                 {% else %}—{% endif %}
               </td>
               <td>
@@ -344,21 +327,11 @@ function saveRow(id, data) {
   });
 }
 
-document.querySelectorAll('.txn-contractor').forEach(sel => {
-  sel.addEventListener('change', function() {
-    const id = this.dataset.id;
-    const row = document.querySelector(`.txn-row[data-id="${id}"]`);
-    const cat = row.querySelector('.txn-category').value;
-    const ign = row.querySelector('.txn-ignore').checked ? '1' : '';
-    saveRow(id, {contractor_id: this.value, category: cat, is_ignored: ign});
-  });
-});
-
 document.querySelectorAll('.txn-category').forEach(sel => {
   sel.addEventListener('change', function() {
     const id = this.dataset.id;
     const row = document.querySelector(`.txn-row[data-id="${id}"]`);
-    const ctr = row.querySelector('.txn-contractor')?.value || '';
+    const ctr = row.dataset.contractor || '';
     const ign = row.querySelector('.txn-ignore').checked ? '1' : '';
     row.dataset.category = this.value;
     saveRow(id, {contractor_id: ctr, category: this.value, is_ignored: ign});
@@ -369,7 +342,7 @@ document.querySelectorAll('.txn-ignore').forEach(chk => {
   chk.addEventListener('change', function() {
     const id = this.dataset.id;
     const row = document.querySelector(`.txn-row[data-id="${id}"]`);
-    const ctr = row.querySelector('.txn-contractor')?.value || '';
+    const ctr = row.dataset.contractor || '';
     const cat = row.querySelector('.txn-category').value;
     const ign = this.checked ? '1' : '';
     saveRow(id, {contractor_id: ctr, category: cat, is_ignored: ign});
@@ -380,53 +353,6 @@ document.querySelectorAll('.txn-ignore').forEach(chk => {
     }
   });
 });
-
-// Предзаполнение модала быстрого добавления контрагента
-document.querySelectorAll('.add-ctr-btn').forEach(btn => {
-  btn.addEventListener('click', function() {
-    const cp = this.dataset.cp || '';
-    document.getElementById('quickCtrName').value = cp;
-    document.getElementById('quickCtrKeywords').value = cp;
-  });
-});
 </script>
 
-<!-- Модал быстрого добавления контрагента -->
-<div class="modal fade" id="quickAddContractorModal" tabindex="-1">
-  <div class="modal-dialog">
-    <form method="POST" action="{{ url_for('bank_contractor_add') }}">
-      <input type="hidden" name="next" value="{{ request.url }}">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h5 class="modal-title"><i class="bi bi-person-plus me-2"></i>Новый контрагент</h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-        </div>
-        <div class="modal-body">
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Название <span class="text-danger">*</span></label>
-            <input type="text" id="quickCtrName" name="name" class="form-control" required>
-          </div>
-          <div class="mb-3">
-            <label class="form-label fw-semibold">Категория</label>
-            <select name="category" class="form-select">
-              <option value="">— не выбрана —</option>
-              {% for cat in ctr_cats %}
-              <option value="{{ cat.name }}">{{ cat.name }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="mb-0">
-            <label class="form-label fw-semibold">Ключевые слова</label>
-            <input type="text" id="quickCtrKeywords" name="keywords" class="form-control">
-            <div class="form-text">Слова из описания выписки (через запятую). По ним контрагент будет распознаваться автоматически.</div>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-          <button type="submit" class="btn btn-primary">Добавить</button>
-        </div>
-      </div>
-    </form>
-  </div>
-</div>
 {% endblock %}
