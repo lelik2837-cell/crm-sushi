@@ -62,9 +62,12 @@
                 <td>
                     <input type="hidden" name="ctr_name" value="{{ c.name }}">
                     <input type="hidden" name="ctr_keywords" value="{{ c.keywords }}">
+                    <input type="hidden" name="ctr_id" value="{{ c.ctr_id or '' }}">
                     <span class="small fw-medium">{{ c.name }}</span>
                     {% if c.is_new %}
                     <span class="badge bg-warning text-dark ms-1" style="font-size:0.65rem">новый</span>
+                    {% elif c.matched_name %}
+                    <div class="text-muted" style="font-size:0.7rem">→ {{ c.matched_name }}</div>
                     {% endif %}
                 </td>
                 <td>
@@ -80,7 +83,7 @@
                 </td>
                 <td class="text-end text-muted small">{{ c.cnt }}</td>
                 <td class="text-end small fw-semibold {% if c.total < 0 %}text-danger{% else %}text-success{% endif %}">
-                    {{ "{:,.0f}".format(c.total).replace(',', ' ') }} ₽
+                    {{ c.total|money }} ₽
                 </td>
             </tr>
             {% endfor %}

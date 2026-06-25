@@ -357,7 +357,7 @@
     <div class="card-header d-flex justify-content-between align-items-center">
       <span><i class="bi bi-arrow-up-circle me-2"></i>Расходы по контрагентам</span>
       {% if expense_total %}
-      <span class="fw-bold text-danger">Итого: {{ '%.0f'|format(expense_total) }} ₽</span>
+      <span class="fw-bold text-danger">Итого: {{ expense_total|money }} ₽</span>
       {% endif %}
     </div>
     <div class="card-body p-0">
@@ -383,14 +383,14 @@
               <td>{{ r.name }}</td>
               <td>{{ r.cat_label or r.category or '—' }}</td>
               <td>{{ r.cnt }}</td>
-              <td class="text-end fw-semibold text-danger">{{ '%.0f'|format(r.total) }} ₽</td>
+              <td class="text-end fw-semibold text-danger">{{ r.total|money }} ₽</td>
             </tr>
             {% endfor %}
           </tbody>
           <tfoot class="table-light">
             <tr>
               <td colspan="3" class="fw-bold">Итого</td>
-              <td class="text-end fw-bold text-danger">{{ '%.0f'|format(expense_total) }} ₽</td>
+              <td class="text-end fw-bold text-danger">{{ expense_total|money }} ₽</td>
             </tr>
           </tfoot>
         </table>
@@ -422,7 +422,7 @@
       <div class="card metric-card">
         <div class="card-body">
           <div class="text-muted small">Расходы по банку</div>
-          <div class="fs-4 fw-bold text-danger">{{ '%.0f'|format(compare_bank) }} ₽</div>
+          <div class="fs-4 fw-bold text-danger">{{ compare_bank|money }} ₽</div>
         </div>
       </div>
     </div>
@@ -430,7 +430,7 @@
       <div class="card metric-card" style="border-left-color:#0d6efd">
         <div class="card-body">
           <div class="text-muted small">Расходы в CRM</div>
-          <div class="fs-4 fw-bold text-primary">{{ '%.0f'|format(compare_crm) }} ₽</div>
+          <div class="fs-4 fw-bold text-primary">{{ compare_crm|money }} ₽</div>
         </div>
       </div>
     </div>
@@ -439,7 +439,7 @@
         <div class="card-body">
           <div class="text-muted small">Расхождение</div>
           <div class="fs-4 fw-bold {% if (compare_bank - compare_crm)|abs < 1 %}text-success{% else %}text-warning{% endif %}">
-            {{ '%.0f'|format(compare_bank - compare_crm) }} ₽
+            {{ (compare_bank - compare_crm)|money }} ₽
           </div>
         </div>
       </div>
@@ -473,9 +473,9 @@
               <td>{{ r.dt }}</td>
               <td>{{ r.counterparty }}</td>
               <td>{{ r.bank_cat_label or r.bank_cat or '—' }}</td>
-              <td class="text-end text-danger fw-semibold">{{ '%.0f'|format(r.bank_amount) }} ₽</td>
+              <td class="text-end text-danger fw-semibold">{{ r.bank_amount|money }} ₽</td>
               <td class="text-end {% if r.crm_amount %}text-success fw-semibold{% else %}text-muted{% endif %}">
-                {% if r.crm_amount %}{{ '%.0f'|format(r.crm_amount) }} ₽{% else %}—{% endif %}
+                {% if r.crm_amount %}{{ r.crm_amount|money }} ₽{% else %}—{% endif %}
               </td>
               <td class="text-muted small">{{ r.crm_desc or '' }}</td>
             </tr>

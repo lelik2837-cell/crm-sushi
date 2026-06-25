@@ -327,6 +327,24 @@ def _parse_bank_csv(raw_bytes):
     return result
 
 
+def _detect_branch_card(conn, txn):
+    """Если транзакция — расход по карте филиала, возвращает (card4, branch_name), иначе None."""
+    desc = (txn.get('description') or '') + ' ' + (txn.get('counterparty') or '')
+    if 'PURCHASE' not in desc.upper():
+        return None
+    card_sequences = re.findall(r'[A-Za-z0-9]{10,24}', desc)
+    cards = conn.execute(
+        'SELECT bc.card_number, b.name as branch_name '
+        'FROM branch_cards bc JOIN branches b ON b.id=bc.branch_id WHERE bc.is_active=1'
+    ).fetchall()
+    for card in cards:
+        num = card['card_number'].replace(' ', '')
+        if any(seq.endswith(num) or (len(num) >= 8 and num in seq) for seq in card_sequences):
+            card4 = num[-4:] if len(num) >= 4 else num
+            return (card4, card['branch_name'])
+    return None
+
+
 def _match_contractors(conn, txns):
     contractors = conn.execute('SELECT id, name, category, keywords FROM contractors WHERE is_active=1').fetchall()
     for txn in txns:
@@ -338,9 +356,18 @@ def _match_contractors(conn, txns):
                 txn['category'] = txn.get('category') or c['category']
                 break
 
-        # Если контрагент не найден — создаём нового из поля counterparty
         if not txn.get('contractor_id'):
-            cp = (txn.get('counterparty') or '').strip()
+            branch_card = txn.pop('_branch_card', None)
+
+            if branch_card:
+                # Расход по карте филиала → имя контрагента: "Карта XXXX (Название)"
+                card4, branch_name = branch_card
+                cp = f"Карта {card4} ({branch_name})"
+                is_card = 1
+            else:
+                cp = (txn.get('counterparty') or '').strip()
+                is_card = 0
+
             if cp:
                 existing = conn.execute(
                     'SELECT id FROM contractors WHERE LOWER(name)=LOWER(?)', (cp,)
@@ -348,17 +375,17 @@ def _match_contractors(conn, txns):
                 if existing:
                     cid = existing['id']
                 else:
-                    is_card = 1 if 'PURCHASE' in ((txn.get('description') or '') + ' ' + cp).upper() else 0
                     conn.execute(
                         'INSERT INTO contractors (name, keywords, is_card_merchant) VALUES (?,?,?)',
                         (cp, cp, is_card)
                     )
                     cid = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
-                    # Обновляем локальный список чтобы следующие транзакции с тем же контрагентом не дублировали запись
                     contractors = conn.execute(
                         'SELECT id, name, category, keywords FROM contractors WHERE is_active=1'
                     ).fetchall()
                 txn['contractor_id'] = cid
+        else:
+            txn.pop('_branch_card', None)
     return txns
 
 
@@ -4418,6 +4445,11 @@ def bank_upload():
         flash('Не найдено ни одной транзакции', 'warning')
         return redirect(url_for('bank'))
     with get_db() as conn:
+        # Сначала помечаем расходы по картам филиалов
+        for t in txns:
+            bc = _detect_branch_card(conn, t)
+            if bc:
+                t['_branch_card'] = bc
         _match_contractors(conn, txns)
         dates = [t['date'] for t in txns]
         stmt_id = conn.execute(
@@ -4454,32 +4486,50 @@ def bank_classify(stmt_id):
             ctr_names    = request.form.getlist('ctr_name')
             ctr_cats     = request.form.getlist('ctr_category')
             ctr_keywords = request.form.getlist('ctr_keywords')
+            ctr_ids      = request.form.getlist('ctr_id')
             tid_numbers  = request.form.getlist('tid_number')
             tid_branches = request.form.getlist('tid_branch')
             tid_names    = request.form.getlist('tid_name')
 
-            for name, cat, kw in zip(ctr_names, ctr_cats, ctr_keywords):
+            for name, cat, kw, ctr_id_str in zip(ctr_names, ctr_cats, ctr_keywords, ctr_ids):
                 name = (name or '').strip()
                 cat  = (cat or '').strip()
                 if not name or not cat:
                     continue
                 kw = (kw or name).strip() or name
-                existing = conn.execute(
-                    'SELECT id FROM contractors WHERE LOWER(name)=LOWER(?)', (name,)
-                ).fetchone()
-                if existing:
+                pre_id = int(ctr_id_str) if ctr_id_str and ctr_id_str.isdigit() else None
+
+                if pre_id:
+                    # Contractor already matched — update its category
                     conn.execute('UPDATE contractors SET category=?, keywords=? WHERE id=?',
-                                 (cat, kw, existing['id']))
-                    ctr_id = existing['id']
+                                 (cat, kw, pre_id))
+                    # Update all transactions for this contractor in the statement
+                    conn.execute('''
+                        UPDATE bank_transactions SET category=?
+                        WHERE statement_id=? AND contractor_id=?
+                    ''', (cat, stmt_id, pre_id))
+                    # Also link any remaining unlinked rows by counterparty text
+                    conn.execute('''
+                        UPDATE bank_transactions SET contractor_id=?, category=?
+                        WHERE statement_id=? AND LOWER(TRIM(counterparty))=LOWER(?) AND contractor_id IS NULL
+                    ''', (pre_id, cat, stmt_id, name))
                 else:
-                    ctr_id = conn.execute(
-                        'INSERT INTO contractors (name, category, keywords) VALUES (?,?,?)',
-                        (name, cat, kw)
-                    ).lastrowid
-                conn.execute('''
-                    UPDATE bank_transactions SET contractor_id=?, category=?
-                    WHERE statement_id=? AND LOWER(TRIM(counterparty))=LOWER(?)
-                ''', (ctr_id, cat, stmt_id, name))
+                    existing = conn.execute(
+                        'SELECT id FROM contractors WHERE LOWER(name)=LOWER(?)', (name,)
+                    ).fetchone()
+                    if existing:
+                        conn.execute('UPDATE contractors SET category=?, keywords=? WHERE id=?',
+                                     (cat, kw, existing['id']))
+                        pre_id = existing['id']
+                    else:
+                        pre_id = conn.execute(
+                            'INSERT INTO contractors (name, category, keywords) VALUES (?,?,?)',
+                            (name, cat, kw)
+                        ).lastrowid
+                    conn.execute('''
+                        UPDATE bank_transactions SET contractor_id=?, category=?
+                        WHERE statement_id=? AND LOWER(TRIM(counterparty))=LOWER(?)
+                    ''', (pre_id, cat, stmt_id, name))
 
             for tid, branch_str, tname in zip(tid_numbers, tid_branches, tid_names):
                 tid = (tid or '').strip()
@@ -4522,20 +4572,28 @@ def bank_classify(stmt_id):
             ORDER BY SUM(amount)
         ''', (stmt_id,)).fetchall()
 
-        existing_ctrs = {c['name'].lower(): c for c in
-                         conn.execute('SELECT name, category, keywords FROM contractors').fetchall()}
+        all_ctrs = conn.execute('SELECT id, name, category, keywords FROM contractors').fetchall()
+        existing_ctrs_by_name = {c['name'].lower(): c for c in all_ctrs}
+        existing_ctrs_by_id   = {c['id']: c for c in all_ctrs}
 
         counterparties = []
         for row in ctr_rows:
-            name = row['name']
-            ex   = existing_ctrs.get(name.lower())
+            name   = row['name']
+            ctr_id = row['contractor_id']
+            # Prefer lookup by ID (handles keyword-matched contractors with different name)
+            ex = existing_ctrs_by_id.get(ctr_id) if ctr_id else None
+            if ex is None:
+                ex = existing_ctrs_by_name.get(name.lower())
+            matched_name = ex['name'] if ex and ex['name'].lower() != name.lower() else None
             counterparties.append({
-                'name':        name,
-                'cnt':         row['cnt'],
-                'total':       row['total'],
-                'is_new':      ex is None,
-                'current_cat': (ex['category'] if ex else row['category']) or '',
-                'keywords':    (ex['keywords'] if ex else name) or name,
+                'name':         name,
+                'cnt':          row['cnt'],
+                'total':        row['total'],
+                'ctr_id':       ex['id'] if ex else None,
+                'is_new':       ex is None,
+                'current_cat':  (ex['category'] if ex else row['category']) or '',
+                'keywords':     (ex['keywords'] if ex else name) or name,
+                'matched_name': matched_name,
             })
 
         # Detect TIDs in descriptions
