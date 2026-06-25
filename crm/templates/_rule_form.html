@@ -40,6 +40,16 @@
     Пример: <code>К\.(\d+[\.,]\d+)</code> найдёт <strong>257.52</strong> из текста <em>К.257.52</em>
   </div>
 </div>
+<div class="mb-3">
+  <label class="form-label fw-semibold">Категория</label>
+  <select name="category" class="form-select">
+    <option value="">— не задана —</option>
+    {% for cat in ctr_cats %}
+    <option value="{{ cat.name }}">{{ cat.name }}</option>
+    {% endfor %}
+  </select>
+  <div class="form-text">Если задана — подставляется в выписке для совпавших транзакций без категории</div>
+</div>
 <div class="mb-0">
   <label class="form-label fw-semibold">Порядок сортировки</label>
   <input type="number" name="sort_order" class="form-control" value="0" style="max-width:100px">

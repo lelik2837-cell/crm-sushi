@@ -194,15 +194,18 @@
                 {% else %}—{% endif %}
               </td>
               <td>
+                {% set effective_cat = t.category or t.parse_rule_category %}
                 <select class="form-select form-select-sm txn-category" style="min-width:120px" data-id="{{ t.id }}">
                   <option value="">—</option>
                   {% for cat in ctr_cats %}
-                  <option value="{{ cat.name }}" {% if cat.name == t.category %}selected{% endif %}>{{ cat.name }}</option>
+                  <option value="{{ cat.name }}" {% if cat.name == effective_cat %}selected{% endif %}>{{ cat.name }}</option>
                   {% endfor %}
                 </select>
               </td>
               <td class="small text-nowrap">
-                {% if t.op_type == 'card' %}
+                {% if t.parse_rule_name %}
+                  <span class="badge bg-info text-dark">{{ t.parse_rule_name }}</span>
+                {% elif t.op_type == 'card' %}
                   <span class="badge bg-warning text-dark">Карта</span>{% if t.op_card4 %} {{ t.op_card4 }}{% endif %}
                   {% if t.terminal_branch %}
                     <br><span class="text-muted">{{ t.terminal_branch }}</span>
@@ -222,9 +225,6 @@
                   <span class="badge bg-secondary">Пере-ние средств</span>
                 {% else %}
                   —
-                {% endif %}
-                {% if t.parse_rule_name %}
-                  <br><span class="badge bg-info text-dark mt-1">{{ t.parse_rule_name }}</span>
                 {% endif %}
               </td>
               <td>

@@ -953,6 +953,7 @@
             <th>Ключевое слово</th>
             <th>Комиссия</th>
             <th>Паттерн комиссии</th>
+            <th>Категория</th>
             <th></th>
           </tr>
         </thead>
@@ -973,6 +974,7 @@
               {% else %}<span class="badge bg-warning text-dark">Извлечь из текста</span>{% endif %}
             </td>
             <td><code class="small">{{ r.commission_pattern or '—' }}</code></td>
+            <td class="small text-muted">{{ r.category or '—' }}</td>
             <td class="text-end text-nowrap">
               <button class="btn btn-sm btn-outline-secondary py-0"
                       data-bs-toggle="modal" data-bs-target="#editRuleModal"
@@ -983,6 +985,7 @@
                       data-keyword="{{ r.keyword }}"
                       data-comm-incl="{{ r.commission_included }}"
                       data-comm-pat="{{ r.commission_pattern or '' }}"
+                      data-category="{{ r.category or '' }}"
                       data-sort="{{ r.sort_order }}">
                 <i class="bi bi-pencil"></i>
               </button>
@@ -1061,6 +1064,7 @@ document.getElementById('editRuleModal').addEventListener('show.bs.modal', funct
   form.querySelector('[name=keyword]').value       = btn.dataset.keyword;
   form.querySelector('[name=commission_included]').value = btn.dataset.commIncl;
   form.querySelector('[name=commission_pattern]').value  = btn.dataset.commPat;
+  form.querySelector('[name=category]').value      = btn.dataset.category || '';
   form.querySelector('[name=sort_order]').value    = btn.dataset.sort;
   toggleCommPattern(form);
 });

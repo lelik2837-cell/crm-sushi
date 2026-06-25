@@ -1001,10 +1001,15 @@ def init_db():
                 keyword TEXT NOT NULL,
                 commission_included INTEGER DEFAULT 1,
                 commission_pattern TEXT DEFAULT '',
+                category TEXT DEFAULT '',
                 sort_order INTEGER DEFAULT 0,
                 is_active INTEGER DEFAULT 1
             );
         ''')
+        try:
+            conn.execute("ALTER TABLE bank_parse_rules ADD COLUMN category TEXT DEFAULT ''")
+        except Exception:
+            pass
 
         conn.commit()
 
@@ -4972,14 +4977,15 @@ def bank_parse_rule_add():
     account_id = request.form.get('bank_account_id', '').strip() or None
     comm_incl  = 1 if request.form.get('commission_included') == '1' else 0
     comm_pat   = request.form.get('commission_pattern', '').strip()
+    category   = request.form.get('category', '').strip()
     sort_order = int(request.form.get('sort_order', 0) or 0)
     if not name or not keyword:
         flash('Укажите название и ключевое слово', 'danger')
         return redirect(url_for('bank', tab='rules'))
     with get_db() as conn:
         conn.execute(
-            'INSERT INTO bank_parse_rules (bank_account_id, name, direction, keyword, commission_included, commission_pattern, sort_order) VALUES (?,?,?,?,?,?,?)',
-            (account_id, name, direction, keyword, comm_incl, comm_pat, sort_order)
+            'INSERT INTO bank_parse_rules (bank_account_id, name, direction, keyword, commission_included, commission_pattern, category, sort_order) VALUES (?,?,?,?,?,?,?,?)',
+            (account_id, name, direction, keyword, comm_incl, comm_pat, category, sort_order)
         )
         conn.commit()
     flash('Правило добавлено', 'success')
@@ -4996,14 +5002,15 @@ def bank_parse_rule_edit(rule_id):
     account_id = request.form.get('bank_account_id', '').strip() or None
     comm_incl  = 1 if request.form.get('commission_included') == '1' else 0
     comm_pat   = request.form.get('commission_pattern', '').strip()
+    category   = request.form.get('category', '').strip()
     sort_order = int(request.form.get('sort_order', 0) or 0)
     if not name or not keyword:
         flash('Укажите название и ключевое слово', 'danger')
         return redirect(url_for('bank', tab='rules'))
     with get_db() as conn:
         conn.execute(
-            'UPDATE bank_parse_rules SET bank_account_id=?, name=?, direction=?, keyword=?, commission_included=?, commission_pattern=?, sort_order=? WHERE id=?',
-            (account_id, name, direction, keyword, comm_incl, comm_pat, sort_order, rule_id)
+            'UPDATE bank_parse_rules SET bank_account_id=?, name=?, direction=?, keyword=?, commission_included=?, commission_pattern=?, category=?, sort_order=? WHERE id=?',
+            (account_id, name, direction, keyword, comm_incl, comm_pat, category, sort_order, rule_id)
         )
         conn.commit()
     flash('Правило обновлено', 'success')
@@ -5092,6 +5099,7 @@ def bank_statement_view(stmt_id):
         _rx_cache = {}
         for d in txns:
             d['parse_rule_name'] = ''
+            d['parse_rule_category'] = ''
             d['commission_extracted'] = None
             for rule in parse_rules:
                 if rule['bank_account_id'] and rule['bank_account_id'] != stmt['bank_account_id']:
@@ -5104,6 +5112,7 @@ def bank_statement_view(stmt_id):
                 if not kw or kw not in (d.get('description') or '').lower():
                     continue
                 d['parse_rule_name'] = rule['name']
+                d['parse_rule_category'] = rule['category'] or ''
                 if not rule['commission_included'] and rule['commission_pattern']:
                     pat = rule['commission_pattern']
                     if pat not in _rx_cache:
