@@ -360,30 +360,27 @@ def _match_contractors(conn, txns):
             branch_card = txn.pop('_branch_card', None)
 
             if branch_card:
-                # Расход по карте филиала → имя контрагента: "Карта XXXX (Название)"
-                card4, branch_name = branch_card
-                cp = f"Карта {card4} ({branch_name})"
-                is_card = 1
+                # Расход по карте филиала — контрагента не создаём,
+                # в таблице выписки отображается через op_card4 + terminal_branch
+                pass
             else:
                 cp = (txn.get('counterparty') or '').strip()
-                is_card = 0
-
-            if cp:
-                existing = conn.execute(
-                    'SELECT id FROM contractors WHERE LOWER(name)=LOWER(?)', (cp,)
-                ).fetchone()
-                if existing:
-                    cid = existing['id']
-                else:
-                    conn.execute(
-                        'INSERT INTO contractors (name, keywords, is_card_merchant) VALUES (?,?,?)',
-                        (cp, cp, is_card)
-                    )
-                    cid = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
-                    contractors = conn.execute(
-                        'SELECT id, name, category, keywords FROM contractors WHERE is_active=1'
-                    ).fetchall()
-                txn['contractor_id'] = cid
+                if cp:
+                    existing = conn.execute(
+                        'SELECT id FROM contractors WHERE LOWER(name)=LOWER(?)', (cp,)
+                    ).fetchone()
+                    if existing:
+                        cid = existing['id']
+                    else:
+                        conn.execute(
+                            'INSERT INTO contractors (name, keywords) VALUES (?,?)',
+                            (cp, cp)
+                        )
+                        cid = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                        contractors = conn.execute(
+                            'SELECT id, name, category, keywords FROM contractors WHERE is_active=1'
+                        ).fetchall()
+                    txn['contractor_id'] = cid
         else:
             txn.pop('_branch_card', None)
     return txns
@@ -4464,8 +4461,8 @@ def bank_upload():
                  t.get('contractor_id'), t.get('category', ''), tid)
             )
         conn.commit()
-    flash(f'Загружено {len(txns)} транзакций. Назначьте контрагентов и терминалы.', 'success')
-    return redirect(url_for('bank_classify', stmt_id=stmt_id))
+    flash(f'Загружено {len(txns)} транзакций.', 'success')
+    return redirect(url_for('bank_statement_view', stmt_id=stmt_id))
 
 
 @app.route('/bank/statement/<int:stmt_id>/classify', methods=['GET', 'POST'])

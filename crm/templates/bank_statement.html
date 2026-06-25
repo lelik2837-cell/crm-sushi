@@ -12,8 +12,8 @@
       <h5 class="mb-0 fw-bold">{{ stmt.filename }}</h5>
       <small class="text-muted">{{ stmt.account_name }} · {{ stmt.date_from }} — {{ stmt.date_to }} · {{ stmt.row_count }} строк</small>
     </div>
-    <a href="{{ url_for('bank_classify', stmt_id=stmt.id) }}" class="btn btn-outline-primary btn-sm">
-      <i class="bi bi-tags me-1"></i>Разметка
+    <a href="{{ url_for('bank', tab='contractors') }}" class="btn btn-outline-primary btn-sm">
+      <i class="bi bi-people me-1"></i>Контрагенты
     </a>
   </div>
 
@@ -182,8 +182,13 @@
               <td class="small" title="{{ t.counterparty or '' }}">{{ t.counterparty[:50] if t.counterparty else '—' }}</td>
               <td class="small text-muted" title="{{ t.description or '' }}">{{ t.description[:100] if t.description else '—' }}</td>
               <td>
-                {% if t.op_type == 'contractor' %}
-                <div class="d-flex gap-1 align-items-center">
+                {% if t.op_type == 'card' and t.terminal_branch %}
+                  <span class="small text-muted">Карта {{ t.op_card4 }} ({{ t.terminal_branch }})</span>
+                {% elif t.op_type == 'contractor' %}
+                <div class="d-flex gap-1 align-items-center flex-wrap">
+                  {% if t.contractor_name %}
+                  <span class="small fw-medium me-1">{{ t.contractor_name }}</span>
+                  {% endif %}
                   <select class="form-select form-select-sm txn-contractor" style="min-width:120px" data-id="{{ t.id }}">
                     <option value="">—</option>
                     {% for c in contractors %}
@@ -197,6 +202,8 @@
                     <i class="bi bi-plus"></i>
                   </button>
                 </div>
+                {% elif t.contractor_name %}
+                  <span class="small text-muted">{{ t.contractor_name }}</span>
                 {% else %}—{% endif %}
               </td>
               <td>
