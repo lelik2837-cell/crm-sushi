@@ -195,9 +195,10 @@
               </td>
               <td>
                 {% set effective_cat = t.category or t.parse_rule_category %}
+                {% set cats = ctr_cats_income if t.amount > 0 else ctr_cats_expense %}
                 <select class="form-select form-select-sm txn-category" style="min-width:120px" data-id="{{ t.id }}">
                   <option value="">—</option>
-                  {% for cat in ctr_cats %}
+                  {% for cat in cats %}
                   <option value="{{ cat.name }}" {% if cat.name == effective_cat %}selected{% endif %}>{{ cat.name }}</option>
                   {% endfor %}
                 </select>

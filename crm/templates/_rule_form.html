@@ -42,10 +42,14 @@
 </div>
 <div class="mb-3">
   <label class="form-label fw-semibold">Категория</label>
-  <select name="category" class="form-select">
+  <select name="category" class="form-select rule-cat-select">
     <option value="">— не задана —</option>
     {% for cat in ctr_cats %}
-    <option value="{{ cat.name }}">{{ cat.name }}</option>
+    {% set show = (cat.direction in ('any', None, '')) or
+                  (cat.direction == 'income') or
+                  (cat.direction == 'expense') %}
+    <option value="{{ cat.name }}"
+            data-dir="{{ cat.direction or 'any' }}">{{ cat.name }}</option>
     {% endfor %}
   </select>
   <div class="form-text">Если задана — подставляется в выписке для совпавших транзакций без категории</div>

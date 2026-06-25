@@ -1010,6 +1010,10 @@ def init_db():
             conn.execute("ALTER TABLE bank_parse_rules ADD COLUMN category TEXT DEFAULT ''")
         except Exception:
             pass
+        try:
+            conn.execute("ALTER TABLE contractor_categories ADD COLUMN direction TEXT DEFAULT 'any'")
+        except Exception:
+            pass
 
         conn.commit()
 
@@ -4846,11 +4850,23 @@ def bank_account_delete(acc_id):
 @login_required
 @owner_required
 def bank_ctr_cat_add():
-    name = request.form.get('name', '').strip()
+    name      = request.form.get('name', '').strip()
+    direction = request.form.get('direction', 'any')
     if name:
         with get_db() as conn:
-            conn.execute('INSERT OR IGNORE INTO contractor_categories (name) VALUES (?)', (name,))
+            conn.execute('INSERT OR IGNORE INTO contractor_categories (name, direction) VALUES (?,?)', (name, direction))
             conn.commit()
+    return redirect(url_for('bank', tab='contractors'))
+
+
+@app.route('/bank/contractor-categories/<int:cat_id>/direction', methods=['POST'])
+@login_required
+@owner_required
+def bank_ctr_cat_direction(cat_id):
+    direction = request.form.get('direction', 'any')
+    with get_db() as conn:
+        conn.execute('UPDATE contractor_categories SET direction=? WHERE id=?', (direction, cat_id))
+        conn.commit()
     return redirect(url_for('bank', tab='contractors'))
 
 
@@ -5133,10 +5149,13 @@ def bank_statement_view(stmt_id):
         contractors = conn.execute(
             'SELECT * FROM contractors WHERE is_active=1 AND COALESCE(is_card_merchant,0)=0 ORDER BY name'
         ).fetchall()
-        ctr_cats    = conn.execute('SELECT * FROM contractor_categories ORDER BY sort_order, name').fetchall()
+        all_ctr_cats = conn.execute('SELECT * FROM contractor_categories ORDER BY sort_order, name').fetchall()
+        ctr_cats_income  = [c for c in all_ctr_cats if c['direction'] in ('income', 'any')]
+        ctr_cats_expense = [c for c in all_ctr_cats if c['direction'] in ('expense', 'any')]
     unique_cats = sorted(set(d['category'] for d in txns if d.get('category')))
     return render_template('bank_statement.html',
-        stmt=stmt, txns=txns, contractors=contractors, ctr_cats=ctr_cats,
+        stmt=stmt, txns=txns, contractors=contractors,
+        ctr_cats_income=ctr_cats_income, ctr_cats_expense=ctr_cats_expense,
         unique_cats=unique_cats)
 
 

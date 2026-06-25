@@ -502,20 +502,40 @@
       <span class="fw-semibold small"><i class="bi bi-tags me-1"></i>Категории контрагентов</span>
     </div>
     <div class="card-body py-2">
-      <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+      <table class="table table-sm mb-2" style="max-width:480px">
+        <thead class="table-light"><tr><th>Категория</th><th>Направление</th><th></th></tr></thead>
+        <tbody>
         {% for cat in ctr_cats %}
-        <span class="badge bg-light text-dark border d-flex align-items-center gap-1 px-2 py-1">
-          {{ cat.name }}
-          <form method="POST" action="{{ url_for('bank_ctr_cat_delete', cat_id=cat.id) }}"
-                class="d-inline" onsubmit="return confirm('Удалить категорию «{{ cat.name }}»?')">
-            <button type="submit" class="btn-close btn-close-sm" style="font-size:0.6rem"></button>
-          </form>
-        </span>
+        <tr>
+          <td>{{ cat.name }}</td>
+          <td>
+            <form method="POST" action="{{ url_for('bank_ctr_cat_direction', cat_id=cat.id) }}" class="d-flex gap-1">
+              <select name="direction" class="form-select form-select-sm" style="max-width:130px"
+                      onchange="this.form.submit()">
+                <option value="any"    {% if cat.direction in ('any', None, '') %}selected{% endif %}>Любое</option>
+                <option value="income" {% if cat.direction == 'income' %}selected{% endif %}>Приход</option>
+                <option value="expense"{% if cat.direction == 'expense' %}selected{% endif %}>Расход</option>
+              </select>
+            </form>
+          </td>
+          <td>
+            <form method="POST" action="{{ url_for('bank_ctr_cat_delete', cat_id=cat.id) }}"
+                  onsubmit="return confirm('Удалить категорию «{{ cat.name }}»?')">
+              <button class="btn btn-sm btn-outline-danger py-0"><i class="bi bi-trash"></i></button>
+            </form>
+          </td>
+        </tr>
         {% endfor %}
-      </div>
+        </tbody>
+      </table>
       <form method="POST" action="{{ url_for('bank_ctr_cat_add') }}" class="d-flex gap-2">
-        <input type="text" name="name" class="form-control form-control-sm" style="max-width:200px"
+        <input type="text" name="name" class="form-control form-control-sm" style="max-width:180px"
                placeholder="Новая категория" required>
+        <select name="direction" class="form-select form-select-sm" style="max-width:120px">
+          <option value="any">Любое</option>
+          <option value="income">Приход</option>
+          <option value="expense">Расход</option>
+        </select>
         <button type="submit" class="btn btn-sm btn-outline-primary">
           <i class="bi bi-plus"></i> Добавить
         </button>
@@ -1054,6 +1074,22 @@
 </div>
 
 <script>
+// Фильтр категорий по направлению правила
+function filterRuleCategories(form) {
+  var dir = (form.querySelector('[name=direction]') || {}).value || 'any';
+  var catSel = form.querySelector('.rule-cat-select');
+  if (!catSel) return;
+  var current = catSel.value;
+  Array.from(catSel.options).forEach(function(opt) {
+    if (!opt.value) return; // «не задана» — всегда видна
+    var d = opt.dataset.dir || 'any';
+    opt.hidden = !(d === 'any' || d === dir);
+  });
+  // если текущее значение скрылось — сбрасываем
+  var selected = catSel.querySelector('option[value="' + current + '"]');
+  if (selected && selected.hidden) catSel.value = '';
+}
+
 document.getElementById('editRuleModal').addEventListener('show.bs.modal', function(e) {
   var btn = e.relatedTarget;
   var form = document.getElementById('editRuleForm');
@@ -1064,8 +1100,9 @@ document.getElementById('editRuleModal').addEventListener('show.bs.modal', funct
   form.querySelector('[name=keyword]').value       = btn.dataset.keyword;
   form.querySelector('[name=commission_included]').value = btn.dataset.commIncl;
   form.querySelector('[name=commission_pattern]').value  = btn.dataset.commPat;
-  form.querySelector('[name=category]').value      = btn.dataset.category || '';
   form.querySelector('[name=sort_order]').value    = btn.dataset.sort;
+  filterRuleCategories(form);
+  form.querySelector('[name=category]').value      = btn.dataset.category || '';
   toggleCommPattern(form);
 });
 
@@ -1079,6 +1116,13 @@ function toggleCommPattern(form) {
 document.querySelectorAll('[name=commission_included]').forEach(function(sel) {
   sel.addEventListener('change', function() { toggleCommPattern(this.closest('form')); });
   toggleCommPattern(sel.closest('form'));
+});
+
+document.querySelectorAll('[name=direction]').forEach(function(sel) {
+  // только в формах правил (не в форме добавления категории)
+  if (!sel.closest('form[action*="parse-rules"]') && !sel.closest('#addRuleModal') && !sel.closest('#editRuleModal')) return;
+  sel.addEventListener('change', function() { filterRuleCategories(this.closest('form')); });
+  filterRuleCategories(sel.closest('form'));
 });
 </script>
 {% endif %}
