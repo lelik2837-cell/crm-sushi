@@ -285,17 +285,31 @@ def parse_transactions(data):
                 transfer.get('payeeName') or transfer.get('recipientName') or
                 op.get('recipientName') or op.get('creditorName') or ''
             ).strip()
-        # Последний резерв
+        # Последний резерв для контрагента
         if not counterparty:
             counterparty = str(
                 op.get('counterPartyName') or op.get('contragentName') or
                 transfer.get('name') or ''
             ).strip()
 
+        # ИНН контрагента
+        # Карточные покупки: payeeInn = ИНН банка-эквайера (не магазина) — пропускаем
+        if is_card:
+            inn = ''
+        elif amount < 0:
+            # Расход: ИНН получателя из rurTransfer.payeeInn
+            inn_raw = transfer.get('payeeInn') or op.get('payeeInn') or op.get('counterPartyInn') or ''
+            inn = re.sub(r'\D', '', str(inn_raw))
+        else:
+            # Доход: ИНН плательщика из rurTransfer.payerInn
+            inn_raw = transfer.get('payerInn') or op.get('payerInn') or op.get('counterPartyInn') or ''
+            inn = re.sub(r'\D', '', str(inn_raw))
+
         result.append({
             'date':         date_str,
             'amount':       amount,
             'description':  desc,
             'counterparty': counterparty,
+            'inn':          inn,
         })
     return result
