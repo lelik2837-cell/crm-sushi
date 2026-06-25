@@ -1946,6 +1946,277 @@ def _export_shift_to_gsheet(shift_id):
         print(f'[GSheets] shift {shift_id} export error: {e}')
 
 
+def _export_shift_to_gdrive_xlsx(shift_id):
+    """Экспорт смены в Google Drive как xlsx в формате импорта."""
+    try:
+        import openpyxl
+        from openpyxl import Workbook
+        import io as _io
+        import urllib.request
+        import datetime as _dt_mod
+
+        creds_json = os.environ.get('GOOGLE_CREDENTIALS_JSON')
+        folder_id  = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
+        if not creds_json or not folder_id:
+            return
+
+        with get_db() as conn:
+            shift = conn.execute('''
+                SELECT s.*, b.name AS branch_name
+                FROM shifts s JOIN branches b ON b.id = s.branch_id
+                WHERE s.id = ?
+            ''', (shift_id,)).fetchone()
+            if not shift:
+                return
+
+            rev = dict(conn.execute(
+                'SELECT * FROM shift_revenue WHERE shift_id=?', (shift_id,)
+            ).fetchone() or {})
+
+            exp_rows = conn.execute(
+                "SELECT category, description, amount_cash, amount_card FROM expenses WHERE shift_id=? ORDER BY category, id",
+                (shift_id,)
+            ).fetchall()
+
+            taxi_trips = conn.execute(
+                'SELECT amount, payment_type, note FROM taxi_trips WHERE shift_id=? ORDER BY id',
+                (shift_id,)
+            ).fetchall()
+
+            couriers = conn.execute(
+                "SELECT full_name_snapshot, hours_worked, km, orders, rate_snapshot, "
+                "rate_per_km_snapshot, rate_per_order_snapshot, bonus_comment, total_amount, is_paid "
+                "FROM employee_shifts WHERE shift_id=? AND role_snapshot='courier' ORDER BY full_name_snapshot",
+                (shift_id,)
+            ).fetchall()
+
+            non_couriers = conn.execute(
+                "SELECT full_name_snapshot, role_snapshot, rate_snapshot, shift_start, shift_end, "
+                "hours_worked, bonus_amount, penalty_amount, bonus_comment, total_amount, is_paid "
+                "FROM employee_shifts WHERE shift_id=? AND role_snapshot IN ('admin','sushi','cleaner','cook','packer') "
+                "ORDER BY role_snapshot, full_name_snapshot",
+                (shift_id,)
+            ).fetchall()
+
+            terminals = conn.execute(
+                'SELECT terminal_number, amount FROM shift_terminals WHERE shift_id=? ORDER BY sort_order, id',
+                (shift_id,)
+            ).fetchall()
+
+        def _rv(col, default=0):
+            v = rev.get(col, default)
+            return v if v is not None else default
+
+        # Reverse map: category code → import label
+        _CAT_REVERSE = {}
+        for _lbl, _code in _XL_CAT_MAP.items():
+            if _code not in _CAT_REVERSE:
+                _CAT_REVERSE[_code] = _lbl
+
+        # Fixed row positions for known expense categories (match import template)
+        _CAT_ROW = {
+            'repair_plumbing': 10, 'repair_grease':  11,
+            'repair_electric': 12, 'repair_fridge':  13,
+            'repair_other':    14, 'shop':            15,
+        }
+
+        # Aggregate expenses by category
+        exp_by_cat = {}
+        for e in exp_rows:
+            cat = e['category'] or 'other'
+            if cat == 'taxi':
+                continue
+            if cat not in exp_by_cat:
+                exp_by_cat[cat] = {'cash': 0.0, 'card': 0.0, 'descs': []}
+            exp_by_cat[cat]['cash'] += e['amount_cash'] or 0
+            exp_by_cat[cat]['card'] += e['amount_card'] or 0
+            if e['description']:
+                exp_by_cat[cat]['descs'].append(e['description'])
+
+        # Build workbook
+        wb = Workbook()
+        ws = wb.active
+        shift_date = _dt_mod.date.fromisoformat(shift['date'])
+        wd_names = ['ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ', 'ВС']
+        ws.title = wd_names[shift_date.weekday()]
+
+        def w(row, col, val):
+            ws.cell(row=row, column=col, value=val)
+
+        # ─── Revenue (cells match what _xl_process_sheet reads) ────────────
+        w(2, 6, _rv('total_revenue'))            # F2
+        w(3, 2, shift_date)                       # B3 = date
+        w(3, 4, _rv('morning_cash', 0))           # D3 = утренняя касса
+        w(4, 7, _rv('delivery_revenue'))          # G4
+        w(5, 4, _rv('cash_amount'))               # D5
+        w(5, 7, int(_rv('delivery_orders')))      # G5
+        w(6, 4, _rv('card_amount'))               # D6
+        w(6, 7, _rv('pickup_revenue'))            # G6
+        w(7, 4, _rv('online_amount'))             # D7
+        w(7, 7, int(_rv('pickup_orders')))        # G7
+        w(31, 4, _rv('change_amount', 0))         # D31 = размен
+        w(33, 4, _rv('plus_amount', 0))           # D33 = плюс в кассу
+
+        # ─── Couriers (rows 3-8, cols K-V) ─────────────────────────────────
+        for i, c in enumerate(couriers[:6]):
+            r = 3 + i
+            km      = c['km'] or 0
+            orders  = c['orders'] or 0
+            hours   = c['hours_worked'] or 0
+            km_rate = c['rate_per_km_snapshot'] or 10
+            or_rate = c['rate_per_order_snapshot'] or 100
+            hr_rate = c['rate_snapshot'] or 0
+            w(r, 11, c['full_name_snapshot'])          # K
+            w(r, 13, km)                               # M = km
+            w(r, 14, round(km * km_rate, 2))           # N = km pay
+            w(r, 15, hours)                            # O = hours
+            w(r, 16, round(hours * hr_rate, 2))        # P = hrs pay
+            w(r, 17, orders)                           # Q = orders
+            w(r, 18, round(orders * or_rate, 2))       # R = ord pay
+            w(r, 19, c['bonus_comment'] or '')         # S = comment
+            w(r, 21, 'Да' if c['is_paid'] else '')    # U = paid
+            w(r, 22, c['total_amount'] or 0)           # V = total
+
+        # ─── Expense categories (rows 10-20, cols B,C,F,G) ─────────────────
+        # Write labels for known categories
+        for code, row in _CAT_ROW.items():
+            lbl = _CAT_REVERSE.get(code, '')
+            if lbl:
+                w(row, 2, lbl)
+        w(20, 2, 'Другое')
+
+        other_cash, other_card, other_descs = 0.0, 0.0, []
+        for cat_code, data in exp_by_cat.items():
+            cat_row = _CAT_ROW.get(cat_code)
+            if cat_row:
+                w(cat_row, 6, round(data['cash'], 2))    # F = нал
+                w(cat_row, 7, round(data['card'], 2))    # G = безнал
+                if data['descs']:
+                    w(cat_row, 3, '; '.join(data['descs'][:3]))  # C = описание
+            else:
+                other_cash += data['cash']
+                other_card += data['card']
+                other_descs.extend(data['descs'])
+        if other_cash or other_card:
+            w(20, 6, round(other_cash, 2))
+            w(20, 7, round(other_card, 2))
+            if other_descs:
+                w(20, 3, '; '.join(other_descs[:5]))
+
+        # ─── Admin/Sushi/Cleaner (rows 10-22, cols K-V) ────────────────────
+        # Rows 10-14 → admin role (row_idx 9-13 in importer)
+        # Rows 15-21 → sushi role (row_idx 14-20)
+        # Row 22     → cleaner (name must be 'Уборщица' for importer)
+        admins   = [s for s in non_couriers if s['role_snapshot'] in ('admin', 'cook', 'packer')]
+        sushis   = [s for s in non_couriers if s['role_snapshot'] == 'sushi']
+        cleaners = [s for s in non_couriers if s['role_snapshot'] == 'cleaner']
+
+        def _write_staff(r, s):
+            bonus_val = (s['bonus_amount'] or 0) - (s['penalty_amount'] or 0)
+            w(r, 11, s['full_name_snapshot'])
+            w(r, 13, s['rate_snapshot'] or 0)        # M = ставка
+            if s['shift_start']:
+                w(r, 14, s['shift_start'])            # N = начало
+            if s['shift_end']:
+                w(r, 15, s['shift_end'])              # O = конец
+            w(r, 16, s['hours_worked'] or 0)          # P = часы
+            if bonus_val:
+                w(r, 18, bonus_val)                   # R = премия/штраф
+            if s['bonus_comment']:
+                w(r, 19, s['bonus_comment'])          # S = комментарий
+            w(r, 21, 'Да' if s['is_paid'] else '')   # U = выплачено
+            w(r, 22, s['total_amount'] or 0)          # V = итого
+
+        for i, s in enumerate(admins[:5]):
+            _write_staff(10 + i, s)
+
+        for i, s in enumerate(sushis[:7]):
+            _write_staff(15 + i, s)
+
+        # Cleaner: write at row 22; importer identifies by name 'Уборщица'
+        if cleaners:
+            cl = cleaners[0]
+            total_cl = sum(s['total_amount'] or 0 for s in cleaners)
+            w(22, 11, 'Уборщица')
+            w(22, 13, cl['rate_snapshot'] or 0)
+            w(22, 16, sum(s['hours_worked'] or 0 for s in cleaners))
+            w(22, 21, 'Да' if cl['is_paid'] else '')
+            w(22, 22, total_cl)
+
+        # ─── Taxi section (rows 22-24) ──────────────────────────────────────
+        # Row 22 col B = 'ТАКСИ' skips it as taxi data; actual trips in 23-24
+        w(22, 2, 'ТАКСИ')
+        for i, t in enumerate(taxi_trips[:2]):
+            r = 23 + i
+            cash = round(t['amount'] or 0, 2) if (t['payment_type'] or 'cash') == 'cash' else 0
+            card = round(t['amount'] or 0, 2) if (t['payment_type'] or 'cash') != 'cash' else 0
+            w(r, 3, t['note'] or '')   # C = описание
+            w(r, 6, card)              # F = безнал (в импорте F=card, G=cash — инверсия!)
+            w(r, 7, cash)              # G = нал
+
+        # ─── Terminals (rows 26, 29-32) ─────────────────────────────────────
+        if terminals:
+            w(26, 5, 'По терминалам:')
+            w(26, 7, round(sum(t['amount'] or 0 for t in terminals), 2))
+            for i, t in enumerate(terminals[:4]):
+                w(29 + i, 5, t['terminal_number'])        # E = номер
+                w(29 + i, 7, round(t['amount'] or 0, 2)) # G = сумма
+
+        # ─── Actual cash, who closed ────────────────────────────────────────
+        actual_cash = _rv('actual_cash', None)
+        if actual_cash is not None:
+            w(27, 2, 'Факт в кассе:')
+            w(27, 4, round(actual_cash, 2))
+
+        closed_by = shift['closed_by_name'] if 'closed_by_name' in shift.keys() else None
+        if closed_by:
+            w(28, 2, 'Смену закрыл(а):')
+            w(28, 5, closed_by)
+
+        # ─── Save & upload to Google Drive ──────────────────────────────────
+        buf = _io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        xlsx_bytes = buf.getvalue()
+
+        from google.oauth2.service_account import Credentials
+        import google.auth.transport.requests as _gatr
+
+        creds_dict = _json_lib.loads(creds_json)
+        creds = Credentials.from_service_account_info(
+            creds_dict, scopes=['https://www.googleapis.com/auth/drive']
+        )
+        creds.refresh(_gatr.Request())
+        token = creds.token
+
+        branch_nm = shift['branch_name'].replace(' ', '_')
+        filename = f'{branch_nm}_{shift["date"]}_{wd_names[shift_date.weekday()]}.xlsx'
+        xlsx_mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        boundary = '---GDriveXlsxBnd9347'
+        meta_json = _json_lib.dumps({'name': filename, 'parents': [folder_id]})
+        body = (
+            f'--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'
+            f'{meta_json}\r\n'
+            f'--{boundary}\r\nContent-Type: {xlsx_mime}\r\n\r\n'
+        ).encode('utf-8') + xlsx_bytes + f'\r\n--{boundary}--'.encode('utf-8')
+
+        upload_req = urllib.request.Request(
+            'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+            data=body,
+            headers={
+                'Authorization': f'Bearer {token}',
+                'Content-Type': f'multipart/related; boundary="{boundary}"',
+            },
+            method='POST'
+        )
+        with urllib.request.urlopen(upload_req, timeout=60) as resp:
+            result = _json_lib.loads(resp.read())
+        print(f'[GDrive] shift {shift_id} xlsx uploaded: {filename} id={result.get("id","?")}')
+
+    except Exception as e:
+        print(f'[GDrive] shift {shift_id} xlsx error: {e}')
+
+
 @app.route('/shift/<int:shift_id>/close', methods=['POST'])
 @login_required
 def close_shift(shift_id):
@@ -1970,6 +2241,7 @@ def close_shift(shift_id):
         conn.commit()
     flash('Смена закрыта', 'success')
     threading.Thread(target=_export_shift_to_gsheet, args=(shift_id,), daemon=True).start()
+    threading.Thread(target=_export_shift_to_gdrive_xlsx, args=(shift_id,), daemon=True).start()
     return redirect(url_for('shift_view', shift_id=shift_id))
 
 
@@ -4650,6 +4922,7 @@ def gsheet_settings():
         cfg = _gsheet_load_settings(conn)
     return render_template('gsheet_settings.html', cfg=cfg, cols=GSHEET_COLS,
                            sheet_id=os.environ.get('GOOGLE_SHEET_ID', ''),
+                           drive_folder_id=os.environ.get('GOOGLE_DRIVE_FOLDER_ID', ''),
                            has_creds=bool(os.environ.get('GOOGLE_CREDENTIALS_JSON')))
 
 

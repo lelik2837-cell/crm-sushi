@@ -34,6 +34,30 @@
     </div>
 </div>
 
+{# Google Drive папка для xlsx #}
+<div class="card mb-4">
+    <div class="card-header fw-semibold" style="background:#1a1a2e;color:#fff">
+        <i class="bi bi-folder me-2"></i>Сохранение xlsx в Google Drive (формат импорта)
+    </div>
+    <div class="card-body">
+        <div class="d-flex align-items-center gap-3 mb-2">
+            {% if drive_folder_id %}
+            <span class="badge bg-success fs-6"><i class="bi bi-check-circle me-1"></i>Папка настроена</span>
+            <a href="https://drive.google.com/drive/folders/{{ drive_folder_id }}" target="_blank" class="small">
+                Открыть папку <i class="bi bi-box-arrow-up-right"></i>
+            </a>
+            {% else %}
+            <span class="badge bg-secondary fs-6"><i class="bi bi-dash-circle me-1"></i>Папка не указана</span>
+            <span class="text-muted small">Добавьте переменную <code>GOOGLE_DRIVE_FOLDER_ID</code> в Railway — ID папки из ссылки Google Drive</span>
+            {% endif %}
+        </div>
+        <p class="text-muted small mb-0">
+            При закрытии смены автоматически создаётся файл <code>Филиал_ДАТА_ДеньНедели.xlsx</code>
+            в формате шаблона импорта. Файл можно открыть в Excel или повторно импортировать в CRM.
+        </p>
+    </div>
+</div>
+
 {# Настройки колонок #}
 <div class="card">
     <div class="card-header fw-semibold" style="background:#1a1a2e;color:#fff">
