@@ -350,9 +350,23 @@ def _detect_branch_card(conn, txn):
 
 def _match_contractors(conn, txns):
     contractors = conn.execute('SELECT id, name, category, keywords, inn FROM contractors WHERE is_active=1').fetchall()
+
+    def _refresh():
+        nonlocal contractors
+        contractors = conn.execute('SELECT id, name, category, keywords, inn FROM contractors WHERE is_active=1').fetchall()
+
+    def _set_inn(cid, inn):
+        """Записывает ИНН контрагенту если у него его ещё нет."""
+        if inn:
+            conn.execute(
+                'UPDATE contractors SET inn=? WHERE id=? AND (inn IS NULL OR inn="")',
+                (inn, cid)
+            )
+
     for txn in txns:
-        inn  = (txn.get('inn') or '').strip()
-        text = ((txn.get('description') or '') + ' ' + (txn.get('counterparty') or '')).lower()
+        inn         = (txn.get('inn') or '').strip()
+        text        = ((txn.get('description') or '') + ' ' + (txn.get('counterparty') or '')).lower()
+        branch_card = txn.pop('_branch_card', None)  # сохраняем и убираем из dict
 
         # 1. Матч по ИНН (наивысший приоритет)
         if inn:
@@ -362,55 +376,53 @@ def _match_contractors(conn, txns):
             if row:
                 txn['contractor_id'] = row['id']
                 txn['category'] = txn.get('category') or row['category']
-                txn.pop('_branch_card', None)
                 continue
 
         # 2. Матч по ключевым словам
+        matched_ctr = None
         for c in contractors:
             kws = [k.strip().lower() for k in (c['keywords'] or c['name']).split(',') if k.strip()]
             if any(kw in text for kw in kws):
-                txn['contractor_id'] = c['id']
-                txn['category'] = txn.get('category') or c['category']
+                matched_ctr = c
                 break
 
-        if not txn.get('contractor_id'):
-            branch_card = txn.pop('_branch_card', None)
+        if matched_ctr:
+            txn['contractor_id'] = matched_ctr['id']
+            txn['category'] = txn.get('category') or matched_ctr['category']
+            # Если у контрагента нет ИНН — заполняем из выписки
+            if inn and not (matched_ctr['inn'] or '').strip():
+                _set_inn(matched_ctr['id'], inn)
+                _refresh()
+            continue
 
-            if branch_card:
-                # Расход по карте филиала — контрагента не создаём,
-                # в таблице выписки отображается через op_card4 + terminal_branch
-                pass
-            else:
-                cp = (txn.get('counterparty') or '').strip()
-                if cp:
-                    # Ищем сначала по ИНН (если есть), потом по имени
-                    existing = None
-                    if inn:
-                        existing = conn.execute(
-                            'SELECT id FROM contractors WHERE inn=?', (inn,)
-                        ).fetchone()
-                    if not existing:
-                        existing = conn.execute(
-                            'SELECT id FROM contractors WHERE LOWER(name)=LOWER(?)', (cp,)
-                        ).fetchone()
-                    if existing:
-                        # Обновляем ИНН если его не было
-                        if inn:
-                            conn.execute('UPDATE contractors SET inn=? WHERE id=? AND (inn IS NULL OR inn="")',
-                                         (inn, existing['id']))
-                        cid = existing['id']
-                    else:
-                        conn.execute(
-                            'INSERT INTO contractors (name, keywords, inn) VALUES (?,?,?)',
-                            (cp, cp, inn or None)
-                        )
-                        cid = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
-                        contractors = conn.execute(
-                            'SELECT id, name, category, keywords, inn FROM contractors WHERE is_active=1'
-                        ).fetchall()
-                    txn['contractor_id'] = cid
+        # 3. Расход по карте филиала — контрагента не создаём
+        if branch_card:
+            continue
+
+        # 4. Новый контрагент: ищем по ИНН или имени, иначе создаём
+        cp = (txn.get('counterparty') or '').strip()
+        if not cp:
+            continue
+
+        existing = None
+        if inn:
+            existing = conn.execute('SELECT id FROM contractors WHERE inn=?', (inn,)).fetchone()
+        if not existing:
+            existing = conn.execute('SELECT id FROM contractors WHERE LOWER(name)=LOWER(?)', (cp,)).fetchone()
+
+        if existing:
+            _set_inn(existing['id'], inn)
+            cid = existing['id']
         else:
-            txn.pop('_branch_card', None)
+            conn.execute(
+                'INSERT INTO contractors (name, keywords, inn) VALUES (?,?,?)',
+                (cp, cp, inn or None)
+            )
+            cid = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+            _refresh()
+
+        txn['contractor_id'] = cid
+
     return txns
 
 
