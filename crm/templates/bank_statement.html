@@ -179,6 +179,10 @@
               <td class="text-end fw-semibold text-nowrap
                 {% if t.is_ignored %}text-muted{% elif t.amount > 0 %}text-success{% else %}text-danger{% endif %}">
                 {% if t.amount > 0 %}+{% endif %}{{ t.amount|money }} ₽
+                {% if t.commission_extracted %}
+                  <br><span class="text-muted fw-normal" style="font-size:0.72rem">ком. {{ t.commission_extracted|money }} ₽</span>
+                  <br><span class="text-success fw-normal" style="font-size:0.72rem">брутто {{ (t.amount + t.commission_extracted)|money }} ₽</span>
+                {% endif %}
               </td>
               <td class="small" title="{{ t.counterparty or '' }}">{{ t.counterparty[:50] if t.counterparty else '—' }}</td>
               <td class="small text-muted" title="{{ t.description or '' }}">{{ t.description[:100] if t.description else '—' }}</td>
@@ -218,6 +222,9 @@
                   <span class="badge bg-secondary">Пере-ние средств</span>
                 {% else %}
                   —
+                {% endif %}
+                {% if t.parse_rule_name %}
+                  <br><span class="badge bg-info text-dark mt-1">{{ t.parse_rule_name }}</span>
                 {% endif %}
               </td>
               <td>

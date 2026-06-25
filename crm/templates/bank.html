@@ -56,6 +56,11 @@
         <i class="bi bi-wallet2 me-1"></i>Счета
       </a>
     </li>
+    <li class="nav-item">
+      <a class="nav-link {% if tab=='rules' %}active{% endif %}" href="{{ url_for('bank', tab='rules') }}">
+        <i class="bi bi-sliders me-1"></i>Правила
+      </a>
+    </li>
   </ul>
 
   <!-- ══════════════════════ ВЫПИСКИ ══════════════════════ -->
@@ -918,6 +923,159 @@
   })
   .catch(function() { bar.style.display = 'none'; });
 })();
+</script>
+{% endif %}
+
+<!-- ══════════════════════ ПРАВИЛА РАЗБОРА ══════════════════════ -->
+{% if tab == 'rules' %}
+<div class="card mb-3">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-sliders me-2"></i>Правила разбора операций</span>
+    <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addRuleModal">
+      <i class="bi bi-plus-lg me-1"></i>Добавить правило
+    </button>
+  </div>
+  <div class="card-body p-0">
+    {% if not parse_rules %}
+    <div class="text-center py-5 text-muted">
+      <i class="bi bi-sliders fs-1"></i>
+      <div class="mt-2">Нет правил. Добавьте первое правило для автоматического распознавания типов операций.</div>
+    </div>
+    {% else %}
+    <div class="table-responsive">
+      <table class="table table-hover table-sm mb-0">
+        <thead class="table-light">
+          <tr>
+            <th style="width:40px">#</th>
+            <th>Название</th>
+            <th>Счёт</th>
+            <th>Направление</th>
+            <th>Ключевое слово</th>
+            <th>Комиссия</th>
+            <th>Паттерн комиссии</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in parse_rules %}
+          <tr>
+            <td class="text-muted small">{{ r.sort_order }}</td>
+            <td class="fw-semibold">{{ r.name }}</td>
+            <td class="small text-muted">{{ r.account_name or '—' }}</td>
+            <td>
+              {% if r.direction == 'income' %}<span class="badge bg-success">Приход</span>
+              {% elif r.direction == 'expense' %}<span class="badge bg-danger">Расход</span>
+              {% else %}<span class="badge bg-secondary">Любое</span>{% endif %}
+            </td>
+            <td><code>{{ r.keyword }}</code></td>
+            <td>
+              {% if r.commission_included %}<span class="text-muted small">Включена</span>
+              {% else %}<span class="badge bg-warning text-dark">Извлечь из текста</span>{% endif %}
+            </td>
+            <td><code class="small">{{ r.commission_pattern or '—' }}</code></td>
+            <td class="text-end text-nowrap">
+              <button class="btn btn-sm btn-outline-secondary py-0"
+                      data-bs-toggle="modal" data-bs-target="#editRuleModal"
+                      data-id="{{ r.id }}"
+                      data-name="{{ r.name }}"
+                      data-account="{{ r.bank_account_id or '' }}"
+                      data-direction="{{ r.direction }}"
+                      data-keyword="{{ r.keyword }}"
+                      data-comm-incl="{{ r.commission_included }}"
+                      data-comm-pat="{{ r.commission_pattern or '' }}"
+                      data-sort="{{ r.sort_order }}">
+                <i class="bi bi-pencil"></i>
+              </button>
+              <form method="POST" action="{{ url_for('bank_parse_rule_delete', rule_id=r.id) }}" class="d-inline"
+                    onsubmit="return confirm('Удалить правило?')">
+                <button class="btn btn-sm btn-outline-danger py-0"><i class="bi bi-trash"></i></button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="alert alert-info small">
+  <i class="bi bi-info-circle me-1"></i>
+  <strong>Как работает:</strong> при просмотре выписки каждая транзакция проверяется по правилам сверху вниз.
+  Если ключевое слово найдено в описании и направление совпадает — транзакция помечается именем правила.
+  Если <em>«Комиссия: извлечь из текста»</em> — паттерн (регулярное выражение) ищет сумму комиссии в описании
+  (первая группа захвата, пример: <code>К\.(\d+[\.,]\d+)</code> находит <em>К.257.52</em>).
+</div>
+
+<!-- Modal: добавить правило -->
+<div class="modal fade" id="addRuleModal" tabindex="-1">
+  <div class="modal-dialog">
+    <form method="POST" action="{{ url_for('bank_parse_rule_add') }}">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-plus-lg me-2"></i>Новое правило</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          {% include '_rule_form.html' %}
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+          <button type="submit" class="btn btn-primary">Добавить</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal: редактировать правило -->
+<div class="modal fade" id="editRuleModal" tabindex="-1">
+  <div class="modal-dialog">
+    <form method="POST" id="editRuleForm" action="">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>Редактировать правило</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          {% include '_rule_form.html' %}
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+          <button type="submit" class="btn btn-primary">Сохранить</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+document.getElementById('editRuleModal').addEventListener('show.bs.modal', function(e) {
+  var btn = e.relatedTarget;
+  var form = document.getElementById('editRuleForm');
+  form.action = '/bank/parse-rules/' + btn.dataset.id + '/edit';
+  form.querySelector('[name=name]').value          = btn.dataset.name;
+  form.querySelector('[name=bank_account_id]').value = btn.dataset.account;
+  form.querySelector('[name=direction]').value     = btn.dataset.direction;
+  form.querySelector('[name=keyword]').value       = btn.dataset.keyword;
+  form.querySelector('[name=commission_included]').value = btn.dataset.commIncl;
+  form.querySelector('[name=commission_pattern]').value  = btn.dataset.commPat;
+  form.querySelector('[name=sort_order]').value    = btn.dataset.sort;
+  toggleCommPattern(form);
+});
+
+function toggleCommPattern(form) {
+  var sel = form.querySelector('[name=commission_included]');
+  var row = form.querySelector('.comm-pattern-row');
+  if (!sel || !row) return;
+  row.style.display = sel.value === '0' ? '' : 'none';
+}
+
+document.querySelectorAll('[name=commission_included]').forEach(function(sel) {
+  sel.addEventListener('change', function() { toggleCommPattern(this.closest('form')); });
+  toggleCommPattern(sel.closest('form'));
+});
 </script>
 {% endif %}
 

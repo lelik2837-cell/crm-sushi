@@ -991,6 +991,21 @@ def init_db():
             );
         ''')
 
+        # Правила разбора банковских операций
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS bank_parse_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bank_account_id INTEGER REFERENCES bank_accounts(id),
+                name TEXT NOT NULL,
+                direction TEXT NOT NULL DEFAULT 'any',
+                keyword TEXT NOT NULL,
+                commission_included INTEGER DEFAULT 1,
+                commission_pattern TEXT DEFAULT '',
+                sort_order INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1
+            );
+        ''')
+
         conn.commit()
 
 
@@ -4478,6 +4493,13 @@ def bank():
             "SELECT COUNT(*) FROM bank_accounts WHERE is_active=1 AND sber_auto_sync=1 AND account_number != '' AND account_number IS NOT NULL"
         ).fetchone()[0]
 
+        parse_rules = conn.execute('''
+            SELECT pr.*, ba.name as account_name
+            FROM bank_parse_rules pr
+            LEFT JOIN bank_accounts ba ON ba.id=pr.bank_account_id
+            ORDER BY pr.sort_order, pr.id
+        ''').fetchall()
+
     return render_template('bank.html',
         tab=tab, date_from=date_from, date_to=date_to,
         accounts=accounts, acc_branches=acc_branches, statements=statements,
@@ -4487,6 +4509,7 @@ def bank():
         expense_rows=expense_rows, expense_total=expense_total,
         compare_rows=compare_rows, compare_bank=compare_bank, compare_crm=compare_crm,
         sber_auto_count=sber_auto_count,
+        parse_rules=parse_rules,
     )
 
 
@@ -4939,6 +4962,65 @@ def bank_terminal_delete(tid):
     return redirect(url_for('bank', tab='terminals'))
 
 
+@app.route('/bank/parse-rules/add', methods=['POST'])
+@login_required
+@owner_required
+def bank_parse_rule_add():
+    name       = request.form.get('name', '').strip()
+    keyword    = request.form.get('keyword', '').strip()
+    direction  = request.form.get('direction', 'any')
+    account_id = request.form.get('bank_account_id', '').strip() or None
+    comm_incl  = 1 if request.form.get('commission_included') == '1' else 0
+    comm_pat   = request.form.get('commission_pattern', '').strip()
+    sort_order = int(request.form.get('sort_order', 0) or 0)
+    if not name or not keyword:
+        flash('Укажите название и ключевое слово', 'danger')
+        return redirect(url_for('bank', tab='rules'))
+    with get_db() as conn:
+        conn.execute(
+            'INSERT INTO bank_parse_rules (bank_account_id, name, direction, keyword, commission_included, commission_pattern, sort_order) VALUES (?,?,?,?,?,?,?)',
+            (account_id, name, direction, keyword, comm_incl, comm_pat, sort_order)
+        )
+        conn.commit()
+    flash('Правило добавлено', 'success')
+    return redirect(url_for('bank', tab='rules'))
+
+
+@app.route('/bank/parse-rules/<int:rule_id>/edit', methods=['POST'])
+@login_required
+@owner_required
+def bank_parse_rule_edit(rule_id):
+    name       = request.form.get('name', '').strip()
+    keyword    = request.form.get('keyword', '').strip()
+    direction  = request.form.get('direction', 'any')
+    account_id = request.form.get('bank_account_id', '').strip() or None
+    comm_incl  = 1 if request.form.get('commission_included') == '1' else 0
+    comm_pat   = request.form.get('commission_pattern', '').strip()
+    sort_order = int(request.form.get('sort_order', 0) or 0)
+    if not name or not keyword:
+        flash('Укажите название и ключевое слово', 'danger')
+        return redirect(url_for('bank', tab='rules'))
+    with get_db() as conn:
+        conn.execute(
+            'UPDATE bank_parse_rules SET bank_account_id=?, name=?, direction=?, keyword=?, commission_included=?, commission_pattern=?, sort_order=? WHERE id=?',
+            (account_id, name, direction, keyword, comm_incl, comm_pat, sort_order, rule_id)
+        )
+        conn.commit()
+    flash('Правило обновлено', 'success')
+    return redirect(url_for('bank', tab='rules'))
+
+
+@app.route('/bank/parse-rules/<int:rule_id>/delete', methods=['POST'])
+@login_required
+@owner_required
+def bank_parse_rule_delete(rule_id):
+    with get_db() as conn:
+        conn.execute('DELETE FROM bank_parse_rules WHERE id=?', (rule_id,))
+        conn.commit()
+    flash('Правило удалено', 'success')
+    return redirect(url_for('bank', tab='rules'))
+
+
 @app.route('/bank/statement/<int:stmt_id>')
 @login_required
 @owner_required
@@ -5002,6 +5084,43 @@ def bank_statement_view(stmt_id):
                 d['op_card4'] = ''
 
             txns.append(d)
+
+        # Применяем правила разбора (Альфа и др.)
+        parse_rules = conn.execute(
+            'SELECT * FROM bank_parse_rules WHERE is_active=1 ORDER BY sort_order, id'
+        ).fetchall()
+        _rx_cache = {}
+        for d in txns:
+            d['parse_rule_name'] = ''
+            d['commission_extracted'] = None
+            for rule in parse_rules:
+                if rule['bank_account_id'] and rule['bank_account_id'] != stmt['bank_account_id']:
+                    continue
+                if rule['direction'] == 'income' and d['amount'] <= 0:
+                    continue
+                if rule['direction'] == 'expense' and d['amount'] >= 0:
+                    continue
+                kw = (rule['keyword'] or '').lower()
+                if not kw or kw not in (d.get('description') or '').lower():
+                    continue
+                d['parse_rule_name'] = rule['name']
+                if not rule['commission_included'] and rule['commission_pattern']:
+                    pat = rule['commission_pattern']
+                    if pat not in _rx_cache:
+                        try:
+                            _rx_cache[pat] = re.compile(pat, re.IGNORECASE)
+                        except re.error:
+                            _rx_cache[pat] = None
+                    rx = _rx_cache.get(pat)
+                    if rx:
+                        m2 = rx.search(d.get('description') or '')
+                        if m2:
+                            try:
+                                d['commission_extracted'] = float(m2.group(1).replace(',', '.'))
+                            except (ValueError, IndexError):
+                                pass
+                break
+
         contractors = conn.execute(
             'SELECT * FROM contractors WHERE is_active=1 AND COALESCE(is_card_merchant,0)=0 ORDER BY name'
         ).fetchall()
