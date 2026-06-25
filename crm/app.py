@@ -15,6 +15,8 @@ from flask import Flask, render_template, request, redirect, url_for, session, f
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 import sqlite3
+import threading
+import json as _json_lib
 
 logging.basicConfig(level=logging.INFO)
 
@@ -1679,6 +1681,100 @@ def delete_staff(shift_id, staff_id):
     return jsonify({'ok': True, 'auto_bonuses': auto_bonuses})
 
 
+def _export_shift_to_gsheet(shift_id):
+    """Экспорт смены в Google Sheets. Ошибки не прерывают работу."""
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+
+        creds_json = os.environ.get('GOOGLE_CREDENTIALS_JSON')
+        sheet_id   = os.environ.get('GOOGLE_SHEET_ID')
+        if not creds_json or not sheet_id:
+            return
+
+        creds_dict = _json_lib.loads(creds_json)
+        scopes = [
+            'https://spreadsheets.google.com/feeds',
+            'https://www.googleapis.com/auth/drive',
+        ]
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        gc    = gspread.authorize(creds)
+        sh    = gc.open_by_key(sheet_id)
+
+        with get_db() as conn:
+            shift = conn.execute('''
+                SELECT s.*, b.name AS branch_name
+                FROM shifts s JOIN branches b ON b.id = s.branch_id
+                WHERE s.id = ?
+            ''', (shift_id,)).fetchone()
+            if not shift:
+                return
+
+            rev = conn.execute(
+                'SELECT * FROM shift_revenue WHERE shift_id=?', (shift_id,)
+            ).fetchone()
+
+            exp_rows = conn.execute('''
+                SELECT COALESCE(SUM(amount_cash),0) AS cash_total,
+                       COALESCE(SUM(amount_card),0) AS card_total
+                FROM expenses WHERE shift_id=?
+            ''', (shift_id,)).fetchone()
+
+            sal = conn.execute('''
+                SELECT COALESCE(SUM(total_amount),0) AS total
+                FROM employee_shifts WHERE shift_id=?
+            ''', (shift_id,)).fetchone()
+
+            cats = conn.execute('''
+                SELECT ec.label AS cat, COALESCE(SUM(e.amount_cash),0) AS amt
+                FROM expenses e
+                LEFT JOIN expense_categories ec ON ec.code = e.category
+                WHERE e.shift_id=?
+                GROUP BY e.category
+            ''', (shift_id,)).fetchall()
+
+        total_rev   = (rev['total_revenue'] if rev else 0) or 0
+        cash_rev    = (rev['cash_amount']   if rev else 0) or 0
+        card_rev    = round(total_rev - cash_rev, 2)
+        exp_cash    = round((exp_rows['cash_total'] if exp_rows else 0) or 0, 2)
+        exp_card    = round((exp_rows['card_total'] if exp_rows else 0) or 0, 2)
+        salary      = round((sal['total'] if sal else 0) or 0, 2)
+        profit      = round(total_rev - exp_cash - exp_card - salary, 2)
+
+        year = (shift['date'] or '')[:4] or str(date.today().year)
+        try:
+            ws = sh.worksheet(year)
+        except Exception:
+            ws = sh.add_worksheet(title=year, rows=3000, cols=20)
+            header = ['Дата', 'Филиал', 'Выручка', 'Нал приход', 'Безнал приход',
+                      'Расходы нал', 'Расходы карта', 'ФОТ', 'Прибыль',
+                      'Закрыл', 'Комментарий']
+            for cat_row in cats:
+                header.append(cat_row['cat'] or '?')
+            ws.append_row(header)
+
+        row = [
+            shift['date'],
+            shift['branch_name'],
+            total_rev,
+            cash_rev,
+            card_rev,
+            exp_cash,
+            exp_card,
+            salary,
+            profit,
+            shift['closed_by_name'] or '',
+            shift['comment'] or '',
+        ]
+        for cat_row in cats:
+            row.append(round(cat_row['amt'] or 0, 2))
+
+        ws.append_row(row, value_input_option='USER_ENTERED')
+        print(f'[GSheets] shift {shift_id} exported OK')
+    except Exception as e:
+        print(f'[GSheets] shift {shift_id} export error: {e}')
+
+
 @app.route('/shift/<int:shift_id>/close', methods=['POST'])
 @login_required
 def close_shift(shift_id):
@@ -1702,6 +1798,7 @@ def close_shift(shift_id):
         log_action(conn, 'shift_close', 'Смена закрыта', shift_id=shift_id)
         conn.commit()
     flash('Смена закрыта', 'success')
+    threading.Thread(target=_export_shift_to_gsheet, args=(shift_id,), daemon=True).start()
     return redirect(url_for('shift_view', shift_id=shift_id))
 
 
