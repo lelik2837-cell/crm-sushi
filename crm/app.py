@@ -365,7 +365,8 @@ def _match_contractors(conn, txns):
 
     for txn in txns:
         inn         = (txn.get('inn') or '').strip()
-        text        = ((txn.get('description') or '') + ' ' + (txn.get('counterparty') or '')).lower()
+        # Матчим только по counterparty, description — назначение платежа, не имя контрагента
+        cp_text     = (txn.get('counterparty') or '').lower().strip()
         branch_card = txn.pop('_branch_card', None)  # сохраняем и убираем из dict
 
         # 1. Матч по ИНН (наивысший приоритет)
@@ -378,11 +379,18 @@ def _match_contractors(conn, txns):
                 txn['category'] = txn.get('category') or row['category']
                 continue
 
-        # 2. Матч по ключевым словам
+        # 2. Матч по ключевым словам (только против поля counterparty)
         matched_ctr = None
         for c in contractors:
-            kws = [k.strip().lower() for k in (c['keywords'] or c['name']).split(',') if k.strip()]
-            if any(kw in text for kw in kws):
+            raw_kw = (c['keywords'] or '').strip()
+            name_lc = (c['name'] or '').lower()
+            if raw_kw:
+                # Ключевые слова заданы вручную — разбиваем по запятой
+                kws = [k.strip().lower() for k in raw_kw.split(',') if k.strip()]
+            else:
+                # Ключевых слов нет — используем имя целиком как одну фразу
+                kws = [name_lc] if name_lc else []
+            if any(kw and kw in cp_text for kw in kws):
                 matched_ctr = c
                 break
 
