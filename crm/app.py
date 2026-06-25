@@ -1025,6 +1025,14 @@ def init_db():
             );
         ''')
 
+        # Google Sheets export settings
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS gsheet_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
+        ''')
+
         conn.commit()
 
 
@@ -1681,6 +1689,33 @@ def delete_staff(shift_id, staff_id):
     return jsonify({'ok': True, 'auto_bonuses': auto_bonuses})
 
 
+GSHEET_COLS = [
+    ('date',            'Дата'),
+    ('branch',          'Филиал'),
+    ('revenue_total',   'Выручка итого'),
+    ('revenue_cash',    'Наличные приход'),
+    ('revenue_card',    'Безнал приход'),
+    ('actual_cash',     'Факт в кассе'),
+    ('exp_cash_total',  'Расходы нал итого'),
+    ('exp_card_total',  'Расходы карта итого'),
+    ('exp_by_cat',      'Расходы по категориям'),
+    ('salary_total',    'ФОТ итого'),
+    ('salary_by_role',  'ФОТ по должностям'),
+    ('profit',          'Прибыль'),
+    ('closed_by',       'Кто закрыл'),
+    ('comment',         'Комментарий'),
+]
+
+def _gsheet_load_settings(conn):
+    rows = conn.execute('SELECT key, value FROM gsheet_settings').fetchall()
+    cfg  = {r['key']: r['value'] for r in rows}
+    # По умолчанию все включены
+    result = {}
+    for key, _ in GSHEET_COLS:
+        result[key] = int(cfg.get(f'col_{key}', '1'))
+    return result
+
+
 def _export_shift_to_gsheet(shift_id):
     """Экспорт смены в Google Sheets. Ошибки не прерывают работу."""
     try:
@@ -1702,6 +1737,8 @@ def _export_shift_to_gsheet(shift_id):
         sh    = gc.open_by_key(sheet_id)
 
         with get_db() as conn:
+            cfg = _gsheet_load_settings(conn)
+
             shift = conn.execute('''
                 SELECT s.*, b.name AS branch_name
                 FROM shifts s JOIN branches b ON b.id = s.branch_id
@@ -1714,60 +1751,91 @@ def _export_shift_to_gsheet(shift_id):
                 'SELECT * FROM shift_revenue WHERE shift_id=?', (shift_id,)
             ).fetchone()
 
-            exp_rows = conn.execute('''
+            exp_totals = conn.execute('''
                 SELECT COALESCE(SUM(amount_cash),0) AS cash_total,
                        COALESCE(SUM(amount_card),0) AS card_total
                 FROM expenses WHERE shift_id=?
             ''', (shift_id,)).fetchone()
 
-            sal = conn.execute('''
+            exp_cats = conn.execute('''
+                SELECT COALESCE(ec.label, e.category, '?') AS cat,
+                       COALESCE(SUM(e.amount_cash),0) AS cash_amt,
+                       COALESCE(SUM(e.amount_card),0) AS card_amt
+                FROM expenses e
+                LEFT JOIN expense_categories ec ON ec.code = e.category
+                WHERE e.shift_id=?
+                GROUP BY e.category ORDER BY ec.sort_order, e.category
+            ''', (shift_id,)).fetchall()
+
+            sal_total = conn.execute('''
                 SELECT COALESCE(SUM(total_amount),0) AS total
                 FROM employee_shifts WHERE shift_id=?
             ''', (shift_id,)).fetchone()
 
-            cats = conn.execute('''
-                SELECT ec.label AS cat, COALESCE(SUM(e.amount_cash),0) AS amt
-                FROM expenses e
-                LEFT JOIN expense_categories ec ON ec.code = e.category
-                WHERE e.shift_id=?
-                GROUP BY e.category
+            sal_roles = conn.execute('''
+                SELECT COALESCE(role_snapshot,'other') AS role,
+                       COALESCE(SUM(total_amount),0) AS total
+                FROM employee_shifts WHERE shift_id=?
+                GROUP BY role_snapshot
             ''', (shift_id,)).fetchall()
 
-        total_rev   = (rev['total_revenue'] if rev else 0) or 0
-        cash_rev    = (rev['cash_amount']   if rev else 0) or 0
-        card_rev    = round(total_rev - cash_rev, 2)
-        exp_cash    = round((exp_rows['cash_total'] if exp_rows else 0) or 0, 2)
-        exp_card    = round((exp_rows['card_total'] if exp_rows else 0) or 0, 2)
-        salary      = round((sal['total'] if sal else 0) or 0, 2)
-        profit      = round(total_rev - exp_cash - exp_card - salary, 2)
+        total_rev  = (rev['total_revenue'] if rev else 0) or 0
+        cash_rev   = (rev['cash_amount']   if rev else 0) or 0
+        card_rev   = round(total_rev - cash_rev, 2)
+        actual_cash= (rev['actual_cash']   if rev else None)
+        exp_cash   = round((exp_totals['cash_total'] if exp_totals else 0) or 0, 2)
+        exp_card   = round((exp_totals['card_total'] if exp_totals else 0) or 0, 2)
+        salary     = round((sal_total['total'] if sal_total else 0) or 0, 2)
+        profit     = round(total_rev - exp_cash - exp_card - salary, 2)
+
+        role_labels_map = {
+            'admin': 'Администратор', 'cook': 'Повар', 'sushi': 'Сушист',
+            'courier': 'Курьер', 'packer': 'Упаковщик', 'cleaner': 'Уборщица',
+        }
+
+        # Собираем заголовки и значения по настройкам
+        header = []
+        row    = []
+
+        def add(key, label, value):
+            if cfg.get(key):
+                header.append(label)
+                row.append(value)
+
+        add('date',           'Дата',              shift['date'])
+        add('branch',         'Филиал',             shift['branch_name'])
+        add('revenue_total',  'Выручка итого',      total_rev)
+        add('revenue_cash',   'Наличные приход',    cash_rev)
+        add('revenue_card',   'Безнал приход',      card_rev)
+        add('actual_cash',    'Факт в кассе',       actual_cash if actual_cash is not None else '')
+
+        add('exp_cash_total', 'Расходы нал итого',  exp_cash)
+        add('exp_card_total', 'Расходы карта итого',exp_card)
+
+        if cfg.get('exp_by_cat'):
+            for ec in exp_cats:
+                lbl = ec['cat']
+                header.append(lbl)
+                row.append(round((ec['cash_amt'] or 0) + (ec['card_amt'] or 0), 2))
+
+        add('salary_total',   'ФОТ итого',          salary)
+
+        if cfg.get('salary_by_role'):
+            for sr in sal_roles:
+                lbl = role_labels_map.get(sr['role'], sr['role'])
+                header.append(f'ФОТ {lbl}')
+                row.append(round(sr['total'] or 0, 2))
+
+        add('profit',         'Прибыль',            profit)
+        add('closed_by',      'Кто закрыл',         shift['closed_by_name'] or '')
+        add('comment',        'Комментарий',        shift['comment'] or '')
 
         year = (shift['date'] or '')[:4] or str(date.today().year)
         try:
             ws = sh.worksheet(year)
         except Exception:
-            ws = sh.add_worksheet(title=year, rows=3000, cols=20)
-            header = ['Дата', 'Филиал', 'Выручка', 'Нал приход', 'Безнал приход',
-                      'Расходы нал', 'Расходы карта', 'ФОТ', 'Прибыль',
-                      'Закрыл', 'Комментарий']
-            for cat_row in cats:
-                header.append(cat_row['cat'] or '?')
+            ws = sh.add_worksheet(title=year, rows=3000, cols=len(header) + 5)
             ws.append_row(header)
-
-        row = [
-            shift['date'],
-            shift['branch_name'],
-            total_rev,
-            cash_rev,
-            card_rev,
-            exp_cash,
-            exp_card,
-            salary,
-            profit,
-            shift['closed_by_name'] or '',
-            shift['comment'] or '',
-        ]
-        for cat_row in cats:
-            row.append(round(cat_row['amt'] or 0, 2))
 
         ws.append_row(row, value_input_option='USER_ENTERED')
         print(f'[GSheets] shift {shift_id} exported OK')
@@ -4457,6 +4525,29 @@ def pnl_settings_save():
         params['branch_ids'] = bids
     return redirect(url_for('pnl_report', **params))
 
+
+
+# ─── GSHEET SETTINGS ──────────────────────────────────────────────────────────
+
+@app.route('/settings/gsheet', methods=['GET', 'POST'])
+@login_required
+@owner_required
+def gsheet_settings():
+    with get_db() as conn:
+        if request.method == 'POST':
+            for key, _ in GSHEET_COLS:
+                val = '1' if request.form.get(f'col_{key}') else '0'
+                conn.execute(
+                    'INSERT OR REPLACE INTO gsheet_settings (key, value) VALUES (?,?)',
+                    (f'col_{key}', val)
+                )
+            conn.commit()
+            flash('Настройки экспорта сохранены', 'success')
+            return redirect(url_for('gsheet_settings'))
+        cfg = _gsheet_load_settings(conn)
+    return render_template('gsheet_settings.html', cfg=cfg, cols=GSHEET_COLS,
+                           sheet_id=os.environ.get('GOOGLE_SHEET_ID', ''),
+                           has_creds=bool(os.environ.get('GOOGLE_CREDENTIALS_JSON')))
 
 
 # ─── HISTORY ──────────────────────────────────────────────────────────────────

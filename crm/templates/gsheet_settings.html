@@ -1,0 +1,177 @@
+{% extends 'base.html' %}
+{% block title %}Экспорт в Google Sheets{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="fw-bold mb-0"><i class="bi bi-google me-2"></i>Экспорт в Google Sheets</h4>
+</div>
+
+{# Статус подключения #}
+<div class="card mb-4">
+    <div class="card-header fw-semibold" style="background:#1a1a2e;color:#fff">
+        <i class="bi bi-plug me-2"></i>Статус подключения
+    </div>
+    <div class="card-body">
+        <div class="d-flex align-items-center gap-3 mb-2">
+            {% if has_creds %}
+            <span class="badge bg-success fs-6"><i class="bi bi-check-circle me-1"></i>Ключ подключён</span>
+            {% else %}
+            <span class="badge bg-danger fs-6"><i class="bi bi-x-circle me-1"></i>Ключ не найден</span>
+            <span class="text-muted small">Добавьте переменную <code>GOOGLE_CREDENTIALS_JSON</code> в Railway</span>
+            {% endif %}
+        </div>
+        <div class="d-flex align-items-center gap-3">
+            {% if sheet_id %}
+            <span class="badge bg-success fs-6"><i class="bi bi-table me-1"></i>Таблица настроена</span>
+            <a href="https://docs.google.com/spreadsheets/d/{{ sheet_id }}" target="_blank" class="small">
+                Открыть таблицу <i class="bi bi-box-arrow-up-right"></i>
+            </a>
+            {% else %}
+            <span class="badge bg-danger fs-6"><i class="bi bi-x-circle me-1"></i>Таблица не указана</span>
+            <span class="text-muted small">Добавьте переменную <code>GOOGLE_SHEET_ID</code> в Railway</span>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{# Настройки колонок #}
+<div class="card">
+    <div class="card-header fw-semibold" style="background:#1a1a2e;color:#fff">
+        <i class="bi bi-table me-2"></i>Выбор колонок для экспорта
+    </div>
+    <div class="card-body">
+        <p class="text-muted small mb-3">
+            Выберите какие данные записывать в Google Sheets при каждом закрытии смены.
+            При первом закрытии смены автоматически создаётся строка заголовков.
+        </p>
+        <form method="POST">
+            <div class="row g-2">
+
+                <div class="col-12">
+                    <div class="fw-semibold small text-uppercase text-muted mb-2"
+                         style="border-bottom:1px solid #dee2e6;padding-bottom:4px">
+                        Основное
+                    </div>
+                </div>
+                {% for key, label in cols %}
+                {% if key in ('date','branch') %}
+                <div class="col-md-4 col-6">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="col_{{ key }}"
+                               id="col_{{ key }}" value="1"
+                               {% if cfg[key] %}checked{% endif %}
+                               {% if key in ('date','branch') %}disabled checked{% endif %}>
+                        <label class="form-check-label small" for="col_{{ key }}">{{ label }}</label>
+                        {% if key in ('date','branch') %}
+                        <input type="hidden" name="col_{{ key }}" value="1">
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
+                {% endfor %}
+
+                <div class="col-12 mt-3">
+                    <div class="fw-semibold small text-uppercase text-muted mb-2"
+                         style="border-bottom:1px solid #dee2e6;padding-bottom:4px">
+                        Выручка
+                    </div>
+                </div>
+                {% for key, label in cols %}
+                {% if key in ('revenue_total','revenue_cash','revenue_card','actual_cash') %}
+                <div class="col-md-4 col-6">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="col_{{ key }}"
+                               id="col_{{ key }}" value="1"
+                               {% if cfg[key] %}checked{% endif %}>
+                        <label class="form-check-label small" for="col_{{ key }}">{{ label }}</label>
+                    </div>
+                </div>
+                {% endif %}
+                {% endfor %}
+
+                <div class="col-12 mt-3">
+                    <div class="fw-semibold small text-uppercase text-muted mb-2"
+                         style="border-bottom:1px solid #dee2e6;padding-bottom:4px">
+                        Расходы
+                    </div>
+                </div>
+                {% for key, label in cols %}
+                {% if key in ('exp_cash_total','exp_card_total','exp_by_cat') %}
+                <div class="col-md-4 col-6">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="col_{{ key }}"
+                               id="col_{{ key }}" value="1"
+                               {% if cfg[key] %}checked{% endif %}>
+                        <label class="form-check-label small" for="col_{{ key }}">
+                            {{ label }}
+                            {% if key == 'exp_by_cat' %}
+                            <span class="text-muted" style="font-size:.7rem">(отдельная колонка на каждую категорию)</span>
+                            {% endif %}
+                        </label>
+                    </div>
+                </div>
+                {% endif %}
+                {% endfor %}
+
+                <div class="col-12 mt-3">
+                    <div class="fw-semibold small text-uppercase text-muted mb-2"
+                         style="border-bottom:1px solid #dee2e6;padding-bottom:4px">
+                        ФОТ
+                    </div>
+                </div>
+                {% for key, label in cols %}
+                {% if key in ('salary_total','salary_by_role') %}
+                <div class="col-md-4 col-6">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="col_{{ key }}"
+                               id="col_{{ key }}" value="1"
+                               {% if cfg[key] %}checked{% endif %}>
+                        <label class="form-check-label small" for="col_{{ key }}">
+                            {{ label }}
+                            {% if key == 'salary_by_role' %}
+                            <span class="text-muted" style="font-size:.7rem">(отдельная колонка на каждую должность)</span>
+                            {% endif %}
+                        </label>
+                    </div>
+                </div>
+                {% endif %}
+                {% endfor %}
+
+                <div class="col-12 mt-3">
+                    <div class="fw-semibold small text-uppercase text-muted mb-2"
+                         style="border-bottom:1px solid #dee2e6;padding-bottom:4px">
+                        Итог и прочее
+                    </div>
+                </div>
+                {% for key, label in cols %}
+                {% if key in ('profit','closed_by','comment') %}
+                <div class="col-md-4 col-6">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="col_{{ key }}"
+                               id="col_{{ key }}" value="1"
+                               {% if cfg[key] %}checked{% endif %}>
+                        <label class="form-check-label small" for="col_{{ key }}">{{ label }}</label>
+                    </div>
+                </div>
+                {% endif %}
+                {% endfor %}
+
+            </div>
+
+            <div class="mt-4 d-flex gap-2">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-floppy me-1"></i>Сохранить
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="alert alert-info mt-4 small">
+    <i class="bi bi-info-circle me-1"></i>
+    Данные экспортируются автоматически при каждом закрытии смены.
+    Листы в таблице разделяются по годам (2025, 2026 и т.д.).
+    Если изменить набор колонок — новая строка заголовков добавится при следующем закрытии смены с новым листом.
+</div>
+
+{% endblock %}

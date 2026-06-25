@@ -180,6 +180,12 @@
                                 <i class="bi bi-cash-coin me-2"></i>Размен
                             </a>
                         </li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li>
+                            <a class="dropdown-item {% if request.endpoint=='gsheet_settings' %}active{% endif %}" href="{{ url_for('gsheet_settings') }}">
+                                <i class="bi bi-google me-2"></i>Экспорт в Google Sheets
+                            </a>
+                        </li>
                         {% endif %}
                     </ul>
                 </li>
