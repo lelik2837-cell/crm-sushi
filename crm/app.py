@@ -4070,9 +4070,9 @@ def _pnl_load_settings(conn):
     ).fetchall()]
 
     return {
-        'cash_expense_cats':        _lst('cash_expense_cats', default_cash_exp),
-        'bank_income_ctr_cats':     _lst('bank_income_ctr_cats',  None),  # None = все
-        'bank_expense_ctr_cats':    _lst('bank_expense_ctr_cats', None),  # None = все
+        'cash_expense_cats':     _lst('cash_expense_cats',     default_cash_exp),
+        'bank_income_exp_cats':  _lst('bank_income_exp_cats',  None),  # None = все
+        'bank_expense_exp_cats': _lst('bank_expense_exp_cats', None),  # None = все
         'include_salary':           int(cfg.get('include_salary', '1')),
         'include_salary_breakdown': int(cfg.get('include_salary_breakdown', '1')),
     }
@@ -4096,7 +4096,6 @@ def pnl_report():
         branches      = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
         branch_groups = get_branch_groups(conn)
         all_cats      = get_expense_categories(conn)
-        all_ctr_cats  = conn.execute('SELECT * FROM contractor_categories ORDER BY sort_order, name').fetchall()
         cfg           = _pnl_load_settings(conn)
 
         if branch_ids:
@@ -4133,27 +4132,28 @@ def pnl_report():
         """, [date_from, date_to] + b_args).fetchall():
             cash_rev_by_p[r['period']] = r['amount']
 
-        # Приход из банка по категориям контрагентов
+        # Приход из банка по expense_categories
         bank_inc_by = defaultdict(lambda: defaultdict(float))
         _bi_filter = ''
         _bi_args   = []
-        if cfg['bank_income_ctr_cats'] is not None:
-            if cfg['bank_income_ctr_cats']:
-                ph_c = ','.join('?' * len(cfg['bank_income_ctr_cats']))
+        if cfg['bank_income_exp_cats'] is not None:
+            if cfg['bank_income_exp_cats']:
+                ph_c = ','.join('?' * len(cfg['bank_income_exp_cats']))
                 _bi_filter = f"AND bt.category IN ({ph_c})"
-                _bi_args   = cfg['bank_income_ctr_cats']
+                _bi_args   = cfg['bank_income_exp_cats']
             else:
                 _bi_filter = 'AND 0=1'  # пустой список = ничего
         for r in conn.execute(f"""
             SELECT {pe_bt} AS period,
-                   bt.category AS cat_name,
+                   COALESCE(ec.label, bt.category) AS cat_name,
                    SUM(bt.amount) AS amount
             FROM bank_transactions bt
+            LEFT JOIN expense_categories ec ON ec.code = bt.category
             WHERE bt.txn_date BETWEEN ? AND ?
               AND bt.amount > 0 AND bt.is_ignored=0
               AND bt.category IS NOT NULL AND bt.category != ''
               {_bi_filter} {bf_bt}
-            GROUP BY period, cat_name
+            GROUP BY period, bt.category
             HAVING amount > 0
         """, [date_from, date_to] + _bi_args + b_args).fetchall():
             bank_inc_by[r['cat_name']][r['period']] += r['amount']
@@ -4172,27 +4172,28 @@ def pnl_report():
             """, [date_from, date_to] + cfg['cash_expense_cats'] + b_args).fetchall():
                 cash_exp_by[r['cat']][r['period']] += r['amount']
 
-        # Расходы из банка по категориям контрагентов
+        # Расходы из банка по expense_categories
         bank_exp_by = defaultdict(lambda: defaultdict(float))
         _be_filter = ''
         _be_args   = []
-        if cfg['bank_expense_ctr_cats'] is not None:
-            if cfg['bank_expense_ctr_cats']:
-                ph_c = ','.join('?' * len(cfg['bank_expense_ctr_cats']))
+        if cfg['bank_expense_exp_cats'] is not None:
+            if cfg['bank_expense_exp_cats']:
+                ph_c = ','.join('?' * len(cfg['bank_expense_exp_cats']))
                 _be_filter = f"AND bt.category IN ({ph_c})"
-                _be_args   = cfg['bank_expense_ctr_cats']
+                _be_args   = cfg['bank_expense_exp_cats']
             else:
                 _be_filter = 'AND 0=1'
         for r in conn.execute(f"""
             SELECT {pe_bt} AS period,
-                   bt.category AS cat_name,
+                   COALESCE(ec.label, bt.category) AS cat_name,
                    SUM(-bt.amount) AS amount
             FROM bank_transactions bt
+            LEFT JOIN expense_categories ec ON ec.code = bt.category
             WHERE bt.txn_date BETWEEN ? AND ?
               AND bt.amount < 0 AND bt.is_ignored=0
               AND bt.category IS NOT NULL AND bt.category != ''
               {_be_filter} {bf_bt}
-            GROUP BY period, cat_name
+            GROUP BY period, bt.category
             HAVING amount > 0
         """, [date_from, date_to] + _be_args + b_args).fetchall():
             bank_exp_by[r['cat_name']][r['period']] += r['amount']
@@ -4295,7 +4296,6 @@ def pnl_report():
         cfg=cfg,
         branches=branches, branch_groups=branch_groups,
         all_cats=all_cats, cat_map=cat_map,
-        all_ctr_cats=all_ctr_cats,
         role_labels=ROLE_LABELS,
         date_from=date_from, date_to=date_to,
         branch_ids=branch_ids, group_by=group_by,
@@ -4308,14 +4308,14 @@ def pnl_report():
 def pnl_settings_save():
     bank_inc_all = request.form.get('bank_income_all')
     bank_exp_all = request.form.get('bank_expense_all')
-    bank_income_val  = None if bank_inc_all else request.form.getlist('bank_income_ctr_cats')
-    bank_expense_val = None if bank_exp_all else request.form.getlist('bank_expense_ctr_cats')
+    bank_income_val  = None if bank_inc_all else request.form.getlist('bank_income_exp_cats')
+    bank_expense_val = None if bank_exp_all else request.form.getlist('bank_expense_exp_cats')
 
     with get_db() as conn:
         for key, val in [
             ('cash_expense_cats',       _json.dumps(request.form.getlist('cash_expense_cats'))),
-            ('bank_income_ctr_cats',    _json.dumps(bank_income_val)),
-            ('bank_expense_ctr_cats',   _json.dumps(bank_expense_val)),
+            ('bank_income_exp_cats',    _json.dumps(bank_income_val)),
+            ('bank_expense_exp_cats',   _json.dumps(bank_expense_val)),
             ('include_salary',          '1' if request.form.get('include_salary') else '0'),
             ('include_salary_breakdown','1' if request.form.get('include_salary_breakdown') else '0'),
         ]:

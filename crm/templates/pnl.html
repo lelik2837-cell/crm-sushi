@@ -38,42 +38,27 @@
             {# ── Приход из банка ── #}
             <div class="col-md-4">
                 <div class="fw-semibold mb-2" style="color:#198754;border-bottom:2px solid #198754;padding-bottom:3px">
-                    <i class="bi bi-bank me-1"></i>Приход из банка (категории контрагентов)
+                    <i class="bi bi-bank me-1"></i>Приход из банка (по категориям)
                 </div>
-                {% if all_ctr_cats %}
                 <div class="form-check mb-2">
                     <input class="form-check-input" type="checkbox" name="bank_income_all"
                            value="1" id="bi_all"
-                           {% if cfg.bank_income_ctr_cats is none %}checked{% endif %}
+                           {% if cfg.bank_income_exp_cats is none %}checked{% endif %}
                            onchange="toggleCatGroup('bi_all', 'bank-inc-cb')">
                     <label class="form-check-label fw-semibold small" for="bi_all">Все категории</label>
                 </div>
                 <div class="ps-3">
-                {% for cc in all_ctr_cats %}
+                {% for cat in all_cats %}
                 <div class="form-check">
                     <input class="form-check-input bank-inc-cb" type="checkbox"
-                           name="bank_income_ctr_cats" value="{{ cc.name }}"
-                           id="bi_{{ cc.id }}"
-                           {% if cfg.bank_income_ctr_cats is none or cc.name in cfg.bank_income_ctr_cats %}checked{% endif %}
+                           name="bank_income_exp_cats" value="{{ cat.code }}"
+                           id="bi_{{ cat.code }}"
+                           {% if cfg.bank_income_exp_cats is none or cat.code in cfg.bank_income_exp_cats %}checked{% endif %}
                            onchange="uncheckAll('bi_all', 'bank-inc-cb')">
-                    <label class="form-check-label small" for="bi_{{ cc.id }}">
-                        {{ cc.name }}
-                        <span class="text-muted" style="font-size:.65rem">({{ cc.direction }})</span>
-                    </label>
+                    <label class="form-check-label small" for="bi_{{ cat.code }}">{{ cat.label }}</label>
                 </div>
                 {% endfor %}
                 </div>
-                {% else %}
-                <div class="text-muted small">
-                    <i class="bi bi-info-circle me-1"></i>
-                    Нет категорий контрагентов. Добавьте их в разделе
-                    <a href="{{ url_for('bank') }}">Банк</a>.
-                </div>
-                <div class="form-check mt-2">
-                    <input class="form-check-input" type="checkbox" name="bank_income_all" value="1" checked>
-                    <label class="form-check-label small">Все (когда появятся)</label>
-                </div>
-                {% endif %}
             </div>
 
             {# ── Наличные расходы ── #}
@@ -95,34 +80,27 @@
             {# ── Расходы из банка + ФОТ ── #}
             <div class="col-md-4">
                 <div class="fw-semibold mb-2" style="color:#dc3545;border-bottom:2px solid #dc3545;padding-bottom:3px">
-                    <i class="bi bi-bank me-1"></i>Расходы из банка (категории контрагентов)
+                    <i class="bi bi-bank me-1"></i>Расходы из банка (по категориям)
                 </div>
-                {% if all_ctr_cats %}
                 <div class="form-check mb-2">
                     <input class="form-check-input" type="checkbox" name="bank_expense_all"
                            value="1" id="be_all"
-                           {% if cfg.bank_expense_ctr_cats is none %}checked{% endif %}
+                           {% if cfg.bank_expense_exp_cats is none %}checked{% endif %}
                            onchange="toggleCatGroup('be_all', 'bank-exp-cb')">
                     <label class="form-check-label fw-semibold small" for="be_all">Все категории</label>
                 </div>
                 <div class="ps-3 mb-3">
-                {% for cc in all_ctr_cats %}
+                {% for cat in all_cats %}
                 <div class="form-check">
                     <input class="form-check-input bank-exp-cb" type="checkbox"
-                           name="bank_expense_ctr_cats" value="{{ cc.name }}"
-                           id="be_{{ cc.id }}"
-                           {% if cfg.bank_expense_ctr_cats is none or cc.name in cfg.bank_expense_ctr_cats %}checked{% endif %}
+                           name="bank_expense_exp_cats" value="{{ cat.code }}"
+                           id="be_{{ cat.code }}"
+                           {% if cfg.bank_expense_exp_cats is none or cat.code in cfg.bank_expense_exp_cats %}checked{% endif %}
                            onchange="uncheckAll('be_all', 'bank-exp-cb')">
-                    <label class="form-check-label small" for="be_{{ cc.id }}">{{ cc.name }}</label>
+                    <label class="form-check-label small" for="be_{{ cat.code }}">{{ cat.label }}</label>
                 </div>
                 {% endfor %}
                 </div>
-                {% else %}
-                <div class="text-muted small mb-3">
-                    <i class="bi bi-info-circle me-1"></i>Нет категорий контрагентов.
-                </div>
-                <input type="hidden" name="bank_expense_all" value="1">
-                {% endif %}
 
                 <div class="fw-semibold mb-2 mt-1" style="color:#6c757d;border-bottom:1px solid #dee2e6;padding-bottom:3px">
                     <i class="bi bi-people me-1"></i>ФОТ
