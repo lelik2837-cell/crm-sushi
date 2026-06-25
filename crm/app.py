@@ -4229,6 +4229,19 @@ def pnl_report():
         bt_debug['sample_cats'] = [r['category'] for r in _bt_cats]
         _ctr_cats = conn.execute("SELECT name FROM contractor_categories ORDER BY sort_order, name").fetchall()
         bt_debug['ctr_cats'] = [r['name'] for r in _ctr_cats]
+        bt_debug['branch_ids'] = branch_ids
+        bt_debug['bf_bt'] = bf_bt or '(нет)'
+        _bab = conn.execute("SELECT COUNT(*) FROM bank_account_branches").fetchone()[0]
+        bt_debug['bank_account_branches_cnt'] = _bab
+        # Проверяем сколько транзакций проходит через bf_bt
+        _bt_filtered = conn.execute(f"""
+            SELECT COUNT(*) AS cnt,
+                   SUM(CASE WHEN amount<0 AND is_ignored=0 AND category!='' AND category IS NOT NULL THEN 1 ELSE 0 END) AS cat_exp
+            FROM bank_transactions bt
+            WHERE txn_date BETWEEN ? AND ?
+              AND bt.is_ignored=0 {bf_bt}
+        """, [date_from, date_to] + b_args).fetchone()
+        bt_debug['after_branch_filter'] = dict(_bt_filtered) if _bt_filtered else {}
 
         # ФОТ по ролям
         sal_by_role = defaultdict(lambda: defaultdict(float))
