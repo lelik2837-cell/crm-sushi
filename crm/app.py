@@ -207,6 +207,7 @@ def _map_csv_columns(fieldnames):
     TYPE_P  = ['вид операции', 'приход/расход', 'тип операции', 'д/к', 'd_c', 'dc', 'тип']
     DESC_P  = ['назначение платежа', 'text70', 'назначение', 'описание', 'description', 'наименование']
     CTR_P   = ['контрагент', 'pol_name', 'получатель', 'plat_name', 'плательщик', 'наименование контрагента']
+    INN_P   = ['инн контрагента', 'инн плательщика', 'инн получателя', 'инн', 'inn', 'inn_pol', 'inn_plat']
 
     def find(patterns):
         for p in patterns:
@@ -221,6 +222,7 @@ def _map_csv_columns(fieldnames):
         'date': find(DATE_P), 'debit': find(DEBIT_P), 'credit': find(CRED_P),
         'amount': find(AMT_P), 'type': find(TYPE_P),
         'description': find(DESC_P), 'counterparty': find(CTR_P),
+        'inn': find(INN_P),
     }
 
 
@@ -313,7 +315,8 @@ def _parse_bank_csv(raw_bytes):
             continue
         desc = (row.get(col.get('description') or '\x00', '') or '').strip()
         ctr  = (row.get(col.get('counterparty') or '\x00', '') or '').strip()
-        result.append({'date': date_val, 'amount': amount, 'description': desc, 'counterparty': ctr})
+        inn  = re.sub(r'\D', '', (row.get(col.get('inn') or '\x00', '') or '').strip())
+        result.append({'date': date_val, 'amount': amount, 'description': desc, 'counterparty': ctr, 'inn': inn})
 
     if not result and rows:
         col_info = '; '.join(f'{k}={v}' for k, v in col.items() if v) or 'ни одна не определена'
@@ -346,9 +349,23 @@ def _detect_branch_card(conn, txn):
 
 
 def _match_contractors(conn, txns):
-    contractors = conn.execute('SELECT id, name, category, keywords FROM contractors WHERE is_active=1').fetchall()
+    contractors = conn.execute('SELECT id, name, category, keywords, inn FROM contractors WHERE is_active=1').fetchall()
     for txn in txns:
+        inn  = (txn.get('inn') or '').strip()
         text = ((txn.get('description') or '') + ' ' + (txn.get('counterparty') or '')).lower()
+
+        # 1. Матч по ИНН (наивысший приоритет)
+        if inn:
+            row = conn.execute(
+                'SELECT id, category FROM contractors WHERE inn=? AND is_active=1', (inn,)
+            ).fetchone()
+            if row:
+                txn['contractor_id'] = row['id']
+                txn['category'] = txn.get('category') or row['category']
+                txn.pop('_branch_card', None)
+                continue
+
+        # 2. Матч по ключевым словам
         for c in contractors:
             kws = [k.strip().lower() for k in (c['keywords'] or c['name']).split(',') if k.strip()]
             if any(kw in text for kw in kws):
@@ -366,19 +383,30 @@ def _match_contractors(conn, txns):
             else:
                 cp = (txn.get('counterparty') or '').strip()
                 if cp:
-                    existing = conn.execute(
-                        'SELECT id FROM contractors WHERE LOWER(name)=LOWER(?)', (cp,)
-                    ).fetchone()
+                    # Ищем сначала по ИНН (если есть), потом по имени
+                    existing = None
+                    if inn:
+                        existing = conn.execute(
+                            'SELECT id FROM contractors WHERE inn=?', (inn,)
+                        ).fetchone()
+                    if not existing:
+                        existing = conn.execute(
+                            'SELECT id FROM contractors WHERE LOWER(name)=LOWER(?)', (cp,)
+                        ).fetchone()
                     if existing:
+                        # Обновляем ИНН если его не было
+                        if inn:
+                            conn.execute('UPDATE contractors SET inn=? WHERE id=? AND (inn IS NULL OR inn="")',
+                                         (inn, existing['id']))
                         cid = existing['id']
                     else:
                         conn.execute(
-                            'INSERT INTO contractors (name, keywords) VALUES (?,?)',
-                            (cp, cp)
+                            'INSERT INTO contractors (name, keywords, inn) VALUES (?,?,?)',
+                            (cp, cp, inn or None)
                         )
                         cid = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
                         contractors = conn.execute(
-                            'SELECT id, name, category, keywords FROM contractors WHERE is_active=1'
+                            'SELECT id, name, category, keywords, inn FROM contractors WHERE is_active=1'
                         ).fetchall()
                     txn['contractor_id'] = cid
         else:
@@ -730,6 +758,12 @@ def init_db():
 
         try:
             conn.execute("ALTER TABLE contractors ADD COLUMN is_card_merchant INTEGER DEFAULT 0")
+        except Exception:
+            pass
+
+        try:
+            conn.execute("ALTER TABLE contractors ADD COLUMN inn TEXT DEFAULT ''")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_contractors_inn ON contractors(inn) WHERE inn IS NOT NULL AND inn != ''")
         except Exception:
             pass
 
@@ -4776,14 +4810,15 @@ def bank_contractor_add():
     name = request.form.get('name', '').strip()
     category = request.form.get('category', '').strip()
     keywords = request.form.get('keywords', '').strip()
+    inn = re.sub(r'\D', '', request.form.get('inn', '').strip())
     next_url = request.form.get('next', '').strip()
     if not name:
         flash('Введите название контрагента', 'danger')
         return redirect(next_url or url_for('bank', tab='contractors'))
     with get_db() as conn:
         conn.execute(
-            'INSERT INTO contractors (name, category, keywords) VALUES (?,?,?)',
-            (name, category, keywords)
+            'INSERT INTO contractors (name, category, keywords, inn) VALUES (?,?,?,?)',
+            (name, category, keywords, inn or None)
         )
         conn.commit()
     flash(f'Контрагент «{name}» добавлен', 'success')
@@ -4797,10 +4832,11 @@ def bank_contractor_edit(ctr_id):
     name = request.form.get('name', '').strip()
     category = request.form.get('category', '').strip()
     keywords = request.form.get('keywords', '').strip()
+    inn = re.sub(r'\D', '', request.form.get('inn', '').strip())
     with get_db() as conn:
         conn.execute(
-            'UPDATE contractors SET name=?, category=?, keywords=? WHERE id=?',
-            (name, category, keywords, ctr_id)
+            'UPDATE contractors SET name=?, category=?, keywords=?, inn=? WHERE id=?',
+            (name, category, keywords, inn or None, ctr_id)
         )
         conn.commit()
     flash('Контрагент обновлён', 'success')
