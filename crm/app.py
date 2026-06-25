@@ -4222,6 +4222,8 @@ def pnl_report():
             WHERE category IS NOT NULL AND category != '' LIMIT 10
         """).fetchall()
         bt_debug['sample_cats'] = [r['category'] for r in _bt_cats]
+        _ctr_cats = conn.execute("SELECT name FROM contractor_categories ORDER BY sort_order, name").fetchall()
+        bt_debug['ctr_cats'] = [r['name'] for r in _ctr_cats]
 
         # ФОТ по ролям
         sal_by_role = defaultdict(lambda: defaultdict(float))
