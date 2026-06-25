@@ -246,13 +246,15 @@
 </div>
 
 {# ═══ ДИАГНОСТИКА БАНКА ═══ #}
-<div class="alert alert-info py-2 small mb-3">
-    <i class="bi bi-info-circle me-1"></i>
-    <strong>Банк за период:</strong>
-    всего транзакций: <strong>{{ bt_debug.total or 0 }}</strong> |
-    с категорией: <strong>{{ bt_debug.with_cat or 0 }}</strong> |
-    доход: <strong>{{ bt_debug.income_rows or 0 }}</strong> |
-    расход: <strong>{{ bt_debug.expense_rows or 0 }}</strong>
+<div class="alert alert-warning py-2 small mb-3" style="font-size:.8rem">
+    <i class="bi bi-bug me-1"></i>
+    <strong>ДИАГНОСТИКА:</strong>
+    В базе всего транзакций: <strong>{{ bt_debug.total_all or 0 }}</strong>
+    (даты: {{ bt_debug.min_date or '—' }} … {{ bt_debug.max_date or '—' }}) |
+    с категорией вообще: <strong>{{ bt_debug.with_cat_all or 0 }}</strong> |
+    за выбранный период: <strong>{{ bt_debug.total or 0 }}</strong>
+    (с кат: {{ bt_debug.with_cat or 0 }}, доход: {{ bt_debug.income_rows or 0 }}, расход: {{ bt_debug.expense_rows or 0 }}) |
+    примеры категорий: <strong>{{ bt_debug.sample_cats | join(', ') if bt_debug.sample_cats else 'нет' }}</strong>
 </div>
 
 {# ═══ ТАБЛИЦА P&L ═══ #}

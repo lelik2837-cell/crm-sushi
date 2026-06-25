@@ -4210,6 +4210,18 @@ def pnl_report():
             WHERE txn_date BETWEEN ? AND ?
         """, [date_from, date_to]).fetchone()
         bt_debug = dict(_bt_debug) if _bt_debug else {}
+        _bt_all = conn.execute("""
+            SELECT COUNT(*) AS total_all,
+                   MIN(txn_date) AS min_date, MAX(txn_date) AS max_date,
+                   SUM(CASE WHEN category IS NOT NULL AND category!='' THEN 1 ELSE 0 END) AS with_cat_all
+            FROM bank_transactions
+        """).fetchone()
+        bt_debug.update(dict(_bt_all) if _bt_all else {})
+        _bt_cats = conn.execute("""
+            SELECT DISTINCT category FROM bank_transactions
+            WHERE category IS NOT NULL AND category != '' LIMIT 10
+        """).fetchall()
+        bt_debug['sample_cats'] = [r['category'] for r in _bt_cats]
 
         # ФОТ по ролям
         sal_by_role = defaultdict(lambda: defaultdict(float))
