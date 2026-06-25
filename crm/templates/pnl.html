@@ -1,12 +1,22 @@
 {% extends 'base.html' %}
 {% block title %}P&L Отчёт{% endblock %}
-{% block content %}
 
+{% macro pct(val, base) %}
+{% if base and base > 0 %}<div class="text-muted lh-1" style="font-size:.7rem">{{ (val/base*100)|round(1) }}%</div>{% endif %}
+{% endmacro %}
+
+{% macro cell(val, base) %}
+<td class="text-end" style="min-width:90px">
+    {% if val %}{{ '{:,.0f}'.format(val) }} ₽{{ pct(val, base) }}{% else %}<span class="text-muted small">—</span>{% endif %}
+</td>
+{% endmacro %}
+
+{% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="fw-bold mb-0"><i class="bi bi-calculator me-2"></i>P&amp;L Отчёт</h4>
     <button class="btn btn-outline-secondary btn-sm" type="button"
             data-bs-toggle="collapse" data-bs-target="#pnlSettings">
-        <i class="bi bi-gear me-1"></i>Настройки категорий
+        <i class="bi bi-gear me-1"></i>Настройки
     </button>
 </div>
 
@@ -14,113 +24,126 @@
 <div class="collapse mb-4" id="pnlSettings">
 <div class="card border-0 shadow-sm">
     <div class="card-header fw-semibold" style="background:#1a1a2e;color:#fff">
-        <i class="bi bi-sliders me-2"></i>Настройки P&amp;L
+        <i class="bi bi-sliders me-2"></i>Настройки P&amp;L — выбор статей
     </div>
     <div class="card-body">
     <form method="POST" action="{{ url_for('pnl_settings_save') }}">
-        <input type="hidden" name="date_from"  value="{{ date_from }}">
-        <input type="hidden" name="date_to"    value="{{ date_to }}">
-        <input type="hidden" name="group_by"   value="{{ group_by }}">
+        <input type="hidden" name="date_from" value="{{ date_from }}">
+        <input type="hidden" name="date_to"   value="{{ date_to }}">
+        <input type="hidden" name="group_by"  value="{{ group_by }}">
         {% for bid in branch_ids %}<input type="hidden" name="branch_ids" value="{{ bid }}">{% endfor %}
 
         <div class="row g-4">
 
-            {# ─── ДОХОДЫ ─── #}
-            <div class="col-md-6">
-                <div class="section-title mb-2" style="color:#198754">
-                    <i class="bi bi-arrow-up-circle me-1"></i>ДОХОДЫ
+            {# ── Приход из банка ── #}
+            <div class="col-md-4">
+                <div class="fw-semibold mb-2" style="color:#198754;border-bottom:2px solid #198754;padding-bottom:3px">
+                    <i class="bi bi-bank me-1"></i>Приход из банка (категории контрагентов)
                 </div>
-
-                <div class="fw-semibold small text-muted mb-1">Наличные из смен</div>
-                <div class="form-check mb-3">
-                    <input class="form-check-input" type="checkbox"
-                           name="include_cash_revenue" value="1" id="inc_cash_rev"
-                           {% if cfg.include_cash_revenue %}checked{% endif %}>
-                    <label class="form-check-label" for="inc_cash_rev">
-                        Наличные (выручка из смен)
+                {% if all_ctr_cats %}
+                <div class="form-check mb-2">
+                    <input class="form-check-input" type="checkbox" name="bank_income_all"
+                           value="1" id="bi_all"
+                           {% if cfg.bank_income_ctr_cats is none %}checked{% endif %}
+                           onchange="toggleCatGroup('bi_all', 'bank-inc-cb')">
+                    <label class="form-check-label fw-semibold small" for="bi_all">Все категории</label>
+                </div>
+                <div class="ps-3">
+                {% for cc in all_ctr_cats %}
+                <div class="form-check">
+                    <input class="form-check-input bank-inc-cb" type="checkbox"
+                           name="bank_income_ctr_cats" value="{{ cc.name }}"
+                           id="bi_{{ cc.id }}"
+                           {% if cfg.bank_income_ctr_cats is none or cc.name in cfg.bank_income_ctr_cats %}checked{% endif %}
+                           onchange="uncheckAll('bi_all', 'bank-inc-cb')">
+                    <label class="form-check-label small" for="bi_{{ cc.id }}">
+                        {{ cc.name }}
+                        <span class="text-muted" style="font-size:.65rem">({{ cc.direction }})</span>
                     </label>
-                </div>
-
-                <div class="fw-semibold small text-muted mb-1">
-                    Приход из банка — выбери категории:
-                </div>
-                <div class="row g-1">
-                {% for cat in all_cats if not cat.parent_id %}
-                <div class="col-12">
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox"
-                               name="bank_income_cats" value="{{ cat.code }}"
-                               id="bi_{{ cat.code }}"
-                               {% if cat.code in cfg.bank_income_cats %}checked{% endif %}>
-                        <label class="form-check-label small" for="bi_{{ cat.code }}">
-                            {{ cat.label }}
-                            <span class="badge bg-secondary ms-1" style="font-size:0.65rem">{{ cat.type or 'expense' }}</span>
-                        </label>
-                    </div>
                 </div>
                 {% endfor %}
                 </div>
+                {% else %}
+                <div class="text-muted small">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Нет категорий контрагентов. Добавьте их в разделе
+                    <a href="{{ url_for('bank') }}">Банк</a>.
+                </div>
+                <div class="form-check mt-2">
+                    <input class="form-check-input" type="checkbox" name="bank_income_all" value="1" checked>
+                    <label class="form-check-label small">Все (когда появятся)</label>
+                </div>
+                {% endif %}
             </div>
 
-            {# ─── РАСХОДЫ ─── #}
-            <div class="col-md-6">
-                <div class="section-title mb-2" style="color:#dc3545">
-                    <i class="bi bi-arrow-down-circle me-1"></i>РАСХОДЫ
+            {# ── Наличные расходы ── #}
+            <div class="col-md-4">
+                <div class="fw-semibold mb-2" style="color:#dc3545;border-bottom:2px solid #dc3545;padding-bottom:3px">
+                    <i class="bi bi-wallet2 me-1"></i>Наличные расходы (категории из смен)
                 </div>
-
-                <div class="fw-semibold small text-muted mb-1">Наличные расходы из смен:</div>
-                <div class="row g-1 mb-3">
                 {% for cat in all_cats if not cat.parent_id %}
-                <div class="col-6">
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox"
-                               name="cash_expense_cats" value="{{ cat.code }}"
-                               id="ce_{{ cat.code }}"
-                               {% if cat.code in cfg.cash_expense_cats %}checked{% endif %}>
-                        <label class="form-check-label small" for="ce_{{ cat.code }}">{{ cat.label }}</label>
-                    </div>
-                </div>
-                {% endfor %}
-                </div>
-
-                <div class="fw-semibold small text-muted mb-1">Расходы из банка — выбери категории:</div>
-                <div class="row g-1 mb-3">
-                {% for cat in all_cats if not cat.parent_id %}
-                <div class="col-12">
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox"
-                               name="bank_expense_cats" value="{{ cat.code }}"
-                               id="be_{{ cat.code }}"
-                               {% if cat.code in cfg.bank_expense_cats %}checked{% endif %}>
-                        <label class="form-check-label small" for="be_{{ cat.code }}">{{ cat.label }}</label>
-                    </div>
-                </div>
-                {% endfor %}
-                </div>
-
-                <div class="fw-semibold small text-muted mb-1">Дополнительно:</div>
-                <div class="form-check mb-1">
-                    <input class="form-check-input" type="checkbox"
-                           name="include_salary" value="1" id="inc_sal"
-                           {% if cfg.include_salary %}checked{% endif %}>
-                    <label class="form-check-label small" for="inc_sal">
-                        <i class="bi bi-people me-1"></i>ФОТ (зарплаты сотрудников)
-                    </label>
-                </div>
                 <div class="form-check">
                     <input class="form-check-input" type="checkbox"
-                           name="include_purchases" value="1" id="inc_pur"
-                           {% if cfg.include_purchases %}checked{% endif %}>
-                    <label class="form-check-label small" for="inc_pur">
-                        <i class="bi bi-box-seam me-1"></i>Закупки (накладные)
-                    </label>
+                           name="cash_expense_cats" value="{{ cat.code }}"
+                           id="ce_{{ cat.code }}"
+                           {% if cat.code in cfg.cash_expense_cats %}checked{% endif %}>
+                    <label class="form-check-label small" for="ce_{{ cat.code }}">{{ cat.label }}</label>
+                </div>
+                {% endfor %}
+            </div>
+
+            {# ── Расходы из банка + ФОТ ── #}
+            <div class="col-md-4">
+                <div class="fw-semibold mb-2" style="color:#dc3545;border-bottom:2px solid #dc3545;padding-bottom:3px">
+                    <i class="bi bi-bank me-1"></i>Расходы из банка (категории контрагентов)
+                </div>
+                {% if all_ctr_cats %}
+                <div class="form-check mb-2">
+                    <input class="form-check-input" type="checkbox" name="bank_expense_all"
+                           value="1" id="be_all"
+                           {% if cfg.bank_expense_ctr_cats is none %}checked{% endif %}
+                           onchange="toggleCatGroup('be_all', 'bank-exp-cb')">
+                    <label class="form-check-label fw-semibold small" for="be_all">Все категории</label>
+                </div>
+                <div class="ps-3 mb-3">
+                {% for cc in all_ctr_cats %}
+                <div class="form-check">
+                    <input class="form-check-input bank-exp-cb" type="checkbox"
+                           name="bank_expense_ctr_cats" value="{{ cc.name }}"
+                           id="be_{{ cc.id }}"
+                           {% if cfg.bank_expense_ctr_cats is none or cc.name in cfg.bank_expense_ctr_cats %}checked{% endif %}
+                           onchange="uncheckAll('be_all', 'bank-exp-cb')">
+                    <label class="form-check-label small" for="be_{{ cc.id }}">{{ cc.name }}</label>
+                </div>
+                {% endfor %}
+                </div>
+                {% else %}
+                <div class="text-muted small mb-3">
+                    <i class="bi bi-info-circle me-1"></i>Нет категорий контрагентов.
+                </div>
+                <input type="hidden" name="bank_expense_all" value="1">
+                {% endif %}
+
+                <div class="fw-semibold mb-2 mt-1" style="color:#6c757d;border-bottom:1px solid #dee2e6;padding-bottom:3px">
+                    <i class="bi bi-people me-1"></i>ФОТ
+                </div>
+                <div class="form-check mb-1">
+                    <input class="form-check-input" type="checkbox" name="include_salary" value="1"
+                           id="inc_sal" {% if cfg.include_salary %}checked{% endif %}>
+                    <label class="form-check-label small" for="inc_sal">Включить ФОТ</label>
+                </div>
+                <div class="form-check ms-3">
+                    <input class="form-check-input" type="checkbox" name="include_salary_breakdown" value="1"
+                           id="inc_sal_brk" {% if cfg.include_salary_breakdown %}checked{% endif %}>
+                    <label class="form-check-label small" for="inc_sal_brk">Разбивка по должностям</label>
                 </div>
             </div>
+
         </div>
 
         <div class="mt-3 d-flex gap-2">
             <button type="submit" class="btn btn-primary btn-sm">
-                <i class="bi bi-floppy me-1"></i>Сохранить настройки
+                <i class="bi bi-floppy me-1"></i>Сохранить
             </button>
             <button type="button" class="btn btn-outline-secondary btn-sm"
                     data-bs-toggle="collapse" data-bs-target="#pnlSettings">Закрыть</button>
@@ -147,10 +170,10 @@
                 <div class="dropdown">
                     <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle"
                         data-bs-toggle="dropdown" data-bs-auto-close="outside"
-                        style="min-width:160px;text-align:left" id="pnl-branch-btn">
-                        <span id="pnl-branch-label">{% if branch_ids %}Выбрано: {{ branch_ids|length }}{% else %}Все филиалы{% endif %}</span>
+                        style="min-width:150px;text-align:left">
+                        <span id="pnl-branch-label">{% if branch_ids %}Выбрано: {{ branch_ids|length }}{% else %}Все{% endif %}</span>
                     </button>
-                    <ul class="dropdown-menu p-2" style="min-width:220px">
+                    <ul class="dropdown-menu p-2" style="min-width:210px">
                         {% if branch_groups %}
                         <li><div class="text-muted px-1 mb-1" style="font-size:.75rem">ГРУППЫ</div></li>
                         {% for g in branch_groups %}
@@ -158,7 +181,6 @@
                             <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1"
                                     onclick="pnlSelectGroup({{ g.branch_ids|tojson }})">
                                 <i class="bi bi-collection me-1"></i>{{ g.name }}
-                                <span class="text-muted small">({{ g.branch_ids|length }})</span>
                             </button>
                         </li>
                         {% endfor %}
@@ -201,68 +223,76 @@
     </div>
 </div>
 
-{# ═══ КАРТОЧКИ ИТОГОВ ═══ #}
+{# ═══ КАРТОЧКИ ═══ #}
+{% set total_rev_grand_safe = total_rev_grand if total_rev_grand > 0 else 1 %}
 <div class="row g-3 mb-4">
     <div class="col-6 col-md-3">
+        <div class="card p-3" style="border-left:4px solid #0d6efd">
+            <div class="text-muted small">Выручка (база)</div>
+            <div class="fw-bold fs-5">{{ '{:,.0f}'.format(total_rev_grand) }} ₽</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
         <div class="card p-3" style="border-left:4px solid #198754">
-            <div class="text-muted small">Доходы</div>
-            <div class="fw-bold fs-4 text-success">{{ '{:,.0f}'.format(inc_grand) }} ₽</div>
+            <div class="text-muted small">Доходы в P&amp;L</div>
+            <div class="fw-bold fs-5 text-success">{{ '{:,.0f}'.format(inc_grand) }} ₽</div>
+            {% if total_rev_grand > 0 %}<div class="text-muted small">{{ (inc_grand/total_rev_grand_safe*100)|round(1) }}%</div>{% endif %}
         </div>
     </div>
     <div class="col-6 col-md-3">
         <div class="card p-3" style="border-left:4px solid #dc3545">
             <div class="text-muted small">Расходы</div>
-            <div class="fw-bold fs-4 text-danger">{{ '{:,.0f}'.format(exp_grand) }} ₽</div>
+            <div class="fw-bold fs-5 text-danger">{{ '{:,.0f}'.format(exp_grand) }} ₽</div>
+            {% if total_rev_grand > 0 %}<div class="text-muted small">{{ (exp_grand/total_rev_grand_safe*100)|round(1) }}%</div>{% endif %}
         </div>
     </div>
     <div class="col-6 col-md-3">
-        <div class="card p-3" style="border-left:4px solid {% if profit_grand>=0 %}#0d6efd{% else %}#dc3545{% endif %}">
-            <div class="text-muted small">Чистая прибыль</div>
-            <div class="fw-bold fs-4 {% if profit_grand>=0 %}text-primary{% else %}text-danger{% endif %}">
+        <div class="card p-3" style="border-left:4px solid {% if profit_grand>=0 %}#6f42c1{% else %}#dc3545{% endif %}">
+            <div class="text-muted small">Прибыль</div>
+            <div class="fw-bold fs-5 {% if profit_grand>=0 %}text-success{% else %}text-danger{% endif %}">
                 {{ '{:,.0f}'.format(profit_grand) }} ₽
             </div>
-        </div>
-    </div>
-    <div class="col-6 col-md-3">
-        <div class="card p-3" style="border-left:4px solid #6f42c1">
-            <div class="text-muted small">Маржинальность</div>
-            {% if inc_grand > 0 %}
-            {% set margin = (profit_grand / inc_grand * 100)|round(1) %}
-            <div class="fw-bold fs-4" style="color:{% if margin>=0 %}#6f42c1{% else %}#dc3545{% endif %}">
-                {{ margin }}%
-            </div>
-            {% else %}
-            <div class="fw-bold fs-4 text-muted">—</div>
-            {% endif %}
+            {% if total_rev_grand > 0 %}<div class="text-muted small">{{ (profit_grand/total_rev_grand_safe*100)|round(1) }}%</div>{% endif %}
         </div>
     </div>
 </div>
 
 {# ═══ ТАБЛИЦА P&L ═══ #}
+{% set n_cols = periods|length + (2 if periods|length > 1 else 1) %}
 <div class="card">
     <div class="card-header bg-light fw-semibold d-flex justify-content-between">
-        <span><i class="bi bi-table me-2"></i>P&amp;L таблица</span>
+        <span><i class="bi bi-table me-2"></i>P&amp;L</span>
         <span class="text-muted small">{{ date_from|datefmt }} — {{ date_to|datefmt }}</span>
     </div>
     <div class="table-responsive">
     <table class="table table-sm mb-0 align-middle" style="white-space:nowrap">
         <thead class="table-light">
             <tr>
-                <th style="min-width:220px">Статья</th>
+                <th style="min-width:200px">Статья</th>
                 {% for p in periods %}
-                <th class="text-end">{{ period_labels[p] }}</th>
+                <th class="text-end" style="min-width:95px">{{ period_labels[p] }}</th>
                 {% endfor %}
                 {% if periods|length > 1 %}
-                <th class="text-end table-secondary fw-bold">Итого</th>
+                <th class="text-end table-secondary fw-bold" style="min-width:95px">Итого</th>
                 {% endif %}
             </tr>
         </thead>
         <tbody>
 
+        {# Выручка-база (отдельная строка для справки) #}
+        <tr class="table-light">
+            <td class="small text-muted fst-italic">Выручка общая (база %)</td>
+            {% for p in periods %}
+            {{ cell(total_rev_by_p.get(p,0), total_rev_by_p.get(p,0)) }}
+            {% endfor %}
+            {% if periods|length > 1 %}
+            <td class="text-end small text-muted table-secondary">{{ '{:,.0f}'.format(total_rev_grand) }} ₽</td>
+            {% endif %}
+        </tr>
+
         {# ── ДОХОДЫ ── #}
         <tr>
-            <td colspan="{{ periods|length + (2 if periods|length > 1 else 1) }}"
-                class="fw-bold py-2 px-3"
+            <td colspan="{{ n_cols }}" class="fw-bold py-2 px-3"
                 style="background:#d1e7dd;font-size:.78rem;letter-spacing:.5px;text-transform:uppercase">
                 <i class="bi bi-arrow-up-circle me-1"></i>ДОХОДЫ
             </td>
@@ -273,47 +303,64 @@
                 {{ row.label }}
                 {% if row.badge == 'bank' %}
                 <span class="badge bg-primary ms-1" style="font-size:.6rem">банк</span>
-                {% elif row.badge == 'cash' %}
+                {% else %}
                 <span class="badge bg-success ms-1" style="font-size:.6rem">нал</span>
                 {% endif %}
             </td>
             {% for p in periods %}
-            <td class="text-end">
-                {% if row.values[p] %}{{ '{:,.0f}'.format(row.values[p]) }} ₽{% else %}<span class="text-muted">—</span>{% endif %}
-            </td>
+            {{ cell(row.amounts.get(p,0), total_rev_by_p.get(p,0)) }}
             {% endfor %}
             {% if periods|length > 1 %}
-            <td class="text-end table-secondary fw-bold">{{ '{:,.0f}'.format(row.total) }} ₽</td>
+            <td class="text-end table-secondary fw-bold">
+                {{ '{:,.0f}'.format(row.total) }} ₽
+                {{ pct(row.total, total_rev_grand) }}
+            </td>
             {% endif %}
         </tr>
-        {% else %}
-        <tr>
-            <td colspan="{{ periods|length + (2 if periods|length > 1 else 1) }}"
-                class="text-center text-muted py-2 small">
-                Нет статей — выберите в настройках
-            </td>
-        </tr>
         {% endfor %}
-        {# Итого доходы #}
         <tr style="background:#c3e6cb">
             <td class="fw-bold text-success">Итого доходы</td>
             {% for p in periods %}
-            <td class="text-end fw-bold text-success">{{ '{:,.0f}'.format(inc_totals.get(p,0)) }} ₽</td>
+            <td class="text-end fw-bold text-success">
+                {{ '{:,.0f}'.format(inc_totals.get(p,0)) }} ₽
+                {{ pct(inc_totals.get(p,0), total_rev_by_p.get(p,0)) }}
+            </td>
             {% endfor %}
             {% if periods|length > 1 %}
-            <td class="text-end fw-bold text-success table-secondary">{{ '{:,.0f}'.format(inc_grand) }} ₽</td>
+            <td class="text-end fw-bold text-success table-secondary">
+                {{ '{:,.0f}'.format(inc_grand) }} ₽
+                {{ pct(inc_grand, total_rev_grand) }}
+            </td>
             {% endif %}
         </tr>
 
         {# ── РАСХОДЫ ── #}
         <tr>
-            <td colspan="{{ periods|length + (2 if periods|length > 1 else 1) }}"
-                class="fw-bold py-2 px-3"
+            <td colspan="{{ n_cols }}" class="fw-bold py-2 px-3"
                 style="background:#f8d7da;font-size:.78rem;letter-spacing:.5px;text-transform:uppercase">
                 <i class="bi bi-arrow-down-circle me-1"></i>РАСХОДЫ
             </td>
         </tr>
         {% for row in exp_rows %}
+        {% if row.sub %}
+        <tr style="background:#fafafa">
+            <td class="ps-4 small text-muted">
+                <i class="bi bi-arrow-return-right me-1" style="font-size:.7rem"></i>{{ row.label }}
+            </td>
+            {% for p in periods %}
+            <td class="text-end small text-muted">
+                {% set v = row.amounts.get(p,0) %}
+                {% if v %}{{ '{:,.0f}'.format(v) }} ₽{{ pct(v, total_rev_by_p.get(p,0)) }}{% else %}—{% endif %}
+            </td>
+            {% endfor %}
+            {% if periods|length > 1 %}
+            <td class="text-end small text-muted table-secondary">
+                {{ '{:,.0f}'.format(row.total) }} ₽
+                {{ pct(row.total, total_rev_grand) }}
+            </td>
+            {% endif %}
+        </tr>
+        {% else %}
         <tr>
             <td class="fw-semibold">
                 {{ row.label }}
@@ -323,35 +370,42 @@
                 <span class="badge bg-success ms-1" style="font-size:.6rem">нал</span>
                 {% elif row.badge == 'salary' %}
                 <span class="badge bg-secondary ms-1" style="font-size:.6rem">фот</span>
-                {% elif row.badge == 'purchases' %}
-                <span class="badge bg-warning text-dark ms-1" style="font-size:.6rem">закупки</span>
                 {% endif %}
             </td>
             {% for p in periods %}
             <td class="text-end">
-                {% if row.values[p] %}{{ '{:,.0f}'.format(row.values[p]) }} ₽{% else %}<span class="text-muted">—</span>{% endif %}
+                {% set v = row.amounts.get(p,0) %}
+                {% if v %}{{ '{:,.0f}'.format(v) }} ₽{{ pct(v, total_rev_by_p.get(p,0)) }}{% else %}<span class="text-muted">—</span>{% endif %}
             </td>
             {% endfor %}
             {% if periods|length > 1 %}
-            <td class="text-end table-secondary fw-semibold text-danger">{{ '{:,.0f}'.format(row.total) }} ₽</td>
+            <td class="text-end table-secondary fw-semibold text-danger">
+                {{ '{:,.0f}'.format(row.total) }} ₽
+                {{ pct(row.total, total_rev_grand) }}
+            </td>
             {% endif %}
         </tr>
+        {% endif %}
         {% else %}
         <tr>
-            <td colspan="{{ periods|length + (2 if periods|length > 1 else 1) }}"
-                class="text-center text-muted py-2 small">
-                Нет статей — выберите в настройках
+            <td colspan="{{ n_cols }}" class="text-center text-muted py-3 small">
+                Нет статей расходов — выберите в настройках
             </td>
         </tr>
         {% endfor %}
-        {# Итого расходы #}
         <tr style="background:#f5c6cb">
             <td class="fw-bold text-danger">Итого расходы</td>
             {% for p in periods %}
-            <td class="text-end fw-bold text-danger">{{ '{:,.0f}'.format(exp_totals.get(p,0)) }} ₽</td>
+            <td class="text-end fw-bold text-danger">
+                {{ '{:,.0f}'.format(exp_totals.get(p,0)) }} ₽
+                {{ pct(exp_totals.get(p,0), total_rev_by_p.get(p,0)) }}
+            </td>
             {% endfor %}
             {% if periods|length > 1 %}
-            <td class="text-end fw-bold text-danger table-secondary">{{ '{:,.0f}'.format(exp_grand) }} ₽</td>
+            <td class="text-end fw-bold text-danger table-secondary">
+                {{ '{:,.0f}'.format(exp_grand) }} ₽
+                {{ pct(exp_grand, total_rev_grand) }}
+            </td>
             {% endif %}
         </tr>
 
@@ -359,29 +413,16 @@
         <tr style="background:#cfe2ff">
             <td class="fw-bold fs-6"><i class="bi bi-trophy me-1"></i>Чистая прибыль</td>
             {% for p in periods %}
-            {% set pr = profit_by_period.get(p,0) %}
-            <td class="text-end fw-bold fs-6 {% if pr>=0 %}text-primary{% else %}text-danger{% endif %}">
+            {% set pr = profit_by_p.get(p,0) %}
+            <td class="text-end fw-bold {% if pr>=0 %}text-primary{% else %}text-danger{% endif %}">
                 {{ '{:,.0f}'.format(pr) }} ₽
+                {{ pct(pr, total_rev_by_p.get(p,0)) }}
             </td>
             {% endfor %}
             {% if periods|length > 1 %}
-            <td class="text-end fw-bold fs-6 table-secondary {% if profit_grand>=0 %}text-primary{% else %}text-danger{% endif %}">
+            <td class="text-end fw-bold table-secondary {% if profit_grand>=0 %}text-primary{% else %}text-danger{% endif %}">
                 {{ '{:,.0f}'.format(profit_grand) }} ₽
-            </td>
-            {% endif %}
-        </tr>
-        <tr style="background:#e7f0ff">
-            <td class="small text-muted">Маржинальность</td>
-            {% for p in periods %}
-            {% set inc_p = inc_totals.get(p,0) %}
-            {% set pr_p  = profit_by_period.get(p,0) %}
-            <td class="text-end small text-muted">
-                {% if inc_p > 0 %}{{ (pr_p/inc_p*100)|round(1) }}%{% else %}—{% endif %}
-            </td>
-            {% endfor %}
-            {% if periods|length > 1 %}
-            <td class="text-end small text-muted table-secondary">
-                {% if inc_grand > 0 %}{{ (profit_grand/inc_grand*100)|round(1) }}%{% else %}—{% endif %}
+                {{ pct(profit_grand, total_rev_grand) }}
             </td>
             {% endif %}
         </tr>
@@ -400,12 +441,12 @@ function pnlBranchChange() {
     var checked = [...cbs].filter(c => c.checked);
     document.getElementById('pnl-all-cb').checked = checked.length === 0;
     document.getElementById('pnl-branch-label').textContent =
-        checked.length === 0 ? 'Все филиалы' : 'Выбрано: ' + checked.length;
+        checked.length === 0 ? 'Все' : 'Выбрано: ' + checked.length;
 }
 function pnlToggleAll(cb) {
     if (cb.checked) {
         document.querySelectorAll('.pnl-branch-cb').forEach(c => c.checked = false);
-        document.getElementById('pnl-branch-label').textContent = 'Все филиалы';
+        document.getElementById('pnl-branch-label').textContent = 'Все';
     }
 }
 function pnlSelectGroup(ids) {
@@ -414,6 +455,16 @@ function pnlSelectGroup(ids) {
         if (ids.indexOf(parseInt(cb.value)) >= 0) cb.checked = true;
     });
     pnlBranchChange();
+}
+function toggleCatGroup(allId, groupClass) {
+    var allCb = document.getElementById(allId);
+    if (allCb && allCb.checked) {
+        document.querySelectorAll('.' + groupClass).forEach(c => c.checked = true);
+    }
+}
+function uncheckAll(allId, groupClass) {
+    var allCb = document.getElementById(allId);
+    if (allCb) allCb.checked = false;
 }
 </script>
 {% endblock %}

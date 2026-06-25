@@ -4051,33 +4051,30 @@ def _pnl_period_label(p):
         return p
 
 
+
 def _pnl_load_settings(conn):
     rows = conn.execute('SELECT key, value FROM pnl_settings').fetchall()
     cfg  = {r['key']: r['value'] for r in rows}
 
-    all_cats = conn.execute(
-        "SELECT code, COALESCE(type,'expense') AS type FROM expense_categories"
-        " WHERE is_active=1 AND parent_id IS NULL ORDER BY sort_order, label"
-    ).fetchall()
-
-    def _list(key, default):
+    def _lst(key, default):
         raw = cfg.get(key)
+        if raw is None:
+            return default
         try:
-            return _json.loads(raw) if raw is not None else default
+            return _json.loads(raw)
         except Exception:
             return default
 
-    default_cash_exp = [c['code'] for c in all_cats if c['type'] == 'expense']
-    default_bank_inc = [c['code'] for c in all_cats if c['type'] == 'income']
-    default_bank_exp = [c['code'] for c in all_cats if c['type'] == 'expense']
+    default_cash_exp = [c['code'] for c in conn.execute(
+        "SELECT code FROM expense_categories WHERE is_active=1 AND parent_id IS NULL ORDER BY sort_order, label"
+    ).fetchall()]
 
     return {
-        'include_cash_revenue': int(cfg.get('include_cash_revenue', '1')),
-        'cash_expense_cats':    _list('cash_expense_cats', default_cash_exp),
-        'bank_income_cats':     _list('bank_income_cats',  default_bank_inc),
-        'bank_expense_cats':    _list('bank_expense_cats', default_bank_exp),
-        'include_salary':       int(cfg.get('include_salary', '1')),
-        'include_purchases':    int(cfg.get('include_purchases', '0')),
+        'cash_expense_cats':        _lst('cash_expense_cats', default_cash_exp),
+        'bank_income_ctr_cats':     _lst('bank_income_ctr_cats',  None),  # None = все
+        'bank_expense_ctr_cats':    _lst('bank_expense_ctr_cats', None),  # None = все
+        'include_salary':           int(cfg.get('include_salary', '1')),
+        'include_salary_breakdown': int(cfg.get('include_salary_breakdown', '1')),
     }
 
 
@@ -4099,52 +4096,72 @@ def pnl_report():
         branches      = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
         branch_groups = get_branch_groups(conn)
         all_cats      = get_expense_categories(conn)
+        all_ctr_cats  = conn.execute('SELECT * FROM contractor_categories ORDER BY sort_order, name').fetchall()
         cfg           = _pnl_load_settings(conn)
 
         if branch_ids:
             ph    = ','.join('?' * len(branch_ids))
             bf    = f'AND s.branch_id IN ({ph})'
             bf_p  = f'AND p.branch_id IN ({ph})'
-            bf_bt = (
-                f'AND bt.bank_account_id IN '
-                f'(SELECT bank_account_id FROM bank_account_branches WHERE branch_id IN ({ph}))'
-            )
+            bf_bt = (f'AND bt.bank_account_id IN '
+                     f'(SELECT bank_account_id FROM bank_account_branches WHERE branch_id IN ({ph}))')
             b_args = [int(b) for b in branch_ids]
         else:
             bf = bf_p = bf_bt = ''
             b_args = []
 
         pe    = "strftime('%Y-%m', s.date)"      if group_by == 'month' else "'total'"
-        pe_p  = "strftime('%Y-%m', p.date)"      if group_by == 'month' else "'total'"
         pe_bt = "strftime('%Y-%m', bt.txn_date)" if group_by == 'month' else "'total'"
 
-        # Наличная выручка из смен
+        # Общая выручка (база для %)
+        total_rev_by_p = {}
+        for r in conn.execute(f"""
+            SELECT {pe} AS period, COALESCE(SUM(r.total_revenue), 0) AS amount
+            FROM shifts s LEFT JOIN shift_revenue r ON r.shift_id=s.id
+            WHERE s.date BETWEEN ? AND ? {bf}
+            GROUP BY period ORDER BY period
+        """, [date_from, date_to] + b_args).fetchall():
+            total_rev_by_p[r['period']] = r['amount']
+
+        # Наличный приход
         cash_rev_by_p = {}
-        if cfg['include_cash_revenue']:
-            for r in conn.execute(f"""
-                SELECT {pe} AS period, COALESCE(SUM(r.cash_amount), 0) AS amount
-                FROM shifts s LEFT JOIN shift_revenue r ON r.shift_id=s.id
-                WHERE s.date BETWEEN ? AND ? {bf}
-                GROUP BY period ORDER BY period
-            """, [date_from, date_to] + b_args).fetchall():
-                cash_rev_by_p[r['period']] = r['amount']
+        for r in conn.execute(f"""
+            SELECT {pe} AS period, COALESCE(SUM(r.cash_amount), 0) AS amount
+            FROM shifts s LEFT JOIN shift_revenue r ON r.shift_id=s.id
+            WHERE s.date BETWEEN ? AND ? {bf}
+            GROUP BY period ORDER BY period
+        """, [date_from, date_to] + b_args).fetchall():
+            cash_rev_by_p[r['period']] = r['amount']
 
-        # Приход из банка по категориям
+        # Приход из банка по категориям контрагентов
         bank_inc_by = defaultdict(lambda: defaultdict(float))
-        if cfg['bank_income_cats']:
-            ph_c = ','.join('?' * len(cfg['bank_income_cats']))
-            for r in conn.execute(f"""
-                SELECT {pe_bt} AS period, bt.category AS cat,
-                       COALESCE(SUM(bt.amount), 0) AS amount
-                FROM bank_transactions bt
-                WHERE bt.txn_date BETWEEN ? AND ?
-                  AND bt.amount > 0 AND bt.is_ignored=0
-                  AND bt.category IN ({ph_c}) {bf_bt}
-                GROUP BY period, bt.category
-            """, [date_from, date_to] + cfg['bank_income_cats'] + b_args).fetchall():
-                bank_inc_by[r['cat']][r['period']] += r['amount']
+        _bi_filter = ''
+        _bi_args   = []
+        if cfg['bank_income_ctr_cats'] is not None:
+            if cfg['bank_income_ctr_cats']:
+                ph_c = ','.join('?' * len(cfg['bank_income_ctr_cats']))
+                _bi_filter = f"AND COALESCE(cc.name, c.category, bt.category, '') IN ({ph_c})"
+                _bi_args   = cfg['bank_income_ctr_cats']
+            else:
+                _bi_filter = 'AND 0=1'  # пустой список = ничего
+        for r in conn.execute(f"""
+            SELECT {pe_bt} AS period,
+                   COALESCE(cc.name, c.category, bt.category) AS cat_name,
+                   COALESCE(SUM(bt.amount), 0) AS amount
+            FROM bank_transactions bt
+            LEFT JOIN contractors c ON c.id = bt.contractor_id
+            LEFT JOIN contractor_categories cc
+                   ON LOWER(TRIM(cc.name)) = LOWER(TRIM(COALESCE(c.category, '')))
+            WHERE bt.txn_date BETWEEN ? AND ?
+              AND bt.amount > 0 AND bt.is_ignored=0
+              AND COALESCE(cc.name, c.category, bt.category, '') != ''
+              {_bi_filter} {bf_bt}
+            GROUP BY period, cat_name
+            HAVING amount > 0
+        """, [date_from, date_to] + _bi_args + b_args).fetchall():
+            bank_inc_by[r['cat_name']][r['period']] += r['amount']
 
-        # Наличные расходы из смен по категориям
+        # Наличные расходы по категориям
         cash_exp_by = defaultdict(lambda: defaultdict(float))
         if cfg['cash_expense_cats']:
             ph_c = ','.join('?' * len(cfg['cash_expense_cats']))
@@ -4158,105 +4175,134 @@ def pnl_report():
             """, [date_from, date_to] + cfg['cash_expense_cats'] + b_args).fetchall():
                 cash_exp_by[r['cat']][r['period']] += r['amount']
 
-        # Расходы из банка по категориям
+        # Расходы из банка по категориям контрагентов
         bank_exp_by = defaultdict(lambda: defaultdict(float))
-        if cfg['bank_expense_cats']:
-            ph_c = ','.join('?' * len(cfg['bank_expense_cats']))
-            for r in conn.execute(f"""
-                SELECT {pe_bt} AS period, bt.category AS cat,
-                       COALESCE(SUM(-bt.amount), 0) AS amount
-                FROM bank_transactions bt
-                WHERE bt.txn_date BETWEEN ? AND ?
-                  AND bt.amount < 0 AND bt.is_ignored=0
-                  AND bt.category IN ({ph_c}) {bf_bt}
-                GROUP BY period, bt.category
-            """, [date_from, date_to] + cfg['bank_expense_cats'] + b_args).fetchall():
-                bank_exp_by[r['cat']][r['period']] += r['amount']
+        _be_filter = ''
+        _be_args   = []
+        if cfg['bank_expense_ctr_cats'] is not None:
+            if cfg['bank_expense_ctr_cats']:
+                ph_c = ','.join('?' * len(cfg['bank_expense_ctr_cats']))
+                _be_filter = f"AND COALESCE(cc.name, c.category, bt.category, '') IN ({ph_c})"
+                _be_args   = cfg['bank_expense_ctr_cats']
+            else:
+                _be_filter = 'AND 0=1'
+        for r in conn.execute(f"""
+            SELECT {pe_bt} AS period,
+                   COALESCE(cc.name, c.category, bt.category) AS cat_name,
+                   COALESCE(SUM(-bt.amount), 0) AS amount
+            FROM bank_transactions bt
+            LEFT JOIN contractors c ON c.id = bt.contractor_id
+            LEFT JOIN contractor_categories cc
+                   ON LOWER(TRIM(cc.name)) = LOWER(TRIM(COALESCE(c.category, '')))
+            WHERE bt.txn_date BETWEEN ? AND ?
+              AND bt.amount < 0 AND bt.is_ignored=0
+              AND COALESCE(cc.name, c.category, bt.category, '') != ''
+              {_be_filter} {bf_bt}
+            GROUP BY period, cat_name
+            HAVING amount > 0
+        """, [date_from, date_to] + _be_args + b_args).fetchall():
+            bank_exp_by[r['cat_name']][r['period']] += r['amount']
 
-        # ФОТ
-        sal_by_p = {}
+        # ФОТ по ролям
+        sal_by_role = defaultdict(lambda: defaultdict(float))
         if cfg['include_salary']:
             for r in conn.execute(f"""
-                SELECT {pe} AS period, COALESCE(SUM(es.total_amount), 0) AS amount
+                SELECT {pe} AS period,
+                       COALESCE(es.role_snapshot, 'other') AS role,
+                       COALESCE(SUM(es.total_amount), 0) AS amount
                 FROM employee_shifts es JOIN shifts s ON s.id=es.shift_id
                 WHERE s.date BETWEEN ? AND ? {bf}
-                GROUP BY period ORDER BY period
+                GROUP BY period, role
             """, [date_from, date_to] + b_args).fetchall():
-                sal_by_p[r['period']] = r['amount']
-
-        # Закупки
-        pur_by_p = {}
-        if cfg['include_purchases']:
-            for r in conn.execute(f"""
-                SELECT {pe_p} AS period, COALESCE(SUM(p.amount), 0) AS amount
-                FROM purchases p
-                WHERE p.date BETWEEN ? AND ? {bf_p}
-                GROUP BY period ORDER BY period
-            """, [date_from, date_to] + b_args).fetchall():
-                pur_by_p[r['period']] = r['amount']
+                sal_by_role[r['role']][r['period']] += r['amount']
 
     # Все периоды
-    all_p = set(cash_rev_by_p) | set(sal_by_p) | set(pur_by_p)
+    all_p = set(total_rev_by_p) | set(cash_rev_by_p)
     for d in list(bank_inc_by.values()) + list(cash_exp_by.values()) + list(bank_exp_by.values()):
+        all_p.update(d)
+    for d in sal_by_role.values():
         all_p.update(d)
     periods = sorted(all_p) if group_by == 'month' else ['total']
 
     cat_map = {c['code']: c['label'] for c in all_cats}
 
-    def _build_row(label, by_period, totals_acc, badge=None):
-        row = {'label': label, 'values': {}, 'total': 0.0, 'badge': badge}
+    def _row(label, by_p, badge=None, sub=False):
+        r = {'label': label, 'amounts': {}, 'total': 0.0, 'badge': badge, 'sub': sub}
         for p in periods:
-            v = by_period.get(p, 0.0)
-            row['values'][p] = v
-            row['total'] += v
-            totals_acc[p] = totals_acc.get(p, 0.0) + v
-        return row
+            v = by_p.get(p, 0.0)
+            r['amounts'][p] = v
+            r['total'] += v
+        return r
 
-    # ДОХОДЫ
+    # ── ДОХОДЫ ────────────────────────────────────────────────────────────────
     inc_totals = {}
-    inc_rows   = []
+    inc_rows   = [_row('Наличные', cash_rev_by_p, 'cash')]
 
-    if cfg['include_cash_revenue']:
-        inc_rows.append(_build_row('Наличные (выручка)', cash_rev_by_p, inc_totals, 'cash'))
+    for cat_name, by_p in sorted(bank_inc_by.items()):
+        inc_rows.append(_row(cat_name, dict(by_p), 'bank'))
 
-    for cat_code in cfg['bank_income_cats']:
-        d = {p: bank_inc_by[cat_code].get(p, 0.0) for p in periods}
-        inc_rows.append(_build_row(cat_map.get(cat_code, cat_code), d, inc_totals, 'bank'))
+    for row in inc_rows:
+        for p in periods:
+            inc_totals[p] = inc_totals.get(p, 0.0) + row['amounts'].get(p, 0.0)
 
     inc_grand = sum(inc_totals.get(p, 0) for p in periods)
 
-    # РАСХОДЫ
+    # ── РАСХОДЫ ───────────────────────────────────────────────────────────────
     exp_totals = {}
     exp_rows   = []
 
-    for cat_code in cfg['cash_expense_cats']:
-        d = {p: cash_exp_by[cat_code].get(p, 0.0) for p in periods}
-        exp_rows.append(_build_row(cat_map.get(cat_code, cat_code), d, exp_totals, 'cash'))
-
-    for cat_code in cfg['bank_expense_cats']:
-        d = {p: bank_exp_by[cat_code].get(p, 0.0) for p in periods}
-        exp_rows.append(_build_row(cat_map.get(cat_code, cat_code), d, exp_totals, 'bank'))
-
+    # ФОТ
     if cfg['include_salary']:
-        exp_rows.append(_build_row('ФОТ (зарплаты)', sal_by_p, exp_totals, 'salary'))
+        sal_total_by_p = {}
+        for role, by_p in sal_by_role.items():
+            for p, v in by_p.items():
+                sal_total_by_p[p] = sal_total_by_p.get(p, 0.0) + v
+        sal_total_row = _row('ФОТ (итого)', sal_total_by_p, 'salary')
+        exp_rows.append(sal_total_row)
 
-    if cfg['include_purchases']:
-        exp_rows.append(_build_row('Закупки', pur_by_p, exp_totals, 'purchases'))
+        if cfg['include_salary_breakdown']:
+            role_order = ['admin', 'cook', 'sushi', 'courier', 'packer', 'cleaner']
+            for role in role_order:
+                if role in sal_by_role:
+                    exp_rows.append(_row(ROLE_LABELS.get(role, role), dict(sal_by_role[role]), 'salary', sub=True))
+            # прочие роли не в списке
+            for role, by_p in sal_by_role.items():
+                if role not in role_order:
+                    exp_rows.append(_row(ROLE_LABELS.get(role, role), dict(by_p), 'salary', sub=True))
+
+    # Наличные расходы по категориям
+    for cat_code in cfg['cash_expense_cats']:
+        by_p = cash_exp_by.get(cat_code, {})
+        if any(v > 0 for v in by_p.values()):
+            exp_rows.append(_row(cat_map.get(cat_code, cat_code), dict(by_p), 'cash'))
+
+    # Банковские расходы по категориям контрагентов
+    for cat_name, by_p in sorted(bank_exp_by.items()):
+        exp_rows.append(_row(cat_name, dict(by_p), 'bank'))
+
+    for row in exp_rows:
+        if not row['sub']:
+            for p in periods:
+                exp_totals[p] = exp_totals.get(p, 0.0) + row['amounts'].get(p, 0.0)
 
     exp_grand = sum(exp_totals.get(p, 0) for p in periods)
 
-    profit_by_period = {p: inc_totals.get(p, 0) - exp_totals.get(p, 0) for p in periods}
-    profit_grand     = inc_grand - exp_grand
-    period_labels    = {p: _pnl_period_label(p) for p in periods}
+    profit_by_p   = {p: inc_totals.get(p, 0) - exp_totals.get(p, 0) for p in periods}
+    profit_grand  = inc_grand - exp_grand
+    total_rev_grand = sum(total_rev_by_p.get(p, 0) for p in periods)
+    period_labels = {p: _pnl_period_label(p) for p in periods}
 
     return render_template('pnl.html',
         periods=periods, period_labels=period_labels,
         inc_rows=inc_rows, inc_totals=inc_totals, inc_grand=inc_grand,
         exp_rows=exp_rows, exp_totals=exp_totals, exp_grand=exp_grand,
-        profit_by_period=profit_by_period, profit_grand=profit_grand,
+        profit_by_p=profit_by_p, profit_grand=profit_grand,
+        total_rev_by_p=total_rev_by_p, total_rev_grand=total_rev_grand,
         cfg=cfg,
         branches=branches, branch_groups=branch_groups,
         all_cats=all_cats, cat_map=cat_map,
+        all_ctr_cats=all_ctr_cats,
+        role_labels=ROLE_LABELS,
         date_from=date_from, date_to=date_to,
         branch_ids=branch_ids, group_by=group_by,
     )
@@ -4266,19 +4312,20 @@ def pnl_report():
 @login_required
 @owner_required
 def pnl_settings_save():
+    bank_inc_all = request.form.get('bank_income_all')
+    bank_exp_all = request.form.get('bank_expense_all')
+    bank_income_val  = None if bank_inc_all else request.form.getlist('bank_income_ctr_cats')
+    bank_expense_val = None if bank_exp_all else request.form.getlist('bank_expense_ctr_cats')
+
     with get_db() as conn:
         for key, val in [
-            ('include_cash_revenue', '1' if request.form.get('include_cash_revenue') else '0'),
-            ('cash_expense_cats',    _json.dumps(request.form.getlist('cash_expense_cats'))),
-            ('bank_income_cats',     _json.dumps(request.form.getlist('bank_income_cats'))),
-            ('bank_expense_cats',    _json.dumps(request.form.getlist('bank_expense_cats'))),
-            ('include_salary',       '1' if request.form.get('include_salary') else '0'),
-            ('include_purchases',    '1' if request.form.get('include_purchases') else '0'),
+            ('cash_expense_cats',       _json.dumps(request.form.getlist('cash_expense_cats'))),
+            ('bank_income_ctr_cats',    _json.dumps(bank_income_val)),
+            ('bank_expense_ctr_cats',   _json.dumps(bank_expense_val)),
+            ('include_salary',          '1' if request.form.get('include_salary') else '0'),
+            ('include_salary_breakdown','1' if request.form.get('include_salary_breakdown') else '0'),
         ]:
-            conn.execute(
-                'INSERT OR REPLACE INTO pnl_settings (key, value) VALUES (?, ?)',
-                (key, val)
-            )
+            conn.execute('INSERT OR REPLACE INTO pnl_settings (key, value) VALUES (?, ?)', (key, val))
         conn.commit()
 
     flash('Настройки P&L сохранены', 'success')
@@ -4287,6 +4334,7 @@ def pnl_settings_save():
     if bids:
         params['branch_ids'] = bids
     return redirect(url_for('pnl_report', **params))
+
 
 
 # ─── HISTORY ──────────────────────────────────────────────────────────────────
