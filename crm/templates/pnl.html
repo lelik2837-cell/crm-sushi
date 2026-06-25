@@ -235,6 +235,16 @@
     </div>
 </div>
 
+{# ═══ ДИАГНОСТИКА БАНКА ═══ #}
+<div class="alert alert-info py-2 small mb-3">
+    <i class="bi bi-info-circle me-1"></i>
+    <strong>Банк за период:</strong>
+    всего транзакций: <strong>{{ bt_debug.total or 0 }}</strong> |
+    с категорией: <strong>{{ bt_debug.with_cat or 0 }}</strong> |
+    доход: <strong>{{ bt_debug.income_rows or 0 }}</strong> |
+    расход: <strong>{{ bt_debug.expense_rows or 0 }}</strong>
+</div>
+
 {# ═══ ТАБЛИЦА P&L ═══ #}
 {% set n_cols = periods|length + (2 if periods|length > 1 else 1) %}
 <div class="card">

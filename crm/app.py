@@ -4198,6 +4198,17 @@ def pnl_report():
         """, [date_from, date_to] + _be_args + b_args).fetchall():
             bank_exp_by[r['cat_name']][r['period']] += r['amount']
 
+        # Диагностика банковских данных
+        _bt_debug = conn.execute("""
+            SELECT COUNT(*) AS total,
+                   SUM(CASE WHEN category IS NOT NULL AND category!='' THEN 1 ELSE 0 END) AS with_cat,
+                   SUM(CASE WHEN amount>0 AND is_ignored=0 THEN 1 ELSE 0 END) AS income_rows,
+                   SUM(CASE WHEN amount<0 AND is_ignored=0 THEN 1 ELSE 0 END) AS expense_rows
+            FROM bank_transactions
+            WHERE txn_date BETWEEN ? AND ?
+        """, [date_from, date_to]).fetchone()
+        bt_debug = dict(_bt_debug) if _bt_debug else {}
+
         # ФОТ по ролям
         sal_by_role = defaultdict(lambda: defaultdict(float))
         if cfg['include_salary']:
@@ -4299,6 +4310,7 @@ def pnl_report():
         role_labels=ROLE_LABELS,
         date_from=date_from, date_to=date_to,
         branch_ids=branch_ids, group_by=group_by,
+        bt_debug=bt_debug,
     )
 
 
