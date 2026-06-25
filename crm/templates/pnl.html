@@ -255,11 +255,8 @@
     за выбранный период: <strong>{{ bt_debug.total or 0 }}</strong>
     (с кат: {{ bt_debug.with_cat or 0 }}, доход: {{ bt_debug.income_rows or 0 }}, расход: {{ bt_debug.expense_rows or 0 }}) |
     из них с кат+активные: расход <strong>{{ bt_debug.cat_exp_active or 0 }}</strong>, доход <strong>{{ bt_debug.cat_inc_active or 0 }}</strong>, проигнорированы <strong>{{ bt_debug.cat_ignored or 0 }}</strong> |
-    примеры категорий: <strong>{{ bt_debug.sample_cats | join(', ') if bt_debug.sample_cats else 'нет' }}</strong><br>
-    <strong>Филиалы в фильтре:</strong> {{ bt_debug.branch_ids or 'нет (все)' }} |
-    bank_account_branches: <strong>{{ bt_debug.bank_account_branches_cnt }}</strong> |
-    bf_bt: <code>{{ bt_debug.bf_bt }}</code> |
-    после фильтра филиалов: всего {{ bt_debug.after_branch_filter.cnt or 0 }}, с кат+расход {{ bt_debug.after_branch_filter.cat_exp or 0 }}
+    примеры категорий в транзакциях: <strong>{{ bt_debug.sample_cats | join(', ') if bt_debug.sample_cats else 'нет' }}</strong> |
+    категории контрагентов в справочнике: <strong>{{ bt_debug.ctr_cats | join(', ') if bt_debug.ctr_cats else 'нет' }}</strong>
 </div>
 
 {# ═══ ТАБЛИЦА P&L ═══ #}
