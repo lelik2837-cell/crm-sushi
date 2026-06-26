@@ -516,6 +516,26 @@ keyword, commission_included (1/0), commission_pattern (regex), category, sort_o
 - Для `amount <= 0` — только `ctr_cats_expense` (direction=expense/any)
 - `bank_statement_view` передаёт оба списка отдельно: `ctr_cats_income`, `ctr_cats_expense`
 
+### 34. Экспорт смены в Google Sheets (при закрытии)
+
+- Расширенный экспорт: все поля выручки, расходы по каждой категории (нал+безнал), ФОТ по должностям, сотрудники, такси, терминалы
+- Переменные Railway: `GOOGLE_CREDENTIALS_JSON`, `GOOGLE_SHEET_ID`
+- Настройки: `/settings/gsheet`
+
+### 35. Экспорт смены в Google Drive как xlsx (при закрытии)
+
+- Файл `Филиал_ДАТА_ДеньНедели.xlsx` в формате шаблона импорта (те же ячейки что читает `_xl_process_sheet`)
+- Переменная Railway: `GOOGLE_DRIVE_FOLDER_ID = 1Aj_oaaG-gBW7anpk018gEH8If7F9oYIW`
+- **СТАТУС: отлаживаем** — добавлены диагностические логи, ждём `[GDrive]` в Railway после коммита b03c726
+
+---
+
+## Ожидает подтверждения / в процессе
+
+- **GDrive xlsx** — закрыть тестовую смену, найти `[GDrive]` в логах Railway
+- **PnL банк** — убрать диагностический баннер из `pnl.html` после подтверждения что категории отображаются
+- **PnL банк** — проверить исправление фильтра `[] or None` в `_pnl_load_settings`
+
 ---
 
 ## Глобальные стандарты UI (обязательно везде)
