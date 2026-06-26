@@ -1,9 +1,17 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-  <rect width="100" height="100" rx="22" ry="22" fill="#cc0000"/>
-  <text x="50" y="78"
-        font-family="Arial Black, Arial, sans-serif"
-        font-size="74"
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="110" ry="110" fill="#cc0000"/>
+  <text x="256" y="230"
+        font-family="Arial Black, Impact, sans-serif"
+        font-size="165"
         font-weight="900"
         text-anchor="middle"
-        fill="#ffc107">P</text>
+        fill="#ffffff"
+        letter-spacing="-4">CRM</text>
+  <text x="256" y="410"
+        font-family="Arial Black, Impact, sans-serif"
+        font-size="185"
+        font-weight="900"
+        text-anchor="middle"
+        fill="#ffc107"
+        letter-spacing="-2">PAPA</text>
 </svg>
