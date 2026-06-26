@@ -150,35 +150,6 @@
 </div>
 {% endif %}
 
-<!-- ══ WEEKLY STATS ══ -->
-{% if weekly %}
-<div class="row g-3 mb-4">
-    <div class="col-6 col-md-3">
-        <div class="card metric-card p-3">
-            <div class="text-muted small">Выручка за 7 дней</div>
-            <div class="fw-bold fs-4 metric-value">{{ '{:,.0f}'.format(weekly.total or 0) }} ₽</div>
-        </div>
-    </div>
-    <div class="col-6 col-md-3">
-        <div class="card p-3" style="border-left: 4px solid #0d6efd">
-            <div class="text-muted small">Доставка</div>
-            <div class="fw-bold fs-4">{{ '{:,.0f}'.format(weekly.delivery or 0) }} ₽</div>
-        </div>
-    </div>
-    <div class="col-6 col-md-3">
-        <div class="card p-3" style="border-left: 4px solid #198754">
-            <div class="text-muted small">Самовывоз</div>
-            <div class="fw-bold fs-4">{{ '{:,.0f}'.format(weekly.pickup or 0) }} ₽</div>
-        </div>
-    </div>
-    <div class="col-6 col-md-3">
-        <div class="card p-3" style="border-left: 4px solid #fd7e14">
-            <div class="text-muted small">Заказов за 7 дней</div>
-            <div class="fw-bold fs-4">{{ weekly.orders or 0 }}</div>
-        </div>
-    </div>
-</div>
-{% endif %}
 
 <!-- ══ OPEN SHIFTS ══ -->
 {% if open_shifts %}
