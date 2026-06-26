@@ -438,7 +438,6 @@ function updateRightMetrics(d) {
         function(b){ return b.delivery_revenue; },
         function(b){ return b.delivery_revenue > 0 ? Math.round(b.courier_fot/b.delivery_revenue*100) : 0; },
         '#f97316',
-        function(b){ return b.delivery_orders > 0 ? Math.round(b.courier_fot/b.delivery_orders) + 'р. / заказ' : '—'; },
         function(b){ return b.delivery_orders > 0 ? Math.round(b.courier_fot/b.delivery_orders) + 'р.' : '—'; });
 }
 
