@@ -1364,6 +1364,25 @@ def api_revenue_summary():
     })
 
 
+@app.route('/api/revenue-days')
+@login_required
+@owner_required
+def api_revenue_days():
+    date_from = request.args.get('date_from', date.today().isoformat())
+    date_to   = request.args.get('date_to',   date.today().isoformat())
+    with get_db() as conn:
+        rows = conn.execute('''
+            SELECT s.date, COALESCE(SUM(r.total_revenue), 0) AS revenue
+            FROM shifts s JOIN shift_revenue r ON r.shift_id = s.id
+            WHERE s.date BETWEEN ? AND ?
+            GROUP BY s.date ORDER BY s.date
+        ''', (date_from, date_to)).fetchall()
+    return jsonify({
+        'ok': True,
+        'days': [{'date': r['date'], 'revenue': int(r['revenue'])} for r in rows]
+    })
+
+
 # ─── SHIFTS ───────────────────────────────────────────────────────────────────
 
 @app.route('/shift/open', methods=['POST'])
