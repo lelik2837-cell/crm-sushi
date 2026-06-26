@@ -48,6 +48,40 @@
         .form-control, .form-select { border-radius: 8px; }
         .input-sm { padding: 0.25rem 0.5rem; font-size: 0.875rem; }
         @media (max-width: 768px) { .metric-value { font-size: 1.4rem; } }
+
+        /* Mobile: убираем чёрную полосу навбара, оставляем только кнопку меню */
+        @media (max-width: 991.98px) {
+            .navbar {
+                background: transparent !important;
+                box-shadow: none;
+                padding-top: 6px;
+                padding-bottom: 6px;
+            }
+            .navbar-brand { display: none; }
+            .navbar-toggler {
+                background: #fff !important;
+                border: none !important;
+                border-radius: 10px;
+                padding: 6px 10px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+                margin-left: auto;
+            }
+            /* Тёмные линии гамбургера на белом фоне */
+            .navbar-toggler-icon {
+                background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba(26,26,46,1)' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e") !important;
+            }
+            /* Когда меню раскрыто — возвращаем тёмный фон */
+            .navbar:has(.navbar-collapse.show) {
+                background: #1a1a2e !important;
+            }
+            .navbar:has(.navbar-collapse.show) .navbar-toggler {
+                background: transparent !important;
+                box-shadow: none;
+            }
+            .navbar:has(.navbar-collapse.show) .navbar-toggler-icon {
+                background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba(255,255,255,0.85)' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e") !important;
+            }
+        }
     </style>
 </head>
 <body>
