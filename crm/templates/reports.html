@@ -132,38 +132,102 @@
 {% endif %}
 
 <div class="card mb-4">
-    <div class="card-header bg-light fw-semibold">По сменам</div>
+    <div class="card-header bg-light fw-semibold d-flex align-items-center justify-content-between">
+        <span>По дням</span>
+        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleAllDays()">
+            <i class="bi bi-arrows-expand" id="toggle-all-icon"></i> <span id="toggle-all-label">Раскрыть все</span>
+        </button>
+    </div>
     <div class="card-body p-0">
         <div class="table-responsive">
-            <table class="table table-hover mb-0">
+            <table class="table table-hover mb-0 align-middle" id="days-table">
                 <thead class="table-light">
                     <tr>
-                        <th>Дата</th><th>Филиал</th>
+                        <th style="width:36px;"></th>
+                        <th>Дата</th>
                         <th class="text-end">Выручка</th>
-                        <th class="text-end">Доставка</th>
                         <th class="text-end">Самовывоз</th>
-                        <th class="text-center">Заказов</th>
-                        <th class="text-center">Статус</th>
-                        <th></th>
+                        <th class="text-end text-muted small">Самовывоз %</th>
+                        <th class="text-end">ФОТ</th>
+                        <th class="text-end text-muted small">ФОТ %</th>
                     </tr>
                 </thead>
                 <tbody>
-                {% for s in shifts_data %}
-                <tr>
-                    <td class="fw-semibold">{{ s.date }}</td>
-                    <td>{{ s.branch_name }}</td>
-                    <td class="text-end fw-semibold">{{ '{:,.0f}'.format(s.revenue) }} ₽</td>
-                    <td class="text-end">{{ '{:,.0f}'.format(s.delivery) }} ₽</td>
-                    <td class="text-end">{{ '{:,.0f}'.format(s.pickup) }} ₽</td>
-                    <td class="text-center">{{ s.orders }}</td>
-                    <td class="text-center">
-                        {% if s.status == 'open' %}<span class="badge bg-warning text-dark">Открыта</span>
-                        {% else %}<span class="badge bg-secondary">Закрыта</span>{% endif %}
+                {% for day in day_groups %}
+                {% set day_idx = loop.index %}
+                {% set drev = day.revenue %}
+                {% set dpct_pickup = ((day.pickup / drev * 100) | round(1)) if drev > 0 else 0 %}
+                {% set dpct_fot    = ((day.fot    / drev * 100) | round(1)) if drev > 0 else 0 %}
+                {# day header row #}
+                <tr class="day-header-row" data-day="{{ day_idx }}"
+                    onclick="toggleDay({{ day_idx }})"
+                    style="cursor:pointer; background:#f8f9fa;">
+                    <td class="text-center" style="color:#6c757d; font-size:13px;">
+                        <i class="bi bi-chevron-right day-chevron" id="chev-{{ day_idx }}"></i>
                     </td>
-                    <td><a href="{{ url_for('shift_view', shift_id=s.shift_id) }}" class="btn btn-sm btn-outline-secondary">→</a></td>
+                    <td class="fw-bold">
+                        {% set d = day.date %}
+                        {{ d[8:10] }}.{{ d[5:7] }}.{{ d[:4] }}
+                        <span class="text-muted fw-normal small ms-1">({{ day.branches | length }} фил.)</span>
+                    </td>
+                    <td class="text-end fw-bold" style="color:#1d4ed8;">{{ '{:,.0f}'.format(drev).replace(',', ' ') }} ₽</td>
+                    <td class="text-end fw-semibold">{{ '{:,.0f}'.format(day.pickup).replace(',', ' ') }} ₽</td>
+                    <td class="text-end">
+                        <span class="badge" style="background:#e0f2fe; color:#0369a1; font-weight:600;">{{ dpct_pickup }}%</span>
+                    </td>
+                    <td class="text-end fw-semibold" style="color:#92400e;">{{ '{:,.0f}'.format(day.fot).replace(',', ' ') }} ₽</td>
+                    <td class="text-end">
+                        <span class="badge" style="background:#fef9c3; color:#854d0e; font-weight:600;">{{ dpct_fot }}%</span>
+                    </td>
+                </tr>
+                {# branch detail rows (hidden by default) #}
+                {% for b in day.branches %}
+                {% set brev = b.revenue %}
+                {% set bpct_pickup = ((b.pickup / brev * 100) | round(1)) if brev > 0 else 0 %}
+                {% set bpct_fot    = ((b.fot    / brev * 100) | round(1)) if brev > 0 else 0 %}
+                <tr class="day-detail-row" data-day="{{ day_idx }}" style="display:none; background:#fff;">
+                    <td></td>
+                    <td class="ps-4 small">
+                        <i class="bi bi-shop text-muted me-1"></i>{{ b.branch_name }}
+                        {% if b.status == 'open' %}
+                        <span class="badge bg-warning text-dark ms-1" style="font-size:10px;">Открыта</span>
+                        {% endif %}
+                        <a href="{{ url_for('shift_view', shift_id=b.shift_id) }}"
+                           class="ms-1 text-muted" style="font-size:11px;" onclick="event.stopPropagation()">→</a>
+                    </td>
+                    <td class="text-end small">{{ '{:,.0f}'.format(brev).replace(',', ' ') }} ₽</td>
+                    <td class="text-end small">{{ '{:,.0f}'.format(b.pickup).replace(',', ' ') }} ₽</td>
+                    <td class="text-end">
+                        <span class="text-muted small">{{ bpct_pickup }}%</span>
+                    </td>
+                    <td class="text-end small" style="color:#92400e;">{{ '{:,.0f}'.format(b.fot).replace(',', ' ') }} ₽</td>
+                    <td class="text-end">
+                        <span class="text-muted small">{{ bpct_fot }}%</span>
+                    </td>
                 </tr>
                 {% endfor %}
+                {% endfor %}
                 </tbody>
+                {% if totals %}
+                {% set trev = totals.revenue or 0 %}
+                {% set tpct_pickup = ((totals.pickup / trev * 100) | round(1)) if trev > 0 else 0 %}
+                {% set tpct_fot    = (((totals.fot or 0) / trev * 100) | round(1)) if trev > 0 else 0 %}
+                <tfoot class="table-light fw-bold">
+                    <tr>
+                        <td></td>
+                        <td>Итого</td>
+                        <td class="text-end" style="color:#1d4ed8;">{{ '{:,.0f}'.format(trev).replace(',', ' ') }} ₽</td>
+                        <td class="text-end">{{ '{:,.0f}'.format(totals.pickup or 0).replace(',', ' ') }} ₽</td>
+                        <td class="text-end">
+                            <span class="badge" style="background:#e0f2fe; color:#0369a1; font-weight:600;">{{ tpct_pickup }}%</span>
+                        </td>
+                        <td class="text-end" style="color:#92400e;">{{ '{:,.0f}'.format(totals.fot or 0).replace(',', ' ') }} ₽</td>
+                        <td class="text-end">
+                            <span class="badge" style="background:#fef9c3; color:#854d0e; font-weight:600;">{{ tpct_fot }}%</span>
+                        </td>
+                    </tr>
+                </tfoot>
+                {% endif %}
             </table>
         </div>
     </div>
@@ -475,6 +539,39 @@
 
 {% block scripts %}
 <script>
+// ── Day grouping expand/collapse ──────────────────────────────────────────────
+var _expandedDays = {};
+
+function toggleDay(idx) {
+    var rows = document.querySelectorAll('.day-detail-row[data-day="' + idx + '"]');
+    var chev = document.getElementById('chev-' + idx);
+    var isOpen = _expandedDays[idx];
+    rows.forEach(function(r) { r.style.display = isOpen ? 'none' : ''; });
+    if (chev) {
+        chev.classList.toggle('bi-chevron-right', isOpen);
+        chev.classList.toggle('bi-chevron-down',  !isOpen);
+    }
+    _expandedDays[idx] = !isOpen;
+}
+
+function toggleAllDays() {
+    var allOpen = Object.values(_expandedDays).some(function(v) { return v; });
+    // if any open — collapse all; otherwise expand all
+    document.querySelectorAll('.day-header-row').forEach(function(row) {
+        var idx = row.dataset.day;
+        if (allOpen) {
+            if (_expandedDays[idx]) toggleDay(parseInt(idx));
+        } else {
+            if (!_expandedDays[idx]) toggleDay(parseInt(idx));
+        }
+    });
+    var icon  = document.getElementById('toggle-all-icon');
+    var label = document.getElementById('toggle-all-label');
+    var nowOpen = Object.values(_expandedDays).some(function(v) { return v; });
+    if (icon)  { icon.className  = 'bi ' + (nowOpen ? 'bi-arrows-collapse' : 'bi-arrows-expand'); }
+    if (label) { label.textContent = nowOpen ? 'Свернуть все' : 'Раскрыть все'; }
+}
+
 (function () {
     // Branch dropdown (shifts tab)
     function onBranchCbChange() {

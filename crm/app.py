@@ -3410,12 +3410,15 @@ def reports():
 
         shifts_data = conn.execute(f'''
             SELECT s.date, b.name as branch_name, s.status,
-                   COALESCE(r.total_revenue,0) as revenue,
+                   COALESCE(r.total_revenue,0)    as revenue,
                    COALESCE(r.delivery_revenue,0) as delivery,
-                   COALESCE(r.pickup_revenue,0) as pickup,
+                   COALESCE(r.pickup_revenue,0)   as pickup,
                    COALESCE(r.delivery_orders,0)+COALESCE(r.pickup_orders,0) as orders,
-                   COALESCE(r.cash_amount,0) as cash,
-                   COALESCE(r.card_amount,0) as card,
+                   COALESCE(r.cash_amount,0)       as cash,
+                   COALESCE(r.card_amount,0)       as card,
+                   COALESCE(r.online_amount,0)     as online,
+                   COALESCE((SELECT SUM(es.total_amount) FROM employee_shifts es
+                              WHERE es.shift_id = s.id), 0) as fot,
                    s.id as shift_id
             FROM shifts s
             JOIN branches b ON b.id=s.branch_id
@@ -3429,10 +3432,28 @@ def reports():
                    COALESCE(SUM(r.pickup_revenue),0) as pickup,
                    COALESCE(SUM(r.delivery_orders+r.pickup_orders),0) as orders,
                    COALESCE(SUM(r.cash_amount),0) as cash,
-                   COALESCE(SUM(r.card_amount),0) as card
+                   COALESCE(SUM(r.card_amount),0) as card,
+                   COALESCE((SELECT SUM(es.total_amount) FROM employee_shifts es
+                              JOIN shifts s2 ON s2.id=es.shift_id
+                              WHERE 1=1 {date_filter} {branch_filter}
+                              ), 0) as fot
             FROM shifts s LEFT JOIN shift_revenue r ON r.shift_id=s.id
             WHERE 1=1 {date_filter} {branch_filter}
         ''').fetchone()
+
+        # Group shifts by date for the grouped view
+        from collections import OrderedDict as _OD
+        _dg = _OD()
+        for _row in shifts_data:
+            _d = _row['date']
+            if _d not in _dg:
+                _dg[_d] = {'date': _d, 'revenue': 0.0, 'pickup': 0.0,
+                            'fot': 0.0, 'branches': []}
+            _dg[_d]['revenue'] += _row['revenue']
+            _dg[_d]['pickup']  += _row['pickup']
+            _dg[_d]['fot']     += _row['fot']
+            _dg[_d]['branches'].append(dict(_row))
+        day_groups = list(_dg.values())
         salary_data = conn.execute(f'''
             SELECT es.full_name_snapshot, es.role_snapshot,
                    SUM(es.total_amount) as earned, SUM(es.paid_amount) as paid,
@@ -3575,6 +3596,7 @@ def reports():
         s_branch_id=s_branch_id, s_role=s_role, s_unpaid=s_unpaid,
         s_group=s_group, s_emps=s_emps,
         all_sal_emps=all_sal_emps, pivot_rows=pivot_rows, pivot_emps=pivot_emps,
+        day_groups=day_groups,
         branch_groups=get_branch_groups(conn))
 
 
