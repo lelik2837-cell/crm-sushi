@@ -813,9 +813,10 @@ function saveAllRevenue() {
 }
 
 function updateKassa() {
-  const cashIn   = readNum(document.querySelector('.rev-field[data-field="cash_amount"]'));
-  const cardIn   = readNum(document.querySelector('.rev-field[data-field="card_amount"]'));
-  const onlineIn = readNum(document.querySelector('.rev-field[data-field="online_amount"]'));
+  const cashIn      = readNum(document.querySelector('.rev-field[data-field="cash_amount"]'));
+  const cardIn      = readNum(document.querySelector('.rev-field[data-field="card_amount"]'));
+  const onlineIn    = readNum(document.querySelector('.rev-field[data-field="online_amount"]'));
+  const morningCash = readNum(document.querySelector('.rev-field[data-field="morning_cash"]'));
 
   // Общая выручка = нал + безнал + онлайн (авто)
   const totalRev = cashIn + cardIn + onlineIn;
@@ -840,7 +841,8 @@ function updateKassa() {
     }
   });
 
-  const kassaNal    = cashIn - expCash - paidSalary;
+  // Итого нал = утром в кассе + выручка нал − расходы нал − ФОТ
+  const kassaNal    = morningCash + cashIn - expCash - paidSalary;
   const kassaBeznal = cardIn; // только карта, без онлайн
   const fmt = n => Math.round(n).toLocaleString('ru-RU') + ' ₽';
   document.getElementById('kassa-nал').textContent = fmt(kassaNal);

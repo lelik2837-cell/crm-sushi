@@ -9,6 +9,54 @@
     </div>
 </div>
 
+<!-- ══ MONTH REVENUE ══ -->
+{% if month_rev %}
+{% set total = month_rev.total_revenue or 0 %}
+{% set cash  = month_rev.cash_amount   or 0 %}
+{% set card  = month_rev.card_amount   or 0 %}
+{% set online= month_rev.online_amount or 0 %}
+{% set fot   = month_fot or 0 %}
+{% macro pct(val, base) %}{% if base > 0 %}{{ ((val / base) * 100) | round(1) }}%{% else %}—{% endif %}{% endmacro %}
+<div class="card mb-4" style="border-left:4px solid #6366f1;">
+  <div class="card-header bg-light d-flex align-items-center justify-content-between">
+    <span class="fw-bold"><i class="bi bi-calendar-month"></i> Выручка за текущий месяц</span>
+    <span class="fw-bold fs-5" style="color:#6366f1;">{{ '{:,.0f}'.format(total).replace(',', ' ') }} ₽</span>
+  </div>
+  <div class="card-body py-3">
+    <div class="row g-3">
+      <div class="col-6 col-md-3">
+        <div class="p-3 rounded-3" style="background:#fff1f2; border:1.5px solid #fecdd3;">
+          <div class="text-muted small fw-semibold mb-1" style="font-size:11px; text-transform:uppercase; letter-spacing:.5px;">Нал</div>
+          <div class="fw-bold" style="font-size:20px; color:#be123c;">{{ '{:,.0f}'.format(cash).replace(',', ' ') }} ₽</div>
+          <div class="text-muted small">({{ pct(cash, total) }})</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="p-3 rounded-3" style="background:#f0fdf4; border:1.5px solid #bbf7d0;">
+          <div class="text-muted small fw-semibold mb-1" style="font-size:11px; text-transform:uppercase; letter-spacing:.5px;">Безнал</div>
+          <div class="fw-bold" style="font-size:20px; color:#15803d;">{{ '{:,.0f}'.format(card).replace(',', ' ') }} ₽</div>
+          <div class="text-muted small">({{ pct(card, total) }})</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="p-3 rounded-3" style="background:#eff6ff; border:1.5px solid #bfdbfe;">
+          <div class="text-muted small fw-semibold mb-1" style="font-size:11px; text-transform:uppercase; letter-spacing:.5px;">Онлайн</div>
+          <div class="fw-bold" style="font-size:20px; color:#1d4ed8;">{{ '{:,.0f}'.format(online).replace(',', ' ') }} ₽</div>
+          <div class="text-muted small">({{ pct(online, total) }})</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="p-3 rounded-3" style="background:#fefce8; border:1.5px solid #fde68a;">
+          <div class="text-muted small fw-semibold mb-1" style="font-size:11px; text-transform:uppercase; letter-spacing:.5px;">ФОТ</div>
+          <div class="fw-bold" style="font-size:20px; color:#92400e;">{{ '{:,.0f}'.format(fot).replace(',', ' ') }} ₽</div>
+          <div class="text-muted small">({{ pct(fot, total) }})</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <!-- ══ KPI BLOCKS ══ -->
 {% if kpi_blocks %}
 <div class="card mb-4">
@@ -22,9 +70,9 @@
                 {% endfor %}
             </select>
             <div class="btn-group btn-group-sm" role="group">
-                <button type="button" class="btn btn-outline-secondary kpi-period active" data-period="today">Сегодня</button>
+                <button type="button" class="btn btn-outline-secondary kpi-period" data-period="today">Сегодня</button>
                 <button type="button" class="btn btn-outline-secondary kpi-period" data-period="week">Неделя</button>
-                <button type="button" class="btn btn-outline-secondary kpi-period" data-period="month">Месяц</button>
+                <button type="button" class="btn btn-outline-secondary kpi-period active" data-period="month">Месяц</button>
                 <button type="button" class="btn btn-outline-secondary kpi-period" data-period="custom">Период</button>
             </div>
             <div id="custom-range" class="d-none d-flex gap-1">
@@ -172,7 +220,7 @@ const KPI_COLORS = {
     warning: '#ffc107', info: '#0dcaf0', dark: '#212529'
 };
 
-let currentPeriod = 'today';
+let currentPeriod = 'month';
 
 function getPeriodDates(period) {
     const today = new Date();

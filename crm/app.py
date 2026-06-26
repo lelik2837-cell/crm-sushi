@@ -1207,9 +1207,27 @@ def dashboard():
             kpi_blocks = conn.execute(
                 'SELECT * FROM kpi_blocks WHERE is_active=1 ORDER BY sort_order, id'
             ).fetchall()
+            # Current month stats
+            month_rev = conn.execute('''
+                SELECT
+                    COALESCE(SUM(r.cash_amount), 0)   AS cash_amount,
+                    COALESCE(SUM(r.card_amount), 0)   AS card_amount,
+                    COALESCE(SUM(r.online_amount), 0) AS online_amount,
+                    COALESCE(SUM(r.total_revenue), 0) AS total_revenue
+                FROM shifts s
+                JOIN shift_revenue r ON r.shift_id = s.id
+                WHERE s.date >= date('now', 'start of month')
+            ''').fetchone()
+            month_fot = conn.execute('''
+                SELECT COALESCE(SUM(es.total_amount), 0) AS fot
+                FROM employee_shifts es
+                JOIN shifts s ON s.id = es.shift_id
+                WHERE s.date >= date('now', 'start of month')
+            ''').fetchone()
             return render_template('dashboard_owner.html',
                 branches=branches, stats=stats, weekly=weekly,
-                open_shifts=open_shifts, kpi_blocks=kpi_blocks)
+                open_shifts=open_shifts, kpi_blocks=kpi_blocks,
+                month_rev=month_rev, month_fot=month_fot['fot'] or 0)
         else:
             today = date.today().isoformat()
             bids = _session_branch_ids()
@@ -2226,25 +2244,35 @@ def close_shift(shift_id):
     if not _can_edit_shift(shift_id):
         flash('Нет доступа', 'danger')
         return redirect(url_for('shift_view', shift_id=shift_id))
-    comment = request.form.get('comment', '')
-    closed_by_name = request.form.get('closed_by_name', session.get('full_name', ''))
-    actual_cash_comment = request.form.get('actual_cash_comment', '').strip()
-    with get_db() as conn:
-        conn.execute('''
-            UPDATE shifts SET status='closed', closed_by=?, closed_at=CURRENT_TIMESTAMP,
-            comment=?, closed_by_name=?
-            WHERE id=?
-        ''', (session['user_id'], comment, closed_by_name, shift_id))
-        if actual_cash_comment:
-            conn.execute(
-                'UPDATE shift_revenue SET actual_cash_comment=? WHERE shift_id=?',
-                (actual_cash_comment, shift_id)
-            )
-        log_action(conn, 'shift_close', 'Смена закрыта', shift_id=shift_id)
-        conn.commit()
-    flash('Смена закрыта', 'success')
-    threading.Thread(target=_export_shift_to_gsheet, args=(shift_id,), daemon=True).start()
-    threading.Thread(target=_export_shift_to_gdrive_xlsx, args=(shift_id,), daemon=True).start()
+    try:
+        comment = request.form.get('comment', '')
+        closed_by_name = request.form.get('closed_by_name', session.get('full_name', ''))
+        actual_cash_comment = request.form.get('actual_cash_comment', '').strip()
+        if not closed_by_name or not closed_by_name.strip():
+            flash('Укажите, кто закрыл смену', 'danger')
+            return redirect(url_for('shift_view', shift_id=shift_id))
+        with get_db() as conn:
+            rows_updated = conn.execute('''
+                UPDATE shifts SET status='closed', closed_by=?, closed_at=CURRENT_TIMESTAMP,
+                comment=?, closed_by_name=?
+                WHERE id=? AND status='open'
+            ''', (session['user_id'], comment, closed_by_name, shift_id)).rowcount
+            if rows_updated == 0:
+                flash('Смена не найдена или уже закрыта', 'danger')
+                conn.rollback()
+                return redirect(url_for('shift_view', shift_id=shift_id))
+            if actual_cash_comment:
+                conn.execute(
+                    'UPDATE shift_revenue SET actual_cash_comment=? WHERE shift_id=?',
+                    (actual_cash_comment, shift_id)
+                )
+            log_action(conn, 'shift_close', 'Смена закрыта', shift_id=shift_id)
+            conn.commit()
+        flash('Смена закрыта', 'success')
+        threading.Thread(target=_export_shift_to_gsheet, args=(shift_id,), daemon=True).start()
+        threading.Thread(target=_export_shift_to_gdrive_xlsx, args=(shift_id,), daemon=True).start()
+    except Exception as e:
+        flash(f'Ошибка при закрытии смены: {e}', 'danger')
     return redirect(url_for('shift_view', shift_id=shift_id))
 
 
