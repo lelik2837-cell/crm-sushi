@@ -374,24 +374,27 @@ function fmtPct(val, total) { return total ? '(' + Math.round(val / total * 100)
 function pct(val, total) { return total > 0 ? Math.round(val / total * 100) : 0; }
 function pctStr(val, total) { return total > 0 ? Math.round(val / total * 100) + '%' : '—'; }
 
-function branchRows(branches, valFn, pctFn, color, mobileSuffixFn) {
+function branchRows(branches, valFn, pctFn, color, mobileSuffixFn, desktopSuffixFn) {
     if (!branches || !branches.length) return '';
+    var dSufFn = desktopSuffixFn || mobileSuffixFn;
     return branches.filter(function(b){ return valFn(b) > 0; }).map(function(b) {
-        var p      = pctFn(b);
-        var abbr   = '<span style="font-size:10px;font-weight:600;color:#94a3b8;min-width:28px;">' + b.abbr + '</span>';
-        var suffix = mobileSuffixFn ? mobileSuffixFn(b) : (fmtNum(valFn(b)) + ' ₽');
+        var p    = pctFn(b);
+        var abbr = '<span style="font-size:10px;font-weight:600;color:#94a3b8;min-width:28px;">' + b.abbr + '</span>';
+        var dSuf = dSufFn ? dSufFn(b) : null;
+        var mSuf = mobileSuffixFn ? mobileSuffixFn(b) : null;
         return '<div class="rm-bar-row" style="align-items:center;gap:6px;">' +
                    abbr +
                    '<div style="flex:1;height:3px;background:#f1f5f9;border-radius:2px;">' +
                      '<div style="height:100%;width:' + Math.min(100,p) + '%;background:' + color + ';border-radius:2px;"></div>' +
                    '</div>' +
-                   '<span style="font-size:11px;font-weight:700;color:#475569;min-width:32px;text-align:right;">' + p + '%</span>' +
+                   '<span style="font-size:11px;font-weight:700;color:#475569;">' + p + '%</span>' +
+                   (dSuf ? '<span style="font-size:10px;color:#94a3b8;margin-left:2px;white-space:nowrap;">(' + dSuf + ')</span>' : '') +
                '</div>' +
                '<div class="rm-text-row" style="align-items:center;gap:4px;">' +
                    abbr +
                    '<span style="flex:1;"></span>' +
                    '<span style="font-size:12px;font-weight:800;color:#334155;">' + p + '%</span>' +
-                   '<span style="font-size:11px;color:#94a3b8;margin-left:3px;">(' + suffix + ')</span>' +
+                   (mSuf ? '<span style="font-size:11px;color:#94a3b8;margin-left:3px;">(' + mSuf + ')</span>' : '') +
                '</div>';
     }).join('');
 }
@@ -435,7 +438,8 @@ function updateRightMetrics(d) {
         function(b){ return b.delivery_revenue; },
         function(b){ return b.delivery_revenue > 0 ? Math.round(b.courier_fot/b.delivery_revenue*100) : 0; },
         '#f97316',
-        function(b){ return b.delivery_orders > 0 ? Math.round(b.courier_fot/b.delivery_orders) + 'р. / заказ' : '—'; });
+        function(b){ return b.delivery_orders > 0 ? Math.round(b.courier_fot/b.delivery_orders) + 'р. / заказ' : '—'; },
+        function(b){ return b.delivery_orders > 0 ? Math.round(b.courier_fot/b.delivery_orders) + 'р.' : '—'; });
 }
 
 function clearMetrics() {
