@@ -1948,6 +1948,7 @@ def _export_shift_to_gsheet(shift_id):
 
 def _export_shift_to_gdrive_xlsx(shift_id):
     """Экспорт смены в Google Drive как xlsx в формате импорта."""
+    print(f'[GDrive] start shift {shift_id}')
     try:
         import openpyxl
         from openpyxl import Workbook
@@ -1957,7 +1958,9 @@ def _export_shift_to_gdrive_xlsx(shift_id):
 
         creds_json = os.environ.get('GOOGLE_CREDENTIALS_JSON')
         folder_id  = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
+        print(f'[GDrive] creds={bool(creds_json)} folder_id={folder_id!r}')
         if not creds_json or not folder_id:
+            print(f'[GDrive] missing env vars, exit')
             return
 
         with get_db() as conn:
