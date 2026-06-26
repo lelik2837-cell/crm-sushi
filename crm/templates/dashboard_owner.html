@@ -9,53 +9,66 @@
     </div>
 </div>
 
-<!-- ══ MONTH REVENUE ══ -->
-{% if month_rev %}
-{% set total = month_rev.total_revenue or 0 %}
-{% set cash  = month_rev.cash_amount   or 0 %}
-{% set card  = month_rev.card_amount   or 0 %}
-{% set online= month_rev.online_amount or 0 %}
-{% set fot   = month_fot or 0 %}
-{% macro pct(val, base) %}{% if base > 0 %}{{ ((val / base) * 100) | round(1) }}%{% else %}—{% endif %}{% endmacro %}
-<div class="card mb-4" style="border-left:4px solid #6366f1;">
-  <div class="card-header bg-light d-flex align-items-center justify-content-between">
-    <span class="fw-bold"><i class="bi bi-calendar-month"></i> Выручка за текущий месяц</span>
-    <span class="fw-bold fs-5" style="color:#6366f1;">{{ '{:,.0f}'.format(total).replace(',', ' ') }} ₽</span>
+<!-- ══ REVENUE CARD ══ -->
+<div class="row g-3 mb-4">
+  <!-- Purple revenue card -->
+  <div class="col-12 col-lg-5">
+    <div id="rev-card" style="background:linear-gradient(135deg,#4f46e5 0%,#7c3aed 60%,#9333ea 100%); border-radius:20px; padding:28px 28px 24px; color:#fff; min-height:320px; position:relative;">
+      <!-- Period buttons -->
+      <div style="display:flex; gap:6px; margin-bottom:20px;">
+        <button onclick="loadRevCard('today')"  data-rp="today"  class="rev-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Сегодня</button>
+        <button onclick="loadRevCard('week')"   data-rp="week"   class="rev-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">7 дней</button>
+        <button onclick="loadRevCard('month')"  data-rp="month"  class="rev-period-btn rev-period-active" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.9); background:rgba(255,255,255,.25); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Месяц</button>
+      </div>
+      <!-- Label -->
+      <div style="font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; opacity:.7; margin-bottom:6px;">Общая выручка</div>
+      <!-- Big number -->
+      <div id="rev-total" style="font-size:clamp(32px,6vw,52px); font-weight:800; letter-spacing:-1px; line-height:1.05; margin-bottom:2px;">—</div>
+      <div style="font-size:14px; opacity:.6; margin-bottom:18px;">рублей</div>
+      <!-- Divider -->
+      <div style="border-top:1px solid rgba(255,255,255,.2); margin-bottom:14px;"></div>
+      <!-- Branch list -->
+      <div id="rev-branches" style="display:flex; flex-direction:column; gap:8px;">
+        <div style="opacity:.5; font-size:13px;">Загрузка...</div>
+      </div>
+    </div>
   </div>
-  <div class="card-body py-3">
-    <div class="row g-3">
-      <div class="col-6 col-md-3">
-        <div class="p-3 rounded-3" style="background:#fff1f2; border:1.5px solid #fecdd3;">
-          <div class="text-muted small fw-semibold mb-1" style="font-size:11px; text-transform:uppercase; letter-spacing:.5px;">Нал</div>
-          <div class="fw-bold" style="font-size:20px; color:#be123c;">{{ '{:,.0f}'.format(cash).replace(',', ' ') }} ₽</div>
-          <div class="text-muted small">({{ pct(cash, total) }})</div>
-        </div>
+  <!-- Right: detail metrics -->
+  <div class="col-12 col-lg-7">
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; height:100%;">
+      <div id="rm-cash" class="rev-metric-card" style="background:#fff1f2; border:1.5px solid #fecdd3; border-radius:14px; padding:18px 20px;">
+        <div style="font-size:10px; color:#9f1239; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:6px;">Нал в кассе</div>
+        <div class="rev-metric-val" style="font-size:clamp(18px,2.5vw,26px); font-weight:800; color:#be123c; line-height:1.1;">—</div>
+        <div class="rev-metric-pct" style="font-size:12px; color:#9f1239; margin-top:3px; opacity:.7;">—</div>
       </div>
-      <div class="col-6 col-md-3">
-        <div class="p-3 rounded-3" style="background:#f0fdf4; border:1.5px solid #bbf7d0;">
-          <div class="text-muted small fw-semibold mb-1" style="font-size:11px; text-transform:uppercase; letter-spacing:.5px;">Безнал</div>
-          <div class="fw-bold" style="font-size:20px; color:#15803d;">{{ '{:,.0f}'.format(card).replace(',', ' ') }} ₽</div>
-          <div class="text-muted small">({{ pct(card, total) }})</div>
-        </div>
+      <div id="rm-card" class="rev-metric-card" style="background:#f0fdf4; border:1.5px solid #bbf7d0; border-radius:14px; padding:18px 20px;">
+        <div style="font-size:10px; color:#166534; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:6px;">Безнал</div>
+        <div class="rev-metric-val" style="font-size:clamp(18px,2.5vw,26px); font-weight:800; color:#15803d; line-height:1.1;">—</div>
+        <div class="rev-metric-pct" style="font-size:12px; color:#166534; margin-top:3px; opacity:.7;">—</div>
       </div>
-      <div class="col-6 col-md-3">
-        <div class="p-3 rounded-3" style="background:#eff6ff; border:1.5px solid #bfdbfe;">
-          <div class="text-muted small fw-semibold mb-1" style="font-size:11px; text-transform:uppercase; letter-spacing:.5px;">Онлайн</div>
-          <div class="fw-bold" style="font-size:20px; color:#1d4ed8;">{{ '{:,.0f}'.format(online).replace(',', ' ') }} ₽</div>
-          <div class="text-muted small">({{ pct(online, total) }})</div>
-        </div>
+      <div id="rm-online" class="rev-metric-card" style="background:#eff6ff; border:1.5px solid #bfdbfe; border-radius:14px; padding:18px 20px;">
+        <div style="font-size:10px; color:#1e40af; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:6px;">Онлайн</div>
+        <div class="rev-metric-val" style="font-size:clamp(18px,2.5vw,26px); font-weight:800; color:#1d4ed8; line-height:1.1;">—</div>
+        <div class="rev-metric-pct" style="font-size:12px; color:#1e40af; margin-top:3px; opacity:.7;">—</div>
       </div>
-      <div class="col-6 col-md-3">
-        <div class="p-3 rounded-3" style="background:#fefce8; border:1.5px solid #fde68a;">
-          <div class="text-muted small fw-semibold mb-1" style="font-size:11px; text-transform:uppercase; letter-spacing:.5px;">ФОТ</div>
-          <div class="fw-bold" style="font-size:20px; color:#92400e;">{{ '{:,.0f}'.format(fot).replace(',', ' ') }} ₽</div>
-          <div class="text-muted small">({{ pct(fot, total) }})</div>
-        </div>
+      <div id="rm-fot" class="rev-metric-card" style="background:#fefce8; border:1.5px solid #fde68a; border-radius:14px; padding:18px 20px;">
+        <div style="font-size:10px; color:#854d0e; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:6px;">ФОТ</div>
+        <div class="rev-metric-val" style="font-size:clamp(18px,2.5vw,26px); font-weight:800; color:#92400e; line-height:1.1;">—</div>
+        <div class="rev-metric-pct" style="font-size:12px; color:#854d0e; margin-top:3px; opacity:.7;">—</div>
+      </div>
+      <div id="rm-pickup" class="rev-metric-card" style="background:#fdf4ff; border:1.5px solid #e9d5ff; border-radius:14px; padding:18px 20px;">
+        <div style="font-size:10px; color:#6b21a8; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:6px;">Самовывоз</div>
+        <div class="rev-metric-val" style="font-size:clamp(18px,2.5vw,26px); font-weight:800; color:#7e22ce; line-height:1.1;">—</div>
+        <div class="rev-metric-pct" style="font-size:12px; color:#6b21a8; margin-top:3px; opacity:.7;">—</div>
+      </div>
+      <div id="rm-delivery" class="rev-metric-card" style="background:#fff7ed; border:1.5px solid #fed7aa; border-radius:14px; padding:18px 20px;">
+        <div style="font-size:10px; color:#9a3412; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:6px;">Доставка</div>
+        <div class="rev-metric-val" style="font-size:clamp(18px,2.5vw,26px); font-weight:800; color:#c2410c; line-height:1.1;">—</div>
+        <div class="rev-metric-pct" style="font-size:12px; color:#9a3412; margin-top:3px; opacity:.7;">—</div>
       </div>
     </div>
   </div>
 </div>
-{% endif %}
 
 <!-- ══ KPI BLOCKS ══ -->
 {% if kpi_blocks %}
@@ -293,4 +306,87 @@ document.getElementById('kpi-to').value = today;
 loadKpi();
 </script>
 {% endif %}
+
+<script>
+// ── Revenue card ─────────────────────────────────────────────────────────────
+var revPeriod = 'month';
+
+function fmtNum(n) {
+    return Math.round(n).toLocaleString('ru-RU');
+}
+function fmtPct(val, total) {
+    if (!total) return '';
+    return '(' + Math.round(val / total * 100) + '%)';
+}
+
+function setMetric(id, val, total) {
+    var card = document.getElementById(id);
+    if (!card) return;
+    card.querySelector('.rev-metric-val').textContent = fmtNum(val) + ' ₽';
+    card.querySelector('.rev-metric-pct').textContent = fmtPct(val, total);
+}
+
+function loadRevCard(period) {
+    if (period) revPeriod = period;
+    // update button styles
+    document.querySelectorAll('.rev-period-btn').forEach(function(b) {
+        var active = b.dataset.rp === revPeriod;
+        b.style.background = active ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.12)';
+        b.style.borderColor = active ? 'rgba(255,255,255,.9)' : 'rgba(255,255,255,.35)';
+    });
+
+    var today = new Date();
+    var fmt = function(d) { return d.toISOString().split('T')[0]; };
+    var dateFrom, dateTo = fmt(today);
+    if (revPeriod === 'today') {
+        dateFrom = dateTo;
+    } else if (revPeriod === 'week') {
+        var w = new Date(today); w.setDate(w.getDate() - 6);
+        dateFrom = fmt(w);
+    } else {
+        dateFrom = fmt(today).slice(0,7) + '-01';
+    }
+
+    document.getElementById('rev-total').textContent = '…';
+    document.getElementById('rev-branches').innerHTML = '<div style="opacity:.5;font-size:13px;">Загрузка…</div>';
+
+    fetch('/api/revenue-summary?date_from=' + dateFrom + '&date_to=' + dateTo)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.ok) return;
+            var total = d.total;
+            document.getElementById('rev-total').textContent = fmtNum(total);
+
+            // branches list
+            var html = '';
+            (d.branches || []).forEach(function(b) {
+                var pct = total > 0 ? Math.round(b.revenue / total * 100) : 0;
+                var barW = total > 0 ? Math.min(100, Math.round(b.revenue / total * 100)) : 0;
+                html += '<div style="display:flex;align-items:center;gap:8px;">' +
+                    '<span style="font-size:11px;font-weight:700;background:rgba(255,255,255,.18);border-radius:6px;padding:2px 7px;letter-spacing:.5px;min-width:36px;text-align:center;">' + b.abbr + '</span>' +
+                    '<div style="flex:1;">' +
+                      '<div style="display:flex;justify-content:space-between;margin-bottom:3px;">' +
+                        '<span style="font-size:12px;opacity:.85;font-weight:500;">' + b.name + '</span>' +
+                        '<span style="font-size:12px;font-weight:700;">' + fmtNum(b.revenue) + ' ₽ <span style="opacity:.55;font-size:11px;">(' + pct + '%)</span></span>' +
+                      '</div>' +
+                      '<div style="height:3px;background:rgba(255,255,255,.15);border-radius:2px;">' +
+                        '<div style="height:100%;width:' + barW + '%;background:rgba(255,255,255,.7);border-radius:2px;transition:width .4s;"></div>' +
+                      '</div>' +
+                    '</div>' +
+                '</div>';
+            });
+            document.getElementById('rev-branches').innerHTML = html || '<div style="opacity:.5;font-size:13px;">Нет данных</div>';
+
+            // metrics grid
+            setMetric('rm-cash',     d.cash,     total);
+            setMetric('rm-card',     d.card,     total);
+            setMetric('rm-online',   d.online,   total);
+            setMetric('rm-fot',      d.fot,      total);
+            setMetric('rm-pickup',   d.pickup,   total);
+            setMetric('rm-delivery', d.delivery, total);
+        });
+}
+
+loadRevCard('month');
+</script>
 {% endblock %}

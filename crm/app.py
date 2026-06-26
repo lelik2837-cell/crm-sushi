@@ -1287,6 +1287,59 @@ def api_kpi_values():
     return jsonify({'ok': True, 'blocks': results, 'vars': {k: round(v, 2) for k, v in vals.items()}})
 
 
+@app.route('/api/revenue-summary')
+@login_required
+@owner_required
+def api_revenue_summary():
+    date_from = request.args.get('date_from', date.today().isoformat())
+    date_to   = request.args.get('date_to',   date.today().isoformat())
+    with get_db() as conn:
+        total_row = conn.execute('''
+            SELECT COALESCE(SUM(r.total_revenue), 0)    AS total,
+                   COALESCE(SUM(r.cash_amount),   0)    AS cash,
+                   COALESCE(SUM(r.card_amount),   0)    AS card,
+                   COALESCE(SUM(r.online_amount), 0)    AS online,
+                   COALESCE(SUM(r.delivery_revenue), 0) AS delivery,
+                   COALESCE(SUM(r.pickup_revenue),   0) AS pickup
+            FROM shifts s JOIN shift_revenue r ON r.shift_id = s.id
+            WHERE s.date BETWEEN ? AND ?
+        ''', (date_from, date_to)).fetchone()
+        fot_row = conn.execute('''
+            SELECT COALESCE(SUM(es.total_amount), 0) AS fot
+            FROM employee_shifts es JOIN shifts s ON s.id = es.shift_id
+            WHERE s.date BETWEEN ? AND ?
+        ''', (date_from, date_to)).fetchone()
+        branch_rows = conn.execute('''
+            SELECT b.name,
+                   COALESCE(SUM(r.total_revenue), 0) AS revenue
+            FROM shifts s
+            JOIN branches b ON b.id = s.branch_id
+            JOIN shift_revenue r ON r.shift_id = s.id
+            WHERE s.date BETWEEN ? AND ?
+            GROUP BY b.id, b.name
+            ORDER BY revenue DESC
+        ''', (date_from, date_to)).fetchall()
+
+    total = total_row['total'] or 0
+    branches = []
+    for br in branch_rows:
+        name = br['name'] or ''
+        abbr = name[:3].upper()
+        branches.append({'abbr': abbr, 'name': name, 'revenue': int(br['revenue'])})
+
+    return jsonify({
+        'ok': True,
+        'total': int(total),
+        'cash':  int(total_row['cash'] or 0),
+        'card':  int(total_row['card'] or 0),
+        'online': int(total_row['online'] or 0),
+        'delivery': int(total_row['delivery'] or 0),
+        'pickup': int(total_row['pickup'] or 0),
+        'fot':   int(fot_row['fot'] or 0),
+        'branches': branches,
+    })
+
+
 # ─── SHIFTS ───────────────────────────────────────────────────────────────────
 
 @app.route('/shift/open', methods=['POST'])
