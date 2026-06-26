@@ -413,7 +413,12 @@ function buildDayChart(days) {
                 legend: { display: false },
                 tooltip: {
                     callbacks: {
-                        title: function(ctx) { return days[ctx[0].dataIndex].date.split('-').reverse().join('.'); },
+                        title: function(ctx) {
+                            var DOW = ['вс','пн','вт','ср','чт','пт','сб'];
+                            var raw = days[ctx[0].dataIndex].date; // YYYY-MM-DD
+                            var d   = new Date(raw + 'T00:00:00');
+                            return raw.split('-').reverse().join('.') + ', ' + DOW[d.getDay()];
+                        },
                         label: function(ctx) { return fmtNum(ctx.parsed.y) + ' ₽'; }
                     },
                     backgroundColor: 'rgba(0,0,0,.7)',
