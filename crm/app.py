@@ -1287,6 +1287,30 @@ def api_kpi_values():
     return jsonify({'ok': True, 'blocks': results, 'vars': {k: round(v, 2) for k, v in vals.items()}})
 
 
+@app.route('/api/revenue-year')
+@login_required
+@owner_required
+def api_revenue_year():
+    try:
+        year_int = int(request.args.get('year', date.today().year))
+    except ValueError:
+        year_int = date.today().year
+    with get_db() as conn:
+        rows = conn.execute('''
+            SELECT CAST(strftime('%m', s.date) AS INTEGER) AS month,
+                   COALESCE(SUM(r.total_revenue), 0) AS revenue
+            FROM shifts s JOIN shift_revenue r ON r.shift_id = s.id
+            WHERE strftime('%Y', s.date) = ?
+            GROUP BY month ORDER BY month
+        ''', (str(year_int),)).fetchall()
+    rev_by_month = {r['month']: int(r['revenue']) for r in rows}
+    labels = ['', 'Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн',
+              'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
+    months = [{'month': m, 'label': labels[m], 'revenue': rev_by_month.get(m, 0)}
+              for m in range(1, 13)]
+    return jsonify({'ok': True, 'year': year_int, 'total': sum(x['revenue'] for x in months), 'months': months})
+
+
 @app.route('/api/revenue-summary')
 @login_required
 @owner_required

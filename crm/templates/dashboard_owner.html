@@ -13,23 +13,32 @@
 <div class="row g-3 mb-4">
   <!-- Purple revenue card -->
   <div class="col-12 col-lg-5">
-    <div id="rev-card" style="background:linear-gradient(135deg,#4f46e5 0%,#7c3aed 60%,#9333ea 100%); border-radius:20px; padding:28px 28px 24px; color:#fff; min-height:320px; position:relative;">
+    <div id="rev-card" style="background:linear-gradient(135deg,#4f46e5 0%,#7c3aed 60%,#9333ea 100%); border-radius:20px; padding:28px 28px 24px; color:#fff; position:relative;">
       <!-- Period buttons -->
       <div style="display:flex; gap:6px; margin-bottom:20px;">
-        <button onclick="loadRevCard('today')"  data-rp="today"  class="rev-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Сегодня</button>
-        <button onclick="loadRevCard('week')"   data-rp="week"   class="rev-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">7 дней</button>
-        <button onclick="loadRevCard('month')"  data-rp="month"  class="rev-period-btn rev-period-active" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.9); background:rgba(255,255,255,.25); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Месяц</button>
+        <button onclick="loadRevCard('today')" data-rp="today" class="rev-period-btn rev-period-active" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.9); background:rgba(255,255,255,.25); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Сегодня</button>
+        <button onclick="loadRevCard('month')" data-rp="month" class="rev-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Месяц</button>
+        <button onclick="loadRevCard('year')"  data-rp="year"  class="rev-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Год</button>
       </div>
       <!-- Label -->
       <div style="font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; opacity:.7; margin-bottom:6px;">Общая выручка</div>
       <!-- Big number -->
       <div id="rev-total" style="font-size:clamp(32px,6vw,52px); font-weight:800; letter-spacing:-1px; line-height:1.05; margin-bottom:2px;">—</div>
-      <div style="font-size:14px; opacity:.6; margin-bottom:18px;">рублей</div>
+      <div id="rev-period-label" style="font-size:14px; opacity:.6; margin-bottom:18px;">рублей</div>
       <!-- Divider -->
       <div style="border-top:1px solid rgba(255,255,255,.2); margin-bottom:14px;"></div>
-      <!-- Branch list -->
+      <!-- Branch list (today / month) -->
       <div id="rev-branches" style="display:flex; flex-direction:column; gap:8px;">
         <div style="opacity:.5; font-size:13px;">Загрузка...</div>
+      </div>
+      <!-- Year chart (year mode) -->
+      <div id="rev-year-wrap" style="display:none;">
+        <canvas id="rev-year-canvas" height="180"></canvas>
+        <!-- Month detail on bar click -->
+        <div id="rev-month-detail" style="display:none; margin-top:16px; border-top:1px solid rgba(255,255,255,.2); padding-top:14px;">
+          <div id="rev-month-title" style="font-size:12px; font-weight:700; letter-spacing:.5px; opacity:.8; margin-bottom:10px; text-transform:uppercase;"></div>
+          <div id="rev-month-branches" style="display:flex; flex-direction:column; gap:7px;"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -307,23 +316,143 @@ loadKpi();
 </script>
 {% endif %}
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
 // ── Revenue card ─────────────────────────────────────────────────────────────
-var revPeriod = 'month';
+var revPeriod = 'today';
+var revChart  = null;
+var revYear   = new Date().getFullYear();
 
-function fmtNum(n) {
-    return Math.round(n).toLocaleString('ru-RU');
-}
-function fmtPct(val, total) {
-    if (!total) return '';
-    return '(' + Math.round(val / total * 100) + '%)';
-}
+var MONTHS_RU_FULL = ['', 'Январь','Февраль','Март','Апрель','Май','Июнь',
+                      'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+
+function fmtNum(n) { return Math.round(n).toLocaleString('ru-RU'); }
+function fmtPct(val, total) { return total ? '(' + Math.round(val / total * 100) + '%)' : ''; }
 
 function setMetric(id, val, total) {
-    var card = document.getElementById(id);
-    if (!card) return;
-    card.querySelector('.rev-metric-val').textContent = fmtNum(val) + ' ₽';
-    card.querySelector('.rev-metric-pct').textContent = fmtPct(val, total);
+    var c = document.getElementById(id); if (!c) return;
+    c.querySelector('.rev-metric-val').textContent = fmtNum(val) + ' ₽';
+    c.querySelector('.rev-metric-pct').textContent = fmtPct(val, total);
+}
+
+function clearMetrics() {
+    ['rm-cash','rm-card','rm-online','rm-fot','rm-pickup','rm-delivery'].forEach(function(id) {
+        setMetric(id, 0, 0);
+    });
+}
+
+function branchListHtml(branches, total) {
+    if (!branches || !branches.length) return '<div style="opacity:.5;font-size:13px;">Нет данных</div>';
+    return branches.map(function(b) {
+        var pct  = total > 0 ? Math.round(b.revenue / total * 100) : 0;
+        var barW = Math.min(100, pct);
+        return '<div style="display:flex;align-items:center;gap:8px;">' +
+            '<span style="font-size:11px;font-weight:700;background:rgba(255,255,255,.18);border-radius:6px;padding:2px 7px;letter-spacing:.5px;min-width:36px;text-align:center;">' + b.abbr + '</span>' +
+            '<div style="flex:1;">' +
+              '<div style="display:flex;justify-content:space-between;margin-bottom:3px;">' +
+                '<span style="font-size:12px;opacity:.85;font-weight:500;">' + b.name + '</span>' +
+                '<span style="font-size:12px;font-weight:700;">' + fmtNum(b.revenue) + ' ₽ <span style="opacity:.55;font-size:11px;">(' + pct + '%)</span></span>' +
+              '</div>' +
+              '<div style="height:3px;background:rgba(255,255,255,.15);border-radius:2px;">' +
+                '<div style="height:100%;width:' + barW + '%;background:rgba(255,255,255,.7);border-radius:2px;transition:width .4s;"></div>' +
+              '</div>' +
+            '</div></div>';
+    }).join('');
+}
+
+function showMonthDetail(monthIdx, monthLabel, yearData) {
+    // fetch branch breakdown for selected month
+    var y = revYear;
+    var m = String(monthIdx).padStart(2, '0');
+    var lastDay = new Date(y, monthIdx, 0).getDate();
+    var dateFrom = y + '-' + m + '-01';
+    var dateTo   = y + '-' + m + '-' + String(lastDay).padStart(2, '0');
+
+    var detail    = document.getElementById('rev-month-detail');
+    var titleEl   = document.getElementById('rev-month-title');
+    var branchEl  = document.getElementById('rev-month-branches');
+    detail.style.display = '';
+    titleEl.textContent  = monthLabel + ' ' + y;
+    branchEl.innerHTML   = '<div style="opacity:.5;font-size:12px;">Загрузка…</div>';
+
+    fetch('/api/revenue-summary?date_from=' + dateFrom + '&date_to=' + dateTo)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.ok) return;
+            branchEl.innerHTML = branchListHtml(d.branches, d.total);
+            setMetric('rm-cash',     d.cash,     d.total);
+            setMetric('rm-card',     d.card,     d.total);
+            setMetric('rm-online',   d.online,   d.total);
+            setMetric('rm-fot',      d.fot,      d.total);
+            setMetric('rm-pickup',   d.pickup,   d.total);
+            setMetric('rm-delivery', d.delivery, d.total);
+        });
+}
+
+function buildYearChart(months) {
+    if (revChart) { revChart.destroy(); revChart = null; }
+    var canvas = document.getElementById('rev-year-canvas');
+    var maxRev = Math.max.apply(null, months.map(function(m) { return m.revenue; })) || 1;
+
+    revChart = new Chart(canvas, {
+        type: 'bar',
+        data: {
+            labels: months.map(function(m) { return m.label; }),
+            datasets: [{
+                data: months.map(function(m) { return m.revenue; }),
+                backgroundColor: months.map(function() { return 'rgba(255,255,255,0.55)'; }),
+                hoverBackgroundColor: 'rgba(255,255,255,0.95)',
+                borderRadius: 6,
+                borderSkipped: false,
+            }]
+        },
+        options: {
+            responsive: true,
+            animation: { duration: 400 },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: function(ctx) { return fmtNum(ctx.parsed.y) + ' ₽'; }
+                    },
+                    backgroundColor: 'rgba(0,0,0,.7)',
+                    titleColor: '#fff',
+                    bodyColor: '#fff',
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { color: 'rgba(255,255,255,.75)', font: { size: 11, weight: '600' } },
+                    grid: { display: false },
+                    border: { color: 'rgba(255,255,255,.15)' }
+                },
+                y: {
+                    ticks: {
+                        color: 'rgba(255,255,255,.6)',
+                        font: { size: 10 },
+                        callback: function(v) {
+                            return v >= 1000000 ? (v/1000000).toFixed(1) + 'М' :
+                                   v >= 1000 ? Math.round(v/1000) + 'К' : v;
+                        }
+                    },
+                    grid: { color: 'rgba(255,255,255,.1)' },
+                    border: { display: false }
+                }
+            },
+            onClick: function(evt, elements) {
+                if (!elements.length) return;
+                var idx = elements[0].index;
+                var month = months[idx];
+                if (!month.revenue) return;
+                // highlight selected bar
+                revChart.data.datasets[0].backgroundColor = months.map(function(_, i) {
+                    return i === idx ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.45)';
+                });
+                revChart.update('none');
+                showMonthDetail(month.month, MONTHS_RU_FULL[month.month], months);
+            }
+        }
+    });
 }
 
 function loadRevCard(period) {
@@ -331,62 +460,61 @@ function loadRevCard(period) {
     // update button styles
     document.querySelectorAll('.rev-period-btn').forEach(function(b) {
         var active = b.dataset.rp === revPeriod;
-        b.style.background = active ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.12)';
-        b.style.borderColor = active ? 'rgba(255,255,255,.9)' : 'rgba(255,255,255,.35)';
+        b.style.background   = active ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.12)';
+        b.style.borderColor  = active ? 'rgba(255,255,255,.9)'  : 'rgba(255,255,255,.35)';
     });
 
-    var today = new Date();
-    var fmt = function(d) { return d.toISOString().split('T')[0]; };
-    var dateFrom, dateTo = fmt(today);
-    if (revPeriod === 'today') {
-        dateFrom = dateTo;
-    } else if (revPeriod === 'week') {
-        var w = new Date(today); w.setDate(w.getDate() - 6);
-        dateFrom = fmt(w);
-    } else {
-        dateFrom = fmt(today).slice(0,7) + '-01';
+    document.getElementById('rev-total').textContent = '…';
+    document.getElementById('rev-period-label').textContent = 'рублей';
+
+    var branchesWrap = document.getElementById('rev-branches');
+    var yearWrap     = document.getElementById('rev-year-wrap');
+    var monthDetail  = document.getElementById('rev-month-detail');
+
+    if (revPeriod === 'year') {
+        branchesWrap.style.display = 'none';
+        yearWrap.style.display     = '';
+        monthDetail.style.display  = 'none';
+        if (revChart) { revChart.destroy(); revChart = null; }
+        clearMetrics();
+
+        fetch('/api/revenue-year?year=' + revYear)
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (!d.ok) return;
+                document.getElementById('rev-total').textContent = fmtNum(d.total);
+                document.getElementById('rev-period-label').textContent = 'рублей за ' + revYear;
+                buildYearChart(d.months);
+            });
+        return;
     }
 
-    document.getElementById('rev-total').textContent = '…';
-    document.getElementById('rev-branches').innerHTML = '<div style="opacity:.5;font-size:13px;">Загрузка…</div>';
+    // today / month
+    branchesWrap.style.display = '';
+    yearWrap.style.display     = 'none';
+    if (revChart) { revChart.destroy(); revChart = null; }
+    branchesWrap.innerHTML = '<div style="opacity:.5;font-size:13px;">Загрузка…</div>';
+
+    var today = new Date();
+    var fmt   = function(d) { return d.toISOString().split('T')[0]; };
+    var dateTo   = fmt(today);
+    var dateFrom = revPeriod === 'today' ? dateTo : fmt(today).slice(0,7) + '-01';
 
     fetch('/api/revenue-summary?date_from=' + dateFrom + '&date_to=' + dateTo)
         .then(function(r) { return r.json(); })
         .then(function(d) {
             if (!d.ok) return;
-            var total = d.total;
-            document.getElementById('rev-total').textContent = fmtNum(total);
-
-            // branches list
-            var html = '';
-            (d.branches || []).forEach(function(b) {
-                var pct = total > 0 ? Math.round(b.revenue / total * 100) : 0;
-                var barW = total > 0 ? Math.min(100, Math.round(b.revenue / total * 100)) : 0;
-                html += '<div style="display:flex;align-items:center;gap:8px;">' +
-                    '<span style="font-size:11px;font-weight:700;background:rgba(255,255,255,.18);border-radius:6px;padding:2px 7px;letter-spacing:.5px;min-width:36px;text-align:center;">' + b.abbr + '</span>' +
-                    '<div style="flex:1;">' +
-                      '<div style="display:flex;justify-content:space-between;margin-bottom:3px;">' +
-                        '<span style="font-size:12px;opacity:.85;font-weight:500;">' + b.name + '</span>' +
-                        '<span style="font-size:12px;font-weight:700;">' + fmtNum(b.revenue) + ' ₽ <span style="opacity:.55;font-size:11px;">(' + pct + '%)</span></span>' +
-                      '</div>' +
-                      '<div style="height:3px;background:rgba(255,255,255,.15);border-radius:2px;">' +
-                        '<div style="height:100%;width:' + barW + '%;background:rgba(255,255,255,.7);border-radius:2px;transition:width .4s;"></div>' +
-                      '</div>' +
-                    '</div>' +
-                '</div>';
-            });
-            document.getElementById('rev-branches').innerHTML = html || '<div style="opacity:.5;font-size:13px;">Нет данных</div>';
-
-            // metrics grid
-            setMetric('rm-cash',     d.cash,     total);
-            setMetric('rm-card',     d.card,     total);
-            setMetric('rm-online',   d.online,   total);
-            setMetric('rm-fot',      d.fot,      total);
-            setMetric('rm-pickup',   d.pickup,   total);
-            setMetric('rm-delivery', d.delivery, total);
+            document.getElementById('rev-total').textContent = fmtNum(d.total);
+            branchesWrap.innerHTML = branchListHtml(d.branches, d.total);
+            setMetric('rm-cash',     d.cash,     d.total);
+            setMetric('rm-card',     d.card,     d.total);
+            setMetric('rm-online',   d.online,   d.total);
+            setMetric('rm-fot',      d.fot,      d.total);
+            setMetric('rm-pickup',   d.pickup,   d.total);
+            setMetric('rm-delivery', d.delivery, d.total);
         });
 }
 
-loadRevCard('month');
+loadRevCard('today');
 </script>
 {% endblock %}
