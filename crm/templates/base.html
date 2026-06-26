@@ -49,6 +49,14 @@
         .input-sm { padding: 0.25rem 0.5rem; font-size: 0.875rem; }
         @media (max-width: 768px) { .metric-value { font-size: 1.4rem; } }
 
+        /* Блоки метрик дашборда: шкалы на десктопе, текст на мобиле */
+        .rm-bar-row  { display: flex; }
+        .rm-text-row { display: none; }
+        @media (max-width: 991.98px) {
+            .rm-bar-row  { display: none !important; }
+            .rm-text-row { display: flex !important; }
+        }
+
         /* Mobile: убираем чёрную полосу навбара, оставляем только кнопку меню */
         @media (max-width: 991.98px) {
             .navbar {

@@ -374,16 +374,25 @@ function fmtPct(val, total) { return total ? '(' + Math.round(val / total * 100)
 function pct(val, total) { return total > 0 ? Math.round(val / total * 100) : 0; }
 function pctStr(val, total) { return total > 0 ? Math.round(val / total * 100) + '%' : '—'; }
 
-function branchRows(branches, valFn, pctFn, color) {
+function branchRows(branches, valFn, pctFn, color, mobileSuffixFn) {
     if (!branches || !branches.length) return '';
     return branches.filter(function(b){ return valFn(b) > 0; }).map(function(b) {
-        return '<div style="display:flex;align-items:center;gap:6px;">' +
-            '<span style="font-size:10px;font-weight:600;color:#94a3b8;min-width:28px;">' + b.abbr + '</span>' +
-            '<div style="flex:1;height:3px;background:#f1f5f9;border-radius:2px;">' +
-              '<div style="height:100%;width:' + Math.min(100,pctFn(b)) + '%;background:' + color + ';border-radius:2px;"></div>' +
-            '</div>' +
-            '<span style="font-size:11px;font-weight:700;color:#475569;min-width:32px;text-align:right;">' + pctFn(b) + '%</span>' +
-        '</div>';
+        var p      = pctFn(b);
+        var abbr   = '<span style="font-size:10px;font-weight:600;color:#94a3b8;min-width:28px;">' + b.abbr + '</span>';
+        var suffix = mobileSuffixFn ? mobileSuffixFn(b) : (fmtNum(valFn(b)) + ' ₽');
+        return '<div class="rm-bar-row" style="align-items:center;gap:6px;">' +
+                   abbr +
+                   '<div style="flex:1;height:3px;background:#f1f5f9;border-radius:2px;">' +
+                     '<div style="height:100%;width:' + Math.min(100,p) + '%;background:' + color + ';border-radius:2px;"></div>' +
+                   '</div>' +
+                   '<span style="font-size:11px;font-weight:700;color:#475569;min-width:32px;text-align:right;">' + p + '%</span>' +
+               '</div>' +
+               '<div class="rm-text-row" style="align-items:center;gap:4px;">' +
+                   abbr +
+                   '<span style="flex:1;"></span>' +
+                   '<span style="font-size:12px;font-weight:800;color:#334155;">' + p + '%</span>' +
+                   '<span style="font-size:11px;color:#94a3b8;margin-left:3px;">(' + suffix + ')</span>' +
+               '</div>';
     }).join('');
 }
 
@@ -404,7 +413,8 @@ function updateRightMetrics(d) {
     if(el) el.innerHTML = branchRows(d.branches,
         function(b){ return b.fot; },
         function(b){ return b.revenue > 0 ? Math.round(b.fot/b.revenue*100) : 0; },
-        '#f59e0b');
+        '#f59e0b',
+        function(b){ return fmtNum(b.fot) + ' ₽'; });
     // --- Самовывоз ---
     el = document.getElementById('rm-pickup-pct'); if(el) el.textContent = total > 0 ? Math.round((d.pickup||0)/total*100) : '—';
     el = document.getElementById('rm-pickup-sum'); if(el) el.textContent = fmtNum(d.pickup||0) + ' ₽';
@@ -412,7 +422,8 @@ function updateRightMetrics(d) {
     if(el) el.innerHTML = branchRows(d.branches,
         function(b){ return b.pickup; },
         function(b){ return b.revenue > 0 ? Math.round(b.pickup/b.revenue*100) : 0; },
-        '#9333ea');
+        '#9333ea',
+        function(b){ return fmtNum(b.pickup) + ' ₽'; });
     // --- Доставка ---
     var delRev = d.delivery || 0;
     var couFot = d.courier_fot || 0;
@@ -423,7 +434,8 @@ function updateRightMetrics(d) {
     if(el) el.innerHTML = branchRows(d.branches,
         function(b){ return b.delivery_revenue; },
         function(b){ return b.delivery_revenue > 0 ? Math.round(b.courier_fot/b.delivery_revenue*100) : 0; },
-        '#f97316');
+        '#f97316',
+        function(b){ return b.delivery_orders > 0 ? Math.round(b.courier_fot/b.delivery_orders) + 'р. / заказ' : '—'; });
 }
 
 function clearMetrics() {
