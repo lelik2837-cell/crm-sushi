@@ -1291,24 +1291,36 @@ def api_kpi_values():
 @login_required
 @owner_required
 def api_revenue_year():
-    try:
-        year_int = int(request.args.get('year', date.today().year))
-    except ValueError:
-        year_int = date.today().year
+    today = date.today()
+    # скользящие 12 месяцев, заканчивающихся текущим
+    start_m = today.month - 11
+    start_y = today.year
+    if start_m <= 0:
+        start_m += 12
+        start_y -= 1
+    date_from = date(start_y, start_m, 1).isoformat()
+    date_to   = today.isoformat()
     with get_db() as conn:
         rows = conn.execute('''
-            SELECT CAST(strftime('%m', s.date) AS INTEGER) AS month,
+            SELECT CAST(strftime('%Y', s.date) AS INTEGER) AS year,
+                   CAST(strftime('%m', s.date) AS INTEGER) AS month,
                    COALESCE(SUM(r.total_revenue), 0) AS revenue
             FROM shifts s JOIN shift_revenue r ON r.shift_id = s.id
-            WHERE strftime('%Y', s.date) = ?
-            GROUP BY month ORDER BY month
-        ''', (str(year_int),)).fetchall()
-    rev_by_month = {r['month']: int(r['revenue']) for r in rows}
+            WHERE s.date BETWEEN ? AND ?
+            GROUP BY year, month ORDER BY year, month
+        ''', (date_from, date_to)).fetchall()
+    rev = {(r['year'], r['month']): int(r['revenue']) for r in rows}
     labels = ['', 'Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн',
               'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
-    months = [{'month': m, 'label': labels[m], 'revenue': rev_by_month.get(m, 0)}
-              for m in range(1, 13)]
-    return jsonify({'ok': True, 'year': year_int, 'total': sum(x['revenue'] for x in months), 'months': months})
+    months_list = []
+    y, m = start_y, start_m
+    for _ in range(12):
+        months_list.append({'year': y, 'month': m, 'label': labels[m], 'revenue': rev.get((y, m), 0)})
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return jsonify({'ok': True, 'total': sum(x['revenue'] for x in months_list), 'months': months_list})
 
 
 @app.route('/api/revenue-summary')

@@ -372,9 +372,8 @@ function branchListHtml(branches, total) {
     }).join('');
 }
 
-function showMonthDetail(monthIdx, monthLabel, yearData) {
-    // fetch branch breakdown for selected month
-    var y = revYear;
+function showMonthDetail(monthIdx, monthYear, monthLabel) {
+    var y = monthYear;
     var m = String(monthIdx).padStart(2, '0');
     var lastDay = new Date(y, monthIdx, 0).getDate();
     var dateFrom = y + '-' + m + '-01';
@@ -578,7 +577,7 @@ function buildYearChart(months) {
                     return i === idx ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.45)';
                 });
                 revChart.update('none');
-                showMonthDetail(month.month, MONTHS_RU_FULL[month.month], months);
+                showMonthDetail(month.month, month.year, MONTHS_RU_FULL[month.month]);
             }
         }
     });
@@ -632,7 +631,7 @@ function loadRevCard(period) {
         if (revChart) { revChart.destroy(); revChart = null; }
         clearMetrics();
 
-        fetch('/api/revenue-year?year=' + revYear)
+        fetch('/api/revenue-year')
             .then(function(r) { return r.json(); })
             .then(function(d) {
                 if (!d.ok) return;
