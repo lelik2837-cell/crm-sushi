@@ -50,37 +50,67 @@
   </div>
   <!-- Right: detail metrics -->
   <div class="col-12 col-lg-7">
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; height:100%;">
-      <div id="rm-cash" class="rev-metric-card" style="background:#fff1f2; border:1.5px solid #fecdd3; border-radius:14px; padding:18px 20px;">
-        <div style="font-size:10px; color:#9f1239; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:6px;">Нал в кассе</div>
-        <div class="rev-metric-val" style="font-size:clamp(18px,2.5vw,26px); font-weight:800; color:#be123c; line-height:1.1;">—</div>
-        <div class="rev-metric-pct" style="font-size:12px; color:#9f1239; margin-top:3px; opacity:.7;">—</div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+
+      <!-- 1. Оплата: Нал + Безнал + Онлайн -->
+      <div id="rm-payments" style="background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 100%); border:1.5px solid #e2e8f0; border-radius:14px; padding:16px 18px; box-shadow:0 2px 10px rgba(0,0,0,0.06);">
+        <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:12px;">Оплата</div>
+        <div style="display:flex; flex-direction:column; gap:9px;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div style="width:8px;height:8px;border-radius:50%;background:#be123c;flex-shrink:0;"></div>
+            <span style="flex:1;font-size:12px;color:#64748b;font-weight:500;">Нал</span>
+            <span id="rm-cash-val" style="font-size:13px;font-weight:700;color:#334155;">—</span>
+            <span id="rm-cash-pct" style="font-size:11px;color:#94a3b8;min-width:34px;text-align:right;">—</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div style="width:8px;height:8px;border-radius:50%;background:#15803d;flex-shrink:0;"></div>
+            <span style="flex:1;font-size:12px;color:#64748b;font-weight:500;">Безнал</span>
+            <span id="rm-card-val" style="font-size:13px;font-weight:700;color:#334155;">—</span>
+            <span id="rm-card-pct" style="font-size:11px;color:#94a3b8;min-width:34px;text-align:right;">—</span>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div style="width:8px;height:8px;border-radius:50%;background:#1d4ed8;flex-shrink:0;"></div>
+            <span style="flex:1;font-size:12px;color:#64748b;font-weight:500;">Онлайн</span>
+            <span id="rm-online-val" style="font-size:13px;font-weight:700;color:#334155;">—</span>
+            <span id="rm-online-pct" style="font-size:11px;color:#94a3b8;min-width:34px;text-align:right;">—</span>
+          </div>
+        </div>
       </div>
-      <div id="rm-card" class="rev-metric-card" style="background:#f0fdf4; border:1.5px solid #bbf7d0; border-radius:14px; padding:18px 20px;">
-        <div style="font-size:10px; color:#166534; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:6px;">Безнал</div>
-        <div class="rev-metric-val" style="font-size:clamp(18px,2.5vw,26px); font-weight:800; color:#15803d; line-height:1.1;">—</div>
-        <div class="rev-metric-pct" style="font-size:12px; color:#166534; margin-top:3px; opacity:.7;">—</div>
+
+      <!-- 2. ФОТ -->
+      <div id="rm-fot-card" style="background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 100%); border:1.5px solid #e2e8f0; border-radius:14px; padding:16px 18px; box-shadow:0 2px 10px rgba(0,0,0,0.06);">
+        <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:4px;">ФОТ</div>
+        <div style="display:flex; align-items:baseline; gap:2px; line-height:1;">
+          <span id="rm-fot-pct" style="font-size:34px;font-weight:800;color:#92400e;letter-spacing:-1px;">—</span>
+          <span style="font-size:18px;font-weight:700;color:#92400e;">%</span>
+        </div>
+        <div id="rm-fot-sum" style="font-size:12px;color:#94a3b8;margin-bottom:8px;">— ₽</div>
+        <div id="rm-fot-branches" style="display:flex;flex-direction:column;gap:4px;border-top:1px solid #f1f5f9;padding-top:8px;"></div>
       </div>
-      <div id="rm-online" class="rev-metric-card" style="background:#eff6ff; border:1.5px solid #bfdbfe; border-radius:14px; padding:18px 20px;">
-        <div style="font-size:10px; color:#1e40af; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:6px;">Онлайн</div>
-        <div class="rev-metric-val" style="font-size:clamp(18px,2.5vw,26px); font-weight:800; color:#1d4ed8; line-height:1.1;">—</div>
-        <div class="rev-metric-pct" style="font-size:12px; color:#1e40af; margin-top:3px; opacity:.7;">—</div>
+
+      <!-- 3. Самовывоз -->
+      <div id="rm-pickup-card" style="background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 100%); border:1.5px solid #e2e8f0; border-radius:14px; padding:16px 18px; box-shadow:0 2px 10px rgba(0,0,0,0.06);">
+        <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:4px;">Самовывоз</div>
+        <div style="display:flex; align-items:baseline; gap:2px; line-height:1;">
+          <span id="rm-pickup-pct" style="font-size:34px;font-weight:800;color:#7e22ce;letter-spacing:-1px;">—</span>
+          <span style="font-size:18px;font-weight:700;color:#7e22ce;">%</span>
+        </div>
+        <div id="rm-pickup-sum" style="font-size:12px;color:#94a3b8;margin-bottom:8px;">— ₽</div>
+        <div id="rm-pickup-branches" style="display:flex;flex-direction:column;gap:4px;border-top:1px solid #f1f5f9;padding-top:8px;"></div>
       </div>
-      <div id="rm-fot" class="rev-metric-card" style="background:#fefce8; border:1.5px solid #fde68a; border-radius:14px; padding:18px 20px;">
-        <div style="font-size:10px; color:#854d0e; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:6px;">ФОТ</div>
-        <div class="rev-metric-val" style="font-size:clamp(18px,2.5vw,26px); font-weight:800; color:#92400e; line-height:1.1;">—</div>
-        <div class="rev-metric-pct" style="font-size:12px; color:#854d0e; margin-top:3px; opacity:.7;">—</div>
+
+      <!-- 4. Доставка -->
+      <div id="rm-delivery-card" style="background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 100%); border:1.5px solid #e2e8f0; border-radius:14px; padding:16px 18px; box-shadow:0 2px 10px rgba(0,0,0,0.06);">
+        <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:4px;">Доставка</div>
+        <div style="display:flex; align-items:baseline; gap:2px; line-height:1;">
+          <span id="rm-delivery-pct" style="font-size:34px;font-weight:800;color:#c2410c;letter-spacing:-1px;">—</span>
+          <span style="font-size:18px;font-weight:700;color:#c2410c;">%</span>
+        </div>
+        <div style="font-size:10px;color:#94a3b8;margin-bottom:2px;">ФОТ курьеров / выручка</div>
+        <div id="rm-delivery-cost" style="font-size:12px;color:#64748b;font-weight:600;margin-bottom:8px;">1 заказ: — ₽</div>
+        <div id="rm-delivery-branches" style="display:flex;flex-direction:column;gap:4px;border-top:1px solid #f1f5f9;padding-top:8px;"></div>
       </div>
-      <div id="rm-pickup" class="rev-metric-card" style="background:#fdf4ff; border:1.5px solid #e9d5ff; border-radius:14px; padding:18px 20px;">
-        <div style="font-size:10px; color:#6b21a8; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:6px;">Самовывоз</div>
-        <div class="rev-metric-val" style="font-size:clamp(18px,2.5vw,26px); font-weight:800; color:#7e22ce; line-height:1.1;">—</div>
-        <div class="rev-metric-pct" style="font-size:12px; color:#6b21a8; margin-top:3px; opacity:.7;">—</div>
-      </div>
-      <div id="rm-delivery" class="rev-metric-card" style="background:#fff7ed; border:1.5px solid #fed7aa; border-radius:14px; padding:18px 20px;">
-        <div style="font-size:10px; color:#9a3412; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:6px;">Доставка</div>
-        <div class="rev-metric-val" style="font-size:clamp(18px,2.5vw,26px); font-weight:800; color:#c2410c; line-height:1.1;">—</div>
-        <div class="rev-metric-pct" style="font-size:12px; color:#9a3412; margin-top:3px; opacity:.7;">—</div>
-      </div>
+
     </div>
   </div>
 </div>
@@ -341,16 +371,63 @@ var MONTHS_RU_FULL = ['', 'Январь','Февраль','Март','Апрел
 function fmtNum(n) { return Math.round(n).toLocaleString('ru-RU'); }
 function fmtPct(val, total) { return total ? '(' + Math.round(val / total * 100) + '%)' : ''; }
 
-function setMetric(id, val, total) {
-    var c = document.getElementById(id); if (!c) return;
-    c.querySelector('.rev-metric-val').textContent = fmtNum(val) + ' ₽';
-    c.querySelector('.rev-metric-pct').textContent = fmtPct(val, total);
+function pct(val, total) { return total > 0 ? Math.round(val / total * 100) : 0; }
+function pctStr(val, total) { return total > 0 ? Math.round(val / total * 100) + '%' : '—'; }
+
+function branchRows(branches, valFn, pctFn, color) {
+    if (!branches || !branches.length) return '';
+    return branches.filter(function(b){ return valFn(b) > 0; }).map(function(b) {
+        return '<div style="display:flex;align-items:center;gap:6px;">' +
+            '<span style="font-size:10px;font-weight:600;color:#94a3b8;min-width:28px;">' + b.abbr + '</span>' +
+            '<div style="flex:1;height:3px;background:#f1f5f9;border-radius:2px;">' +
+              '<div style="height:100%;width:' + Math.min(100,pctFn(b)) + '%;background:' + color + ';border-radius:2px;"></div>' +
+            '</div>' +
+            '<span style="font-size:11px;font-weight:700;color:#475569;min-width:32px;text-align:right;">' + pctFn(b) + '%</span>' +
+        '</div>';
+    }).join('');
+}
+
+function updateRightMetrics(d) {
+    var total = d.total || 0;
+    // --- Оплата ---
+    var el; var p;
+    el = document.getElementById('rm-cash-val');   if(el) el.textContent = fmtNum(d.cash||0) + ' ₽';
+    el = document.getElementById('rm-cash-pct');   if(el) el.textContent = pctStr(d.cash||0, total);
+    el = document.getElementById('rm-card-val');   if(el) el.textContent = fmtNum(d.card||0) + ' ₽';
+    el = document.getElementById('rm-card-pct');   if(el) el.textContent = pctStr(d.card||0, total);
+    el = document.getElementById('rm-online-val'); if(el) el.textContent = fmtNum(d.online||0) + ' ₽';
+    el = document.getElementById('rm-online-pct'); if(el) el.textContent = pctStr(d.online||0, total);
+    // --- ФОТ ---
+    el = document.getElementById('rm-fot-pct'); if(el) el.textContent = total > 0 ? Math.round((d.fot||0)/total*100) : '—';
+    el = document.getElementById('rm-fot-sum'); if(el) el.textContent = fmtNum(d.fot||0) + ' ₽';
+    el = document.getElementById('rm-fot-branches');
+    if(el) el.innerHTML = branchRows(d.branches,
+        function(b){ return b.fot; },
+        function(b){ return b.revenue > 0 ? Math.round(b.fot/b.revenue*100) : 0; },
+        '#f59e0b');
+    // --- Самовывоз ---
+    el = document.getElementById('rm-pickup-pct'); if(el) el.textContent = total > 0 ? Math.round((d.pickup||0)/total*100) : '—';
+    el = document.getElementById('rm-pickup-sum'); if(el) el.textContent = fmtNum(d.pickup||0) + ' ₽';
+    el = document.getElementById('rm-pickup-branches');
+    if(el) el.innerHTML = branchRows(d.branches,
+        function(b){ return b.pickup; },
+        function(b){ return b.revenue > 0 ? Math.round(b.pickup/b.revenue*100) : 0; },
+        '#9333ea');
+    // --- Доставка ---
+    var delRev = d.delivery || 0;
+    var couFot = d.courier_fot || 0;
+    var delOrd = d.delivery_orders || 0;
+    el = document.getElementById('rm-delivery-pct'); if(el) el.textContent = delRev > 0 ? Math.round(couFot/delRev*100) : '—';
+    el = document.getElementById('rm-delivery-cost'); if(el) el.textContent = '1 заказ: ' + (delOrd > 0 ? fmtNum(Math.round(couFot/delOrd)) + ' ₽' : '—');
+    el = document.getElementById('rm-delivery-branches');
+    if(el) el.innerHTML = branchRows(d.branches,
+        function(b){ return b.delivery_revenue; },
+        function(b){ return b.delivery_revenue > 0 ? Math.round(b.courier_fot/b.delivery_revenue*100) : 0; },
+        '#f97316');
 }
 
 function clearMetrics() {
-    ['rm-cash','rm-card','rm-online','rm-fot','rm-pickup','rm-delivery'].forEach(function(id) {
-        setMetric(id, 0, 0);
-    });
+    updateRightMetrics({total:0,cash:0,card:0,online:0,fot:0,pickup:0,delivery:0,courier_fot:0,delivery_orders:0,branches:[]});
 }
 
 function branchListHtml(branches, total) {
@@ -402,12 +479,7 @@ function showMonthDetail(monthIdx, monthYear, monthLabel) {
         .then(function(d) {
             if (!d.ok) return;
             branchEl.innerHTML = branchListHtml(d.branches, d.total);
-            setMetric('rm-cash',     d.cash,     d.total);
-            setMetric('rm-card',     d.card,     d.total);
-            setMetric('rm-online',   d.online,   d.total);
-            setMetric('rm-fot',      d.fot,      d.total);
-            setMetric('rm-pickup',   d.pickup,   d.total);
-            setMetric('rm-delivery', d.delivery, d.total);
+            updateRightMetrics(d);
         });
 }
 
@@ -659,12 +731,7 @@ function loadRevCard(period) {
             if (!d.ok) return;
             document.getElementById('rev-total').textContent = fmtNum(d.total);
             branchesWrap.innerHTML = branchListHtml(d.branches, d.total);
-            setMetric('rm-cash',     d.cash,     d.total);
-            setMetric('rm-card',     d.card,     d.total);
-            setMetric('rm-online',   d.online,   d.total);
-            setMetric('rm-fot',      d.fot,      d.total);
-            setMetric('rm-pickup',   d.pickup,   d.total);
-            setMetric('rm-delivery', d.delivery, d.total);
+            updateRightMetrics(d);
         });
 }
 

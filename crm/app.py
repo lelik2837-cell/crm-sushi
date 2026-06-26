@@ -1336,7 +1336,8 @@ def api_revenue_summary():
                    COALESCE(SUM(r.card_amount),   0)    AS card,
                    COALESCE(SUM(r.online_amount), 0)    AS online,
                    COALESCE(SUM(r.delivery_revenue), 0) AS delivery,
-                   COALESCE(SUM(r.pickup_revenue),   0) AS pickup
+                   COALESCE(SUM(r.pickup_revenue),   0) AS pickup,
+                   COALESCE(SUM(r.delivery_orders),  0) AS delivery_orders
             FROM shifts s JOIN shift_revenue r ON r.shift_id = s.id
             WHERE s.date BETWEEN ? AND ?
         ''', (date_from, date_to)).fetchone()
@@ -1345,33 +1346,63 @@ def api_revenue_summary():
             FROM employee_shifts es JOIN shifts s ON s.id = es.shift_id
             WHERE s.date BETWEEN ? AND ?
         ''', (date_from, date_to)).fetchone()
-        branch_rows = conn.execute('''
+        courier_fot_row = conn.execute('''
+            SELECT COALESCE(SUM(es.total_amount), 0) AS courier_fot
+            FROM employee_shifts es JOIN shifts s ON s.id = es.shift_id
+            WHERE s.date BETWEEN ? AND ? AND es.role_snapshot = 'courier'
+        ''', (date_from, date_to)).fetchone()
+        branch_rev_rows = conn.execute('''
             SELECT b.name,
-                   COALESCE(SUM(r.total_revenue), 0) AS revenue
+                   COALESCE(SUM(r.total_revenue), 0)    AS revenue,
+                   COALESCE(SUM(r.pickup_revenue), 0)   AS pickup,
+                   COALESCE(SUM(r.delivery_revenue), 0) AS delivery_revenue,
+                   COALESCE(SUM(r.delivery_orders),  0) AS delivery_orders
             FROM shifts s
             JOIN branches b ON b.id = s.branch_id
             JOIN shift_revenue r ON r.shift_id = s.id
             WHERE s.date BETWEEN ? AND ?
+            GROUP BY b.id, b.name ORDER BY revenue DESC
+        ''', (date_from, date_to)).fetchall()
+        branch_fot_rows = conn.execute('''
+            SELECT b.name,
+                   COALESCE(SUM(es.total_amount), 0) AS fot,
+                   COALESCE(SUM(CASE WHEN es.role_snapshot='courier' THEN es.total_amount ELSE 0 END), 0) AS courier_fot
+            FROM employee_shifts es
+            JOIN shifts s ON s.id = es.shift_id
+            JOIN branches b ON b.id = s.branch_id
+            WHERE s.date BETWEEN ? AND ?
             GROUP BY b.id, b.name
-            ORDER BY revenue DESC
         ''', (date_from, date_to)).fetchall()
 
-    total = total_row['total'] or 0
+    total       = int(total_row['total'] or 0)
+    fot         = int(fot_row['fot'] or 0)
+    courier_fot = int(courier_fot_row['courier_fot'] or 0)
+    fot_by_name = {r['name']: {'fot': int(r['fot']), 'courier_fot': int(r['courier_fot'])} for r in branch_fot_rows}
     branches = []
-    for br in branch_rows:
+    for br in branch_rev_rows:
         name = br['name'] or ''
-        abbr = name[:3].upper()
-        branches.append({'abbr': abbr, 'name': name, 'revenue': int(br['revenue'])})
+        bf   = fot_by_name.get(name, {'fot': 0, 'courier_fot': 0})
+        branches.append({
+            'abbr': name[:3].upper(), 'name': name,
+            'revenue':         int(br['revenue']),
+            'pickup':          int(br['pickup']),
+            'delivery_revenue':int(br['delivery_revenue']),
+            'delivery_orders': int(br['delivery_orders']),
+            'fot':             bf['fot'],
+            'courier_fot':     bf['courier_fot'],
+        })
 
     return jsonify({
         'ok': True,
-        'total': int(total),
+        'total': total,
         'cash':  int(total_row['cash'] or 0),
         'card':  int(total_row['card'] or 0),
         'online': int(total_row['online'] or 0),
         'delivery': int(total_row['delivery'] or 0),
+        'delivery_orders': int(total_row['delivery_orders'] or 0),
         'pickup': int(total_row['pickup'] or 0),
-        'fot':   int(fot_row['fot'] or 0),
+        'fot':   fot,
+        'courier_fot': courier_fot,
         'branches': branches,
     })
 
