@@ -107,7 +107,7 @@
     display: grid; gap: 8px; grid-template-columns: 2fr 90px 90px 50px 24px; align-items: center;
     padding-bottom: 6px; border-bottom: 1.5px solid #e5e7eb; margin-bottom: 2px;
   }
-  .expense-header.plus-grid, .expense-row-main.plus-grid { grid-template-columns: 2fr 90px 24px; }
+  .expense-header.plus-grid, .expense-row-main.plus-grid { grid-template-columns: 2fr 90px 90px 24px; }
   .expense-row { padding: 6px 0; border-bottom: 1px solid #f3f4f6; display: flex; flex-direction: column; gap: 5px; }
   .expense-row:last-child { border-bottom: none; }
   .expense-row-main { display: grid; gap: 8px; grid-template-columns: 2fr 90px 90px 50px 24px; align-items: center; }
@@ -428,6 +428,7 @@
       <div class="expense-header plus-grid">
         <div class="col-label">Категория</div>
         <div class="col-label">Сумма</div>
+        <div class="col-label">Оплата</div>
         <div></div>
       </div>
       <div id="plus-body">
@@ -450,6 +451,7 @@
           </select>
           <input class="mini-input plus-amount money-field" type="text" inputmode="numeric" placeholder="0"
             value="{{ p.amount|int }}">
+          <span style="font-size:12px; color:#6b7280; padding-left:4px;">Наличные</span>
           <button class="row-del" onclick="deletePlus(this, {{ p.id }})">✕</button>
         </div>
         <div class="exp-note-wrap">
@@ -460,6 +462,7 @@
         <div class="expense-row-main plus-grid">
           <span style="font-size:13px;">{% for c, l in income_categories %}{% if c == p.category %}{{ l }}{% endif %}{% endfor %}{% if not p.category %}{{ p.description or '—' }}{% endif %}</span>
           <span style="font-size:13px; text-align:right; color:#16a34a; font-weight:700;">+{{ p.amount|int }} ₽</span>
+          <span style="font-size:12px; color:#6b7280;">Нал</span>
           <div></div>
         </div>
         {% if p.description and p.category %}<div class="exp-note-view">{{ p.description }}</div>{% endif %}
@@ -1025,6 +1028,7 @@ function addPlusRow() {
         ${buildIncomeCatOptions(null)}
       </select>
       <input class="mini-input plus-amount money-field" type="text" inputmode="numeric" placeholder="0" value="">
+      <span style="font-size:12px; color:#6b7280; padding-left:4px;">Наличные</span>
       <button class="row-del" onclick="deletePlus(this, null)">✕</button>
     </div>
     <div class="exp-note-wrap">
