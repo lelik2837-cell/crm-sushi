@@ -791,6 +791,15 @@ def init_db():
         except Exception:
             pass
 
+        # Add category and cash/card split to cash_plus_entries
+        plus_cols = [r[1] for r in conn.execute("PRAGMA table_info(cash_plus_entries)").fetchall()]
+        if 'category' not in plus_cols:
+            conn.execute("ALTER TABLE cash_plus_entries ADD COLUMN category TEXT DEFAULT ''")
+        if 'amount_cash' not in plus_cols:
+            conn.execute("ALTER TABLE cash_plus_entries ADD COLUMN amount_cash REAL DEFAULT 0")
+            conn.execute("ALTER TABLE cash_plus_entries ADD COLUMN amount_card REAL DEFAULT 0")
+            conn.execute("UPDATE cash_plus_entries SET amount_cash = amount WHERE amount > 0")
+
         try:
             conn.execute("ALTER TABLE purchases ADD COLUMN payer TEXT DEFAULT ''")
         except Exception:
@@ -1720,9 +1729,13 @@ def shift_view(shift_id):
             'SELECT terminal_number, amount FROM shift_terminals WHERE shift_id=? ORDER BY sort_order, id',
             (shift_id,)
         ).fetchall()
-        expense_cats = get_expense_categories(conn)
+        all_cats = get_expense_categories(conn)
+        expense_cats = [c for c in all_cats if c['type'] != 'income']
+        income_cats  = [c for c in all_cats if c['type'] == 'income']
         expense_cats_groups = build_cats_groups(expense_cats)
-        expense_cats_flat = [(c['code'], c['label']) for c in expense_cats]
+        expense_cats_flat   = [(c['code'], c['label']) for c in expense_cats]
+        income_cats_groups  = build_cats_groups(income_cats)
+        income_cats_flat    = [(c['code'], c['label']) for c in income_cats]
         can_edit = (role == 'owner') or (shift['status'] == 'open')
         try:
             shift_weekday = date.fromisoformat(shift['date']).weekday()  # 0=Mon, 4=Fri, 5=Sat
@@ -1749,6 +1762,8 @@ def shift_view(shift_id):
             taxi_trips=taxi_trips, taxi_trip_emps=taxi_trip_emps,
             expense_categories=expense_cats_flat,
             expense_cats_groups=expense_cats_groups,
+            income_categories=income_cats_flat,
+            income_cats_groups=income_cats_groups,
         role_labels=ROLE_LABELS,
             can_edit=can_edit,
             is_owner=(role == 'owner'),
@@ -1823,19 +1838,22 @@ def save_cash_plus(shift_id):
     if not _can_edit_shift(shift_id):
         return jsonify({'error': 'Нет доступа'}), 403
     data = request.json or {}
-    entry_id = data.get('id')
-    amount = float(data.get('amount') or 0)
+    entry_id    = data.get('id')
+    amount_cash = float(data.get('amount_cash') or 0)
+    amount_card = float(data.get('amount_card') or 0)
+    amount      = amount_cash + amount_card
+    category    = (data.get('category') or '').strip()
     description = (data.get('description') or '').strip()
     with get_db() as conn:
         if entry_id:
             conn.execute(
-                'UPDATE cash_plus_entries SET amount=?, description=? WHERE id=? AND shift_id=?',
-                (amount, description, entry_id, shift_id)
+                'UPDATE cash_plus_entries SET amount=?, amount_cash=?, amount_card=?, category=?, description=? WHERE id=? AND shift_id=?',
+                (amount, amount_cash, amount_card, category, description, entry_id, shift_id)
             )
         else:
             conn.execute(
-                'INSERT INTO cash_plus_entries (shift_id, amount, description) VALUES (?,?,?)',
-                (shift_id, amount, description)
+                'INSERT INTO cash_plus_entries (shift_id, amount, amount_cash, amount_card, category, description) VALUES (?,?,?,?,?,?)',
+                (shift_id, amount, amount_cash, amount_card, category, description)
             )
             entry_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
         conn.commit()
@@ -5704,7 +5722,7 @@ def shifts_archive():
                    (SELECT COALESCE(SUM(es.total_amount),0)
                     FROM employee_shifts es
                     WHERE es.shift_id=s.id AND es.is_paid=1) as paid_salary,
-                   (SELECT COALESCE(SUM(cp.amount),0)
+                   (SELECT COALESCE(SUM(COALESCE(cp.amount_cash, cp.amount, 0)),0)
                     FROM cash_plus_entries cp WHERE cp.shift_id=s.id) as plus_cash,
                    s.opened_at, s.closed_at,
                    s.closed_by_name
