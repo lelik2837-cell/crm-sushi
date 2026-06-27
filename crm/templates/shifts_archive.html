@@ -125,20 +125,20 @@
                         <th>Дата</th>
                         {% if is_owner %}<th>Филиал</th>{% endif %}
                         <th class="text-center">Статус</th>
-                        <th class="text-end">Выручка</th>
-                        <th class="text-end">Заказов</th>
-                        <th class="text-end">Доставка</th>
-                        <th class="text-end">Самовывоз</th>
-                        <th class="text-end">Нал</th>
-                        <th class="text-end">Карта</th>
+                        <th class="text-end">Выручка&nbsp;/&nbsp;Заказы</th>
+                        <th class="text-end">В кассе</th>
+                        <th class="text-end">Факт в кассе</th>
+                        <th class="text-end">Разница</th>
                         <th></th>
                     </tr>
                 </thead>
                 <tbody>
                 {% for s in shifts %}
+                {% set kassa = (s.morning_cash + s.cash_amount + s.change_amount - s.exp_cash - s.paid_salary) | int %}
+                {% set diff = ((s.actual_cash or 0) - kassa) | int if s.actual_cash is not none else none %}
                 <tr>
                     <td class="fw-semibold">{{ s.date | date_fmt }}</td>
-                    {% if is_owner %}<td class="text-muted">{{ s.branch_name }}</td>{% endif %}
+                    {% if is_owner %}<td class="text-muted small">{{ s.branch_name }}</td>{% endif %}
                     <td class="text-center">
                         {% if s.status == 'open' %}
                             <span class="badge bg-success">Открыта</span>
@@ -146,21 +146,28 @@
                             <span class="badge bg-secondary">Закрыта</span>
                         {% endif %}
                     </td>
+                    <td class="text-end">
+                        <span class="fw-semibold">{% if s.revenue %}{{ "{:,.0f}".format(s.revenue).replace(',', ' ') }}&nbsp;₽{% else %}—{% endif %}</span>
+                        <span class="text-muted small"> / {{ s.orders if s.orders else '0' }}</span>
+                    </td>
                     <td class="text-end fw-semibold">
-                        {% if s.revenue %}{{ "{:,.0f}".format(s.revenue).replace(',', ' ') }} ₽{% else %}—{% endif %}
+                        {{ "{:,.0f}".format(kassa).replace(',', ' ') }}&nbsp;₽
                     </td>
-                    <td class="text-end">{{ s.orders if s.orders else '—' }}</td>
-                    <td class="text-end text-muted small">
-                        {% if s.delivery_revenue %}{{ "{:,.0f}".format(s.delivery_revenue).replace(',', ' ') }} ₽{% else %}—{% endif %}
+                    <td class="text-end">
+                        {% if s.actual_cash is not none %}
+                            <span class="fw-semibold">{{ "{:,.0f}".format(s.actual_cash).replace(',', ' ') }}&nbsp;₽</span>
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
                     </td>
-                    <td class="text-end text-muted small">
-                        {% if s.pickup_revenue %}{{ "{:,.0f}".format(s.pickup_revenue).replace(',', ' ') }} ₽{% else %}—{% endif %}
-                    </td>
-                    <td class="text-end text-muted small">
-                        {% if s.cash_amount %}{{ "{:,.0f}".format(s.cash_amount).replace(',', ' ') }} ₽{% else %}—{% endif %}
-                    </td>
-                    <td class="text-end text-muted small">
-                        {% if s.card_amount %}{{ "{:,.0f}".format(s.card_amount).replace(',', ' ') }} ₽{% else %}—{% endif %}
+                    <td class="text-end fw-semibold">
+                        {% if diff is not none %}
+                            <span style="color:{% if diff == 0 %}#16a34a{% elif diff > 0 %}#2563eb{% else %}#dc2626{% endif %};">
+                                {% if diff > 0 %}+{% endif %}{{ "{:,.0f}".format(diff).replace(',', ' ') }}&nbsp;₽
+                            </span>
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
                     </td>
                     <td class="text-end">
                         <a href="{{ url_for('shift_view', shift_id=s.id) }}"
@@ -174,9 +181,8 @@
                 <tfoot class="table-light fw-bold">
                     <tr>
                         <td {% if is_owner %}colspan="3"{% else %}colspan="2"{% endif %}>Итого</td>
-                        <td class="text-end">{{ "{:,.0f}".format(total_revenue).replace(',', ' ') }} ₽</td>
-                        <td class="text-end">{{ total_orders }}</td>
-                        <td colspan="4"></td>
+                        <td class="text-end">{{ "{:,.0f}".format(total_revenue).replace(',', ' ') }}&nbsp;₽ / {{ total_orders }}</td>
+                        <td colspan="3"></td>
                         <td></td>
                     </tr>
                 </tfoot>

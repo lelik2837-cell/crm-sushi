@@ -274,6 +274,7 @@
             <div style="background:linear-gradient(135deg,#fefce8 0%,#fef08a 100%); border-radius:10px; padding:9px 14px; border-left:4px solid #eab308;">
               <div style="font-size:10px; color:#92400e; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:3px;">Внесен размен:</div>
               <div style="font-size:16px; font-weight:800; color:#92400e; line-height:1.3;">{{ (revenue.change_amount or 0)|int }} ₽</div>
+              <input type="hidden" id="change-amount-val" value="{{ (revenue.change_amount or 0)|int }}">
             </div>
           </div>
 
@@ -841,8 +842,9 @@ function updateKassa() {
     }
   });
 
-  // Итого нал = утром в кассе + выручка нал − расходы нал − ФОТ
-  const kassaNal    = morningCash + cashIn - expCash - paidSalary;
+  // Итого нал = утром в кассе + выручка нал + размен − расходы нал − ФОТ
+  const changeAmt   = parseFloat(document.getElementById('change-amount-val')?.value || 0) || 0;
+  const kassaNal    = morningCash + cashIn + changeAmt - expCash - paidSalary;
   const kassaBeznal = cardIn; // только карта, без онлайн
   const fmt = n => Math.round(n).toLocaleString('ru-RU') + ' ₽';
   document.getElementById('kassa-nал').textContent = fmt(kassaNal);

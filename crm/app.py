@@ -5616,6 +5616,14 @@ def shifts_archive():
                    COALESCE(r.pickup_revenue, 0)       as pickup_revenue,
                    COALESCE(r.cash_amount, 0)          as cash_amount,
                    COALESCE(r.card_amount, 0)          as card_amount,
+                   COALESCE(r.morning_cash, 0)         as morning_cash,
+                   COALESCE(r.change_amount, 0)        as change_amount,
+                   r.actual_cash,
+                   (SELECT COALESCE(SUM(e.amount_cash),0)
+                    FROM expenses e WHERE e.shift_id=s.id)  as exp_cash,
+                   (SELECT COALESCE(SUM(es.total_amount),0)
+                    FROM employee_shifts es
+                    WHERE es.shift_id=s.id AND es.is_paid=1) as paid_salary,
                    s.opened_at, s.closed_at,
                    s.closed_by_name
             FROM shifts s
