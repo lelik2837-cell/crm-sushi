@@ -1631,12 +1631,18 @@ def open_shift():
             raise
         shift_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
         prev_cash_row = conn.execute('''
-            SELECT r.actual_cash FROM shifts s
-            JOIN shift_revenue r ON r.shift_id = s.id
-            WHERE s.branch_id = ? AND s.date < ? AND r.actual_cash IS NOT NULL
+            SELECT COALESCE(r.morning_cash, 0)
+                   + COALESCE(r.cash_amount, 0)
+                   + COALESCE(r.change_amount, 0)
+                   - COALESCE((SELECT SUM(e.amount_cash) FROM expenses e WHERE e.shift_id=s.id), 0)
+                   - COALESCE((SELECT SUM(es.total_amount) FROM employee_shifts es
+                                WHERE es.shift_id=s.id AND es.is_paid=1), 0)
+                   AS kassa_nal
+            FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id
+            WHERE s.branch_id=? AND s.date<?
             ORDER BY s.date DESC LIMIT 1
         ''', (int(branch_id), today)).fetchone()
-        prev_morning = prev_cash_row['actual_cash'] if prev_cash_row else 0
+        prev_morning = (prev_cash_row['kassa_nal'] or 0) if prev_cash_row else 0
         conn.execute(
             'INSERT INTO shift_revenue (shift_id, morning_cash) VALUES (?, ?)',
             (shift_id, prev_morning)
@@ -1711,14 +1717,20 @@ def shift_view(shift_id):
             shift_weekday = date.fromisoformat(shift['date']).weekday()  # 0=Mon, 4=Fri, 5=Sat
         except Exception:
             shift_weekday = 0
-        # Утром в кассе: факт в кассе предыдущего дня по этому филиалу
+        # Утром в кассе: итого нал предыдущего дня по этому филиалу
         prev_day_row = conn.execute('''
-            SELECT r.actual_cash FROM shifts s
-            JOIN shift_revenue r ON r.shift_id = s.id
-            WHERE s.branch_id = ? AND s.date < ?
+            SELECT COALESCE(r.morning_cash, 0)
+                   + COALESCE(r.cash_amount, 0)
+                   + COALESCE(r.change_amount, 0)
+                   - COALESCE((SELECT SUM(e.amount_cash) FROM expenses e WHERE e.shift_id=s.id), 0)
+                   - COALESCE((SELECT SUM(es.total_amount) FROM employee_shifts es
+                                WHERE es.shift_id=s.id AND es.is_paid=1), 0)
+                   AS kassa_nal
+            FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id
+            WHERE s.branch_id=? AND s.date<?
             ORDER BY s.date DESC LIMIT 1
         ''', (shift['branch_id'], shift['date'])).fetchone()
-        prev_actual_cash = prev_day_row['actual_cash'] if prev_day_row else None
+        prev_actual_cash = (prev_day_row['kassa_nal'] or 0) if prev_day_row else None
         return render_template('shift.html',
             shift=shift, revenue=revenue, expenses=expenses,
             staff=staff, employees=employees,
@@ -5628,10 +5640,13 @@ def shifts_archive():
                    COALESCE(r.card_amount, 0)          as card_amount,
                    COALESCE(
                      NULLIF(r.morning_cash, 0),
-                     (SELECT r2.actual_cash FROM shifts s2
-                      JOIN shift_revenue r2 ON r2.shift_id = s2.id
-                      WHERE s2.branch_id = s.branch_id AND s2.date < s.date
-                        AND r2.actual_cash IS NOT NULL
+                     (SELECT COALESCE(r2.morning_cash,0)+COALESCE(r2.cash_amount,0)
+                             +COALESCE(r2.change_amount,0)
+                             -COALESCE((SELECT SUM(e2.amount_cash) FROM expenses e2 WHERE e2.shift_id=s2.id),0)
+                             -COALESCE((SELECT SUM(es2.total_amount) FROM employee_shifts es2
+                                        WHERE es2.shift_id=s2.id AND es2.is_paid=1),0)
+                      FROM shifts s2 JOIN shift_revenue r2 ON r2.shift_id=s2.id
+                      WHERE s2.branch_id=s.branch_id AND s2.date<s.date
                       ORDER BY s2.date DESC LIMIT 1),
                      0
                    )                                    as morning_cash,
