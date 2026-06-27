@@ -136,10 +136,24 @@
         </button>
         <div class="collapse navbar-collapse" id="nav">
             <ul class="navbar-nav me-auto">
-                <li class="nav-item">
-                    <a class="nav-link nav-link-dashboard {% if request.endpoint=='dashboard' %}active{% endif %}" href="{{ url_for('dashboard') }}">
+                {% set dash_active = request.endpoint == 'dashboard' or (request.endpoint == 'reports' and request.args.get('tab') == 'salary') %}
+                <li class="nav-item dropdown">
+                    <a class="nav-link nav-link-dashboard dropdown-toggle {% if dash_active %}active{% endif %}"
+                       href="#" data-bs-toggle="dropdown" aria-expanded="false">
                         <i class="bi bi-grid"></i> Дашборд
                     </a>
+                    <ul class="dropdown-menu">
+                        <li>
+                            <a class="dropdown-item {% if request.endpoint=='dashboard' %}active{% endif %}" href="{{ url_for('dashboard') }}">
+                                <i class="bi bi-grid me-2"></i>Дашборд
+                            </a>
+                        </li>
+                        <li>
+                            <a class="dropdown-item {% if request.endpoint=='reports' and request.args.get('tab')=='salary' %}active{% endif %}" href="{{ url_for('reports') }}?tab=salary">
+                                <i class="bi bi-cash-coin me-2"></i>ФОТ
+                            </a>
+                        </li>
+                    </ul>
                 </li>
                 {% set reports_active = request.endpoint in ('reports', 'shifts_archive', 'expenses_report', 'cash_flow_report', 'purchases', 'report_reconciliation', 'pnl_report', 'pnl_settings_save') or (request.endpoint and (request.endpoint.startswith('bank') or 'purchases_import' in (request.endpoint or ''))) %}
                 <li class="nav-item dropdown">
