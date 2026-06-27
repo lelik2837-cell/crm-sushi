@@ -155,6 +155,7 @@ def get_branch_groups(conn):
         result.append({
             'id': g['id'],
             'name': g['name'],
+            'abbr': g['abbr'] or '',
             'sort_order': g['sort_order'],
             'branches': [dict(m) for m in members],
             'branch_ids': [m['id'] for m in members],
@@ -802,6 +803,16 @@ def init_db():
         except Exception:
             pass
 
+        try:
+            conn.execute("ALTER TABLE branches ADD COLUMN abbr TEXT DEFAULT ''")
+        except Exception:
+            pass
+
+        try:
+            conn.execute("ALTER TABLE branch_groups ADD COLUMN abbr TEXT DEFAULT ''")
+        except Exception:
+            pass
+
         # Create bank module tables
         conn.executescript('''
             CREATE TABLE IF NOT EXISTS contractors (
@@ -1224,10 +1235,12 @@ def dashboard():
                 JOIN shifts s ON s.id = es.shift_id
                 WHERE s.date >= date('now', 'start of month')
             ''').fetchone()
+            branch_groups = get_branch_groups(conn)
             return render_template('dashboard_owner.html',
                 branches=branches, stats=stats, weekly=weekly,
                 open_shifts=open_shifts, kpi_blocks=kpi_blocks,
-                month_rev=month_rev, month_fot=month_fot['fot'] or 0)
+                month_rev=month_rev, month_fot=month_fot['fot'] or 0,
+                branch_groups=branch_groups)
         else:
             today = date.today().isoformat()
             bids = _session_branch_ids()
@@ -1329,8 +1342,11 @@ def api_revenue_year():
 def api_revenue_summary():
     date_from = request.args.get('date_from', date.today().isoformat())
     date_to   = request.args.get('date_to',   date.today().isoformat())
+    raw_bids  = request.args.get('branch_ids', '')
+    bids      = [int(x) for x in raw_bids.split(',') if x.strip().isdigit()]
+    bf        = f"AND s.branch_id IN ({','.join('?'*len(bids))})" if bids else ''
     with get_db() as conn:
-        total_row = conn.execute('''
+        total_row = conn.execute(f'''
             SELECT COALESCE(SUM(r.total_revenue), 0)    AS total,
                    COALESCE(SUM(r.cash_amount),   0)    AS cash,
                    COALESCE(SUM(r.card_amount),   0)    AS card,
@@ -1339,20 +1355,20 @@ def api_revenue_summary():
                    COALESCE(SUM(r.pickup_revenue),   0) AS pickup,
                    COALESCE(SUM(r.delivery_orders),  0) AS delivery_orders
             FROM shifts s JOIN shift_revenue r ON r.shift_id = s.id
-            WHERE s.date BETWEEN ? AND ?
-        ''', (date_from, date_to)).fetchone()
-        fot_row = conn.execute('''
+            WHERE s.date BETWEEN ? AND ? {bf}
+        ''', [date_from, date_to] + bids).fetchone()
+        fot_row = conn.execute(f'''
             SELECT COALESCE(SUM(es.total_amount), 0) AS fot
             FROM employee_shifts es JOIN shifts s ON s.id = es.shift_id
-            WHERE s.date BETWEEN ? AND ?
-        ''', (date_from, date_to)).fetchone()
-        courier_fot_row = conn.execute('''
+            WHERE s.date BETWEEN ? AND ? {bf}
+        ''', [date_from, date_to] + bids).fetchone()
+        courier_fot_row = conn.execute(f'''
             SELECT COALESCE(SUM(es.total_amount), 0) AS courier_fot
             FROM employee_shifts es JOIN shifts s ON s.id = es.shift_id
-            WHERE s.date BETWEEN ? AND ? AND es.role_snapshot = 'courier'
-        ''', (date_from, date_to)).fetchone()
-        branch_rev_rows = conn.execute('''
-            SELECT b.name,
+            WHERE s.date BETWEEN ? AND ? AND es.role_snapshot = 'courier' {bf}
+        ''', [date_from, date_to] + bids).fetchone()
+        branch_rev_rows = conn.execute(f'''
+            SELECT b.id, b.name, b.abbr,
                    COALESCE(SUM(r.total_revenue), 0)    AS revenue,
                    COALESCE(SUM(r.pickup_revenue), 0)   AS pickup,
                    COALESCE(SUM(r.delivery_revenue), 0) AS delivery_revenue,
@@ -1360,19 +1376,19 @@ def api_revenue_summary():
             FROM shifts s
             JOIN branches b ON b.id = s.branch_id
             JOIN shift_revenue r ON r.shift_id = s.id
-            WHERE s.date BETWEEN ? AND ?
+            WHERE s.date BETWEEN ? AND ? {bf}
             GROUP BY b.id, b.name ORDER BY revenue DESC
-        ''', (date_from, date_to)).fetchall()
-        branch_fot_rows = conn.execute('''
+        ''', [date_from, date_to] + bids).fetchall()
+        branch_fot_rows = conn.execute(f'''
             SELECT b.name,
                    COALESCE(SUM(es.total_amount), 0) AS fot,
                    COALESCE(SUM(CASE WHEN es.role_snapshot='courier' THEN es.total_amount ELSE 0 END), 0) AS courier_fot
             FROM employee_shifts es
             JOIN shifts s ON s.id = es.shift_id
             JOIN branches b ON b.id = s.branch_id
-            WHERE s.date BETWEEN ? AND ?
+            WHERE s.date BETWEEN ? AND ? {bf}
             GROUP BY b.id, b.name
-        ''', (date_from, date_to)).fetchall()
+        ''', [date_from, date_to] + bids).fetchall()
 
     total       = int(total_row['total'] or 0)
     fot         = int(fot_row['fot'] or 0)
@@ -1381,15 +1397,16 @@ def api_revenue_summary():
     branches = []
     for br in branch_rev_rows:
         name = br['name'] or ''
-        bf   = fot_by_name.get(name, {'fot': 0, 'courier_fot': 0})
+        abbr = (br['abbr'] or '').strip() or name[:3].upper()
+        bf_   = fot_by_name.get(name, {'fot': 0, 'courier_fot': 0})
         branches.append({
-            'abbr': name[:3].upper(), 'name': name,
+            'abbr': abbr, 'name': name,
             'revenue':         int(br['revenue']),
             'pickup':          int(br['pickup']),
             'delivery_revenue':int(br['delivery_revenue']),
             'delivery_orders': int(br['delivery_orders']),
-            'fot':             bf['fot'],
-            'courier_fot':     bf['courier_fot'],
+            'fot':             bf_['fot'],
+            'courier_fot':     bf_['courier_fot'],
         })
 
     return jsonify({
@@ -1413,13 +1430,16 @@ def api_revenue_summary():
 def api_revenue_days():
     date_from = request.args.get('date_from', date.today().isoformat())
     date_to   = request.args.get('date_to',   date.today().isoformat())
+    raw_bids  = request.args.get('branch_ids', '')
+    bids      = [int(x) for x in raw_bids.split(',') if x.strip().isdigit()]
+    bfilt     = f"AND s.branch_id IN ({','.join('?'*len(bids))})" if bids else ''
     with get_db() as conn:
-        rows = conn.execute('''
+        rows = conn.execute(f'''
             SELECT s.date, COALESCE(SUM(r.total_revenue), 0) AS revenue
             FROM shifts s JOIN shift_revenue r ON r.shift_id = s.id
-            WHERE s.date BETWEEN ? AND ?
+            WHERE s.date BETWEEN ? AND ? {bfilt}
             GROUP BY s.date ORDER BY s.date
-        ''', (date_from, date_to)).fetchall()
+        ''', [date_from, date_to] + bids).fetchall()
     return jsonify({
         'ok': True,
         'days': [{'date': r['date'], 'revenue': int(r['revenue'])} for r in rows]
@@ -3147,13 +3167,14 @@ def branches():
 @owner_required
 def add_branch_group():
     name = request.form.get('name', '').strip()
+    abbr = request.form.get('abbr', '').strip().upper()[:3]
     branch_ids = [b for b in request.form.getlist('branch_ids') if b.isdigit()]
     if not name:
         flash('Введите название группы', 'danger')
         return redirect(url_for('branches'))
     with get_db() as conn:
         sort_order = conn.execute('SELECT COUNT(*) FROM branch_groups').fetchone()[0] * 10
-        conn.execute('INSERT INTO branch_groups (name, sort_order) VALUES (?,?)', (name, sort_order))
+        conn.execute('INSERT INTO branch_groups (name, abbr, sort_order) VALUES (?,?,?)', (name, abbr, sort_order))
         group_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
         for bid in branch_ids:
             conn.execute(
@@ -3170,12 +3191,13 @@ def add_branch_group():
 @owner_required
 def edit_branch_group(group_id):
     name = request.form.get('name', '').strip()
+    abbr = request.form.get('abbr', '').strip().upper()[:3]
     branch_ids = [b for b in request.form.getlist('branch_ids') if b.isdigit()]
     if not name:
         flash('Введите название группы', 'danger')
         return redirect(url_for('branches'))
     with get_db() as conn:
-        conn.execute('UPDATE branch_groups SET name=? WHERE id=?', (name, group_id))
+        conn.execute('UPDATE branch_groups SET name=?, abbr=? WHERE id=?', (name, abbr, group_id))
         conn.execute('DELETE FROM branch_group_members WHERE group_id=?', (group_id,))
         for bid in branch_ids:
             conn.execute(
@@ -3209,8 +3231,9 @@ def add_branch():
         flash('Введите название филиала', 'danger')
         return redirect(url_for('branches'))
     allowed_ip = request.form.get('allowed_ip', '').strip() or None
+    abbr = request.form.get('abbr', '').strip().upper()[:3]
     with get_db() as conn:
-        conn.execute('INSERT INTO branches (name, allowed_ip) VALUES (?,?)', (name, allowed_ip))
+        conn.execute('INSERT INTO branches (name, allowed_ip, abbr) VALUES (?,?,?)', (name, allowed_ip, abbr))
         conn.commit()
     flash(f'Филиал {name} добавлен', 'success')
     return redirect(url_for('branches'))
@@ -3222,10 +3245,11 @@ def add_branch():
 def edit_branch(branch_id):
     allowed_ip = request.form.get('allowed_ip', '').strip() or None
     merchant_numbers = request.form.get('merchant_numbers', '').strip()
+    abbr = request.form.get('abbr', '').strip().upper()[:3]
     with get_db() as conn:
         conn.execute(
-            'UPDATE branches SET allowed_ip=?, merchant_numbers=? WHERE id=?',
-            (allowed_ip, merchant_numbers, branch_id)
+            'UPDATE branches SET allowed_ip=?, merchant_numbers=?, abbr=? WHERE id=?',
+            (allowed_ip, merchant_numbers, abbr, branch_id)
         )
         conn.commit()
     flash('Настройки филиала сохранены', 'success')

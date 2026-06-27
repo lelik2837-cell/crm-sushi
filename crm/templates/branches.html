@@ -60,6 +60,7 @@
             <thead class="table-light">
                 <tr>
                     <th>Название</th>
+                    <th>Сокр.</th>
                     <th>IP-адрес</th>
                     <th>Мерчант / терминал</th>
                     <th>Карты</th>
@@ -72,6 +73,11 @@
             {% for b in branches %}
             <tr>
                 <td class="fw-semibold">{{ b.name }}</td>
+                <td>
+                    <span class="badge bg-secondary font-monospace" style="font-size:11px;letter-spacing:.5px;">
+                        {{ b.abbr if b.abbr else b.name[:3].upper() }}
+                    </span>
+                </td>
                 <td>
                     {% if b.allowed_ip %}
                     <code class="text-success">{{ b.allowed_ip }}</code>
@@ -127,9 +133,17 @@
             </div>
             <form method="POST" action="{{ url_for('add_branch_group') }}">
                 <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">Название группы *</label>
-                        <input type="text" name="name" class="form-control" placeholder="Например: Северный район" required>
+                    <div class="row g-2 mb-3">
+                        <div class="col-8">
+                            <label class="form-label fw-semibold">Название группы *</label>
+                            <input type="text" name="name" class="form-control" placeholder="Например: Новокузнецк" required>
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label fw-semibold">Сокращение</label>
+                            <input type="text" name="abbr" class="form-control font-monospace text-uppercase"
+                                   placeholder="НК" maxlength="3"
+                                   title="До 3 букв — используется в кнопках">
+                        </div>
                     </div>
                     <div class="mb-1">
                         <label class="form-label fw-semibold">Филиалы в группе</label>
@@ -162,9 +176,18 @@
             </div>
             <form method="POST" action="{{ url_for('edit_branch_group', group_id=g.id) }}">
                 <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">Название группы *</label>
-                        <input type="text" name="name" class="form-control" value="{{ g.name }}" required>
+                    <div class="row g-2 mb-3">
+                        <div class="col-8">
+                            <label class="form-label fw-semibold">Название группы *</label>
+                            <input type="text" name="name" class="form-control" value="{{ g.name }}" required>
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label fw-semibold">Сокращение</label>
+                            <input type="text" name="abbr" class="form-control font-monospace text-uppercase"
+                                   placeholder="НК" maxlength="3"
+                                   value="{{ g.abbr or g.name[:3].upper() }}"
+                                   title="До 3 букв — используется в кнопках">
+                        </div>
                     </div>
                     <div class="mb-1">
                         <label class="form-label fw-semibold">Филиалы в группе</label>
@@ -198,9 +221,17 @@
             </div>
             <form method="POST" action="{{ url_for('add_branch') }}">
                 <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">Название филиала</label>
-                        <input type="text" name="name" class="form-control" placeholder="Например: ЦЕНТР" required>
+                    <div class="row g-2 mb-3">
+                        <div class="col-8">
+                            <label class="form-label fw-semibold">Название филиала</label>
+                            <input type="text" name="name" class="form-control" placeholder="Например: ЦЕНТР" required>
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label fw-semibold">Сокращение</label>
+                            <input type="text" name="abbr" class="form-control font-monospace text-uppercase"
+                                   placeholder="ЦНТ" maxlength="3"
+                                   title="До 3 букв — используется в кнопках и графиках">
+                        </div>
                     </div>
                     <div class="mb-1">
                         <label class="form-label fw-semibold">IP-адрес (необязательно)</label>
@@ -236,6 +267,14 @@
 
                 <!-- Основные настройки -->
                 <form id="editBranchForm{{ b.id }}" method="POST" action="{{ url_for('edit_branch', branch_id=b.id) }}">
+                    <div class="mb-2">
+                        <label class="form-label fw-semibold mb-1">Сокращение (до 3 букв)</label>
+                        <input type="text" name="abbr" class="form-control form-control-sm font-monospace text-uppercase"
+                               style="max-width:100px;" maxlength="3"
+                               value="{{ b.abbr or b.name[:3].upper() }}"
+                               title="Используется в кнопках выбора филиалов и графиках">
+                        <div class="form-text">Отображается в кнопках выбора филиалов и в графиках.</div>
+                    </div>
                     <div class="mb-2">
                         <label class="form-label fw-semibold mb-1">IP-адрес филиала</label>
                         <input type="text" name="allowed_ip" class="form-control font-monospace"

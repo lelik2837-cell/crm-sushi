@@ -16,10 +16,44 @@
           <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><path d="M3.5 0a.5.5 0 0 1 .5.5V1h8V.5a.5.5 0 0 1 1 0V1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h1V.5a.5.5 0 0 1 .5-.5zM1 4v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4H1z"/></svg>
         </button>
         <input id="rev-cal-hidden" type="text" style="display:none; position:absolute;">
-        <button id="rev-day-toggle" onclick="toggleDayChart()" title="График по дням" style="display:none; margin-left:auto; width:28px; height:28px; flex-shrink:0; border-radius:8px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); cursor:pointer; padding:0; align-items:center; justify-content:center; transition:all .15s;">
+        <!-- Branch selector (pushes chart buttons right) -->
+        <div class="dropdown" style="margin-left:auto; flex-shrink:0; position:relative;">
+          <button id="dash-branch-btn" type="button"
+            data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+            title="Выбор филиалов"
+            style="border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700;border:1.5px solid rgba(255,255,255,.45);background:rgba(255,255,255,.15);color:#fff;cursor:pointer;display:inline-flex;align-items:center;white-space:nowrap;flex-shrink:0;transition:all .15s;height:26px;">
+            <span id="dash-branch-abbr">НК</span>
+          </button>
+          <div class="dropdown-menu p-2 shadow" style="min-width:220px;max-height:320px;overflow-y:auto;">
+            {% if branch_groups %}
+            <div class="text-muted px-1 mb-1" style="font-size:0.7rem;font-weight:600;letter-spacing:.5px;">ГРУППЫ</div>
+            {% for g in branch_groups %}
+            <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1 mb-1"
+                    onclick="selectDashBranchGroup({{ g.branch_ids | tojson }}, '{{ g.abbr or g.name }}')">
+              <span class="fw-bold">{{ g.abbr or g.name[:3].upper() }}</span>
+              <span class="text-muted ms-1 small">{{ g.name }} ({{ g.branch_ids | length }})</span>
+            </button>
+            {% endfor %}
+            <hr class="dropdown-divider my-1">
+            {% endif %}
+            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2 mb-1" style="cursor:pointer;">
+              <input type="checkbox" id="dash-branch-all-cb" onchange="toggleAllDashBranches(this)">
+              <span class="fw-semibold small">Все филиалы</span>
+            </label>
+            <hr class="dropdown-divider my-1">
+            {% for b in branches %}
+            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+              <input type="checkbox" class="dash-branch-cb" value="{{ b.id }}" onchange="onDashBranchChange()">
+              <span class="fw-bold" style="font-size:11px;min-width:26px;color:#6c757d;">{{ b.abbr or b.name[:3].upper() }}</span>
+              <span class="small">{{ b.name }}</span>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+        <button id="rev-day-toggle" onclick="toggleDayChart()" title="График по дням" style="display:none; width:28px; height:28px; flex-shrink:0; border-radius:50%; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); cursor:pointer; padding:0; align-items:center; justify-content:center; transition:all .15s;">
           <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor"><rect x="1" y="8" width="2.5" height="6" rx="0.5"/><rect x="5" y="5" width="2.5" height="9" rx="0.5"/><rect x="9" y="2" width="2.5" height="12" rx="0.5"/><rect x="13" y="6" width="2.5" height="8" rx="0.5"/></svg>
         </button>
-        <button id="rev-year-day-toggle" onclick="toggleYearDayChart()" title="График по дням" style="display:none; margin-left:auto; width:28px; height:28px; flex-shrink:0; border-radius:8px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); cursor:pointer; padding:0; align-items:center; justify-content:center; transition:all .15s;">
+        <button id="rev-year-day-toggle" onclick="toggleYearDayChart()" title="График по дням" style="display:none; width:28px; height:28px; flex-shrink:0; border-radius:50%; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); cursor:pointer; padding:0; align-items:center; justify-content:center; transition:all .15s;">
           <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor"><rect x="1" y="8" width="2.5" height="6" rx="0.5"/><rect x="5" y="5" width="2.5" height="9" rx="0.5"/><rect x="9" y="2" width="2.5" height="12" rx="0.5"/><rect x="13" y="6" width="2.5" height="8" rx="0.5"/></svg>
         </button>
       </div>
@@ -353,6 +387,95 @@ var revYear             = new Date().getFullYear();
 var revCustomFrom       = null;
 var revCustomTo         = null;
 
+// ── Branch selector ───────────────────────────────────────────────────────────
+var DASH_BRANCH_GROUPS = {{ branch_groups | tojson }};
+var DASH_BRANCHES = [{% for b in branches %}{"id":{{ b.id }},"name":{{ b.name | tojson }},"abbr":{{ (b.abbr or b.name[:3].upper()) | tojson }}}{% if not loop.last %},{% endif %}{% endfor %}];
+var revBranchIds = [];
+
+(function() {
+    var nkGroup = DASH_BRANCH_GROUPS.find(function(g) {
+        return g.abbr === 'НК' || g.name.indexOf('Новокузнецк') !== -1 || g.name === 'НК';
+    });
+    if (nkGroup && nkGroup.branch_ids && nkGroup.branch_ids.length) {
+        revBranchIds = nkGroup.branch_ids.slice();
+        updateDashBranchBtn();
+    }
+})();
+
+function getDashBranchParam() {
+    return revBranchIds.length ? revBranchIds.join(',') : '';
+}
+function _revBranchSuffix() {
+    return revBranchIds.length ? '&branch_ids=' + revBranchIds.join(',') : '';
+}
+
+function updateDashBranchBtn() {
+    var btn = document.getElementById('dash-branch-abbr');
+    if (!btn) return;
+    var ids = revBranchIds;
+    if (!ids.length) { btn.textContent = 'Все'; return; }
+    var grp = DASH_BRANCH_GROUPS.find(function(g) {
+        return g.branch_ids.length === ids.length &&
+               g.branch_ids.every(function(id) { return ids.indexOf(id) !== -1; });
+    });
+    if (grp) { btn.textContent = grp.abbr || grp.name; return; }
+    if (ids.length <= 2) {
+        var abbrs = ids.map(function(id) {
+            var b = DASH_BRANCHES.find(function(x){ return x.id === id; });
+            return b ? b.abbr : id;
+        });
+        btn.textContent = abbrs.join(',');
+    } else {
+        btn.textContent = ids.length + 'фил';
+    }
+}
+
+function selectDashBranchGroup(ids, label) {
+    revBranchIds = ids.slice();
+    document.querySelectorAll('.dash-branch-cb').forEach(function(cb) {
+        cb.checked = revBranchIds.indexOf(parseInt(cb.value)) !== -1;
+    });
+    var allCb = document.getElementById('dash-branch-all-cb');
+    if (allCb) allCb.checked = false;
+    updateDashBranchBtn();
+    refreshDashRevData();
+}
+
+function toggleAllDashBranches(cb) {
+    if (cb.checked) {
+        revBranchIds = [];
+        document.querySelectorAll('.dash-branch-cb').forEach(function(c){ c.checked = false; });
+    } else {
+        cb.checked = false;
+    }
+    updateDashBranchBtn();
+    refreshDashRevData();
+}
+
+function onDashBranchChange() {
+    revBranchIds = [];
+    document.querySelectorAll('.dash-branch-cb:checked').forEach(function(cb) {
+        revBranchIds.push(parseInt(cb.value));
+    });
+    var allCb = document.getElementById('dash-branch-all-cb');
+    if (allCb) allCb.checked = false;
+    updateDashBranchBtn();
+    refreshDashRevData();
+}
+
+function refreshDashRevData() {
+    loadRevCard(revPeriod);
+    if (revDayVisible) {
+        revDayVisible = false;
+        toggleDayChart();
+    }
+    if (revYearDayVisible) {
+        revYearDayVisible = false;
+        toggleYearDayChart();
+    }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 var revCalPicker = null;
 function openRevCal() {
     if (!revCalPicker) {
@@ -498,7 +621,7 @@ function showMonthDetail(monthIdx, monthYear, monthLabel) {
     titleEl.textContent  = monthLabel + ' ' + y;
     branchEl.innerHTML   = '<div style="opacity:.5;font-size:12px;">Загрузка…</div>';
 
-    fetch('/api/revenue-summary?date_from=' + dateFrom + '&date_to=' + dateTo)
+    fetch('/api/revenue-summary?date_from=' + dateFrom + '&date_to=' + dateTo + _revBranchSuffix())
         .then(function(r) { return r.json(); })
         .then(function(d) {
             if (!d.ok) return;
@@ -575,7 +698,7 @@ function toggleDayChart() {
         var today    = new Date();
         var dateFrom = today.toISOString().split('T')[0].slice(0,7) + '-01';
         var dateTo   = today.toISOString().split('T')[0];
-        fetch('/api/revenue-days?date_from=' + dateFrom + '&date_to=' + dateTo)
+        fetch('/api/revenue-days?date_from=' + dateFrom + '&date_to=' + dateTo + _revBranchSuffix())
             .then(function(r) { return r.json(); })
             .then(function(d) {
                 if (!d.ok) return;
@@ -598,7 +721,7 @@ function toggleYearDayChart() {
         btn.style.border     = '1.5px solid rgba(255,255,255,.9)';
         btn.style.background = 'rgba(255,255,255,.25)';
         wrap.style.display   = '';
-        fetch('/api/revenue-days?date_from=' + revYearDayFrom + '&date_to=' + revYearDayTo)
+        fetch('/api/revenue-days?date_from=' + revYearDayFrom + '&date_to=' + revYearDayTo + _revBranchSuffix())
             .then(function(r) { return r.json(); })
             .then(function(d) {
                 if (!d.ok) return;
@@ -764,7 +887,7 @@ function loadRevCard(period) {
         dateFrom = revPeriod === 'today' ? dateTo : fmt(today).slice(0,7) + '-01';
     }
 
-    fetch('/api/revenue-summary?date_from=' + dateFrom + '&date_to=' + dateTo)
+    fetch('/api/revenue-summary?date_from=' + dateFrom + '&date_to=' + dateTo + _revBranchSuffix())
         .then(function(r) { return r.json(); })
         .then(function(d) {
             if (!d.ok) return;

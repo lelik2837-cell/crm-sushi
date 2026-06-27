@@ -162,7 +162,7 @@
                     {% for b in branches %}
                     <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
                         <input type="checkbox" class="rev-report-branch-cb" value="{{ b.id }}" onchange="onRevBranchChange()">
-                        <span class="fw-semibold" style="font-size:11px;min-width:22px;color:#6c757d;">{{ b.name[:2] }}</span>
+                        <span class="fw-semibold" style="font-size:11px;min-width:22px;color:#6c757d;">{{ b.abbr if b.abbr else b.name[:3].upper() }}</span>
                         <span class="small">{{ b.name }}</span>
                     </label>
                     {% endfor %}
