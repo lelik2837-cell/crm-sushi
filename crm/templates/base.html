@@ -49,6 +49,16 @@
         .input-sm { padding: 0.25rem 0.5rem; font-size: 0.875rem; }
         @media (max-width: 768px) { .metric-value { font-size: 1.4rem; } }
 
+        /* Блок оплаты: горизонтально на десктопе, вертикально на мобиле */
+        .rm-pay-row   { display:flex; align-items:center; gap:8px; }
+        .rm-pay-label { display:flex; align-items:center; gap:8px; flex:1; }
+        .rm-pay-vals  { display:flex; align-items:center; gap:6px; flex-shrink:0; }
+        @media (max-width: 991.98px) {
+            .rm-pay-row   { flex-direction:column; align-items:flex-start; gap:2px; }
+            .rm-pay-label { flex:none; }
+            .rm-pay-vals  { gap:10px; }
+        }
+
         /* Блоки метрик дашборда: шкалы на десктопе, текст на мобиле */
         .rm-bar-row  { display: flex; }
         .rm-text-row { display: none; }

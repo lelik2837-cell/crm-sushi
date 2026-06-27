@@ -12,12 +12,25 @@
         <button onclick="loadRevCard('today')" data-rp="today" class="rev-period-btn rev-period-active" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.9); background:rgba(255,255,255,.25); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Сегодня</button>
         <button onclick="loadRevCard('month')" data-rp="month" class="rev-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Месяц</button>
         <button onclick="loadRevCard('year')"  data-rp="year"  class="rev-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Год</button>
+        <button id="rev-cal-btn" onclick="toggleCalendar()" title="Выбрать период" style="width:26px; height:26px; flex-shrink:0; border-radius:50%; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); cursor:pointer; padding:0; display:inline-flex; align-items:center; justify-content:center; transition:all .15s;">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><path d="M3.5 0a.5.5 0 0 1 .5.5V1h8V.5a.5.5 0 0 1 1 0V1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h1V.5a.5.5 0 0 1 .5-.5zM1 4v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4H1z"/></svg>
+        </button>
         <button id="rev-day-toggle" onclick="toggleDayChart()" title="График по дням" style="display:none; margin-left:auto; width:28px; height:28px; flex-shrink:0; border-radius:8px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); cursor:pointer; padding:0; align-items:center; justify-content:center; transition:all .15s;">
           <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor"><rect x="1" y="8" width="2.5" height="6" rx="0.5"/><rect x="5" y="5" width="2.5" height="9" rx="0.5"/><rect x="9" y="2" width="2.5" height="12" rx="0.5"/><rect x="13" y="6" width="2.5" height="8" rx="0.5"/></svg>
         </button>
         <button id="rev-year-day-toggle" onclick="toggleYearDayChart()" title="График по дням" style="display:none; margin-left:auto; width:28px; height:28px; flex-shrink:0; border-radius:8px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); cursor:pointer; padding:0; align-items:center; justify-content:center; transition:all .15s;">
           <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor"><rect x="1" y="8" width="2.5" height="6" rx="0.5"/><rect x="5" y="5" width="2.5" height="9" rx="0.5"/><rect x="9" y="2" width="2.5" height="12" rx="0.5"/><rect x="13" y="6" width="2.5" height="8" rx="0.5"/></svg>
         </button>
+      </div>
+      <!-- Calendar popup -->
+      <div id="rev-cal-popup" style="display:none; position:absolute; top:56px; left:0; right:0; z-index:300; background:#fff; border-radius:14px; padding:14px 16px; box-shadow:0 8px 28px rgba(0,0,0,.28);">
+        <div style="font-size:10px; font-weight:700; color:#475569; text-transform:uppercase; letter-spacing:.5px; margin-bottom:10px;">Выбрать период</div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <input type="date" id="rev-cal-from" style="flex:1; min-width:110px; font-size:13px; border:1.5px solid #e2e8f0; border-radius:8px; padding:6px 10px; color:#334155; outline:none;">
+          <span style="color:#94a3b8; font-size:13px;">—</span>
+          <input type="date" id="rev-cal-to" style="flex:1; min-width:110px; font-size:13px; border:1.5px solid #e2e8f0; border-radius:8px; padding:6px 10px; color:#334155; outline:none;">
+          <button onclick="applyCalendar()" style="padding:6px 18px; border:none; border-radius:8px; background:linear-gradient(135deg,#4f46e5,#7c3aed); color:#fff; font-size:12px; font-weight:700; cursor:pointer;">OK</button>
+        </div>
       </div>
       <!-- Label -->
       <div style="font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; opacity:.7; margin-bottom:6px;">Общая выручка</div>
@@ -56,23 +69,35 @@
       <div id="rm-payments" style="background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 100%); border:1.5px solid #e2e8f0; border-radius:14px; padding:16px 18px; box-shadow:0 2px 10px rgba(0,0,0,0.06);">
         <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:12px;">Оплата</div>
         <div style="display:flex; flex-direction:column; gap:9px;">
-          <div style="display:flex; align-items:center; gap:8px;">
-            <div style="width:8px;height:8px;border-radius:50%;background:#be123c;flex-shrink:0;"></div>
-            <span style="flex:1;font-size:12px;color:#64748b;font-weight:500;">Нал</span>
-            <span id="rm-cash-val" style="font-size:13px;font-weight:700;color:#334155;">—</span>
-            <span id="rm-cash-pct" style="font-size:11px;color:#94a3b8;min-width:34px;text-align:right;">—</span>
+          <div class="rm-pay-row">
+            <div class="rm-pay-label">
+              <div style="width:8px;height:8px;border-radius:50%;background:#be123c;flex-shrink:0;"></div>
+              <span style="font-size:12px;color:#64748b;font-weight:500;">Нал</span>
+            </div>
+            <div class="rm-pay-vals">
+              <span id="rm-cash-val" style="font-size:13px;font-weight:700;color:#334155;">—</span>
+              <span id="rm-cash-pct" style="font-size:11px;color:#94a3b8;">—</span>
+            </div>
           </div>
-          <div style="display:flex; align-items:center; gap:8px;">
-            <div style="width:8px;height:8px;border-radius:50%;background:#15803d;flex-shrink:0;"></div>
-            <span style="flex:1;font-size:12px;color:#64748b;font-weight:500;">Безнал</span>
-            <span id="rm-card-val" style="font-size:13px;font-weight:700;color:#334155;">—</span>
-            <span id="rm-card-pct" style="font-size:11px;color:#94a3b8;min-width:34px;text-align:right;">—</span>
+          <div class="rm-pay-row">
+            <div class="rm-pay-label">
+              <div style="width:8px;height:8px;border-radius:50%;background:#15803d;flex-shrink:0;"></div>
+              <span style="font-size:12px;color:#64748b;font-weight:500;">Безнал</span>
+            </div>
+            <div class="rm-pay-vals">
+              <span id="rm-card-val" style="font-size:13px;font-weight:700;color:#334155;">—</span>
+              <span id="rm-card-pct" style="font-size:11px;color:#94a3b8;">—</span>
+            </div>
           </div>
-          <div style="display:flex; align-items:center; gap:8px;">
-            <div style="width:8px;height:8px;border-radius:50%;background:#1d4ed8;flex-shrink:0;"></div>
-            <span style="flex:1;font-size:12px;color:#64748b;font-weight:500;">Онлайн</span>
-            <span id="rm-online-val" style="font-size:13px;font-weight:700;color:#334155;">—</span>
-            <span id="rm-online-pct" style="font-size:11px;color:#94a3b8;min-width:34px;text-align:right;">—</span>
+          <div class="rm-pay-row">
+            <div class="rm-pay-label">
+              <div style="width:8px;height:8px;border-radius:50%;background:#1d4ed8;flex-shrink:0;"></div>
+              <span style="font-size:12px;color:#64748b;font-weight:500;">Онлайн</span>
+            </div>
+            <div class="rm-pay-vals">
+              <span id="rm-online-val" style="font-size:13px;font-weight:700;color:#334155;">—</span>
+              <span id="rm-online-pct" style="font-size:11px;color:#94a3b8;">—</span>
+            </div>
           </div>
         </div>
       </div>
@@ -334,6 +359,32 @@ var revYearDayVisible   = false;
 var revYearDayFrom      = null;
 var revYearDayTo        = null;
 var revYear             = new Date().getFullYear();
+var revCustomFrom       = null;
+var revCustomTo         = null;
+
+function toggleCalendar() {
+    var popup = document.getElementById('rev-cal-popup');
+    popup.style.display = popup.style.display === 'none' ? '' : 'none';
+}
+
+function applyCalendar() {
+    var from = document.getElementById('rev-cal-from').value;
+    var to   = document.getElementById('rev-cal-to').value;
+    if (!from || !to) return;
+    revCustomFrom = from;
+    revCustomTo   = to;
+    document.getElementById('rev-cal-popup').style.display = 'none';
+    loadRevCard('custom');
+}
+
+// Закрывать попап при клике вне его
+document.addEventListener('click', function(e) {
+    var popup = document.getElementById('rev-cal-popup');
+    var btn   = document.getElementById('rev-cal-btn');
+    if (popup && !popup.contains(e.target) && e.target !== btn && !btn.contains(e.target)) {
+        popup.style.display = 'none';
+    }
+});
 
 var MONTHS_RU_FULL = ['', 'Январь','Февраль','Март','Апрель','Май','Июнь',
                       'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
@@ -643,11 +694,17 @@ function buildYearChart(months) {
 function loadRevCard(period) {
     if (period) revPeriod = period;
     // update button styles
+    var calActive = revPeriod === 'custom';
     document.querySelectorAll('.rev-period-btn').forEach(function(b) {
-        var active = b.dataset.rp === revPeriod;
+        var active = !calActive && b.dataset.rp === revPeriod;
         b.style.background   = active ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.12)';
         b.style.borderColor  = active ? 'rgba(255,255,255,.9)'  : 'rgba(255,255,255,.35)';
     });
+    var calBtn = document.getElementById('rev-cal-btn');
+    if (calBtn) {
+        calBtn.style.background  = calActive ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.12)';
+        calBtn.style.borderColor = calActive ? 'rgba(255,255,255,.9)'  : 'rgba(255,255,255,.35)';
+    }
 
     document.getElementById('rev-total').textContent = '…';
     document.getElementById('rev-period-label').textContent = 'рублей';
@@ -699,7 +756,7 @@ function loadRevCard(period) {
         return;
     }
 
-    // today / month
+    // today / month / custom
     branchesWrap.style.display = '';
     yearWrap.style.display     = 'none';
     if (revChart) { revChart.destroy(); revChart = null; }
@@ -707,8 +764,17 @@ function loadRevCard(period) {
 
     var today = new Date();
     var fmt   = function(d) { return d.toISOString().split('T')[0]; };
-    var dateTo   = fmt(today);
-    var dateFrom = revPeriod === 'today' ? dateTo : fmt(today).slice(0,7) + '-01';
+    var dateTo, dateFrom;
+    if (revPeriod === 'custom' && revCustomFrom && revCustomTo) {
+        dateFrom = revCustomFrom;
+        dateTo   = revCustomTo;
+        // показываем диапазон в подписи
+        var fmtLabel = function(s) { return s.split('-').reverse().join('.'); };
+        document.getElementById('rev-period-label').textContent = fmtLabel(dateFrom) + ' — ' + fmtLabel(dateTo);
+    } else {
+        dateTo   = fmt(today);
+        dateFrom = revPeriod === 'today' ? dateTo : fmt(today).slice(0,7) + '-01';
+    }
 
     fetch('/api/revenue-summary?date_from=' + dateFrom + '&date_to=' + dateTo)
         .then(function(r) { return r.json(); })
