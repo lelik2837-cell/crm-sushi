@@ -134,7 +134,7 @@
                 </thead>
                 <tbody>
                 {% for s in shifts %}
-                {% set kassa = (s.morning_cash + s.cash_amount + s.change_amount - s.exp_cash - s.paid_salary) | int %}
+                {% set kassa = (s.morning_cash + s.cash_amount + s.change_amount + s.plus_cash - s.exp_cash - s.paid_salary) | int %}
                 {% set diff = ((s.actual_cash or 0) - kassa) | int if s.actual_cash is not none else none %}
                 <tr>
                     <td class="fw-semibold">{{ s.date | date_fmt }}</td>

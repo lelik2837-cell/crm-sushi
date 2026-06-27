@@ -412,6 +412,48 @@
     </div>
   </div>
 
+  <!-- BLOCK: ПЛЮСЫ В КАССУ -->
+  <div class="s-card">
+    <div class="s-card-header">
+      <div class="s-card-title">
+        <div class="s-card-icon icon-green">💵</div>
+        Плюсы в кассу
+      </div>
+      {% if can_edit %}
+      <button class="btn-add" style="width:auto; margin:0; padding:5px 12px;" onclick="addPlusRow()">+ Добавить</button>
+      {% endif %}
+    </div>
+    <div class="s-card-body">
+      <div class="expense-header">
+        <div class="col-label" style="grid-column:1/3;">Описание</div>
+        <div class="col-label">Сумма</div>
+        <div></div>
+      </div>
+      <div id="plus-body">
+      {% for p in plus_entries %}
+      <div class="expense-row" data-id="{{ p.id }}">
+        {% if can_edit %}
+        <div class="expense-row-main" style="grid-template-columns:1fr 90px 36px;">
+          <input class="mini-input plus-desc" type="text" placeholder="Описание" value="{{ p.description or '' }}"
+            style="font-size:12px; padding:5px 8px;">
+          <input class="mini-input plus-amount money-field" type="text" inputmode="numeric" placeholder="0"
+            value="{{ p.amount|int }}">
+          <button class="row-del" onclick="deletePlus(this, {{ p.id }})">✕</button>
+        </div>
+        {% else %}
+        <div class="expense-row-main" style="grid-template-columns:1fr 90px 36px;">
+          <span style="font-size:13px;">{{ p.description or '—' }}</span>
+          <span style="font-size:13px; text-align:right; color:#16a34a; font-weight:700;">+{{ p.amount|int }} ₽</span>
+          <div></div>
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+      </div>
+      {% if not plus_entries %}<div id="no-plus" style="text-align:center; color:#9ca3af; padding:16px 0; font-size:13px;">Плюсов нет</div>{% endif %}
+    </div>
+  </div>
+
   <!-- ТАКСИ -->
   <div class="s-card">
     <div class="s-card-header">
@@ -842,9 +884,15 @@ function updateKassa() {
     }
   });
 
-  // Итого нал = утром в кассе + выручка нал + размен − расходы нал − ФОТ
+  // Плюсы в кассу
+  let plusCash = 0;
+  document.querySelectorAll('#plus-body [data-id]').forEach(row => {
+    plusCash += readNum(row.querySelector('.plus-amount'));
+  });
+
+  // Итого нал = утром в кассе + выручка нал + размен + плюсы − расходы нал − ФОТ
   const changeAmt   = parseFloat(document.getElementById('change-amount-val')?.value || 0) || 0;
-  const kassaNal    = morningCash + cashIn + changeAmt - expCash - paidSalary;
+  const kassaNal    = morningCash + cashIn + changeAmt + plusCash - expCash - paidSalary;
   const kassaBeznal = cardIn; // только карта, без онлайн
   const fmt = n => Math.round(n).toLocaleString('ru-RU') + ' ₽';
   document.getElementById('kassa-nал').textContent = fmt(kassaNal);
@@ -932,6 +980,53 @@ document.querySelectorAll('#expenses-body [data-id]').forEach(row => {
   row.querySelector('.exp-cat')?.addEventListener('change', () => saveExpRow(row.querySelector('.exp-cat')));
   row.querySelector('.exp-paytype')?.addEventListener('change', () => { saveExpRow(row.querySelector('.exp-paytype')); updateKassa(); });
   row.querySelector('.exp-note')?.addEventListener('blur', () => saveExpRow(row.querySelector('.exp-note')));
+});
+
+// ── Плюсы в кассу ────────────────────────────────────────────────────────────
+function addPlusRow() {
+  const noPlus = document.getElementById('no-plus');
+  if (noPlus) noPlus.remove();
+  const row = document.createElement('div');
+  row.className = 'expense-row'; row.dataset.id = 'new';
+  row.innerHTML = `
+    <div class="expense-row-main" style="grid-template-columns:1fr 90px 36px;">
+      <input class="mini-input plus-desc" type="text" placeholder="Описание" style="font-size:12px;padding:5px 8px;">
+      <input class="mini-input plus-amount money-field" type="text" inputmode="numeric" placeholder="0" value="">
+      <button class="row-del" onclick="deletePlus(this, null)">✕</button>
+    </div>`;
+  document.getElementById('plus-body').appendChild(row);
+  initMoneyField(row.querySelector('.plus-amount'));
+  row.querySelector('.plus-amount').addEventListener('change', () => { savePlusRow(row.querySelector('.plus-amount')); updateKassa(); });
+  row.querySelector('.plus-desc').addEventListener('blur', () => savePlusRow(row.querySelector('.plus-desc')));
+  row.querySelector('.plus-desc').focus();
+}
+
+function savePlusRow(el) {
+  const row = el.closest('[data-id]');
+  const id  = row.dataset.id === 'new' ? null : parseInt(row.dataset.id);
+  const amt  = readNum(row.querySelector('.plus-amount'));
+  const desc = (row.querySelector('.plus-desc')?.value || '').trim();
+  fetch(`/shift/${SHIFT_ID}/save-plus`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({id, amount: amt, description: desc})
+  }).then(r => r.json()).then(d => {
+    if (d.ok && !id) row.dataset.id = d.id;
+  });
+}
+
+function deletePlus(btn, id) {
+  const row = btn.closest('[data-id]');
+  if (!id && row.dataset.id === 'new') { row.remove(); updateKassa(); return; }
+  const realId = id || parseInt(row.dataset.id);
+  if (!confirm('Удалить запись?')) return;
+  fetch(`/shift/${SHIFT_ID}/delete-plus/${realId}`, {method:'POST'})
+    .then(r => r.json()).then(d => { if (d.ok) { row.remove(); updateKassa(); } });
+}
+
+document.querySelectorAll('#plus-body [data-id]').forEach(row => {
+  if (!CAN_EDIT) return;
+  row.querySelector('.plus-amount')?.addEventListener('change', () => { savePlusRow(row.querySelector('.plus-amount')); updateKassa(); });
+  row.querySelector('.plus-desc')?.addEventListener('blur', () => savePlusRow(row.querySelector('.plus-desc')));
 });
 
 // ── Staff ─────────────────────────────────────────────────────────────────────

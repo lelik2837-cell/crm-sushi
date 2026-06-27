@@ -776,6 +776,16 @@ def init_db():
         except Exception:
             pass
 
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS cash_plus_entries (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                shift_id    INTEGER NOT NULL REFERENCES shifts(id) ON DELETE CASCADE,
+                amount      REAL    NOT NULL DEFAULT 0,
+                description TEXT    DEFAULT '',
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        ''')
+
         try:
             conn.execute("ALTER TABLE shift_revenue ADD COLUMN morning_cash REAL DEFAULT 0")
         except Exception:
@@ -1671,6 +1681,7 @@ def shift_view(shift_id):
 
         revenue = conn.execute('SELECT * FROM shift_revenue WHERE shift_id=?', (shift_id,)).fetchone()
         expenses = conn.execute('SELECT * FROM expenses WHERE shift_id=? ORDER BY id', (shift_id,)).fetchall()
+        plus_entries = conn.execute('SELECT * FROM cash_plus_entries WHERE shift_id=? ORDER BY id', (shift_id,)).fetchall()
         staff = conn.execute(
             '''SELECT es.*, COALESCE(e.pay_monthly, 0) as pay_monthly
                FROM employee_shifts es
@@ -1732,7 +1743,7 @@ def shift_view(shift_id):
         ''', (shift['branch_id'], shift['date'])).fetchone()
         prev_actual_cash = (prev_day_row['kassa_nal'] or 0) if prev_day_row else None
         return render_template('shift.html',
-            shift=shift, revenue=revenue, expenses=expenses,
+            shift=shift, revenue=revenue, expenses=expenses, plus_entries=plus_entries,
             staff=staff, employees=employees,
             emp_addresses=emp_addresses,
             taxi_trips=taxi_trips, taxi_trip_emps=taxi_trip_emps,
@@ -1802,6 +1813,42 @@ def save_terminals(shift_id):
                     'INSERT INTO shift_terminals (shift_id, terminal_number, amount, sort_order) VALUES (?,?,?,?)',
                     (shift_id, tn, amt, i)
                 )
+        conn.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/shift/<int:shift_id>/save-plus', methods=['POST'])
+@login_required
+def save_cash_plus(shift_id):
+    if not _can_edit_shift(shift_id):
+        return jsonify({'error': 'Нет доступа'}), 403
+    data = request.json or {}
+    entry_id = data.get('id')
+    amount = float(data.get('amount') or 0)
+    description = (data.get('description') or '').strip()
+    with get_db() as conn:
+        if entry_id:
+            conn.execute(
+                'UPDATE cash_plus_entries SET amount=?, description=? WHERE id=? AND shift_id=?',
+                (amount, description, entry_id, shift_id)
+            )
+        else:
+            conn.execute(
+                'INSERT INTO cash_plus_entries (shift_id, amount, description) VALUES (?,?,?)',
+                (shift_id, amount, description)
+            )
+            entry_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        conn.commit()
+    return jsonify({'ok': True, 'id': entry_id})
+
+
+@app.route('/shift/<int:shift_id>/delete-plus/<int:entry_id>', methods=['POST'])
+@login_required
+def delete_cash_plus(shift_id, entry_id):
+    if not _can_edit_shift(shift_id):
+        return jsonify({'error': 'Нет доступа'}), 403
+    with get_db() as conn:
+        conn.execute('DELETE FROM cash_plus_entries WHERE id=? AND shift_id=?', (entry_id, shift_id))
         conn.commit()
     return jsonify({'ok': True})
 
@@ -5657,6 +5704,8 @@ def shifts_archive():
                    (SELECT COALESCE(SUM(es.total_amount),0)
                     FROM employee_shifts es
                     WHERE es.shift_id=s.id AND es.is_paid=1) as paid_salary,
+                   (SELECT COALESCE(SUM(cp.amount),0)
+                    FROM cash_plus_entries cp WHERE cp.shift_id=s.id) as plus_cash,
                    s.opened_at, s.closed_at,
                    s.closed_by_name
             FROM shifts s
