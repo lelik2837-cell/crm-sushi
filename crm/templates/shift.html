@@ -223,19 +223,22 @@
             </div>
             <div style="background:#f9fafb; border:1.5px solid #e5e7eb; border-radius:10px; padding:7px 10px; flex:1; display:flex; flex-direction:column; justify-content:center; gap:5px;">
               <div style="display:flex; align-items:center; gap:7px;">
-                <span style="font-size:10px; color:#9ca3af; font-weight:600; text-transform:uppercase; letter-spacing:.3px; white-space:nowrap; min-width:48px;">Нал</span>
+                <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#ef4444; flex-shrink:0;"></span>
+                <span style="font-size:10px; color:#9ca3af; font-weight:600; text-transform:uppercase; letter-spacing:.3px; white-space:nowrap; min-width:40px;">Нал</span>
                 <input class="mini-input rev-field money-field" data-field="cash_amount" type="text" inputmode="numeric" placeholder="0"
                   value="{{ (revenue.cash_amount or 0)|int }}" {% if not can_edit %}disabled{% endif %}
                   style="font-size:13px; flex:1;">
               </div>
               <div style="display:flex; align-items:center; gap:7px;">
-                <span style="font-size:10px; color:#9ca3af; font-weight:600; text-transform:uppercase; letter-spacing:.3px; white-space:nowrap; min-width:48px;">Безнал</span>
+                <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#22c55e; flex-shrink:0;"></span>
+                <span style="font-size:10px; color:#9ca3af; font-weight:600; text-transform:uppercase; letter-spacing:.3px; white-space:nowrap; min-width:40px;">Безнал</span>
                 <input class="mini-input rev-field money-field" data-field="card_amount" type="text" inputmode="numeric" placeholder="0"
                   value="{{ (revenue.card_amount or 0)|int }}" {% if not can_edit %}disabled{% endif %}
                   style="font-size:13px; flex:1;">
               </div>
               <div style="display:flex; align-items:center; gap:7px;">
-                <span style="font-size:10px; color:#9ca3af; font-weight:600; text-transform:uppercase; letter-spacing:.3px; white-space:nowrap; min-width:48px;">Онлайн</span>
+                <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#eab308; flex-shrink:0;"></span>
+                <span style="font-size:10px; color:#9ca3af; font-weight:600; text-transform:uppercase; letter-spacing:.3px; white-space:nowrap; min-width:40px;">Онлайн</span>
                 <input class="mini-input rev-field money-field" data-field="online_amount" type="text" inputmode="numeric" placeholder="0"
                   value="{{ (revenue.online_amount or 0)|int }}" {% if not can_edit %}disabled{% endif %}
                   style="font-size:13px; flex:1;">
