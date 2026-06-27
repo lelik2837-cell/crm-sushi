@@ -111,18 +111,46 @@
             .navbar:has(.navbar-collapse.show) .nav-link.active {
                 color: #e94560 !important;
             }
-            /* Кнопка Дашборд — светло-серая карточка */
-            .navbar:has(.navbar-collapse.show) .nav-link-dashboard {
-                display: block;
-                background: linear-gradient(135deg, #ffffff 0%, #f1f5f9 100%);
-                border: 1.5px solid #e2e8f0;
-                border-radius: 12px;
-                padding: 10px 14px !important;
-                margin: 4px 0 8px;
-                color: #334155 !important;
-                font-weight: 600;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+        }
+
+        /* Desktop: Дашборд — пилюля в стиле кнопок блока выручки */
+        @media (min-width: 992px) {
+            .nav-link-dashboard.nav-link {
+                font-size: 11px !important;
+                font-weight: 600 !important;
+                letter-spacing: .3px !important;
+                border-radius: 20px !important;
+                border: 1.5px solid rgba(255,255,255,.4) !important;
+                background: rgba(255,255,255,.12) !important;
+                padding: 5px 14px !important;
+                margin-right: 4px;
+                transition: all .15s;
             }
+            .nav-link-dashboard.nav-link:hover,
+            .nav-link-dashboard.nav-link.active {
+                border-color: rgba(255,255,255,.9) !important;
+                background: rgba(255,255,255,.25) !important;
+                color: #fff !important;
+            }
+        }
+
+        /* Mobile: автономная кнопка Дашборд (слева в навбаре) */
+        .mobile-dash-btn {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: .3px;
+            border-radius: 20px;
+            border: 1.5px solid #e2e8f0;
+            background: linear-gradient(135deg, #ffffff 0%, #f1f5f9 100%);
+            color: #334155;
+            padding: 5px 14px;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            transition: all .15s;
+        }
+        .mobile-dash-btn:hover {
+            border-color: #cbd5e1;
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
         }
     </style>
 </head>
@@ -131,13 +159,34 @@
 <nav class="navbar navbar-expand-lg navbar-dark mb-4">
     <div class="container-fluid">
         <a class="navbar-brand" href="{{ url_for('dashboard') }}">CRMPAPA</a>
+        <!-- Mobile only: Дашборд dropdown слева от гамбургера -->
+        <div class="d-lg-none dropdown">
+            <button class="mobile-dash-btn dropdown-toggle" type="button"
+                    data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="bi bi-grid"></i> Дашборд
+            </button>
+            <ul class="dropdown-menu" style="border-radius:12px; border:1.5px solid #e2e8f0; box-shadow:0 8px 24px rgba(0,0,0,0.12); min-width:150px;">
+                <li>
+                    <a class="dropdown-item {% if request.endpoint=='dashboard' %}active{% endif %}"
+                       href="{{ url_for('dashboard') }}">
+                        <i class="bi bi-grid me-2"></i>Дашборд
+                    </a>
+                </li>
+                <li>
+                    <a class="dropdown-item {% if request.endpoint=='reports' and request.args.get('tab')=='salary' %}active{% endif %}"
+                       href="{{ url_for('reports') }}?tab=salary">
+                        <i class="bi bi-cash-coin me-2"></i>ФОТ
+                    </a>
+                </li>
+            </ul>
+        </div>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav">
             <span class="navbar-toggler-icon"></span>
         </button>
         <div class="collapse navbar-collapse" id="nav">
             <ul class="navbar-nav me-auto">
                 {% set dash_active = request.endpoint == 'dashboard' or (request.endpoint == 'reports' and request.args.get('tab') == 'salary') %}
-                <li class="nav-item dropdown">
+                <li class="nav-item dropdown d-none d-lg-flex">
                     <a class="nav-link nav-link-dashboard dropdown-toggle {% if dash_active %}active{% endif %}"
                        href="#" data-bs-toggle="dropdown" aria-expanded="false">
                         <i class="bi bi-grid"></i> Дашборд
