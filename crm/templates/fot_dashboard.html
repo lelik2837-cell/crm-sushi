@@ -100,6 +100,7 @@ var activeRole    = '';          // '' = все роли
 var currentDates  = ['', ''];
 var showPct       = true;        // true=%, false=₽
 var lastRoles     = [];          // кэш для перерисовки без запроса
+var lastDays      = [];          // кэш дней для перерисовки графика
 var fotCustomFrom = null;
 var fotCustomTo   = null;
 var fotCalPicker  = null;
@@ -113,8 +114,9 @@ function toggleUnit() {
     btn.textContent    = showPct ? '%' : '₽';
     btn.style.border   = showPct ? '1.5px solid rgba(255,255,255,.35)' : '1.5px solid rgba(255,255,255,.9)';
     btn.style.background = showPct ? 'rgba(255,255,255,.12)' : 'rgba(255,255,255,.28)';
-    // перерисовать чипы из кэша без нового запроса
+    // перерисовать чипы и график из кэша без нового запроса
     if (lastRoles.length) renderChips(lastRoles, document.getElementById('fot-chips'), true);
+    if (lastDays.length)  makeFotDayChart(lastDays);
 }
 
 // ── активная кнопка периода ──────────────────────────────────────────────────
@@ -211,14 +213,16 @@ function updateRight(d) {
 // ── дневной график ФОТ% ───────────────────────────────────────────────────────
 function makeFotDayChart(days) {
     var DOW = ['вс','пн','вт','ср','чт','пт','сб'];
+    lastDays = days;
     var canvas = document.getElementById('fot-day-canvas');
     if (fotDayChart) { fotDayChart.destroy(); fotDayChart = null; }
+    var usePct = showPct;
     fotDayChart = new Chart(canvas, {
         type: 'bar',
         data: {
             labels: days.map(function(d){ return d.date.slice(8); }),
             datasets: [{
-                data: days.map(function(d){ return d.fot_pct; }),
+                data: days.map(function(d){ return usePct ? d.fot_pct : d.fot; }),
                 backgroundColor: 'rgba(255,255,255,0.5)',
                 hoverBackgroundColor: 'rgba(255,255,255,0.88)',
                 borderRadius: 4,
@@ -236,14 +240,25 @@ function makeFotDayChart(days) {
                             var d2=new Date(raw+'T00:00:00');
                             return raw.split('-').reverse().join('.')+', '+DOW[d2.getDay()];
                         },
-                        label:function(ctx){ return 'ФОТ '+ctx.parsed.y+'%'; }
+                        label:function(ctx){
+                            return usePct
+                                ? 'ФОТ ' + ctx.parsed.y + '%'
+                                : 'ФОТ ' + fmtN(ctx.parsed.y) + ' ₽';
+                        }
                     },
                     backgroundColor:'rgba(0,0,0,.65)', titleColor:'#fff', bodyColor:'#fff'
                 }
             },
             scales:{
                 x:{ ticks:{color:'rgba(255,255,255,.65)',font:{size:10,weight:'600'}}, grid:{display:false}, border:{color:'rgba(255,255,255,.15)'} },
-                y:{ ticks:{color:'rgba(255,255,255,.5)',font:{size:9},callback:function(v){return v+'%';}},
+                y:{ ticks:{
+                        color:'rgba(255,255,255,.5)', font:{size:9},
+                        callback:function(v){
+                            return usePct ? v+'%' :
+                                (v>=1000000 ? (v/1000000).toFixed(1)+'М' :
+                                 v>=1000    ? Math.round(v/1000)+'К' : v);
+                        }
+                    },
                     grid:{color:'rgba(255,255,255,.08)'}, border:{display:false} }
             }
         }
