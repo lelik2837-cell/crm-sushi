@@ -246,25 +246,25 @@
           <!-- Колонка 2 (20%): 4 строки вертикально — Доставка выручка/заказов, Самовывоз выручка/заказов -->
           <div style="display:flex; flex-direction:column; gap:0; background:#f9fafb; border:1.5px solid #e5e7eb; border-radius:10px; padding:10px 11px; justify-content:space-between;">
             <div style="margin-bottom:8px;">
-              <div class="mini-label" style="color:#3b82f6;">Доставка — выручка</div>
+              <div class="mini-label">Выручка (дост-ка)</div>
               <input class="mini-input rev-field money-field" data-field="delivery_revenue" type="text" inputmode="numeric" placeholder="0"
                 value="{{ (revenue.delivery_revenue or 0)|int }}" {% if not can_edit %}disabled{% endif %}
                 style="font-size:13px;">
             </div>
             <div style="margin-bottom:8px;">
-              <div class="mini-label" style="color:#3b82f6;">Доставка — заказов</div>
+              <div class="mini-label">Заказы (дост-ка)</div>
               <input class="mini-input rev-field" data-field="delivery_orders_real" type="number" min="0" placeholder="0"
                 value="{{ revenue.delivery_orders or 0 }}" {% if not can_edit %}disabled{% endif %}
                 style="font-size:13px;">
             </div>
             <div style="margin-bottom:8px;">
-              <div class="mini-label" style="color:#10b981;">Самовывоз — выручка</div>
+              <div class="mini-label">Выручка (сам-з)</div>
               <input class="mini-input rev-field money-field" data-field="pickup_revenue" type="text" inputmode="numeric" placeholder="0"
                 value="{{ (revenue.pickup_revenue or 0)|int }}" {% if not can_edit %}disabled{% endif %}
                 style="font-size:13px;">
             </div>
             <div>
-              <div class="mini-label" style="color:#10b981;">Самовывоз — заказов</div>
+              <div class="mini-label">Заказы (сам-з)</div>
               <input class="mini-input rev-field" data-field="pickup_orders" type="number" min="0" placeholder="0"
                 value="{{ revenue.pickup_orders or 0 }}" {% if not can_edit %}disabled{% endif %}
                 style="font-size:13px;">
