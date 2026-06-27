@@ -17,6 +17,13 @@
           style="font-size:11px;padding:4px 12px;border-radius:20px;border:1.5px solid rgba(255,255,255,.9);background:rgba(255,255,255,.25);color:#fff;cursor:pointer;font-weight:600;letter-spacing:.3px;transition:all .15s;">Месяц</button>
         <button onclick="loadFot('year')"  data-fp="year"  class="fot-pb"
           style="font-size:11px;padding:4px 12px;border-radius:20px;border:1.5px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:#fff;cursor:pointer;font-weight:600;letter-spacing:.3px;transition:all .15s;">Год</button>
+        <button id="fot-cal-btn" onclick="openFotCal()" title="Выбрать период"
+          style="width:26px;height:26px;flex-shrink:0;border-radius:50%;border:1.5px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:rgba(255,255,255,.8);cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;transition:all .15s;">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><path d="M3.5 0a.5.5 0 0 1 .5.5V1h8V.5a.5.5 0 0 1 1 0V1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h1V.5a.5.5 0 0 1 .5-.5zM1 4v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4H1z"/></svg>
+        </button>
+        <input id="fot-cal-hidden" type="text" style="display:none; position:absolute;">
+        <button id="fot-unit-btn" onclick="toggleUnit()" title="Переключить % / ₽"
+          style="margin-left:auto;width:26px;height:26px;flex-shrink:0;border-radius:50%;border:1.5px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);cursor:pointer;padding:0;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;transition:all .15s;">%</button>
       </div>
 
       <!-- Label + big % -->
@@ -91,8 +98,24 @@ var fotYearChart  = null;
 var fotDayChart   = null;
 var activeRole    = '';          // '' = все роли
 var currentDates  = ['', ''];
+var showPct       = true;        // true=%, false=₽
+var lastRoles     = [];          // кэш для перерисовки без запроса
+var fotCustomFrom = null;
+var fotCustomTo   = null;
+var fotCalPicker  = null;
 
 function fmtN(n) { return Math.round(n).toLocaleString('ru-RU'); }
+
+// ── переключатель % / ₽ ──────────────────────────────────────────────────────
+function toggleUnit() {
+    showPct = !showPct;
+    var btn = document.getElementById('fot-unit-btn');
+    btn.textContent    = showPct ? '%' : '₽';
+    btn.style.border   = showPct ? '1.5px solid rgba(255,255,255,.35)' : '1.5px solid rgba(255,255,255,.9)';
+    btn.style.background = showPct ? 'rgba(255,255,255,.12)' : 'rgba(255,255,255,.28)';
+    // перерисовать чипы из кэша без нового запроса
+    if (lastRoles.length) renderChips(lastRoles, document.getElementById('fot-chips'), true);
+}
 
 // ── активная кнопка периода ──────────────────────────────────────────────────
 function setPb(period) {
@@ -101,28 +124,57 @@ function setPb(period) {
         b.style.border     = on ? '1.5px solid rgba(255,255,255,.9)'  : '1.5px solid rgba(255,255,255,.35)';
         b.style.background = on ? 'rgba(255,255,255,.25)'             : 'rgba(255,255,255,.12)';
     });
+    var calBtn = document.getElementById('fot-cal-btn');
+    if (calBtn) {
+        calBtn.style.border     = period === 'custom' ? '1.5px solid rgba(255,255,255,.9)'  : '1.5px solid rgba(255,255,255,.35)';
+        calBtn.style.background = period === 'custom' ? 'rgba(255,255,255,.25)'             : 'rgba(255,255,255,.12)';
+    }
 }
 
 // ── диапазон дат ──────────────────────────────────────────────────────────────
 function getDates(period) {
     var t = new Date(), fmt = function(d){ return d.toISOString().split('T')[0]; };
-    if (period === 'today') return [fmt(t), fmt(t)];
+    if (period === 'today')  return [fmt(t), fmt(t)];
+    if (period === 'custom') return [fotCustomFrom || fmt(t), fotCustomTo || fmt(t)];
     return [fmt(t).slice(0,7)+'-01', fmt(t)];
 }
 
+// ── flatpickr календарь ───────────────────────────────────────────────────────
+function openFotCal() {
+    if (!fotCalPicker) {
+        fotCalPicker = flatpickr('#fot-cal-hidden', {
+            mode: 'range',
+            dateFormat: 'Y-m-d',
+            appendTo: document.body,
+            disableMobile: true,
+            onClose: function(dates) {
+                if (dates.length === 2) {
+                    var fmt = function(d){ return d.toISOString().split('T')[0]; };
+                    fotCustomFrom = fmt(dates[0]);
+                    fotCustomTo   = fmt(dates[1]);
+                    loadFot('custom');
+                }
+            }
+        });
+    }
+    fotCalPicker.open();
+}
+
 // ── чипы ролей ───────────────────────────────────────────────────────────────
-function renderChips(roles, container, onClickFn) {
+function renderChips(roles, container, clickable) {
     if (!roles || !roles.length) { container.innerHTML = '<span style="opacity:.5;font-size:12px;">Нет данных</span>'; return; }
+    if (clickable) lastRoles = roles;
     container.innerHTML = roles.map(function(r) {
-        var isAll = (activeRole === '' && !onClickFn);  // year mode never has activeRole
-        var isActive = onClickFn ? (r.role === activeRole) : false;
-        var baseStyle = 'font-size:11px;font-weight:600;padding:5px 11px;border-radius:16px;cursor:pointer;color:#fff;transition:all .2s;';
-        var stateStyle = isActive
+        var isActive = clickable && r.role === activeRole;
+        var base  = 'font-size:11px;font-weight:600;padding:5px 11px;border-radius:16px;color:#fff;transition:all .2s;';
+        var state = isActive
             ? 'border:1.5px solid rgba(255,255,255,.95);background:rgba(255,255,255,.38);'
             : 'border:1px solid rgba(255,255,255,.38);background:rgba(255,255,255,.15);';
-        var clickAttr = onClickFn ? 'onclick="selectRole(\'' + r.role + '\')"' : '';
-        return '<button ' + clickAttr + ' data-role="' + r.role + '" class="fot-chip" style="' + baseStyle + stateStyle + '">' +
-                 r.label + ' <span style="opacity:.75;">' + r.rev_pct + '%</span>' +
+        var cursor = clickable ? 'cursor:pointer;' : 'cursor:default;';
+        var click  = clickable ? 'onclick="selectRole(\'' + r.role + '\')"' : '';
+        var val    = showPct ? (r.rev_pct + '%') : (fmtN(r.fot) + ' ₽');
+        return '<button ' + click + ' data-role="' + r.role + '" class="fot-chip" style="' + base + state + cursor + '">' +
+                 r.label + ' <span style="opacity:.75;">' + val + '</span>' +
                '</button>';
     }).join('');
 }
@@ -314,7 +366,8 @@ function loadFot(period) {
 
     // дневной график (не показываем для "сегодня" — один столбец бессмысленен)
     var dayWrap = document.getElementById('fot-day-wrap');
-    if (fotPeriod === 'today') {
+    var singleDay = (dates[0] === dates[1]);
+    if (singleDay) {
         dayWrap.style.display = 'none';
     } else {
         dayWrap.style.display = '';

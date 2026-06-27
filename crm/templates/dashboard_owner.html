@@ -12,25 +12,16 @@
         <button onclick="loadRevCard('today')" data-rp="today" class="rev-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Сегодня</button>
         <button onclick="loadRevCard('month')" data-rp="month" class="rev-period-btn rev-period-active" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.9); background:rgba(255,255,255,.25); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Месяц</button>
         <button onclick="loadRevCard('year')"  data-rp="year"  class="rev-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Год</button>
-        <button id="rev-cal-btn" onclick="toggleCalendar()" title="Выбрать период" style="width:26px; height:26px; flex-shrink:0; border-radius:50%; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); cursor:pointer; padding:0; display:inline-flex; align-items:center; justify-content:center; transition:all .15s;">
+        <button id="rev-cal-btn" onclick="openRevCal()" title="Выбрать период" style="width:26px; height:26px; flex-shrink:0; border-radius:50%; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); cursor:pointer; padding:0; display:inline-flex; align-items:center; justify-content:center; transition:all .15s;">
           <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><path d="M3.5 0a.5.5 0 0 1 .5.5V1h8V.5a.5.5 0 0 1 1 0V1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h1V.5a.5.5 0 0 1 .5-.5zM1 4v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4H1z"/></svg>
         </button>
+        <input id="rev-cal-hidden" type="text" style="display:none; position:absolute;">
         <button id="rev-day-toggle" onclick="toggleDayChart()" title="График по дням" style="display:none; margin-left:auto; width:28px; height:28px; flex-shrink:0; border-radius:8px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); cursor:pointer; padding:0; align-items:center; justify-content:center; transition:all .15s;">
           <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor"><rect x="1" y="8" width="2.5" height="6" rx="0.5"/><rect x="5" y="5" width="2.5" height="9" rx="0.5"/><rect x="9" y="2" width="2.5" height="12" rx="0.5"/><rect x="13" y="6" width="2.5" height="8" rx="0.5"/></svg>
         </button>
         <button id="rev-year-day-toggle" onclick="toggleYearDayChart()" title="График по дням" style="display:none; margin-left:auto; width:28px; height:28px; flex-shrink:0; border-radius:8px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); cursor:pointer; padding:0; align-items:center; justify-content:center; transition:all .15s;">
           <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor"><rect x="1" y="8" width="2.5" height="6" rx="0.5"/><rect x="5" y="5" width="2.5" height="9" rx="0.5"/><rect x="9" y="2" width="2.5" height="12" rx="0.5"/><rect x="13" y="6" width="2.5" height="8" rx="0.5"/></svg>
         </button>
-      </div>
-      <!-- Calendar popup -->
-      <div id="rev-cal-popup" style="display:none; position:absolute; top:56px; left:0; right:0; z-index:300; background:#fff; border-radius:14px; padding:14px 16px; box-shadow:0 8px 28px rgba(0,0,0,.28);">
-        <div style="font-size:10px; font-weight:700; color:#475569; text-transform:uppercase; letter-spacing:.5px; margin-bottom:10px;">Выбрать период</div>
-        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-          <input type="date" id="rev-cal-from" style="flex:1; min-width:110px; font-size:13px; border:1.5px solid #e2e8f0; border-radius:8px; padding:6px 10px; color:#334155; outline:none;">
-          <span style="color:#94a3b8; font-size:13px;">—</span>
-          <input type="date" id="rev-cal-to" style="flex:1; min-width:110px; font-size:13px; border:1.5px solid #e2e8f0; border-radius:8px; padding:6px 10px; color:#334155; outline:none;">
-          <button onclick="applyCalendar()" style="padding:6px 18px; border:none; border-radius:8px; background:linear-gradient(135deg,#4f46e5,#7c3aed); color:#fff; font-size:12px; font-weight:700; cursor:pointer;">OK</button>
-        </div>
       </div>
       <!-- Label -->
       <div style="font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; opacity:.7; margin-bottom:6px;">Общая выручка</div>
@@ -362,29 +353,26 @@ var revYear             = new Date().getFullYear();
 var revCustomFrom       = null;
 var revCustomTo         = null;
 
-function toggleCalendar() {
-    var popup = document.getElementById('rev-cal-popup');
-    popup.style.display = popup.style.display === 'none' ? '' : 'none';
-}
-
-function applyCalendar() {
-    var from = document.getElementById('rev-cal-from').value;
-    var to   = document.getElementById('rev-cal-to').value;
-    if (!from || !to) return;
-    revCustomFrom = from;
-    revCustomTo   = to;
-    document.getElementById('rev-cal-popup').style.display = 'none';
-    loadRevCard('custom');
-}
-
-// Закрывать попап при клике вне его
-document.addEventListener('click', function(e) {
-    var popup = document.getElementById('rev-cal-popup');
-    var btn   = document.getElementById('rev-cal-btn');
-    if (popup && !popup.contains(e.target) && e.target !== btn && !btn.contains(e.target)) {
-        popup.style.display = 'none';
+var revCalPicker = null;
+function openRevCal() {
+    if (!revCalPicker) {
+        revCalPicker = flatpickr('#rev-cal-hidden', {
+            mode: 'range',
+            dateFormat: 'Y-m-d',
+            appendTo: document.body,
+            disableMobile: true,
+            onClose: function(dates) {
+                if (dates.length === 2) {
+                    var fmt = function(d){ return d.toISOString().split('T')[0]; };
+                    revCustomFrom = fmt(dates[0]);
+                    revCustomTo   = fmt(dates[1]);
+                    loadRevCard('custom');
+                }
+            }
+        });
     }
-});
+    revCalPicker.open();
+}
 
 var MONTHS_RU_FULL = ['', 'Январь','Февраль','Март','Апрель','Май','Июнь',
                       'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
