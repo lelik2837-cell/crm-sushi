@@ -1514,6 +1514,44 @@ def api_fot_year():
     return jsonify({'ok': True, 'months': months_list})
 
 
+@app.route('/api/fot-days')
+@login_required
+@owner_required
+def api_fot_days():
+    date_from = request.args.get('date_from', date.today().isoformat())
+    date_to   = request.args.get('date_to',   date.today().isoformat())
+    role      = request.args.get('role', '')
+    with get_db() as conn:
+        rev_rows = conn.execute('''
+            SELECT s.date, COALESCE(SUM(r.total_revenue),0) AS revenue
+            FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id
+            WHERE s.date BETWEEN ? AND ?
+            GROUP BY s.date ORDER BY s.date
+        ''', (date_from, date_to)).fetchall()
+        if role:
+            fot_rows = conn.execute('''
+                SELECT s.date, COALESCE(SUM(es.total_amount),0) AS fot
+                FROM employee_shifts es JOIN shifts s ON s.id=es.shift_id
+                WHERE s.date BETWEEN ? AND ? AND es.role_snapshot=?
+                GROUP BY s.date ORDER BY s.date
+            ''', (date_from, date_to, role)).fetchall()
+        else:
+            fot_rows = conn.execute('''
+                SELECT s.date, COALESCE(SUM(es.total_amount),0) AS fot
+                FROM employee_shifts es JOIN shifts s ON s.id=es.shift_id
+                WHERE s.date BETWEEN ? AND ?
+                GROUP BY s.date ORDER BY s.date
+            ''', (date_from, date_to)).fetchall()
+    rev_map = {r['date']: int(r['revenue']) for r in rev_rows}
+    fot_map = {r['date']: int(r['fot'])     for r in fot_rows}
+    days = []
+    for d in sorted(rev_map):
+        rv = rev_map[d]; fv = fot_map.get(d, 0)
+        days.append({'date': d, 'fot': fv, 'revenue': rv,
+                     'fot_pct': round(fv / rv * 100, 1) if rv > 0 else 0})
+    return jsonify({'ok': True, 'days': days})
+
+
 @app.route('/fot-dashboard')
 @login_required
 @owner_required
