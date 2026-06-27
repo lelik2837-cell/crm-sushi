@@ -244,30 +244,30 @@
           </div>
 
           <!-- Колонка 2 (20%): 4 строки вертикально — Доставка выручка/заказов, Самовывоз выручка/заказов -->
-          <div style="display:flex; flex-direction:column; justify-content:center; gap:5px; background:#f9fafb; border:1.5px solid #e5e7eb; border-radius:10px; padding:7px 10px;">
-            <div style="display:flex; align-items:center; gap:7px;">
-              <span style="font-size:10px; color:#9ca3af; font-weight:600; text-transform:uppercase; letter-spacing:.3px; white-space:nowrap; min-width:62px;">Дост. выр.</span>
+          <div style="display:flex; flex-direction:column; gap:0; background:#f9fafb; border:1.5px solid #e5e7eb; border-radius:10px; padding:10px 11px; justify-content:space-between;">
+            <div style="margin-bottom:8px;">
+              <div class="mini-label">Выручка (дост-ка)</div>
               <input class="mini-input rev-field money-field" data-field="delivery_revenue" type="text" inputmode="numeric" placeholder="0"
                 value="{{ (revenue.delivery_revenue or 0)|int }}" {% if not can_edit %}disabled{% endif %}
-                style="font-size:13px; flex:1;">
+                style="font-size:13px;">
             </div>
-            <div style="display:flex; align-items:center; gap:7px;">
-              <span style="font-size:10px; color:#9ca3af; font-weight:600; text-transform:uppercase; letter-spacing:.3px; white-space:nowrap; min-width:62px;">Дост. зак.</span>
+            <div style="margin-bottom:8px;">
+              <div class="mini-label">Заказы (дост-ка)</div>
               <input class="mini-input rev-field" data-field="delivery_orders_real" type="number" min="0" placeholder="0"
                 value="{{ revenue.delivery_orders or 0 }}" {% if not can_edit %}disabled{% endif %}
-                style="font-size:13px; flex:1;">
+                style="font-size:13px;">
             </div>
-            <div style="display:flex; align-items:center; gap:7px;">
-              <span style="font-size:10px; color:#9ca3af; font-weight:600; text-transform:uppercase; letter-spacing:.3px; white-space:nowrap; min-width:62px;">Сам-з выр.</span>
+            <div style="margin-bottom:8px;">
+              <div class="mini-label">Выручка (сам-з)</div>
               <input class="mini-input rev-field money-field" data-field="pickup_revenue" type="text" inputmode="numeric" placeholder="0"
                 value="{{ (revenue.pickup_revenue or 0)|int }}" {% if not can_edit %}disabled{% endif %}
-                style="font-size:13px; flex:1;">
+                style="font-size:13px;">
             </div>
-            <div style="display:flex; align-items:center; gap:7px;">
-              <span style="font-size:10px; color:#9ca3af; font-weight:600; text-transform:uppercase; letter-spacing:.3px; white-space:nowrap; min-width:62px;">Сам-з зак.</span>
+            <div>
+              <div class="mini-label">Заказы (сам-з)</div>
               <input class="mini-input rev-field" data-field="pickup_orders" type="number" min="0" placeholder="0"
                 value="{{ revenue.pickup_orders or 0 }}" {% if not can_edit %}disabled{% endif %}
-                style="font-size:13px; flex:1;">
+                style="font-size:13px;">
             </div>
           </div>
 
