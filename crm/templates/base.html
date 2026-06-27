@@ -140,17 +140,41 @@
             font-weight: 600;
             letter-spacing: .3px;
             border-radius: 20px;
-            border: 1.5px solid #e2e8f0;
-            background: linear-gradient(135deg, #ffffff 0%, #f1f5f9 100%);
+            border: 1px solid #e2e8f0;
+            background: #f1f5f9;
             color: #334155;
             padding: 5px 14px;
             cursor: pointer;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            box-shadow: none;
             transition: all .15s;
         }
         .mobile-dash-btn:hover {
+            background: #e2e8f0;
             border-color: #cbd5e1;
-            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+        }
+        /* Выпадающий список кнопки Дашборд */
+        .mobile-dash-menu {
+            border-radius: 12px !important;
+            border: 1px solid #e2e8f0 !important;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.13) !important;
+            min-width: 150px;
+            padding: 6px !important;
+        }
+        .mobile-dash-menu .dropdown-item {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: .3px;
+            color: #334155;
+            border-radius: 8px;
+            padding: 7px 12px;
+        }
+        .mobile-dash-menu .dropdown-item:hover {
+            background: #f1f5f9;
+            color: #1e293b;
+        }
+        .mobile-dash-menu .dropdown-item.active {
+            background: #e2e8f0;
+            color: #1e293b;
         }
     </style>
 </head>
@@ -165,7 +189,7 @@
                     data-bs-toggle="dropdown" aria-expanded="false">
                 <i class="bi bi-grid"></i> Дашборд
             </button>
-            <ul class="dropdown-menu" style="border-radius:12px; border:1.5px solid #e2e8f0; box-shadow:0 8px 24px rgba(0,0,0,0.12); min-width:150px;">
+            <ul class="dropdown-menu mobile-dash-menu">
                 <li>
                     <a class="dropdown-item {% if request.endpoint=='dashboard' %}active{% endif %}"
                        href="{{ url_for('dashboard') }}">
