@@ -1,0 +1,296 @@
+{% extends 'base.html' %}
+{% block title %}ФОТ — Панель{% endblock %}
+{% block content %}
+
+<div class="row g-3 mb-4">
+  <!-- ══ FOT CARD ══ -->
+  <div class="col-12 col-lg-6">
+    <div id="fot-card" style="background:linear-gradient(135deg,#f59e0b 0%,#f97316 55%,#ea580c 100%); border-radius:20px; padding:28px 28px 24px; color:#fff; position:relative; min-height:340px;">
+
+      <!-- Period buttons -->
+      <div style="display:flex; gap:6px; margin-bottom:20px; align-items:center;">
+        <button onclick="loadFot('today')" data-fp="today" class="fot-pb"
+          style="font-size:11px;padding:4px 12px;border-radius:20px;border:1.5px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:#fff;cursor:pointer;font-weight:600;letter-spacing:.3px;transition:all .15s;">Сегодня</button>
+        <button onclick="loadFot('month')" data-fp="month" class="fot-pb"
+          style="font-size:11px;padding:4px 12px;border-radius:20px;border:1.5px solid rgba(255,255,255,.9);background:rgba(255,255,255,.25);color:#fff;cursor:pointer;font-weight:600;letter-spacing:.3px;transition:all .15s;">Месяц</button>
+        <button onclick="loadFot('year')"  data-fp="year"  class="fot-pb"
+          style="font-size:11px;padding:4px 12px;border-radius:20px;border:1.5px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:#fff;cursor:pointer;font-weight:600;letter-spacing:.3px;transition:all .15s;">Год</button>
+      </div>
+
+      <!-- Label -->
+      <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;opacity:.7;margin-bottom:4px;">ФОТ от выручки</div>
+
+      <!-- Big % -->
+      <div id="fot-pct-big" style="font-size:clamp(40px,7vw,64px);font-weight:800;letter-spacing:-1px;line-height:1.05;margin-bottom:2px;">—</div>
+      <div id="fot-sub"     style="font-size:13px;opacity:.65;margin-bottom:18px;">—</div>
+
+      <!-- Divider -->
+      <div style="border-top:1px solid rgba(255,255,255,.2);margin-bottom:14px;"></div>
+
+      <!-- Role list (today/month) -->
+      <div id="fot-roles" style="display:flex;flex-direction:column;gap:9px;">
+        <div style="opacity:.5;font-size:13px;">Загрузка…</div>
+      </div>
+
+      <!-- Year chart -->
+      <div id="fot-year-wrap" style="display:none;">
+        <canvas id="fot-year-canvas" height="190"></canvas>
+        <!-- Month detail on bar click -->
+        <div id="fot-month-detail" style="display:none;margin-top:16px;border-top:1px solid rgba(255,255,255,.2);padding-top:14px;">
+          <div id="fot-month-title"
+               style="font-size:11px;font-weight:700;letter-spacing:.5px;opacity:.8;margin-bottom:10px;text-transform:uppercase;"></div>
+          <div id="fot-month-pct"
+               style="font-size:28px;font-weight:800;letter-spacing:-.5px;line-height:1;margin-bottom:4px;">—</div>
+          <div id="fot-month-sub"
+               style="font-size:12px;opacity:.65;margin-bottom:12px;">—</div>
+          <div id="fot-month-roles" style="display:flex;flex-direction:column;gap:8px;">
+            <div style="opacity:.5;font-size:12px;">Загрузка…</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ══ RIGHT: summary cards ══ -->
+  <div class="col-12 col-lg-6" id="fot-right">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+
+      <!-- Total FOT -->
+      <div style="background:linear-gradient(135deg,#fff 0%,#fef9c3 100%);border:1.5px solid #fde68a;border-radius:14px;padding:16px 18px;box-shadow:0 2px 10px rgba(0,0,0,0.06);">
+        <div style="font-size:10px;color:#92400e;font-weight:700;text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px;">Итого ФОТ</div>
+        <div id="rs-fot-total" style="font-size:22px;font-weight:800;color:#92400e;letter-spacing:-.5px;">—</div>
+        <div id="rs-fot-pct"   style="font-size:12px;color:#b45309;margin-top:4px;">—% от выручки</div>
+      </div>
+
+      <!-- Revenue -->
+      <div style="background:linear-gradient(135deg,#fff 0%,#f1f5f9 100%);border:1.5px solid #e2e8f0;border-radius:14px;padding:16px 18px;box-shadow:0 2px 10px rgba(0,0,0,0.06);">
+        <div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px;">Выручка</div>
+        <div id="rs-revenue"   style="font-size:22px;font-weight:800;color:#334155;letter-spacing:-.5px;">—</div>
+        <div style="font-size:12px;color:#94a3b8;margin-top:4px;">за период</div>
+      </div>
+
+      <!-- Top role -->
+      <div style="background:linear-gradient(135deg,#fff 0%,#fff7ed 100%);border:1.5px solid #fed7aa;border-radius:14px;padding:16px 18px;box-shadow:0 2px 10px rgba(0,0,0,0.06);">
+        <div style="font-size:10px;color:#c2410c;font-weight:700;text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px;">Крупнейшая статья</div>
+        <div id="rs-top-label" style="font-size:14px;font-weight:700;color:#9a3412;margin-bottom:4px;">—</div>
+        <div id="rs-top-val"   style="font-size:20px;font-weight:800;color:#c2410c;letter-spacing:-.5px;">—</div>
+        <div id="rs-top-pct"   style="font-size:11px;color:#ea580c;margin-top:2px;">— от ФОТ</div>
+      </div>
+
+      <!-- Courier vs rest -->
+      <div style="background:linear-gradient(135deg,#fff 0%,#ecfdf5 100%);border:1.5px solid #a7f3d0;border-radius:14px;padding:16px 18px;box-shadow:0 2px 10px rgba(0,0,0,0.06);">
+        <div style="font-size:10px;color:#065f46;font-weight:700;text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px;">Курьеры</div>
+        <div id="rs-courier-val" style="font-size:20px;font-weight:800;color:#047857;letter-spacing:-.5px;">—</div>
+        <div id="rs-courier-pct" style="font-size:11px;color:#059669;margin-top:2px;">— от ФОТ</div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+var fotPeriod  = 'month';
+var fotChart   = null;
+
+function fmtN(n) { return Math.round(n).toLocaleString('ru-RU'); }
+
+// ── активная кнопка периода
+function setPb(period) {
+    document.querySelectorAll('.fot-pb').forEach(function(b) {
+        var on = b.dataset.fp === period;
+        b.style.border     = on ? '1.5px solid rgba(255,255,255,.9)'  : '1.5px solid rgba(255,255,255,.35)';
+        b.style.background = on ? 'rgba(255,255,255,.25)'             : 'rgba(255,255,255,.12)';
+    });
+}
+
+// ── диапазон дат
+function getDates(period) {
+    var t = new Date(), fmt = function(d){ return d.toISOString().split('T')[0]; };
+    if (period === 'today') return [fmt(t), fmt(t)];
+    if (period === 'month') return [fmt(t).slice(0,7)+'-01', fmt(t)];
+    return null;
+}
+
+var ROLE_ICON = {
+    admin:   '🧑‍💼', cook: '👨‍🍳', sushi: '🍣',
+    courier: '🛵',  cleaner: '🧹', packer: '📦'
+};
+
+// ── рендер списка ролей
+function renderRoles(roles, container) {
+    if (!roles || !roles.length) {
+        container.innerHTML = '<div style="opacity:.5;font-size:13px;">Нет данных</div>';
+        return;
+    }
+    var maxPct = Math.max.apply(null, roles.map(function(r){ return r.pct; }));
+    container.innerHTML = roles.map(function(r) {
+        var barW = maxPct > 0 ? Math.round(r.pct / maxPct * 100) : 0;
+        var icon = ROLE_ICON[r.role] || '👤';
+        return '<div style="display:flex;align-items:center;gap:8px;">' +
+          '<span style="font-size:14px;flex-shrink:0;">' + icon + '</span>' +
+          '<span style="font-size:11px;font-weight:600;color:rgba(255,255,255,.8);min-width:100px;flex-shrink:0;">' + r.label + '</span>' +
+          '<div style="flex:1;height:4px;background:rgba(255,255,255,.2);border-radius:2px;">' +
+            '<div style="height:100%;width:' + barW + '%;background:rgba(255,255,255,.85);border-radius:2px;transition:width .35s;"></div>' +
+          '</div>' +
+          '<span style="font-size:12px;font-weight:700;min-width:30px;text-align:right;">' + r.pct + '%</span>' +
+          '<span style="font-size:11px;opacity:.6;min-width:72px;text-align:right;">' + fmtN(r.fot) + ' ₽</span>' +
+        '</div>';
+    }).join('');
+}
+
+// ── обновление правой колонки
+function updateRight(d) {
+    document.getElementById('rs-fot-total').textContent  = fmtN(d.fot) + ' ₽';
+    document.getElementById('rs-fot-pct').textContent    = d.fot_pct + '% от выручки';
+    document.getElementById('rs-revenue').textContent    = fmtN(d.revenue) + ' ₽';
+    var top = d.roles && d.roles[0];
+    if (top) {
+        document.getElementById('rs-top-label').textContent = top.label;
+        document.getElementById('rs-top-val').textContent   = fmtN(top.fot) + ' ₽';
+        document.getElementById('rs-top-pct').textContent   = top.pct + '% от ФОТ';
+    }
+    var courier = (d.roles || []).find(function(r){ return r.role === 'courier'; });
+    if (courier) {
+        document.getElementById('rs-courier-val').textContent = fmtN(courier.fot) + ' ₽';
+        document.getElementById('rs-courier-pct').textContent = courier.pct + '% от ФОТ';
+    } else {
+        document.getElementById('rs-courier-val').textContent = '0 ₽';
+        document.getElementById('rs-courier-pct').textContent = '0% от ФОТ';
+    }
+}
+
+// ── основная загрузка
+function loadFot(period) {
+    if (period) fotPeriod = period;
+    setPb(fotPeriod);
+
+    var rolesEl    = document.getElementById('fot-roles');
+    var yearWrap   = document.getElementById('fot-year-wrap');
+    var pctBig     = document.getElementById('fot-pct-big');
+    var subEl      = document.getElementById('fot-sub');
+    var monthDet   = document.getElementById('fot-month-detail');
+    var rightEl    = document.getElementById('fot-right');
+
+    if (fotPeriod === 'year') {
+        rolesEl.style.display  = 'none';
+        yearWrap.style.display = '';
+        rightEl.style.display  = 'none';
+        pctBig.textContent     = '—';
+        subEl.textContent      = 'нажмите на столбец';
+        if (monthDet) monthDet.style.display = 'none';
+        fetch('/api/fot-year')
+            .then(function(r){ return r.json(); })
+            .then(function(d){
+                if (!d.ok) return;
+                if (fotChart) { fotChart.destroy(); fotChart = null; }
+                fotChart = makeYearChart(d.months);
+            });
+        return;
+    }
+
+    rolesEl.style.display  = 'flex';
+    yearWrap.style.display = 'none';
+    rightEl.style.display  = '';
+    rolesEl.innerHTML      = '<div style="opacity:.5;font-size:13px;">Загрузка…</div>';
+
+    var dates = getDates(fotPeriod);
+    fetch('/api/fot-summary?date_from=' + dates[0] + '&date_to=' + dates[1])
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+            if (!d.ok) return;
+            pctBig.textContent = d.fot_pct + '%';
+            subEl.textContent  = 'ФОТ ' + fmtN(d.fot) + ' ₽  ·  выручка ' + fmtN(d.revenue) + ' ₽';
+            renderRoles(d.roles, rolesEl);
+            updateRight(d);
+        });
+}
+
+// ── график по году
+function makeYearChart(months) {
+    var canvas = document.getElementById('fot-year-canvas');
+    var lastIdx = months.length - 1;
+    return new Chart(canvas, {
+        type: 'bar',
+        data: {
+            labels: months.map(function(m){ return m.label; }),
+            datasets: [{
+                data: months.map(function(m){ return m.fot_pct; }),
+                backgroundColor: months.map(function(_,i){
+                    return i === lastIdx ? 'rgba(255,255,255,.92)' : 'rgba(255,255,255,.42)';
+                }),
+                hoverBackgroundColor: 'rgba(255,255,255,.88)',
+                borderRadius: 5,
+                borderSkipped: false,
+            }]
+        },
+        options: {
+            responsive: true,
+            animation: { duration: 350 },
+            onClick: function(e, els) {
+                if (!els.length) return;
+                showMonthDetail(months[els[0].index]);
+            },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        title: function(ctx){ return months[ctx[0].dataIndex].label + ' ' + months[ctx[0].dataIndex].year; },
+                        label: function(ctx){ return 'ФОТ ' + ctx.parsed.y + '%'; }
+                    },
+                    backgroundColor: 'rgba(0,0,0,.65)',
+                    titleColor: '#fff', bodyColor: '#fff',
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { color:'rgba(255,255,255,.75)', font:{size:11,weight:'600'} },
+                    grid:  { display:false },
+                    border:{ color:'rgba(255,255,255,.15)' }
+                },
+                y: {
+                    ticks: {
+                        color:'rgba(255,255,255,.55)', font:{size:9},
+                        callback: function(v){ return v + '%'; }
+                    },
+                    grid:  { color:'rgba(255,255,255,.08)' },
+                    border:{ display:false }
+                }
+            }
+        }
+    });
+}
+
+// ── детали месяца при клике на столбец
+function showMonthDetail(m) {
+    var detail    = document.getElementById('fot-month-detail');
+    var titleEl   = document.getElementById('fot-month-title');
+    var pctEl     = document.getElementById('fot-month-pct');
+    var subEl2    = document.getElementById('fot-month-sub');
+    var rolesEl2  = document.getElementById('fot-month-roles');
+    var rightEl   = document.getElementById('fot-right');
+
+    var lastDay  = new Date(m.year, m.month, 0).getDate();
+    var dateFrom = m.year + '-' + String(m.month).padStart(2,'0') + '-01';
+    var dateTo   = m.year + '-' + String(m.month).padStart(2,'0') + '-' + String(lastDay).padStart(2,'0');
+
+    titleEl.textContent = m.label + ' ' + m.year;
+    pctEl.textContent   = m.fot_pct + '%';
+    subEl2.textContent  = 'ФОТ ' + fmtN(m.fot) + ' ₽  ·  выручка ' + fmtN(m.revenue) + ' ₽';
+    detail.style.display = '';
+    rolesEl2.innerHTML   = '<div style="opacity:.5;font-size:12px;">Загрузка…</div>';
+    rightEl.style.display = '';
+
+    fetch('/api/fot-summary?date_from=' + dateFrom + '&date_to=' + dateTo)
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+            if (!d.ok) return;
+            renderRoles(d.roles, rolesEl2);
+            updateRight(d);
+        });
+}
+
+loadFot('month');
+</script>
+{% endblock %}

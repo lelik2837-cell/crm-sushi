@@ -1426,6 +1426,101 @@ def api_revenue_days():
     })
 
 
+@app.route('/api/fot-summary')
+@login_required
+@owner_required
+def api_fot_summary():
+    date_from = request.args.get('date_from', date.today().isoformat())
+    date_to   = request.args.get('date_to',   date.today().isoformat())
+    with get_db() as conn:
+        rev_row = conn.execute('''
+            SELECT COALESCE(SUM(r.total_revenue), 0) AS revenue
+            FROM shifts s JOIN shift_revenue r ON r.shift_id = s.id
+            WHERE s.date BETWEEN ? AND ?
+        ''', (date_from, date_to)).fetchone()
+        fot_row = conn.execute('''
+            SELECT COALESCE(SUM(es.total_amount), 0) AS fot
+            FROM employee_shifts es JOIN shifts s ON s.id = es.shift_id
+            WHERE s.date BETWEEN ? AND ?
+        ''', (date_from, date_to)).fetchone()
+        role_rows = conn.execute('''
+            SELECT es.role_snapshot,
+                   COALESCE(SUM(es.total_amount), 0) AS fot
+            FROM employee_shifts es JOIN shifts s ON s.id = es.shift_id
+            WHERE s.date BETWEEN ? AND ?
+            GROUP BY es.role_snapshot ORDER BY fot DESC
+        ''', (date_from, date_to)).fetchall()
+    revenue = int(rev_row['revenue'] or 0)
+    fot     = int(fot_row['fot'] or 0)
+    fot_pct = round(fot / revenue * 100, 1) if revenue > 0 else 0
+    role_labels = {'admin':'Администраторы','sushi':'Сушисты','packer':'Упаковщики',
+                   'courier':'Курьеры','cleaner':'Уборщицы','cook':'Повара'}
+    roles = []
+    for r in role_rows:
+        rfot = int(r['fot'] or 0)
+        role = r['role_snapshot'] or ''
+        if rfot <= 0 or not role:
+            continue
+        roles.append({
+            'role':    role,
+            'label':   role_labels.get(role, role),
+            'fot':     rfot,
+            'pct':     round(rfot / fot * 100) if fot > 0 else 0,
+            'rev_pct': round(rfot / revenue * 100, 1) if revenue > 0 else 0,
+        })
+    return jsonify({'ok': True, 'fot': fot, 'revenue': revenue, 'fot_pct': fot_pct, 'roles': roles})
+
+
+@app.route('/api/fot-year')
+@login_required
+@owner_required
+def api_fot_year():
+    today   = date.today()
+    start_m = today.month - 11
+    start_y = today.year
+    if start_m <= 0:
+        start_m += 12
+        start_y -= 1
+    date_from = date(start_y, start_m, 1).isoformat()
+    date_to   = today.isoformat()
+    with get_db() as conn:
+        fot_rows = conn.execute('''
+            SELECT CAST(strftime('%Y',s.date) AS INTEGER) AS year,
+                   CAST(strftime('%m',s.date) AS INTEGER) AS month,
+                   COALESCE(SUM(es.total_amount),0) AS fot
+            FROM employee_shifts es JOIN shifts s ON s.id=es.shift_id
+            WHERE s.date BETWEEN ? AND ? GROUP BY year,month
+        ''', (date_from, date_to)).fetchall()
+        rev_rows = conn.execute('''
+            SELECT CAST(strftime('%Y',s.date) AS INTEGER) AS year,
+                   CAST(strftime('%m',s.date) AS INTEGER) AS month,
+                   COALESCE(SUM(r.total_revenue),0) AS revenue
+            FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id
+            WHERE s.date BETWEEN ? AND ? GROUP BY year,month
+        ''', (date_from, date_to)).fetchall()
+    fot_map = {(r['year'],r['month']): int(r['fot']) for r in fot_rows}
+    rev_map = {(r['year'],r['month']): int(r['revenue']) for r in rev_rows}
+    labels  = ['','Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек']
+    months_list = []
+    y, m = start_y, start_m
+    for _ in range(12):
+        fv = fot_map.get((y, m), 0)
+        rv = rev_map.get((y, m), 0)
+        months_list.append({'year':y,'month':m,'label':labels[m],
+                            'fot':fv,'revenue':rv,
+                            'fot_pct': round(fv/rv*100, 1) if rv > 0 else 0})
+        m += 1
+        if m > 12: m = 1; y += 1
+    return jsonify({'ok': True, 'months': months_list})
+
+
+@app.route('/fot-dashboard')
+@login_required
+@owner_required
+def fot_dashboard():
+    return render_template('fot_dashboard.html')
+
+
 # ─── SHIFTS ───────────────────────────────────────────────────────────────────
 
 @app.route('/shift/open', methods=['POST'])

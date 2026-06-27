@@ -176,8 +176,8 @@
                     </a>
                 </li>
                 <li>
-                    <a class="dropdown-item {% if request.endpoint=='reports' and request.args.get('tab')=='salary' %}active{% endif %}"
-                       href="{{ url_for('reports') }}?tab=salary">
+                    <a class="dropdown-item {% if request.endpoint=='fot_dashboard' %}active{% endif %}"
+                       href="{{ url_for('fot_dashboard') }}">
                         <i class="bi bi-cash-coin me-2"></i>ФОТ
                     </a>
                 </li>
@@ -188,7 +188,7 @@
         </button>
         <div class="collapse navbar-collapse" id="nav">
             <ul class="navbar-nav me-auto">
-                {% set dash_active = request.endpoint == 'dashboard' or (request.endpoint == 'reports' and request.args.get('tab') == 'salary') %}
+                {% set dash_active = request.endpoint in ('dashboard', 'fot_dashboard') %}
                 <li class="nav-item dropdown d-none d-lg-flex">
                     <a class="nav-link nav-link-dashboard dropdown-toggle {% if dash_active %}active{% endif %}"
                        href="#" data-bs-toggle="dropdown" aria-expanded="false">
@@ -201,7 +201,7 @@
                             </a>
                         </li>
                         <li>
-                            <a class="dropdown-item {% if request.endpoint=='reports' and request.args.get('tab')=='salary' %}active{% endif %}" href="{{ url_for('reports') }}?tab=salary">
+                            <a class="dropdown-item {% if request.endpoint=='fot_dashboard' %}active{% endif %}" href="{{ url_for('fot_dashboard') }}">
                                 <i class="bi bi-cash-coin me-2"></i>ФОТ
                             </a>
                         </li>
