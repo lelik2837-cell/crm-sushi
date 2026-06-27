@@ -125,7 +125,7 @@
   /* TAXI */
   .taxi-trip-block { padding:8px 0; }
   .taxi-trip-block + .taxi-trip-block { border-top:1.5px solid #e5e7eb; }
-  .taxi-trip-header { display:grid; grid-template-columns:auto 80px 72px 52px 28px; gap:6px; align-items:center; margin-bottom:6px; }
+  .taxi-trip-header { display:grid; grid-template-columns:auto 80px 72px 52px auto; gap:6px; align-items:center; margin-bottom:6px; }
   .taxi-trip-num { font-size:11px; font-weight:700; color:#374151; white-space:nowrap; }
   .taxi-emps-body { display:flex; flex-direction:column; gap:4px; margin-bottom:4px; }
   .taxi-emp-row { display:grid; grid-template-columns:1.5fr 2fr 28px; gap:6px; align-items:center; }
@@ -511,7 +511,7 @@
             <label style="display:flex;align-items:center;gap:3px;font-size:11px;color:#6b7280;cursor:pointer;white-space:nowrap;">
               <input type="checkbox" class="check-box taxi-gulyash-cb" {% if t.in_gulyash %}checked{% endif %} {% if not can_edit %}disabled{% endif %}> Гуляш
             </label>
-            {% if can_edit %}<button class="row-del" style="width:26px;height:26px;" onclick="deleteTaxiTrip(this,{{ t.id }})">✕</button>{% else %}<div></div>{% endif %}
+            {% if can_edit %}<button onclick="deleteTaxiTrip(this,{{ t.id }})" style="padding:3px 8px;border-radius:6px;background:#fee2e2;color:#dc2626;border:1.5px solid #fca5a5;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;">Удалить рейс</button>{% else %}<div></div>{% endif %}
           </div>
           <div class="taxi-emps-body">
           {% for tte in taxi_trip_emps[t.id] %}
@@ -535,7 +535,7 @@
           </div>
           {% endfor %}
           </div>
-          {% if can_edit %}<button class="taxi-add-emp-btn" onclick="taxiAddEmp(this.closest('.taxi-trip-block'))">+ Добавить сотрудника</button>{% endif %}
+          {% if can_edit %}<button class="taxi-add-emp-btn" onclick="taxiAddEmp(this.closest('.taxi-trip-block'))">+ Добавить сотрудника в рейс</button>{% endif %}
         </div>
         {% endfor %}
       </div>
@@ -1566,10 +1566,10 @@ async function addTaxiTrip() {
       '<label style="display:flex;align-items:center;gap:3px;font-size:11px;color:#6b7280;cursor:pointer;white-space:nowrap;">' +
         '<input type="checkbox" class="check-box taxi-gulyash-cb"> Гуляш' +
       '</label>' +
-      '<button class="row-del" style="width:26px;height:26px;" onclick="deleteTaxiTrip(this,' + tid + ')">✕</button>' +
+      '<button onclick="deleteTaxiTrip(this,' + tid + ')" style="padding:3px 8px;border-radius:6px;background:#fee2e2;color:#dc2626;border:1.5px solid #fca5a5;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;">Удалить рейс</button>' +
     '</div>' +
     '<div class="taxi-emps-body"></div>' +
-    '<button class="taxi-add-emp-btn" onclick="taxiAddEmp(this.closest(\'.taxi-trip-block\'))">+ Добавить сотрудника</button>';
+    '<button class="taxi-add-emp-btn" onclick="taxiAddEmp(this.closest(\'.taxi-trip-block\'))">+ Добавить сотрудника в рейс</button>';
   taxiWireTripBlock(block);
   document.getElementById('taxi-body').appendChild(block);
   updateTripNumbers();
