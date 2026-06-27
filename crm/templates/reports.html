@@ -134,9 +134,54 @@
 <div class="card mb-4">
     <div class="card-header bg-light fw-semibold d-flex align-items-center justify-content-between">
         <span>По дням</span>
-        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleAllDays()">
-            <i class="bi bi-arrows-expand" id="toggle-all-icon"></i> <span id="toggle-all-label">Раскрыть все</span>
-        </button>
+        <div class="d-flex align-items-center" style="gap:6px;">
+            <!-- Branch selector -->
+            <div class="dropdown">
+                <button id="rev-report-branch-btn" type="button"
+                        data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+                        title="Выбор филиалов"
+                        style="border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700;border:1.5px solid #94a3b8;background:transparent;color:#475569;cursor:pointer;display:inline-flex;align-items:center;white-space:nowrap;transition:all .15s;height:26px;flex-shrink:0;">
+                    <span id="rev-report-branch-abbr">Все</span>
+                </button>
+                <div class="dropdown-menu p-2 shadow" style="min-width:220px;max-height:320px;overflow-y:auto;">
+                    {% if branch_groups %}
+                    <div class="text-muted px-1 mb-1" style="font-size:0.7rem;font-weight:600;letter-spacing:.5px;">ГРУППЫ</div>
+                    {% for g in branch_groups %}
+                    <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1 mb-1"
+                            onclick="selectRevBranchGroup({{ g.branch_ids | tojson }})">
+                        {{ g.name }} <span class="text-muted">({{ g.branch_ids | length }})</span>
+                    </button>
+                    {% endfor %}
+                    <hr class="dropdown-divider my-1">
+                    {% endif %}
+                    <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2 mb-1" style="cursor:pointer;">
+                        <input type="checkbox" id="rev-report-branch-all-cb" checked onchange="toggleAllRevBranches(this)">
+                        <span class="fw-semibold small">Все филиалы</span>
+                    </label>
+                    <hr class="dropdown-divider my-1">
+                    {% for b in branches %}
+                    <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                        <input type="checkbox" class="rev-report-branch-cb" value="{{ b.id }}" onchange="onRevBranchChange()">
+                        <span class="fw-semibold" style="font-size:11px;min-width:22px;color:#6c757d;">{{ b.name[:2] }}</span>
+                        <span class="small">{{ b.name }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+            <!-- Chart toggle (round) -->
+            <button id="rev-report-chart-btn" type="button" onclick="toggleRevChart()" title="График по дням"
+                    style="width:28px;height:28px;border-radius:50%;border:1.5px solid #94a3b8;background:transparent;color:#64748b;cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .15s;">
+                <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor"><rect x="1" y="8" width="2.5" height="6" rx="0.5"/><rect x="5" y="5" width="2.5" height="9" rx="0.5"/><rect x="9" y="2" width="2.5" height="12" rx="0.5"/><rect x="13" y="6" width="2.5" height="8" rx="0.5"/></svg>
+            </button>
+            <!-- Expand all -->
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleAllDays()">
+                <i class="bi bi-arrows-expand" id="toggle-all-icon"></i> <span id="toggle-all-label">Раскрыть все</span>
+            </button>
+        </div>
+    </div>
+    <!-- Day chart (hidden by default) -->
+    <div id="rev-report-chart-wrap" style="display:none;padding:14px 16px 4px;border-bottom:1px solid #e9ecef;">
+        <canvas id="rev-report-chart-canvas" height="110"></canvas>
     </div>
     <div class="card-body p-0">
         <div class="table-responsive">
@@ -538,6 +583,152 @@
 {% endblock %}
 
 {% block scripts %}
+{% if active_tab != 'salary' %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+// ── Revenue chart + branch filter ────────────────────────────────────────────
+var REV_BRANCHES      = [{% for b in branches %}{"id":{{ b.id }},"name":{{ b.name | tojson }}}{% if not loop.last %},{% endif %}{% endfor %}];
+var REV_BRANCH_GROUPS = {{ branch_groups | tojson }};
+var REV_DAY_GROUPS    = {{ day_groups | tojson }};
+var revBranchIds      = [];
+var revChartObj       = null;
+var revChartVisible   = false;
+
+(function() {
+    var nk = REV_BRANCH_GROUPS.find(function(g) { return g.name === 'НК'; });
+    if (nk && nk.branch_ids && nk.branch_ids.length) {
+        revBranchIds = nk.branch_ids.slice();
+    }
+    updateRevBranchBtn();
+})();
+
+function _revBranchLabel() {
+    if (!revBranchIds.length) return 'Все';
+    var grp = REV_BRANCH_GROUPS.find(function(g) {
+        return g.branch_ids.length === revBranchIds.length &&
+               g.branch_ids.every(function(id) { return revBranchIds.indexOf(id) >= 0; });
+    });
+    if (grp) return grp.name;
+    var bs = REV_BRANCHES.filter(function(b) { return revBranchIds.indexOf(b.id) >= 0; });
+    return bs.length <= 2
+        ? bs.map(function(b){ return b.name.slice(0,2); }).join(',')
+        : bs.length + 'фил';
+}
+
+function updateRevBranchBtn() {
+    var el = document.getElementById('rev-report-branch-abbr');
+    if (el) el.textContent = _revBranchLabel();
+}
+
+function getFilteredRevDays() {
+    if (!revBranchIds.length) return REV_DAY_GROUPS;
+    return REV_DAY_GROUPS.map(function(day) {
+        var filtered = (day.branches || []).filter(function(b) {
+            return revBranchIds.indexOf(b.branch_id) >= 0;
+        });
+        var rev = filtered.reduce(function(s, b){ return s + (b.revenue||0); }, 0);
+        return { date: day.date, revenue: rev };
+    }).filter(function(d){ return d.revenue > 0; });
+}
+
+function renderRevChart() {
+    var DOW = ['вс','пн','вт','ср','чт','пт','сб'];
+    var canvas = document.getElementById('rev-report-chart-canvas');
+    if (revChartObj) { revChartObj.destroy(); revChartObj = null; }
+    var days = getFilteredRevDays();
+    if (!days.length) return;
+    revChartObj = new Chart(canvas, {
+        type: 'bar',
+        data: {
+            labels: days.map(function(d){ return d.date.slice(8); }),
+            datasets: [{
+                data: days.map(function(d){ return d.revenue; }),
+                backgroundColor: '#818cf8',
+                hoverBackgroundColor: '#4f46e5',
+                borderRadius: 4,
+                borderSkipped: false,
+            }]
+        },
+        options: {
+            responsive: true, animation: { duration: 250 },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        title: function(ctx) {
+                            var raw = days[ctx[0].dataIndex].date;
+                            var d2 = new Date(raw+'T00:00:00');
+                            return raw.split('-').reverse().join('.') + ', ' + DOW[d2.getDay()];
+                        },
+                        label: function(ctx) {
+                            return Math.round(ctx.parsed.y).toLocaleString('ru-RU') + ' ₽';
+                        }
+                    },
+                    backgroundColor: 'rgba(0,0,0,.65)', titleColor: '#fff', bodyColor: '#fff'
+                }
+            },
+            scales: {
+                x: { ticks: { color: '#64748b', font: { size: 10, weight: '600' } }, grid: { display: false } },
+                y: {
+                    ticks: {
+                        color: '#94a3b8', font: { size: 9 },
+                        callback: function(v) {
+                            return v >= 1000000 ? (v/1000000).toFixed(1)+'М' :
+                                   v >= 1000    ? Math.round(v/1000)+'К' : v;
+                        }
+                    },
+                    grid: { color: '#f1f5f9' }
+                }
+            }
+        }
+    });
+}
+
+function toggleRevChart() {
+    revChartVisible = !revChartVisible;
+    var wrap = document.getElementById('rev-report-chart-wrap');
+    var btn  = document.getElementById('rev-report-chart-btn');
+    wrap.style.display = revChartVisible ? '' : 'none';
+    if (btn) {
+        btn.style.border     = revChartVisible ? '1.5px solid #475569' : '1.5px solid #94a3b8';
+        btn.style.background = revChartVisible ? '#e2e8f0' : 'transparent';
+        btn.style.color      = revChartVisible ? '#1e293b' : '#64748b';
+    }
+    if (revChartVisible) renderRevChart();
+}
+
+function selectRevBranchGroup(ids) {
+    revBranchIds = ids.slice();
+    document.querySelectorAll('.rev-report-branch-cb').forEach(function(cb) {
+        cb.checked = ids.indexOf(parseInt(cb.value)) >= 0;
+    });
+    var allCb = document.getElementById('rev-report-branch-all-cb');
+    if (allCb) allCb.checked = false;
+    updateRevBranchBtn();
+    var dd = bootstrap.Dropdown.getOrCreateInstance(document.getElementById('rev-report-branch-btn'));
+    dd.hide();
+    if (revChartVisible) renderRevChart();
+}
+
+function toggleAllRevBranches(cb) {
+    if (cb.checked) {
+        document.querySelectorAll('.rev-report-branch-cb').forEach(function(c){ c.checked = false; });
+        revBranchIds = [];
+        updateRevBranchBtn();
+        if (revChartVisible) renderRevChart();
+    }
+}
+
+function onRevBranchChange() {
+    var checked = Array.from(document.querySelectorAll('.rev-report-branch-cb:checked'));
+    revBranchIds = checked.map(function(c){ return parseInt(c.value); });
+    var allCb = document.getElementById('rev-report-branch-all-cb');
+    if (allCb) allCb.checked = (revBranchIds.length === 0);
+    updateRevBranchBtn();
+    if (revChartVisible) renderRevChart();
+}
+</script>
+{% endif %}
 <script>
 // ── Day grouping expand/collapse ──────────────────────────────────────────────
 var _expandedDays = {};

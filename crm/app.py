@@ -1432,24 +1432,27 @@ def api_revenue_days():
 def api_fot_summary():
     date_from = request.args.get('date_from', date.today().isoformat())
     date_to   = request.args.get('date_to',   date.today().isoformat())
+    raw_bids  = request.args.get('branch_ids', '')
+    bids      = [int(x) for x in raw_bids.split(',') if x.strip().isdigit()]
+    bf        = f"AND s.branch_id IN ({','.join('?'*len(bids))})" if bids else ''
     with get_db() as conn:
-        rev_row = conn.execute('''
+        rev_row = conn.execute(f'''
             SELECT COALESCE(SUM(r.total_revenue), 0) AS revenue
             FROM shifts s JOIN shift_revenue r ON r.shift_id = s.id
-            WHERE s.date BETWEEN ? AND ?
-        ''', (date_from, date_to)).fetchone()
-        fot_row = conn.execute('''
+            WHERE s.date BETWEEN ? AND ? {bf}
+        ''', [date_from, date_to] + bids).fetchone()
+        fot_row = conn.execute(f'''
             SELECT COALESCE(SUM(es.total_amount), 0) AS fot
             FROM employee_shifts es JOIN shifts s ON s.id = es.shift_id
-            WHERE s.date BETWEEN ? AND ?
-        ''', (date_from, date_to)).fetchone()
-        role_rows = conn.execute('''
+            WHERE s.date BETWEEN ? AND ? {bf}
+        ''', [date_from, date_to] + bids).fetchone()
+        role_rows = conn.execute(f'''
             SELECT es.role_snapshot,
                    COALESCE(SUM(es.total_amount), 0) AS fot
             FROM employee_shifts es JOIN shifts s ON s.id = es.shift_id
-            WHERE s.date BETWEEN ? AND ?
+            WHERE s.date BETWEEN ? AND ? {bf}
             GROUP BY es.role_snapshot ORDER BY fot DESC
-        ''', (date_from, date_to)).fetchall()
+        ''', [date_from, date_to] + bids).fetchall()
     revenue = int(rev_row['revenue'] or 0)
     fot     = int(fot_row['fot'] or 0)
     fot_pct = round(fot / revenue * 100, 1) if revenue > 0 else 0
@@ -1483,21 +1486,24 @@ def api_fot_year():
         start_y -= 1
     date_from = date(start_y, start_m, 1).isoformat()
     date_to   = today.isoformat()
+    raw_bids  = request.args.get('branch_ids', '')
+    bids      = [int(x) for x in raw_bids.split(',') if x.strip().isdigit()]
+    bf        = f"AND s.branch_id IN ({','.join('?'*len(bids))})" if bids else ''
     with get_db() as conn:
-        fot_rows = conn.execute('''
+        fot_rows = conn.execute(f'''
             SELECT CAST(strftime('%Y',s.date) AS INTEGER) AS year,
                    CAST(strftime('%m',s.date) AS INTEGER) AS month,
                    COALESCE(SUM(es.total_amount),0) AS fot
             FROM employee_shifts es JOIN shifts s ON s.id=es.shift_id
-            WHERE s.date BETWEEN ? AND ? GROUP BY year,month
-        ''', (date_from, date_to)).fetchall()
-        rev_rows = conn.execute('''
+            WHERE s.date BETWEEN ? AND ? {bf} GROUP BY year,month
+        ''', [date_from, date_to] + bids).fetchall()
+        rev_rows = conn.execute(f'''
             SELECT CAST(strftime('%Y',s.date) AS INTEGER) AS year,
                    CAST(strftime('%m',s.date) AS INTEGER) AS month,
                    COALESCE(SUM(r.total_revenue),0) AS revenue
             FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id
-            WHERE s.date BETWEEN ? AND ? GROUP BY year,month
-        ''', (date_from, date_to)).fetchall()
+            WHERE s.date BETWEEN ? AND ? {bf} GROUP BY year,month
+        ''', [date_from, date_to] + bids).fetchall()
     fot_map = {(r['year'],r['month']): int(r['fot']) for r in fot_rows}
     rev_map = {(r['year'],r['month']): int(r['revenue']) for r in rev_rows}
     labels  = ['','Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек']
@@ -1521,27 +1527,30 @@ def api_fot_days():
     date_from = request.args.get('date_from', date.today().isoformat())
     date_to   = request.args.get('date_to',   date.today().isoformat())
     role      = request.args.get('role', '')
+    raw_bids  = request.args.get('branch_ids', '')
+    bids      = [int(x) for x in raw_bids.split(',') if x.strip().isdigit()]
+    bf        = f"AND s.branch_id IN ({','.join('?'*len(bids))})" if bids else ''
     with get_db() as conn:
-        rev_rows = conn.execute('''
+        rev_rows = conn.execute(f'''
             SELECT s.date, COALESCE(SUM(r.total_revenue),0) AS revenue
             FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id
-            WHERE s.date BETWEEN ? AND ?
+            WHERE s.date BETWEEN ? AND ? {bf}
             GROUP BY s.date ORDER BY s.date
-        ''', (date_from, date_to)).fetchall()
+        ''', [date_from, date_to] + bids).fetchall()
         if role:
-            fot_rows = conn.execute('''
+            fot_rows = conn.execute(f'''
                 SELECT s.date, COALESCE(SUM(es.total_amount),0) AS fot
                 FROM employee_shifts es JOIN shifts s ON s.id=es.shift_id
-                WHERE s.date BETWEEN ? AND ? AND es.role_snapshot=?
+                WHERE s.date BETWEEN ? AND ? AND es.role_snapshot=? {bf}
                 GROUP BY s.date ORDER BY s.date
-            ''', (date_from, date_to, role)).fetchall()
+            ''', [date_from, date_to, role] + bids).fetchall()
         else:
-            fot_rows = conn.execute('''
+            fot_rows = conn.execute(f'''
                 SELECT s.date, COALESCE(SUM(es.total_amount),0) AS fot
                 FROM employee_shifts es JOIN shifts s ON s.id=es.shift_id
-                WHERE s.date BETWEEN ? AND ?
+                WHERE s.date BETWEEN ? AND ? {bf}
                 GROUP BY s.date ORDER BY s.date
-            ''', (date_from, date_to)).fetchall()
+            ''', [date_from, date_to] + bids).fetchall()
     rev_map = {r['date']: int(r['revenue']) for r in rev_rows}
     fot_map = {r['date']: int(r['fot'])     for r in fot_rows}
     days = []
@@ -1556,7 +1565,10 @@ def api_fot_days():
 @login_required
 @owner_required
 def fot_dashboard():
-    return render_template('fot_dashboard.html')
+    with get_db() as conn:
+        branches = [dict(b) for b in conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()]
+        branch_groups = get_branch_groups(conn)
+    return render_template('fot_dashboard.html', branches=branches, branch_groups=branch_groups)
 
 
 # ─── SHIFTS ───────────────────────────────────────────────────────────────────
@@ -3681,7 +3693,7 @@ def reports():
             branch_filter = ""
 
         shifts_data = conn.execute(f'''
-            SELECT s.date, b.name as branch_name, s.status,
+            SELECT s.date, s.branch_id, b.name as branch_name, s.status,
                    COALESCE(r.total_revenue,0)    as revenue,
                    COALESCE(r.delivery_revenue,0) as delivery,
                    COALESCE(r.pickup_revenue,0)   as pickup,

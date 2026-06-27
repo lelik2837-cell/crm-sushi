@@ -10,7 +10,7 @@
          border-radius:20px; padding:28px 28px 24px; color:#fff; position:relative;">
 
       <!-- Period buttons -->
-      <div style="display:flex; gap:6px; margin-bottom:20px; align-items:center;">
+      <div style="display:flex; gap:6px; margin-bottom:20px; align-items:center; flex-wrap:nowrap;">
         <button onclick="loadFot('today')" data-fp="today" class="fot-pb"
           style="font-size:11px;padding:4px 12px;border-radius:20px;border:1.5px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:#fff;cursor:pointer;font-weight:600;letter-spacing:.3px;transition:all .15s;">Сегодня</button>
         <button onclick="loadFot('month')" data-fp="month" class="fot-pb"
@@ -22,8 +22,42 @@
           <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><path d="M3.5 0a.5.5 0 0 1 .5.5V1h8V.5a.5.5 0 0 1 1 0V1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h1V.5a.5.5 0 0 1 .5-.5zM1 4v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4H1z"/></svg>
         </button>
         <input id="fot-cal-hidden" type="text" style="display:none; position:absolute;">
+        <!-- Branch selector -->
+        <div class="dropdown" style="margin-left:auto; flex-shrink:0; position:relative;">
+          <button id="fot-branch-btn" type="button"
+            data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+            title="Выбор филиалов"
+            style="border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700;border:1.5px solid rgba(255,255,255,.45);background:rgba(255,255,255,.15);color:#fff;cursor:pointer;display:inline-flex;align-items:center;white-space:nowrap;flex-shrink:0;transition:all .15s;height:26px;">
+            <span id="fot-branch-abbr">НК</span>
+          </button>
+          <div class="dropdown-menu p-2 shadow" style="min-width:220px;max-height:320px;overflow-y:auto;">
+            {% if branch_groups %}
+            <div class="text-muted px-1 mb-1" style="font-size:0.7rem;font-weight:600;letter-spacing:.5px;">ГРУППЫ</div>
+            {% for g in branch_groups %}
+            <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1 mb-1"
+                    onclick="selectFotBranchGroup({{ g.branch_ids | tojson }}, '{{ g.name }}')">
+              {{ g.name }} <span class="text-muted">({{ g.branch_ids | length }})</span>
+            </button>
+            {% endfor %}
+            <hr class="dropdown-divider my-1">
+            {% endif %}
+            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2 mb-1" style="cursor:pointer;">
+              <input type="checkbox" id="fot-branch-all-cb" onchange="toggleAllFotBranches(this)">
+              <span class="fw-semibold small">Все филиалы</span>
+            </label>
+            <hr class="dropdown-divider my-1">
+            {% for b in branches %}
+            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+              <input type="checkbox" class="fot-branch-cb" value="{{ b.id }}" onchange="onFotBranchChange()">
+              <span class="fw-semibold" style="font-size:11px;min-width:22px;color:#6c757d;">{{ b.name[:2] }}</span>
+              <span class="small">{{ b.name }}</span>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+        <!-- % toggle -->
         <button id="fot-unit-btn" onclick="toggleUnit()" title="Переключить % / ₽"
-          style="margin-left:auto;width:26px;height:26px;flex-shrink:0;border-radius:50%;border:1.5px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);cursor:pointer;padding:0;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;transition:all .15s;">%</button>
+          style="flex-shrink:0;width:26px;height:26px;border-radius:50%;border:1.5px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);cursor:pointer;padding:0;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;transition:all .15s;">%</button>
       </div>
 
       <!-- Label + big % -->
@@ -96,14 +130,83 @@
 var fotPeriod     = 'month';
 var fotYearChart  = null;
 var fotDayChart   = null;
-var activeRole    = '';          // '' = все роли
+var activeRole    = '';
 var currentDates  = ['', ''];
-var showPct       = true;        // true=%, false=₽
-var lastRoles     = [];          // кэш для перерисовки без запроса
-var lastDays      = [];          // кэш дней для перерисовки графика
+var showPct       = true;
+var lastRoles     = [];
+var lastDays      = [];
 var fotCustomFrom = null;
 var fotCustomTo   = null;
 var fotCalPicker  = null;
+
+var FOT_BRANCHES      = {{ branches | tojson }};
+var FOT_BRANCH_GROUPS = {{ branch_groups | tojson }};
+var fotBranchIds      = [];   // пусто = все филиалы
+
+// Инициализация дефолтной группы НК
+(function() {
+    var nk = FOT_BRANCH_GROUPS.find(function(g) { return g.name === 'НК'; });
+    if (nk && nk.branch_ids && nk.branch_ids.length) {
+        fotBranchIds = nk.branch_ids.slice();
+    }
+    updateFotBranchBtn();
+})();
+
+function getFotBranchParam() {
+    return fotBranchIds.length ? fotBranchIds.join(',') : '';
+}
+
+function _fotBranchSuffix() {
+    var p = getFotBranchParam();
+    return p ? '&branch_ids=' + p : '';
+}
+
+function updateFotBranchBtn() {
+    var el = document.getElementById('fot-branch-abbr');
+    if (!el) return;
+    if (!fotBranchIds.length) { el.textContent = 'Все'; return; }
+    var grp = FOT_BRANCH_GROUPS.find(function(g) {
+        return g.branch_ids.length === fotBranchIds.length &&
+               g.branch_ids.every(function(id) { return fotBranchIds.indexOf(id) >= 0; });
+    });
+    if (grp) { el.textContent = grp.name; return; }
+    var bs = FOT_BRANCHES.filter(function(b) { return fotBranchIds.indexOf(b.id) >= 0; });
+    el.textContent = bs.length <= 2
+        ? bs.map(function(b){ return b.name.slice(0,2); }).join(',')
+        : bs.length + 'фил';
+}
+
+function selectFotBranchGroup(ids, name) {
+    fotBranchIds = ids.slice();
+    document.querySelectorAll('.fot-branch-cb').forEach(function(cb) {
+        cb.checked = ids.indexOf(parseInt(cb.value)) >= 0;
+    });
+    var allCb = document.getElementById('fot-branch-all-cb');
+    if (allCb) allCb.checked = false;
+    updateFotBranchBtn();
+    var dd = bootstrap.Dropdown.getOrCreateInstance(document.getElementById('fot-branch-btn'));
+    dd.hide();
+    loadFot(fotPeriod);
+}
+
+function toggleAllFotBranches(cb) {
+    if (cb.checked) {
+        document.querySelectorAll('.fot-branch-cb').forEach(function(c) { c.checked = false; });
+        fotBranchIds = [];
+        updateFotBranchBtn();
+        loadFot(fotPeriod);
+    }
+}
+
+function onFotBranchChange() {
+    var checked = Array.from(document.querySelectorAll('.fot-branch-cb:checked'));
+    fotBranchIds = checked.map(function(c) { return parseInt(c.value); });
+    var allCb = document.getElementById('fot-branch-all-cb');
+    if (allCb) allCb.checked = (fotBranchIds.length === 0);
+    updateFotBranchBtn();
+    clearTimeout(window._fotBranchTimer);
+    window._fotBranchTimer = setTimeout(function() { loadFot(fotPeriod); }, 300);
+}
 
 function fmtN(n) { return Math.round(n).toLocaleString('ru-RU'); }
 
@@ -266,7 +369,7 @@ function makeFotDayChart(days) {
 }
 
 function loadDayChart(dateFrom, dateTo, role) {
-    var url = '/api/fot-days?date_from='+dateFrom+'&date_to='+dateTo+(role?'&role='+role:'');
+    var url = '/api/fot-days?date_from='+dateFrom+'&date_to='+dateTo+(role?'&role='+role:'')+_fotBranchSuffix();
     fetch(url).then(function(r){return r.json();}).then(function(d){
         if (!d.ok || !d.days.length) return;
         makeFotDayChart(d.days);
@@ -325,7 +428,7 @@ function showMonthDetail(m) {
     document.getElementById('rs-fot-pct').textContent   = m.fot_pct+'% от выручки';
     document.getElementById('rs-revenue').textContent   = fmtN(m.revenue)+' ₽';
 
-    fetch('/api/fot-summary?date_from='+dateFrom+'&date_to='+dateTo)
+    fetch('/api/fot-summary?date_from='+dateFrom+'&date_to='+dateTo+_fotBranchSuffix())
         .then(function(r){return r.json();})
         .then(function(d){
             if (!d.ok) return;
@@ -354,7 +457,8 @@ function loadFot(period) {
         pctBig.textContent      = '—';
         subEl.textContent       = 'нажмите на столбец';
         if (monthDet) monthDet.style.display = 'none';
-        fetch('/api/fot-year').then(function(r){return r.json();}).then(function(d){
+        var yp = getFotBranchParam() ? '?branch_ids='+getFotBranchParam() : '';
+        fetch('/api/fot-year'+yp).then(function(r){return r.json();}).then(function(d){
             if (!d.ok) return;
             makeFotYearChart(d.months);
         });
@@ -369,7 +473,7 @@ function loadFot(period) {
     var dates = getDates(fotPeriod);
     currentDates = dates;
 
-    fetch('/api/fot-summary?date_from='+dates[0]+'&date_to='+dates[1])
+    fetch('/api/fot-summary?date_from='+dates[0]+'&date_to='+dates[1]+_fotBranchSuffix())
         .then(function(r){return r.json();})
         .then(function(d){
             if (!d.ok) return;
