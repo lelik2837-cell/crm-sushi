@@ -49,7 +49,7 @@
             {% for b in branches %}
             <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
               <input type="checkbox" class="fot-branch-cb" value="{{ b.id }}" onchange="onFotBranchChange()">
-              <span class="fw-semibold" style="font-size:11px;min-width:22px;color:#6c757d;">{{ b.abbr if b.abbr else b.name[:3].upper() }}</span>
+              <span class="fw-semibold d-lg-none" style="font-size:11px;min-width:22px;color:#6c757d;">{{ b.abbr if b.abbr else b.name[:3].upper() }}</span>
               <span class="small">{{ b.name }}</span>
             </label>
             {% endfor %}
@@ -161,6 +161,8 @@ function _fotBranchSuffix() {
     return p ? '&branch_ids=' + p : '';
 }
 
+function _fotIsDesktop() { return window.innerWidth >= 992; }
+
 function updateFotBranchBtn() {
     var el = document.getElementById('fot-branch-abbr');
     if (!el) return;
@@ -169,11 +171,18 @@ function updateFotBranchBtn() {
         return g.branch_ids.length === fotBranchIds.length &&
                g.branch_ids.every(function(id) { return fotBranchIds.indexOf(id) >= 0; });
     });
-    if (grp) { el.textContent = grp.name; return; }
+    if (grp) {
+        el.textContent = _fotIsDesktop() ? grp.name : (grp.abbr || grp.name);
+        return;
+    }
     var bs = FOT_BRANCHES.filter(function(b) { return fotBranchIds.indexOf(b.id) >= 0; });
-    el.textContent = bs.length <= 2
-        ? bs.map(function(b){ return b.name.slice(0,2); }).join(',')
-        : bs.length + 'фил';
+    if (_fotIsDesktop()) {
+        el.textContent = bs.length === 1 ? bs[0].name : bs.length + ' филиалов';
+    } else {
+        el.textContent = bs.length <= 2
+            ? bs.map(function(b){ return b.abbr || b.name.slice(0,3); }).join(',')
+            : bs.length + 'фил';
+    }
 }
 
 function selectFotBranchGroup(ids, name) {

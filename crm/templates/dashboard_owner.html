@@ -44,7 +44,7 @@
             {% for b in branches %}
             <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
               <input type="checkbox" class="dash-branch-cb" value="{{ b.id }}" onchange="onDashBranchChange()">
-              <span class="fw-bold" style="font-size:11px;min-width:26px;color:#6c757d;">{{ b.abbr or b.name[:3].upper() }}</span>
+              <span class="fw-bold d-lg-none" style="font-size:11px;min-width:26px;color:#6c757d;">{{ b.abbr or b.name[:3].upper() }}</span>
               <span class="small">{{ b.name }}</span>
             </label>
             {% endfor %}
@@ -409,6 +409,8 @@ function _revBranchSuffix() {
     return revBranchIds.length ? '&branch_ids=' + revBranchIds.join(',') : '';
 }
 
+function _dashIsDesktop() { return window.innerWidth >= 992; }
+
 function updateDashBranchBtn() {
     var btn = document.getElementById('dash-branch-abbr');
     if (!btn) return;
@@ -418,15 +420,23 @@ function updateDashBranchBtn() {
         return g.branch_ids.length === ids.length &&
                g.branch_ids.every(function(id) { return ids.indexOf(id) !== -1; });
     });
-    if (grp) { btn.textContent = grp.abbr || grp.name; return; }
-    if (ids.length <= 2) {
-        var abbrs = ids.map(function(id) {
-            var b = DASH_BRANCHES.find(function(x){ return x.id === id; });
-            return b ? b.abbr : id;
-        });
-        btn.textContent = abbrs.join(',');
+    if (grp) {
+        btn.textContent = _dashIsDesktop() ? grp.name : (grp.abbr || grp.name);
+        return;
+    }
+    if (_dashIsDesktop()) {
+        var b1 = DASH_BRANCHES.find(function(x){ return x.id === ids[0]; });
+        btn.textContent = ids.length === 1 && b1 ? b1.name : ids.length + ' филиалов';
     } else {
-        btn.textContent = ids.length + 'фил';
+        if (ids.length <= 2) {
+            var abbrs = ids.map(function(id) {
+                var b = DASH_BRANCHES.find(function(x){ return x.id === id; });
+                return b ? (b.abbr || b.name.slice(0,3)) : id;
+            });
+            btn.textContent = abbrs.join(',');
+        } else {
+            btn.textContent = ids.length + 'фил';
+        }
     }
 }
 

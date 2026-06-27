@@ -162,7 +162,7 @@
                     {% for b in branches %}
                     <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
                         <input type="checkbox" class="rev-report-branch-cb" value="{{ b.id }}" onchange="onRevBranchChange()">
-                        <span class="fw-semibold" style="font-size:11px;min-width:22px;color:#6c757d;">{{ b.abbr if b.abbr else b.name[:3].upper() }}</span>
+                        <span class="fw-semibold d-lg-none" style="font-size:11px;min-width:22px;color:#6c757d;">{{ b.abbr if b.abbr else b.name[:3].upper() }}</span>
                         <span class="small">{{ b.name }}</span>
                     </label>
                     {% endfor %}
@@ -602,16 +602,21 @@ var revChartVisible   = false;
     updateRevBranchBtn();
 })();
 
+function _repIsDesktop() { return window.innerWidth >= 992; }
+
 function _revBranchLabel() {
     if (!revBranchIds.length) return 'Все';
     var grp = REV_BRANCH_GROUPS.find(function(g) {
         return g.branch_ids.length === revBranchIds.length &&
                g.branch_ids.every(function(id) { return revBranchIds.indexOf(id) >= 0; });
     });
-    if (grp) return grp.name;
+    if (grp) return _repIsDesktop() ? grp.name : (grp.abbr || grp.name);
     var bs = REV_BRANCHES.filter(function(b) { return revBranchIds.indexOf(b.id) >= 0; });
+    if (_repIsDesktop()) {
+        return bs.length === 1 ? bs[0].name : bs.length + ' филиалов';
+    }
     return bs.length <= 2
-        ? bs.map(function(b){ return b.name.slice(0,2); }).join(',')
+        ? bs.map(function(b){ return b.abbr || b.name.slice(0,3); }).join(',')
         : bs.length + 'фил';
 }
 
