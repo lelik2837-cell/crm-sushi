@@ -9,8 +9,8 @@
     <div id="rev-card" style="background:linear-gradient(135deg,#4f46e5 0%,#7c3aed 60%,#9333ea 100%); border-radius:20px; padding:28px 28px 24px; color:#fff; position:relative;">
       <!-- Period buttons -->
       <div style="display:flex; gap:6px; margin-bottom:20px; align-items:center;">
-        <button onclick="loadRevCard('today')" data-rp="today" class="rev-period-btn rev-period-active" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.9); background:rgba(255,255,255,.25); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Сегодня</button>
-        <button onclick="loadRevCard('month')" data-rp="month" class="rev-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Месяц</button>
+        <button onclick="loadRevCard('today')" data-rp="today" class="rev-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Сегодня</button>
+        <button onclick="loadRevCard('month')" data-rp="month" class="rev-period-btn rev-period-active" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.9); background:rgba(255,255,255,.25); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Месяц</button>
         <button onclick="loadRevCard('year')"  data-rp="year"  class="rev-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Год</button>
         <button id="rev-cal-btn" onclick="toggleCalendar()" title="Выбрать период" style="width:26px; height:26px; flex-shrink:0; border-radius:50%; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); cursor:pointer; padding:0; display:inline-flex; align-items:center; justify-content:center; transition:all .15s;">
           <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><path d="M3.5 0a.5.5 0 0 1 .5.5V1h8V.5a.5.5 0 0 1 1 0V1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h1V.5a.5.5 0 0 1 .5-.5zM1 4v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4H1z"/></svg>
@@ -786,6 +786,9 @@ function loadRevCard(period) {
         });
 }
 
-loadRevCard('today');
+loadRevCard('month');
+if (window.matchMedia('(min-width: 992px)').matches) {
+    toggleDayChart();
+}
 </script>
 {% endblock %}
