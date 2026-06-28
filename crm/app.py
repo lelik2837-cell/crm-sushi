@@ -7111,13 +7111,24 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
             actual_cash = _xf(r[3])
         if r[1] == 'Смену закрыл(а):':
             closed_by_name = str(r[4]).strip() if r[4] else None
-    for r in rows[28:32]:
-        code = r[4]
-        amt  = r[6]
-        if code is not None and _xf(amt) > 0:
-            c = str(code).strip()
-            if c:
-                terminal_codes.append(c)
+    # Терминалы: E29:F35 — номера (cols 4,5), G29:H35 — суммы (cols 6,7); rows 28-34
+    terminal_entries = []  # list of (code, amount)
+    for r in rows[28:35]:
+        if len(r) < 7:
+            continue
+        # Слот 1: E (col 4) + G (col 6)
+        code1 = str(r[4]).strip() if r[4] is not None and str(r[4]).strip() else None
+        amt1  = _xf(r[6])
+        if code1 and amt1 > 0:
+            terminal_entries.append((code1, amt1))
+            terminal_codes.append(code1)
+        # Слот 2: F (col 5) + H (col 7)
+        code2 = str(r[5]).strip() if len(r) > 5 and r[5] is not None and str(r[5]).strip() else None
+        amt2  = _xf(r[7]) if len(r) > 7 else 0.0
+        if code2 and amt2 > 0:
+            terminal_entries.append((code2, amt2))
+            terminal_codes.append(code2)
+    terminal_amount = sum(a for _, a in terminal_entries)
 
     morning_cash  = _xf(rows[2][3]) if len(rows) > 2 else 0.0
     change_amount = _xf(rows[30][3]) if len(rows) > 30 else 0.0
@@ -7152,6 +7163,15 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
              online_amount, ','.join(terminal_codes), terminal_amount, actual_cash,
              change_amount, plus_amount, morning_cash)
         )
+
+    # Терминалы → shift_terminals
+    if terminal_entries and not conn.execute(
+            "SELECT id FROM shift_terminals WHERE shift_id=?", (shift_id,)).fetchone():
+        for si, (tn, ta) in enumerate(terminal_entries):
+            conn.execute(
+                "INSERT INTO shift_terminals (shift_id, terminal_number, amount, sort_order) VALUES (?,?,?,?)",
+                (shift_id, tn, ta, si)
+            )
 
     # Плюсы в кассу: D29=масло, D30=рыба, C33:C36=комментарий, D33:D36=сумма
     if not conn.execute("SELECT id FROM cash_plus_entries WHERE shift_id=?", (shift_id,)).fetchone():
