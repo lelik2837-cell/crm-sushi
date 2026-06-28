@@ -443,7 +443,7 @@
       </div>
       <div id="plus-body">
       {% for p in plus_entries %}
-      <div class="expense-row" data-id="{{ p.id }}">
+      <div class="expense-row" data-id="{{ p.id }}" data-amount="{{ p.amount|int }}">
         {% if can_edit %}
         <div class="expense-row-main plus-grid">
           <select class="field-select field-input-sm plus-cat" style="font-size:12px; padding:5px 24px 5px 8px;">
@@ -922,7 +922,8 @@ function updateKassa() {
   // Плюсы в кассу (всегда наличные)
   let plusCash = 0;
   document.querySelectorAll('#plus-body [data-id]').forEach(row => {
-    plusCash += readNum(row.querySelector('.plus-amount'));
+    const inp = row.querySelector('.plus-amount');
+    plusCash += inp ? readNum(inp) : (parseFloat(row.dataset.amount) || 0);
   });
 
   // Итого нал = утром в кассе + выручка нал + размен + плюсы − расходы нал − ФОТ
