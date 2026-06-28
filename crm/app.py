@@ -7099,10 +7099,10 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
             if c:
                 terminal_codes.append(c)
 
-    # D3 = утром в кассе, D31 = размен (change_amount), D33:D36 = плюсы в кассу (plus_amount)
     morning_cash  = _xf(rows[2][3]) if len(rows) > 2 else 0.0
     change_amount = _xf(rows[30][3]) if len(rows) > 30 else 0.0
-    plus_amount   = sum(_xf(rows[i][3]) for i in range(32, 36) if len(rows) > i)
+    # D29=масло, D30=рыба, D33:D36=другие плюсы
+    plus_amount   = sum(_xf(rows[i][3]) for i in ([28, 29] + list(range(32, 36))) if len(rows) > i)
 
     existing = conn.execute(
         "SELECT id FROM shifts WHERE branch_id=? AND date=?",
