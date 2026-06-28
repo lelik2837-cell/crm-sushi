@@ -7051,9 +7051,27 @@ def _xt(t):
 
 
 def _xts(t):
-    from datetime import time as _t
+    from datetime import time as _t, datetime as _dt
+    if t is None:
+        return None
     if isinstance(t, _t):
         return f"{t.hour:02d}:{t.minute:02d}"
+    if isinstance(t, _dt):
+        return f"{t.hour:02d}:{t.minute:02d}"
+    if isinstance(t, float):
+        # Excel stores time as fraction of day: 0.5 = 12:00
+        total_min = round(t * 24 * 60)
+        h, m = divmod(total_min, 60)
+        h = h % 24
+        return f"{h:02d}:{m:02d}"
+    if isinstance(t, str):
+        t = t.strip()
+        if ':' in t:
+            parts = t.split(':')
+            try:
+                return f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+            except (ValueError, IndexError):
+                pass
     return None
 
 
@@ -7240,16 +7258,26 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
         )
         stats['employee_shifts'] += 1
 
-    # Время курьеров: (строка_старт, кол_старт, строка_конец, кол_конец) — 0-индексация
-    # M=12, R=17, V=21; строки 26,27 → idx 25,26; строки 76,77 → idx 75,76
+    # Время курьеров: (строка_старт, кол_час, кол_мин, строка_конец, кол_час, кол_мин)
+    # M=12,N=13; R=17,S=18; V=21,W=22; строки 26,27→idx 25,26; 76,77→idx 75,76
     _COURIER_TIMES = [
-        (25, 12, 26, 12),  # Курьер 1: M26:N26 старт, M27:N27 конец
-        (25, 17, 26, 17),  # Курьер 2: R26:S26 старт, R27:S27 конец
-        (25, 21, 26, 21),  # Курьер 3: V26:W26 старт, V27:W27 конец
-        (75, 12, 76, 12),  # Курьер 4: M76:N76 старт, M77:N77 конец
-        (75, 17, 76, 17),  # Курьер 5: R76:S76 старт, R77:S77 конец
-        (75, 21, 76, 21),  # Курьер 6: V76:W76 старт, V77:W77 конец
+        (25, 12, 13, 26, 12, 13),  # Курьер 1: M26=ч, N26=м старт; M27=ч, N27=м конец
+        (25, 17, 18, 26, 17, 18),  # Курьер 2: R26=ч, S26=м старт; R27=ч, S27=м конец
+        (25, 21, 22, 26, 21, 22),  # Курьер 3: V26=ч, W26=м старт; V27=ч, W27=м конец
+        (75, 12, 13, 76, 12, 13),  # Курьер 4: M76=ч, N76=м старт; M77=ч, N77=м конец
+        (75, 17, 18, 76, 17, 18),  # Курьер 5: R76=ч, S76=м старт; R77=ч, S77=м конец
+        (75, 21, 22, 76, 21, 22),  # Курьер 6: V76=ч, W76=м старт; V77=ч, W77=м конец
     ]
+
+    def _read_hm(row_idx, col_h, col_m):
+        if len(rows) <= row_idx:
+            return None
+        r = rows[row_idx]
+        h = int(_xf(r[col_h])) if len(r) > col_h and r[col_h] is not None else None
+        m = int(_xf(r[col_m])) if len(r) > col_m and r[col_m] is not None else 0
+        if h is None:
+            return None
+        return f"{h:02d}:{m:02d}"
 
     for ci, r in enumerate(rows[2:8]):
         name = r[10]
@@ -7269,11 +7297,9 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
         rate_km  = round(km_pay / km, 2) if km > 0 else 10.0
         rate_ord = round(ord_pay / orders, 2) if orders > 0 else 100.0
         rate_hr  = round(hrs_pay / hours, 2) if hours > 0 else 0.0
-        sr, sc, er, ec = _COURIER_TIMES[ci]
-        raw_s = rows[sr][sc] if len(rows) > sr and len(rows[sr]) > sc else None
-        raw_e = rows[er][ec] if len(rows) > er and len(rows[er]) > ec else None
-        start = _xts(raw_s)
-        end   = _xts(raw_e)
+        sr, sh, sm, er, eh, em = _COURIER_TIMES[ci]
+        start = _read_hm(sr, sh, sm)
+        end   = _read_hm(er, eh, em)
         emp_id = get_or_create(name, 'courier', rate_hr)
         add_shift(emp_id, name, 'courier', rate_hr,
                   hours=hours, km=km, orders=orders,
