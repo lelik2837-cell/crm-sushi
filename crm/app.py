@@ -51,18 +51,18 @@ ROLE_LABELS = {
 
 # Hardcoded defaults — seeded into DB on first run
 _DEFAULT_EXPENSE_CATEGORIES = [
-    ('repair_plumbing', 'Ремонт сантех.',       'expense', 1),
-    ('repair_grease',   'Чистка жироуловителя', 'expense', 2),
-    ('repair_electric', 'Ремонт электрика',     'expense', 3),
-    ('repair_fridge',   'Ремонт холод.оборуд.', 'expense', 4),
-    ('repair_other',    'Ремонт другой',        'expense', 5),
-    ('shop',            'Магазин / Аптека',     'expense', 6),
-    ('taxi',            'Такси',                'expense', 7),
-    ('cash_plus',       'Плюсы в кассу',        'income',  8),
-    ('oil',             'За масло отработанное','income',  9),
-    ('fish',            'Рыба (головы, хребты)','income',  10),
-    ('change',          'Размен внёс Алексей',  'income',  11),
-    ('other',           'Другое',               'expense', 12),
+    ('repair_plumbing', 'Ремонт сантех.', 1),
+    ('repair_grease', 'Чистка жироуловителя', 2),
+    ('repair_electric', 'Ремонт электрика', 3),
+    ('repair_fridge', 'Ремонт холод.оборуд.', 4),
+    ('repair_other', 'Ремонт другой', 5),
+    ('shop', 'Магазин / Аптека', 6),
+    ('taxi', 'Такси', 7),
+    ('cash_plus', 'Плюсы в кассу', 8),
+    ('oil', 'За масло отработанное', 9),
+    ('fish', 'Рыба (головы, хребты)', 10),
+    ('change', 'Размен внёс Алексей', 11),
+    ('other', 'Другое', 12),
 ]
 
 ACTION_LABELS = {
@@ -682,10 +682,10 @@ def init_db():
         # Seed expense categories
         existing = conn.execute("SELECT COUNT(*) FROM expense_categories").fetchone()[0]
         if existing == 0:
-            for code, label, cat_type, sort in _DEFAULT_EXPENSE_CATEGORIES:
+            for code, label, sort in _DEFAULT_EXPENSE_CATEGORIES:
                 conn.execute(
-                    "INSERT OR IGNORE INTO expense_categories (code, label, type, sort_order) VALUES (?,?,?,?)",
-                    (code, label, cat_type, sort)
+                    "INSERT OR IGNORE INTO expense_categories (code, label, sort_order) VALUES (?,?,?)",
+                    (code, label, sort)
                 )
 
             conn.execute('''CREATE TABLE IF NOT EXISTS contractor_categories (
@@ -7080,56 +7080,29 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
     online_amount = _xf(rows[6][3]) if len(rows) > 6 else 0
     pickup_ord    = int(_xf(rows[6][6])) if len(rows) > 6 else 0
 
-    actual_cash    = 0.0
-    closed_by_name = None
+    terminal_amount = 0.0
+    terminal_codes  = []
+    actual_cash     = 0.0
+    closed_by_name  = None
     for r in rows[25:]:
-        if len(r) > 3 and r[1] == 'Факт в кассе:':
+        if r[4] == 'По терминалам:' and r[6] is not None:
+            terminal_amount = _xf(r[6])
+        if r[1] == 'Факт в кассе:':
             actual_cash = _xf(r[3])
-        if len(r) > 4 and r[1] == 'Смену закрыл(а):':
+        if r[1] == 'Смену закрыл(а):':
             closed_by_name = str(r[4]).strip() if r[4] else None
+    for r in rows[28:32]:
+        code = r[4]
+        amt  = r[6]
+        if code is not None and _xf(amt) > 0:
+            c = str(code).strip()
+            if c:
+                terminal_codes.append(c)
 
-    # Terminals: E29:F35 = numbers (cols 4,5), G29:H35 = amounts (cols 6,7)
-    terminal_amount  = 0.0
-    terminal_codes   = []
-    terminal_entries = []
-    for r in rows[28:35]:
-        if len(r) < 7:
-            continue
-        code1 = str(r[4]).strip() if r[4] is not None and str(r[4]).strip() else None
-        amt1  = _xf(r[6])
-        if code1 and amt1 > 0:
-            terminal_entries.append((code1, amt1))
-            terminal_amount += amt1
-            terminal_codes.append(code1)
-        code2 = str(r[5]).strip() if len(r) > 5 and r[5] is not None and str(r[5]).strip() else None
-        amt2  = _xf(r[7]) if len(r) > 7 else 0.0
-        if code2 and amt2 > 0:
-            terminal_entries.append((code2, amt2))
-            terminal_amount += amt2
-            terminal_codes.append(code2)
-
+    # D3 = утром в кассе, D31 = размен (change_amount), D33:D36 = плюсы в кассу (plus_amount)
     morning_cash  = _xf(rows[2][3]) if len(rows) > 2 else 0.0
     change_amount = _xf(rows[30][3]) if len(rows) > 30 else 0.0
-
-    # Plus entries: D29=масло, D30=рыба, D33:D36 with B33:B36 comments
-    # plus_entries_import: list of (category_code, description, amount)
-    plus_entries_import = []
-    if len(rows) > 28:
-        amt = _xf(rows[28][3])
-        if amt > 0:
-            plus_entries_import.append(('oil', '', amt))
-    if len(rows) > 29:
-        amt = _xf(rows[29][3])
-        if amt > 0:
-            plus_entries_import.append(('fish', '', amt))
-    for i in range(32, 36):
-        if len(rows) <= i:
-            break
-        amt  = _xf(rows[i][3])                                   # D col — сумма
-        desc = str(rows[i][2]).strip() if rows[i][2] else ''     # C col — комментарий
-        if amt > 0:
-            plus_entries_import.append(('cash_plus', desc, amt))
-    plus_amount = sum(e[2] for e in plus_entries_import)
+    plus_amount   = sum(_xf(rows[i][3]) for i in range(32, 36) if len(rows) > i)
 
     existing = conn.execute(
         "SELECT id FROM shifts WHERE branch_id=? AND date=?",
@@ -7160,41 +7133,8 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
              change_amount, plus_amount, morning_cash)
         )
 
-    if plus_entries_import and not conn.execute(
-            "SELECT id FROM cash_plus_entries WHERE shift_id=?", (shift_id,)).fetchone():
-        for pcat, pdesc, pamt in plus_entries_import:
-            conn.execute(
-                "INSERT INTO cash_plus_entries (shift_id, amount, amount_cash, category, description) VALUES (?,?,?,?,?)",
-                (shift_id, pamt, pamt, pcat, pdesc)
-            )
-
-    if terminal_entries and not conn.execute(
-            "SELECT id FROM shift_terminals WHERE shift_id=?", (shift_id,)).fetchone():
-        for si, (tn, ta) in enumerate(terminal_entries):
-            conn.execute(
-                "INSERT INTO shift_terminals (shift_id, terminal_number, amount, sort_order) VALUES (?,?,?,?)",
-                (shift_id, tn, ta, si)
-            )
-
-    # Repairs (rows 9-13 = Excel 10-14): amount from col B (idx 1), comment from col D (idx 3)
-    _repair_row_cats = [
-        'repair_plumbing', 'repair_grease', 'repair_electric', 'repair_fridge', 'repair_other'
-    ]
-    for ri, cat in enumerate(_repair_row_cats, start=9):
-        if ri >= len(rows):
-            break
-        r   = rows[ri]
-        amt = _xf(r[1]) if len(r) > 1 else 0.0
-        desc = str(r[3]).strip() if len(r) > 3 and r[3] else None
-        if amt > 0:
-            conn.execute(
-                "INSERT INTO expenses (shift_id,category,description,amount_cash,amount_card,is_gulash) VALUES (?,?,?,?,?,?)",
-                (shift_id, cat, desc, amt, 0, 0)
-            )
-            stats['expenses'] += 1
-
     cur_cat = None
-    for r in rows[14:20]:
+    for r in rows[9:20]:
         cat_str = r[1]
         if cat_str and isinstance(cat_str, str) and cat_str in _XL_CAT_MAP:
             cur_cat = _XL_CAT_MAP[cat_str]
@@ -7202,8 +7142,8 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
             continue
         cash_e = _xf(r[5])
         card_e = _xf(r[6])
-        desc   = str(r[2]).strip() if len(r) > 2 and r[2] and str(r[2]).strip() else None
-        gulash = 1 if len(r) > 7 and r[7] is True else 0
+        desc   = str(r[2]).strip() if r[2] and str(r[2]).strip() else None
+        gulash = 1 if r[7] is True else 0
         if cash_e > 0 or card_e > 0:
             conn.execute(
                 "INSERT INTO expenses (shift_id,category,description,amount_cash,amount_card,is_gulash) VALUES (?,?,?,?,?,?)",
@@ -7211,30 +7151,16 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
             )
             stats['expenses'] += 1
 
-    # Taxi (rows 21-26 = Excel 22-27): addr=C+D+E, card=F, cash=G, gulyash=H → taxi_trips
-    if not conn.execute("SELECT id FROM taxi_trips WHERE shift_id=?", (shift_id,)).fetchone():
-        for r in rows[21:27]:
-            if not r or len(r) < 7:
-                continue
-            parts = [str(r[ci]).strip() for ci in [2, 3, 4] if len(r) > ci and r[ci] is not None and str(r[ci]).strip()]
-            addr = ' '.join(parts) if parts else None
-            if not addr:
-                continue
-            card_t   = _xf(r[5])
-            cash_t   = _xf(r[6])
-            gulash_t = 1 if len(r) > 7 and r[7] else 0
-            if cash_t <= 0 and card_t <= 0:
-                continue
-            pay_type = 'cash' if cash_t > 0 else 'card'
-            amount   = cash_t if cash_t > 0 else card_t
+    for r in rows[21:24]:
+        desc = str(r[2]).strip() if r[2] else None
+        if not desc or r[1] == 'ТАКСИ':
+            continue
+        cash_t = _xf(r[6])
+        card_t = _xf(r[5])
+        if cash_t > 0 or card_t > 0:
             conn.execute(
-                "INSERT INTO taxi_trips (shift_id, amount, payment_type, in_gulyash) VALUES (?,?,?,?)",
-                (shift_id, amount, pay_type, gulash_t)
-            )
-            trip_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-            conn.execute(
-                "INSERT INTO taxi_trip_employees (trip_id, name_snapshot, address_snapshot) VALUES (?,?,?)",
-                (trip_id, '—', addr)
+                "INSERT INTO expenses (shift_id,category,description,amount_cash,amount_card,is_gulash) VALUES (?,?,?,?,?,?)",
+                (shift_id, 'taxi', desc, cash_t, card_t, 0)
             )
             stats['expenses'] += 1
 
