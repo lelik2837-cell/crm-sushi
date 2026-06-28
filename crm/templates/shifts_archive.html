@@ -154,7 +154,11 @@
                         {{ "{:,.0f}".format(kassa).replace(',', ' ') }}&nbsp;₽
                     </td>
                     <td class="text-end fw-semibold">
-                        {{ "{:,.0f}".format(kassa).replace(',', ' ') }}&nbsp;₽
+                        {% if s.actual_cash is not none %}
+                            {{ "{:,.0f}".format(s.actual_cash | int).replace(',', ' ') }}&nbsp;₽
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
                     </td>
                     <td class="text-end fw-semibold">
                         {% if diff is not none %}
