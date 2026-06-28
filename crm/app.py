@@ -2656,6 +2656,7 @@ def _export_shift_to_gdrive_xlsx(shift_id):
             bonus_val = (s['bonus_amount'] or 0) - (s['penalty_amount'] or 0)
             base_pay  = s['base_pay'] or 0
             w(r, 11, s['full_name_snapshot'])
+            w(r, 12, s['role_snapshot'])              # L = роль (для корректного реимпорта)
             w(r, 13, s['rate_snapshot'] or 0)        # M = ставка
             if s['shift_start']:
                 w(r, 14, s['shift_start'])            # N = начало
@@ -7489,11 +7490,16 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
         total = _xf(r[21])
         if total == 0:
             continue
-        # Роль определяется по позиции строки, не по метке в колонке L:
-        # idx 9-13  (Excel 10-14) = администраторы и упаковщики → admin
-        # idx 14-20 (Excel 15-21) = сушисты → sushi
+        # Роль: сначала проверяем колонку L (записывается при экспорте из CRM),
+        # иначе определяем по позиции строки
+        # idx 9-13  (Excel 10-14) = по умолчанию admin
+        # idx 14-20 (Excel 15-21) = по умолчанию sushi
+        _VALID_ROLES = {'admin', 'cook', 'sushi', 'packer', 'cleaner', 'courier'}
+        l_role = str(r[11]).strip().lower() if len(r) > 11 and r[11] else ''
         if name == 'Уборщица':
             role = 'cleaner'
+        elif l_role in _VALID_ROLES:
+            role = l_role
         elif row_idx <= 13:
             role = 'admin'
         else:
