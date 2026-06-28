@@ -719,6 +719,21 @@
     </div>
   </div>
 
+  {# Catch-all: записи с нераспознанной ролью (обычно результат ошибки импорта) #}
+  {% set _known_roles = ['admin','cook','sushi','packer','cleaner','courier'] %}
+  {% set _orphans = [] %}
+  {% for s in staff %}{% if s.role_snapshot not in _known_roles %}{% if _orphans.append(s) %}{% endif %}{% endif %}{% endfor %}
+  {% if _orphans %}
+  <div class="s-card" style="border:2px solid #fca5a5;">
+    <div class="s-card-header"><div class="s-card-title" style="color:#b91c1c;">⚠️ Другие роли (невидимые записи)</div></div>
+    <div class="s-card-body">
+      <div style="font-size:12px;color:#b91c1c;margin-bottom:8px;">Эти записи есть в базе, но не показываются ни в одном разделе из-за неизвестной роли. Удалите их и добавьте сотрудника заново.</div>
+      {{ staff_cols() }}
+      {% for s in _orphans %}{{ staff_row_tpl(s) }}{% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
 </div><!-- /col-right -->
 </div><!-- /grid-main -->
 </div><!-- /page-body -->
@@ -1388,7 +1403,12 @@ function _postStaff(empId, name, role, rate, rateKm) {
       base_pay: defBase, total_amount: defBase, is_paid: false, paid_amount: 0
     })
   }).then(r => r.json()).then(d => {
-    if (d.error === 'duplicate') { alert(name + ' уже добавлен в эту смену'); return; }
+    if (d.error === 'duplicate') {
+      const ROLE_LABELS = {admin:'Админ',cook:'Повар',sushi:'Сушист',packer:'Упаковщик',cleaner:'Уборщица',courier:'Курьер'};
+      const where = d.existing_role ? (' (записан как: ' + (ROLE_LABELS[d.existing_role] || d.existing_role || 'неизвестная роль') + ')') : '';
+      alert(name + ' уже есть в этой смене' + where + '. Если не видно в списке — прокрутите страницу вниз до секции «Другие роли» и удалите там.');
+      return;
+    }
     if (d.ok) location.reload();
   });
 }

@@ -2101,11 +2101,12 @@ def save_staff(shift_id):
             emp_id = data.get('employee_id')
             if emp_id:
                 already = conn.execute(
-                    'SELECT id FROM employee_shifts WHERE shift_id=? AND employee_id=?',
+                    'SELECT id, role_snapshot FROM employee_shifts WHERE shift_id=? AND employee_id=?',
                     (shift_id, emp_id)
                 ).fetchone()
                 if already:
-                    return jsonify({'ok': False, 'error': 'duplicate'}), 200
+                    existing_role = already['role_snapshot'] or ''
+                    return jsonify({'ok': False, 'error': 'duplicate', 'existing_role': existing_role}), 200
             rate = _f(data, 'rate_snapshot')
             rate_km = _f(data, 'rate_per_km_snapshot')
             rate_ord = _f(data, 'rate_per_order_snapshot')
