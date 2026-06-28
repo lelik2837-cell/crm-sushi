@@ -933,9 +933,9 @@ function updateKassa() {
     if (pay === 'cash') taxiCash += readNum(block.querySelector('.taxi-amount-input'));
   });
 
-  // Итого нал = утром в кассе + выручка нал + размен + плюсы + такси нал − расходы нал − ФОТ
+  // Итого нал = утром в кассе + выручка нал + размен + плюсы − такси нал − расходы нал − ФОТ
   const changeAmt   = parseFloat(document.getElementById('change-amount-val')?.value || 0) || 0;
-  const kassaNal    = morningCash + cashIn + changeAmt + plusCash + taxiCash - expCash - paidSalary;
+  const kassaNal    = morningCash + cashIn + changeAmt + plusCash - taxiCash - expCash - paidSalary;
   const kassaBeznal = cardIn; // только карта, без онлайн
   const fmt = n => Math.round(n).toLocaleString('ru-RU') + ' ₽';
   document.getElementById('kassa-nал').textContent = fmt(kassaNal);
