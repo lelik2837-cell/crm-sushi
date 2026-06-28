@@ -1670,6 +1670,16 @@ def fot_dashboard():
     return render_template('fot_dashboard.html', branches=branches, branch_groups=branch_groups)
 
 
+@app.route('/lfl')
+@login_required
+@owner_required
+def lfl_dashboard():
+    with get_db() as conn:
+        branches = [dict(b) for b in conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()]
+        branch_groups = get_branch_groups(conn)
+    return render_template('lfl_dashboard.html', branches=branches, branch_groups=branch_groups)
+
+
 # ─── SHIFTS ───────────────────────────────────────────────────────────────────
 
 @app.route('/shift/open', methods=['POST'])
