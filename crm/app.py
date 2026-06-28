@@ -7290,29 +7290,41 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
                     (shift_id, amt, amt, 'cash_plus', desc)
                 )
 
-    # Расходы (rows 9-19 = Excel 10-20): категория из col B через _XL_CAT_MAP или 'стаф' в C:E/B
-    cur_cat = None
-    for ri, r in enumerate(rows[9:20]):
-        cat_str = r[1] if len(r) > 1 else None
-        if cat_str and isinstance(cat_str, str) and cat_str.strip():
-            s = cat_str.strip()
-            if s in _XL_CAT_MAP:
-                cur_cat = _XL_CAT_MAP[s]
-            elif 'стаф' in s.lower():
-                cur_cat = 'staff'
-        # Для строк 14-19 (Excel 15-20) без метки в B — дефолт shop
-        if cur_cat is None and ri >= 5:
-            cur_cat = 'shop'
-        if cur_cat is None:
+    # Расходы:
+    # Ремонт — фиксированные строки (Excel 10-14 = rows 9-13)
+    _REPAIR_ROWS = {
+        9:  'repair_plumbing',   # Excel 10: Ремонт сантех.
+        10: 'repair_grease',     # Excel 11: Чистка жироуловителя
+        11: 'repair_electric',   # Excel 12: Ремонт электрик
+        12: 'repair_fridge',     # Excel 13: Ремонт холод.оборуд.
+        13: 'repair_other',      # Excel 14: Ремонт другой
+    }
+    for row_idx, cat in _REPAIR_ROWS.items():
+        if len(rows) <= row_idx:
             continue
+        r = rows[row_idx]
         cash_e = _xf(r[5]) if len(r) > 5 else 0.0
         card_e = _xf(r[6]) if len(r) > 6 else 0.0
         if cash_e <= 0 and card_e <= 0:
             continue
         parts = [str(r[ci]).strip() for ci in (2, 3, 4) if len(r) > ci and r[ci] is not None and str(r[ci]).strip()]
         desc   = ' '.join(parts) if parts else None
-        # C:E содержит «стаф» — всегда staff, независимо от cur_cat
-        cat    = 'staff' if (desc and 'стаф' in desc.lower()) or cur_cat == 'staff' else cur_cat
+        gulash = 1 if len(r) > 7 and r[7] is True else 0
+        conn.execute(
+            "INSERT INTO expenses (shift_id,category,description,amount_cash,amount_card,is_gulash) VALUES (?,?,?,?,?,?)",
+            (shift_id, cat, desc, cash_e, card_e, gulash)
+        )
+        stats['expenses'] += 1
+
+    # Магазин / Стафф (Excel 15-20 = rows 14-19)
+    for r in rows[14:20]:
+        cash_e = _xf(r[5]) if len(r) > 5 else 0.0
+        card_e = _xf(r[6]) if len(r) > 6 else 0.0
+        if cash_e <= 0 and card_e <= 0:
+            continue
+        parts = [str(r[ci]).strip() for ci in (2, 3, 4) if len(r) > ci and r[ci] is not None and str(r[ci]).strip()]
+        desc  = ' '.join(parts) if parts else None
+        cat   = 'staff' if desc and 'стаф' in desc.lower() else 'shop'
         gulash = 1 if len(r) > 7 and r[7] is True else 0
         conn.execute(
             "INSERT INTO expenses (shift_id,category,description,amount_cash,amount_card,is_gulash) VALUES (?,?,?,?,?,?)",
