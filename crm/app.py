@@ -5800,6 +5800,8 @@ def shifts_archive():
                     WHERE es.shift_id=s.id AND es.is_paid=1) as paid_salary,
                    (SELECT COALESCE(SUM(COALESCE(cp.amount_cash, cp.amount, 0)),0)
                     FROM cash_plus_entries cp WHERE cp.shift_id=s.id) as plus_cash,
+                   (SELECT COALESCE(SUM(tt.amount),0)
+                    FROM taxi_trips tt WHERE tt.shift_id=s.id AND tt.payment_type='cash') as taxi_cash,
                    s.opened_at, s.closed_at,
                    s.closed_by_name
             FROM shifts s
