@@ -79,7 +79,7 @@
                                 </span>
                                 {% endif %}
                                 <button type="button" class="btn btn-sm btn-outline-primary" title="Редактировать"
-                                    onclick="openEditCat({{ cat.id }}, {{ cat.label|tojson }}, {{ (cat_branches.get(cat.id) or [])|tojson }})">
+                                    onclick='openEditCat({{ cat.id }}, {{ cat.label|tojson }}, {{ (cat_branches.get(cat.id) or [])|tojson }})'>
                                     <i class="bi bi-pencil"></i>
                                 </button>
                                 <form method="POST" action="{{ url_for('toggle_expense_cat', cat_id=cat.id) }}" class="d-inline">
@@ -101,7 +101,7 @@
                                 <span class="badge bg-primary" style="font-size:10px;"><i class="bi bi-building"></i> {{ cat_branches[sub.id]|length }}</span>
                                 {% endif %}
                                 <button type="button" class="btn btn-sm btn-outline-primary" title="Редактировать"
-                                    onclick="openEditCat({{ sub.id }}, {{ sub.label|tojson }}, {{ (cat_branches.get(sub.id) or [])|tojson }})">
+                                    onclick='openEditCat({{ sub.id }}, {{ sub.label|tojson }}, {{ (cat_branches.get(sub.id) or [])|tojson }})'>
                                     <i class="bi bi-pencil"></i>
                                 </button>
                                 <form method="POST" action="{{ url_for('toggle_expense_cat', cat_id=sub.id) }}" class="d-inline">
@@ -140,7 +140,7 @@
                                 <span class="badge bg-primary" style="font-size:10px;"><i class="bi bi-building"></i> {{ cat_branches[cat.id]|length }}</span>
                                 {% endif %}
                                 <button type="button" class="btn btn-sm btn-outline-primary" title="Редактировать"
-                                    onclick="openEditCat({{ cat.id }}, {{ cat.label|tojson }}, {{ (cat_branches.get(cat.id) or [])|tojson }})">
+                                    onclick='openEditCat({{ cat.id }}, {{ cat.label|tojson }}, {{ (cat_branches.get(cat.id) or [])|tojson }})'>
                                     <i class="bi bi-pencil"></i>
                                 </button>
                                 <form method="POST" action="{{ url_for('toggle_expense_cat', cat_id=cat.id) }}" class="d-inline">
@@ -162,7 +162,7 @@
                                 <span class="badge bg-primary" style="font-size:10px;"><i class="bi bi-building"></i> {{ cat_branches[sub.id]|length }}</span>
                                 {% endif %}
                                 <button type="button" class="btn btn-sm btn-outline-primary" title="Редактировать"
-                                    onclick="openEditCat({{ sub.id }}, {{ sub.label|tojson }}, {{ (cat_branches.get(sub.id) or [])|tojson }})">
+                                    onclick='openEditCat({{ sub.id }}, {{ sub.label|tojson }}, {{ (cat_branches.get(sub.id) or [])|tojson }})'>
                                     <i class="bi bi-pencil"></i>
                                 </button>
                                 <form method="POST" action="{{ url_for('toggle_expense_cat', cat_id=sub.id) }}" class="d-inline">
@@ -995,7 +995,7 @@ function openEditCat(catId, label, branchIds) {
     document.querySelectorAll('.edit-cat-branch-cb').forEach(function(cb) {
         cb.checked = branchIds.indexOf(parseInt(cb.value)) !== -1;
     });
-    new bootstrap.Modal(document.getElementById('editCatModal')).show();
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('editCatModal')).show();
 }
 </script>
 {% endblock %}
