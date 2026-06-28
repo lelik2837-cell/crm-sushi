@@ -7112,23 +7112,24 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
     change_amount = _xf(rows[30][3]) if len(rows) > 30 else 0.0
 
     # Plus entries: D29=масло, D30=рыба, D33:D36 with B33:B36 comments
+    # plus_entries_import: list of (category_code, description, amount)
     plus_entries_import = []
     if len(rows) > 28:
         amt = _xf(rows[28][3])
         if amt > 0:
-            plus_entries_import.append(('За масло отработ.', amt))
+            plus_entries_import.append(('oil', '', amt))
     if len(rows) > 29:
         amt = _xf(rows[29][3])
         if amt > 0:
-            plus_entries_import.append(('Рыба (головы, хребты)', amt))
+            plus_entries_import.append(('fish', '', amt))
     for i in range(32, 36):
         if len(rows) <= i:
             break
         amt  = _xf(rows[i][3])
         desc = str(rows[i][1]).strip() if rows[i][1] else ''
         if amt > 0:
-            plus_entries_import.append((desc, amt))
-    plus_amount = sum(e[1] for e in plus_entries_import)
+            plus_entries_import.append(('cash_plus', desc, amt))
+    plus_amount = sum(e[2] for e in plus_entries_import)
 
     existing = conn.execute(
         "SELECT id FROM shifts WHERE branch_id=? AND date=?",
