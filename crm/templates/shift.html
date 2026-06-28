@@ -95,8 +95,8 @@
 
   /* COURIERS */
   .courier-header-row, .courier-row {
-    display: grid; grid-template-columns: 2fr 58px 58px 52px 116px 72px 54px 28px;
-    align-items: center; gap: 8px;
+    display: grid; grid-template-columns: 2fr 68px 68px 52px 58px 58px 116px 72px 41px 28px;
+    align-items: center; gap: 7px;
   }
   .courier-header-row { padding-bottom: 6px; border-bottom: 1.5px solid #e5e7eb; margin-bottom: 2px; }
   .courier-row { padding: 10px 0; border-bottom: 1px solid #f3f4f6; }
@@ -154,7 +154,7 @@
     .page-body { padding: 14px 12px; }
     .page-body > div:first-child { grid-template-columns: 1fr !important; }
     .staff-header-row, .staff-row { grid-template-columns: 2fr 60px 60px 44px 90px 72px 48px 24px; gap: 4px; }
-    .courier-header-row, .courier-row { grid-template-columns: 2fr 50px 50px 44px 90px 62px 48px 24px; gap: 4px; }
+    .courier-header-row, .courier-row { grid-template-columns: 2fr 56px 56px 44px 46px 46px 90px 60px 40px 24px; gap: 4px; }
   }
 </style>
 
@@ -505,7 +505,8 @@
               value="{{ t.amount|int if t.amount else '' }}" {% if not can_edit %}disabled{% endif %}
               style="text-align:right; font-size:13px;">
             <select class="pay-type-sel taxi-pay-select" style="font-size:12px;" {% if not can_edit %}disabled{% endif %}>
-              <option value="cash" {% if t.payment_type != 'card' %}selected{% endif %}>Нал</option>
+              <option value="" disabled {% if not t.payment_type %}selected{% endif %}>— оплата —</option>
+              <option value="cash" {% if t.payment_type == 'cash' %}selected{% endif %}>Нал</option>
               <option value="card" {% if t.payment_type == 'card' %}selected{% endif %}>Карта</option>
             </select>
             <label style="display:flex;align-items:center;gap:3px;font-size:11px;color:#6b7280;cursor:pointer;white-space:nowrap;">
@@ -644,9 +645,11 @@
     <div class="s-card-body">
       <div class="courier-header-row">
         <div class="col-label">Фамилия</div>
+        <div class="col-label">Приход</div>
+        <div class="col-label">Уход</div>
+        <div class="col-label">Ч.</div>
         <div class="col-label">Км</div>
         <div class="col-label">Заказов</div>
-        <div class="col-label">Часов</div>
         <div class="col-label">Премия/Штраф</div>
         <div class="col-label">Итого ₽</div>
         <div class="col-label">Выпл.</div>
@@ -661,9 +664,11 @@
           data-name="{{ s.full_name_snapshot }}" data-role="{{ s.role_snapshot }}"
           data-auto-bonus="{{ (s.auto_bonus or 0)|int }}">
           <div class="field-input-sm sf-name" style="font-size:12px; padding:5px 8px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; height:28px; box-sizing:border-box; display:flex; align-items:center;">{{ s.full_name_snapshot }}</div>
+          <input type="text" class="mini-input time-inp sf-start" value="{{ s.shift_start or '10:00' }}" placeholder="10:00" maxlength="5" {% if not can_edit %}disabled{% endif %}>
+          <input type="text" class="mini-input time-inp sf-end"   value="{{ s.shift_end   or '22:00' }}" placeholder="22:00" maxlength="5" {% if not can_edit %}disabled{% endif %}>
+          <div class="field-calc sf-hours">{{ s.hours_worked or 0 }} ч</div>
           <input class="mini-input sf-km" type="number" min="0" step="0.1" placeholder="0" value="{{ (s.km or 0)|int }}" {% if not can_edit %}disabled{% endif %}>
           <input class="mini-input sf-orders" type="number" min="0" placeholder="0" value="{{ s.orders or 0 }}" {% if not can_edit %}disabled{% endif %}>
-          <input class="mini-input sf-hours" type="number" min="0" step="0.5" placeholder="0" value="{{ s.hours_worked or 0 }}" {% if not can_edit %}disabled{% endif %}>
           {% if can_edit %}
           <div class="bonus-btns"><button class="bonus-btn-prem" onclick="toggleBonus(this,'prem')">Премия</button><button class="bonus-btn-fine" onclick="toggleBonus(this,'fine')">Штраф</button></div>
           {% else %}<div></div>{% endif %}
@@ -1164,8 +1169,8 @@ function roundTime15(val) {
   return (h < 10 ? '0' : '') + h + ':' + (min < 10 ? '0' : '') + min;
 }
 
-// wire time inputs (kitchen) and courier inputs to auto-calc + save
-document.querySelectorAll('.staff-row .sf-start, .staff-row .sf-end').forEach(el => {
+// wire time inputs (staff + couriers) to auto-calc + save
+document.querySelectorAll('.staff-row .sf-start, .staff-row .sf-end, .courier-row .sf-start, .courier-row .sf-end').forEach(el => {
   el.addEventListener('blur', () => {
     el.value = roundTime15(el.value);
     const row = el.closest('[data-id]');
@@ -1173,7 +1178,7 @@ document.querySelectorAll('.staff-row .sf-start, .staff-row .sf-end').forEach(el
     autoSaveStaffRow(row);
   });
 });
-document.querySelectorAll('.courier-row .sf-km, .courier-row .sf-orders, .courier-row .sf-hours').forEach(el => {
+document.querySelectorAll('.courier-row .sf-km, .courier-row .sf-orders').forEach(el => {
   el.addEventListener('input', () => calcStaffTotal(el.closest('[data-id]')));
   el.addEventListener('change', () => {
     const row = el.closest('[data-id]');
