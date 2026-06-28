@@ -1081,6 +1081,25 @@ def init_db():
             );
         ''')
 
+        # Fix Russian-coded categories → correct English codes used by import
+        _code_fixes = [
+            ('стафф',                   'staff'),
+            ('стаф',                    'staff'),
+            ('рыба_(головы,хребты)',    'fish'),
+            ('рыба_(головы_хребты)',    'fish'),
+            ('за_масло_отработанное',   'oil'),
+            ('другие_плюсы_в_кассу',   'cash_plus'),
+        ]
+        for bad_code, good_code in _code_fixes:
+            row = conn.execute('SELECT id FROM expense_categories WHERE code=?', (bad_code,)).fetchone()
+            if row:
+                exists = conn.execute('SELECT id FROM expense_categories WHERE code=?', (good_code,)).fetchone()
+                if exists:
+                    # Correct code already exists — remove the duplicate
+                    conn.execute('DELETE FROM expense_categories WHERE code=?', (bad_code,))
+                else:
+                    conn.execute('UPDATE expense_categories SET code=? WHERE code=?', (good_code, bad_code))
+
         conn.commit()
 
 
