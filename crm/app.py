@@ -2474,6 +2474,33 @@ def _export_shift_to_gsheet(shift_id):
         print(f'[GSheets] shift {shift_id} export error: {e}')
 
 
+def _gdrive_get_oauth_token():
+    """Получить OAuth2 access token через сохранённый refresh token."""
+    import urllib.request as _ur
+    import urllib.parse as _up
+    client_id     = os.environ.get('GOOGLE_OAUTH_CLIENT_ID')
+    client_secret = os.environ.get('GOOGLE_OAUTH_CLIENT_SECRET')
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT value FROM gsheet_settings WHERE key='gdrive_refresh_token'"
+        ).fetchone()
+    if not client_id or not client_secret or not row:
+        return None
+    data = _up.urlencode({
+        'client_id':     client_id,
+        'client_secret': client_secret,
+        'refresh_token': row['value'],
+        'grant_type':    'refresh_token',
+    }).encode()
+    req = _ur.Request(
+        'https://oauth2.googleapis.com/token',
+        data=data,
+        headers={'Content-Type': 'application/x-www-form-urlencoded'},
+    )
+    with _ur.urlopen(req, timeout=15) as resp:
+        return _json_lib.loads(resp.read()).get('access_token')
+
+
 def _export_shift_to_gdrive_xlsx(shift_id):
     """Экспорт смены в Google Drive как xlsx в формате импорта."""
     print(f'[GDrive] start shift {shift_id}')
@@ -2724,15 +2751,10 @@ def _export_shift_to_gdrive_xlsx(shift_id):
         buf.seek(0)
         xlsx_bytes = buf.getvalue()
 
-        from google.oauth2.service_account import Credentials
-        import google.auth.transport.requests as _gatr
-
-        creds_dict = _json_lib.loads(creds_json)
-        creds = Credentials.from_service_account_info(
-            creds_dict, scopes=['https://www.googleapis.com/auth/drive']
-        )
-        creds.refresh(_gatr.Request())
-        token = creds.token
+        token = _gdrive_get_oauth_token()
+        if not token:
+            print(f'[GDrive] shift {shift_id}: OAuth2 токен не получен — авторизуйте Drive в /settings/gsheet')
+            return
 
         branch_nm = shift['branch_name'].replace(' ', '_')
         filename = f'{branch_nm}_{shift["date"]}_{wd_names[shift_date.weekday()]}.xlsx'
@@ -5539,10 +5561,80 @@ def gsheet_settings():
             flash('Настройки экспорта сохранены', 'success')
             return redirect(url_for('gsheet_settings'))
         cfg = _gsheet_load_settings(conn)
+        row = conn.execute(
+            "SELECT value FROM gsheet_settings WHERE key='gdrive_refresh_token'"
+        ).fetchone()
+        gdrive_authorized = bool(row)
     return render_template('gsheet_settings.html', cfg=cfg, cols=GSHEET_COLS,
                            sheet_id=os.environ.get('GOOGLE_SHEET_ID', ''),
                            drive_folder_id=os.environ.get('GOOGLE_DRIVE_FOLDER_ID', ''),
-                           has_creds=bool(os.environ.get('GOOGLE_CREDENTIALS_JSON')))
+                           has_creds=bool(os.environ.get('GOOGLE_CREDENTIALS_JSON')),
+                           gdrive_authorized=gdrive_authorized)
+
+
+@app.route('/settings/gdrive-auth')
+@login_required
+@owner_required
+def gdrive_auth():
+    import urllib.parse as _up
+    client_id = os.environ.get('GOOGLE_OAUTH_CLIENT_ID')
+    if not client_id:
+        flash('Добавьте GOOGLE_OAUTH_CLIENT_ID в Railway Variables', 'danger')
+        return redirect(url_for('gsheet_settings'))
+    params = {
+        'client_id':     client_id,
+        'redirect_uri':  url_for('gdrive_callback', _external=True),
+        'scope':         'https://www.googleapis.com/auth/drive',
+        'response_type': 'code',
+        'access_type':   'offline',
+        'prompt':        'consent',
+    }
+    return redirect('https://accounts.google.com/o/oauth2/v2/auth?' + _up.urlencode(params))
+
+
+@app.route('/settings/gdrive-callback')
+@login_required
+@owner_required
+def gdrive_callback():
+    import urllib.request as _ur
+    import urllib.parse as _up
+    code  = request.args.get('code')
+    error = request.args.get('error')
+    if error or not code:
+        flash(f'Ошибка авторизации Google: {error or "нет кода"}', 'danger')
+        return redirect(url_for('gsheet_settings'))
+    client_id     = os.environ.get('GOOGLE_OAUTH_CLIENT_ID')
+    client_secret = os.environ.get('GOOGLE_OAUTH_CLIENT_SECRET')
+    data = _up.urlencode({
+        'client_id':     client_id,
+        'client_secret': client_secret,
+        'code':          code,
+        'redirect_uri':  url_for('gdrive_callback', _external=True),
+        'grant_type':    'authorization_code',
+    }).encode()
+    try:
+        req = _ur.Request(
+            'https://oauth2.googleapis.com/token',
+            data=data,
+            headers={'Content-Type': 'application/x-www-form-urlencoded'},
+        )
+        with _ur.urlopen(req, timeout=15) as resp:
+            tokens = _json_lib.loads(resp.read())
+    except Exception as e:
+        flash(f'Ошибка получения токена: {e}', 'danger')
+        return redirect(url_for('gsheet_settings'))
+    refresh_token = tokens.get('refresh_token')
+    if not refresh_token:
+        flash('Google не вернул refresh_token — попробуйте ещё раз.', 'danger')
+        return redirect(url_for('gsheet_settings'))
+    with get_db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO gsheet_settings (key, value) VALUES ('gdrive_refresh_token', ?)",
+            (refresh_token,)
+        )
+        conn.commit()
+    flash('✅ Google Drive авторизован! Теперь xlsx будут загружаться автоматически.', 'success')
+    return redirect(url_for('gsheet_settings'))
 
 
 @app.route('/settings/gdrive-test', methods=['POST'])
@@ -5554,44 +5646,22 @@ def gdrive_test():
     def ok(msg):  steps.append({'status': 'ok',    'msg': msg})
     def err(msg): steps.append({'status': 'error', 'msg': msg})
 
-    creds_json = os.environ.get('GOOGLE_CREDENTIALS_JSON')
-    folder_id  = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
-
-    if not creds_json:
-        err('GOOGLE_CREDENTIALS_JSON не задана в Railway')
-        return jsonify({'steps': steps})
-    ok('GOOGLE_CREDENTIALS_JSON найдена')
+    folder_id = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
 
     if not folder_id:
         err('GOOGLE_DRIVE_FOLDER_ID не задана в Railway')
         return jsonify({'steps': steps})
     ok(f'GOOGLE_DRIVE_FOLDER_ID = {folder_id}')
 
-    try:
-        import json as _j
-        creds_dict = _j.loads(creds_json)
-        client_email = creds_dict.get('client_email', '?')
-        ok(f'JSON ключ разобран, сервисный аккаунт: {client_email}')
-    except Exception as e:
-        err(f'Не удалось разобрать GOOGLE_CREDENTIALS_JSON: {e}')
+    token = _gdrive_get_oauth_token()
+    if not token:
+        err('OAuth2 токен не получен — нажмите «Авторизовать Google Drive» на этой странице')
         return jsonify({'steps': steps})
-
-    try:
-        from google.oauth2.service_account import Credentials
-        import google.auth.transport.requests as _gatr
-        creds = Credentials.from_service_account_info(
-            creds_dict, scopes=['https://www.googleapis.com/auth/drive']
-        )
-        creds.refresh(_gatr.Request())
-        ok('Авторизация Google прошла успешно, токен получен')
-    except Exception as e:
-        err(f'Ошибка авторизации Google: {e}')
-        return jsonify({'steps': steps})
+    ok('OAuth2 токен получен успешно')
 
     try:
         import urllib.request as _ur
         import json as _j
-        token = creds.token
         list_req = _ur.Request(
             f'https://www.googleapis.com/drive/v3/files?q=%27{folder_id}%27+in+parents&pageSize=1&fields=files(id,name)',
             headers={'Authorization': f'Bearer {token}'}
@@ -5601,13 +5671,12 @@ def gdrive_test():
         count = len(data.get('files', []))
         ok(f'Доступ к папке есть (найдено файлов: {count})')
     except Exception as e:
-        err(f'Нет доступа к папке Drive: {e}. Убедитесь что {client_email} добавлен как редактор папки.')
+        err(f'Нет доступа к папке Drive: {e}')
         return jsonify({'steps': steps})
 
     try:
         import urllib.request as _ur
         import json as _j
-        token = creds.token
         test_content = b'CRM PAPA gdrive test'
         boundary = 'GDriveTestBnd1234'
         meta = _j.dumps({'name': '_crm_test_.txt', 'parents': [folder_id]})
