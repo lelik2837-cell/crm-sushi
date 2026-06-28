@@ -7133,6 +7133,33 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
              change_amount, plus_amount, morning_cash)
         )
 
+    # Плюсы в кассу: D29=масло, D30=рыба, C33:C36=комментарий, D33:D36=сумма
+    if not conn.execute("SELECT id FROM cash_plus_entries WHERE shift_id=?", (shift_id,)).fetchone():
+        if len(rows) > 28:
+            amt = _xf(rows[28][3])
+            if amt > 0:
+                conn.execute(
+                    "INSERT INTO cash_plus_entries (shift_id, amount, amount_cash, category) VALUES (?,?,?,?)",
+                    (shift_id, amt, amt, 'oil')
+                )
+        if len(rows) > 29:
+            amt = _xf(rows[29][3])
+            if amt > 0:
+                conn.execute(
+                    "INSERT INTO cash_plus_entries (shift_id, amount, amount_cash, category) VALUES (?,?,?,?)",
+                    (shift_id, amt, amt, 'fish')
+                )
+        for i in range(32, 36):
+            if len(rows) <= i:
+                break
+            amt  = _xf(rows[i][3])
+            desc = str(rows[i][2]).strip() if len(rows[i]) > 2 and rows[i][2] else ''
+            if amt > 0:
+                conn.execute(
+                    "INSERT INTO cash_plus_entries (shift_id, amount, amount_cash, category, description) VALUES (?,?,?,?,?)",
+                    (shift_id, amt, amt, 'cash_plus', desc)
+                )
+
     cur_cat = None
     for r in rows[9:20]:
         cat_str = r[1]
@@ -7199,7 +7226,18 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
         )
         stats['employee_shifts'] += 1
 
-    for r in rows[2:8]:
+    # Время курьеров: (строка_старт, кол_старт, строка_конец, кол_конец) — 0-индексация
+    # M=12, R=17, V=21; строки 26,27 → idx 25,26; строки 76,77 → idx 75,76
+    _COURIER_TIMES = [
+        (25, 12, 26, 12),  # Курьер 1: M26:N26 старт, M27:N27 конец
+        (25, 17, 26, 17),  # Курьер 2: R26:S26 старт, R27:S27 конец
+        (25, 21, 26, 21),  # Курьер 3: V26:W26 старт, V27:W27 конец
+        (75, 12, 76, 12),  # Курьер 4: M76:N76 старт, M77:N77 конец
+        (75, 17, 76, 17),  # Курьер 5: R76:S76 старт, R77:S77 конец
+        (75, 21, 76, 21),  # Курьер 6: V76:W76 старт, V77:W77 конец
+    ]
+
+    for ci, r in enumerate(rows[2:8]):
         name = r[10]
         if not name or not isinstance(name, str) or name.strip() in _XL_SKIP:
             continue
@@ -7217,10 +7255,16 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
         rate_km  = round(km_pay / km, 2) if km > 0 else 10.0
         rate_ord = round(ord_pay / orders, 2) if orders > 0 else 100.0
         rate_hr  = round(hrs_pay / hours, 2) if hours > 0 else 0.0
-        emp_id   = get_or_create(name, 'courier', rate_hr)
+        sr, sc, er, ec = _COURIER_TIMES[ci]
+        raw_s = rows[sr][sc] if len(rows) > sr and len(rows[sr]) > sc else None
+        raw_e = rows[er][ec] if len(rows) > er and len(rows[er]) > ec else None
+        start = _xts(raw_s)
+        end   = _xts(raw_e)
+        emp_id = get_or_create(name, 'courier', rate_hr)
         add_shift(emp_id, name, 'courier', rate_hr,
                   hours=hours, km=km, orders=orders,
                   rate_km=rate_km, rate_ord=rate_ord, comment=comment,
+                  start=start, end=end,
                   base_pay=hrs_pay + km_pay, total=total, paid=paid)
 
     for row_idx, r in enumerate(rows[9:22], start=9):
