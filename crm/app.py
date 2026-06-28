@@ -7282,8 +7282,9 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
         for i in range(32, 36):
             if len(rows) <= i:
                 break
-            amt  = _xf(rows[i][3])
-            desc = str(rows[i][2]).strip() if len(rows[i]) > 2 and rows[i][2] else ''
+            amt = _xf(rows[i][3])
+            desc_parts = [str(rows[i][ci]).strip() for ci in (1, 2) if len(rows[i]) > ci and rows[i][ci] is not None and str(rows[i][ci]).strip()]
+            desc = ' '.join(desc_parts)
             if amt > 0:
                 conn.execute(
                     "INSERT INTO cash_plus_entries (shift_id, amount, amount_cash, category, description) VALUES (?,?,?,?,?)",
