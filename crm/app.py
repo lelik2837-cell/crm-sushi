@@ -3627,7 +3627,7 @@ def add_expense_cat():
     if not label:
         flash('Введите название', 'danger')
         return redirect(url_for('settings'))
-    code = label.lower().replace(' ', '_').replace('/', '_')[:30]
+    code = _slugify(label)
     with get_db() as conn:
         if parent_id:
             parent_row = conn.execute('SELECT id, type FROM expense_categories WHERE id=?', (parent_id,)).fetchone()
@@ -7091,6 +7091,20 @@ _XL_ROLE_MAP = {
     'Уборщица': 'cleaner', 'Уборщик': 'cleaner',
     'Повара': 'cook', 'Повар': 'cook', 'Повар.': 'cook',
 }
+
+_TRANSLIT_MAP = {
+    'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'yo','ж':'zh','з':'z',
+    'и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r',
+    'с':'s','т':'t','у':'u','ф':'f','х':'kh','ц':'ts','ч':'ch','ш':'sh',
+    'щ':'sch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya',
+}
+
+def _slugify(s):
+    s = s.lower()
+    out = ''.join(_TRANSLIT_MAP.get(c, c) for c in s)
+    out = re.sub(r'[^a-z0-9]+', '_', out).strip('_')
+    return out[:30]
+
 
 _XL_CAT_MAP = {
     'Ремонт сантех.': 'repair_plumbing', 'Чистка жироул-ля': 'repair_grease',
