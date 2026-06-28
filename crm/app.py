@@ -1360,7 +1360,15 @@ def api_revenue_year():
 @owner_required
 def api_lfl():
     from calendar import monthrange
-    today = date.today()
+    today  = date.today()
+    metric = request.args.get('metric', 'revenue')  # 'revenue' or 'orders'
+    raw_bids = request.args.get('branch_ids', '')
+    bids = [int(x) for x in raw_bids.split(',') if x.strip().isdigit()]
+    bf   = f"AND s.branch_id IN ({','.join('?'*len(bids))})" if bids else ''
+    if metric == 'orders':
+        agg = 'COALESCE(SUM(r.delivery_orders),0) + COALESCE(SUM(r.pickup_orders),0)'
+    else:
+        agg = 'COALESCE(SUM(r.total_revenue),0)'
     month_labels = ['', 'Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн',
                     'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
     with get_db() as conn:
@@ -1387,20 +1395,20 @@ def api_lfl():
                 d_to_this   = date(yr, mo, days_in_this).isoformat()
                 d_from_last = date(yr - 1, mo, 1).isoformat()
                 d_to_last   = date(yr - 1, mo, days_in_last).isoformat()
-            rev_this = conn.execute(
-                'SELECT COALESCE(SUM(r.total_revenue),0) FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id WHERE s.date BETWEEN ? AND ?',
-                (d_from_this, d_to_this)
+            val_this = conn.execute(
+                f'SELECT {agg} FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id WHERE s.date BETWEEN ? AND ? {bf}',
+                [d_from_this, d_to_this] + bids
             ).fetchone()[0] or 0
-            rev_last = conn.execute(
-                'SELECT COALESCE(SUM(r.total_revenue),0) FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id WHERE s.date BETWEEN ? AND ?',
-                (d_from_last, d_to_last)
+            val_last = conn.execute(
+                f'SELECT {agg} FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id WHERE s.date BETWEEN ? AND ? {bf}',
+                [d_from_last, d_to_last] + bids
             ).fetchone()[0] or 0
-            lfl_pct = round((rev_this / rev_last - 1) * 100, 1) if rev_last > 0 else None
+            lfl_pct = round((val_this / val_last - 1) * 100, 1) if val_last > 0 else None
             result.append({
                 'year': yr, 'month': mo,
                 'label': month_labels[mo] + " '" + str(yr)[-2:],
-                'this_year': int(rev_this),
-                'last_year': int(rev_last),
+                'this_year': int(val_this),
+                'last_year': int(val_last),
                 'lfl_pct': lfl_pct,
                 'is_current': is_current,
             })
