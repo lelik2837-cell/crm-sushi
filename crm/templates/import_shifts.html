@@ -5,8 +5,8 @@
 <div class="container-fluid">
     <div class="row mb-3">
         <div class="col">
-            <h4 class="mb-0"><i class="bi bi-cloud-upload me-2"></i>Импорт смен</h4>
-            <p class="text-muted mt-1 mb-0">Загрузите расписание смен из Google Drive или вручную с компьютера.</p>
+            <h4 class="mb-0"><i class="bi bi-upload me-2"></i>Импорт смен</h4>
+            <p class="text-muted mt-1 mb-0">Загрузите файлы Excel (.xlsx) с данными смен.</p>
         </div>
     </div>
 
@@ -19,168 +19,33 @@
         {% endfor %}
     {% endwith %}
 
-    <!-- ══ GOOGLE DRIVE ══════════════════════════════════════════════════════ -->
     <div class="card mb-3">
-        <div class="card-header d-flex align-items-center gap-2">
-            <i class="bi bi-google text-primary"></i>
-            <strong>Импорт из Google Drive</strong>
-            <span class="badge bg-primary ms-1">Основной способ</span>
+        <div class="card-header">
+            <i class="bi bi-file-earmark-excel me-1 text-success"></i> Загрузить файл Excel
         </div>
         <div class="card-body">
-
-            <!-- Сервисный аккаунт -->
-            <div class="mb-3 pb-3 border-bottom">
-                <div class="d-flex align-items-center gap-3 flex-wrap">
-                    <span class="small fw-semibold">Сервисный аккаунт Google:</span>
-                    {% if sa_json %}
-                        <span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Настроен</span>
-                    {% else %}
-                        <span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>Не настроен</span>
-                    {% endif %}
-                    <button class="btn btn-sm btn-outline-secondary" type="button"
-                            onclick="document.getElementById('saForm').classList.toggle('d-none')">
-                        {% if sa_json %}Изменить{% else %}Настроить{% endif %}
-                    </button>
-                </div>
-                <form method="POST" id="saForm" class="mt-2 {% if sa_json %}d-none{% endif %}">
-                    <input type="hidden" name="action" value="save_sa">
-                    <div class="mb-2">
-                        <label class="form-label fw-semibold">JSON ключ сервисного аккаунта</label>
-                        <textarea name="sa_json" class="form-control font-monospace" rows="4"
-                                  placeholder='{"type": "service_account", "project_id": "...", ...}' required></textarea>
-                        <div class="form-text">
-                            <strong>Как получить:</strong><br>
-                            1. <a href="https://console.cloud.google.com/iam-admin/serviceaccounts" target="_blank">Google Console → Service Accounts</a> → <strong>Create Service Account</strong><br>
-                            2. Actions → Manage keys → Add key → <strong>JSON</strong> → скачать файл<br>
-                            3. Открыть скачанный файл блокнотом, скопировать <strong>всё содержимое</strong> и вставить сюда<br>
-                            4. <strong>Поделиться папкой</strong> на Google Диске с email сервисного аккаунта (вида <code>name@project.iam.gserviceaccount.com</code>)
-                        </div>
-                    </div>
-                    <button type="submit" class="btn btn-primary">Сохранить</button>
-                </form>
-            </div>
-
-            {% if sa_json %}
-            <!-- Ссылка на папку -->
-            <form method="POST">
-                <input type="hidden" name="action" value="list">
-                <div class="row g-2 align-items-end mb-3">
-                    <div class="col-sm-8">
-                        <label class="form-label fw-semibold">Ссылка на папку Google Drive</label>
-                        <input type="url" name="folder_url" class="form-control"
-                               placeholder="https://drive.google.com/drive/folders/..."
-                               value="{{ folder_url or '' }}" required>
-                        <div class="form-text">Папка должна быть расшарена с email сервисного аккаунта</div>
-                    </div>
-                    <div class="col-sm-auto">
-                        <button type="submit" class="btn btn-outline-primary">
-                            <i class="bi bi-search me-1"></i>Показать файлы
-                        </button>
-                    </div>
-                </div>
-            </form>
-
-            {% if drive_files %}
-            <form method="POST">
-                <input type="hidden" name="action" value="gdrive_import">
-                <input type="hidden" name="folder_url" value="{{ folder_url }}">
-
-                <div class="table-responsive mb-3">
-                    <table class="table table-hover mb-0 align-middle" style="font-size:0.9rem">
-                        <thead class="table-light">
-                            <tr>
-                                <th style="width:40px">
-                                    <input type="checkbox" class="form-check-input" id="selectAll">
-                                </th>
-                                <th>Файл</th>
-                                <th>Дата изменения</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                        {% for f in drive_files %}
-                        <tr style="cursor:pointer" onclick="toggleRow(this)">
-                            <td>
-                                <input type="checkbox" name="file_data"
-                                       value="{{ f.id }}|||{{ f.name }}|||{{ f.mimeType }}"
-                                       class="form-check-input file-cb" onclick="event.stopPropagation()">
-                            </td>
-                            <td>
-                                {% if f.mimeType == 'application/vnd.google-apps.spreadsheet' %}
-                                <i class="bi bi-file-earmark-spreadsheet text-success me-1"></i>{{ f.name }}
-                                <span class="badge bg-secondary ms-1" style="font-size:0.7rem">Google Таблица</span>
-                                {% else %}
-                                <i class="bi bi-file-earmark-excel text-success me-1"></i>{{ f.name }}
-                                {% endif %}
-                            </td>
-                            <td class="text-muted small">{{ f.modifiedTime[:10] if f.modifiedTime else '—' }}</td>
-                        </tr>
+            <form method="POST" enctype="multipart/form-data">
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Филиал</label>
+                    <select name="branch_id" class="form-select" required>
+                        <option value="">— выберите филиал —</option>
+                        {% for b in branches %}
+                        <option value="{{ b[0] }}">{{ b[1] }}</option>
                         {% endfor %}
-                        </tbody>
-                    </table>
+                    </select>
                 </div>
-
-                <div class="row g-2 align-items-end">
-                    <div class="col-sm-4">
-                        <label class="form-label fw-semibold">Филиал</label>
-                        <select name="branch_id" class="form-select" required>
-                            <option value="">— выберите филиал —</option>
-                            {% for b in branches %}
-                            <option value="{{ b[0] }}" {% if b[0]|string == branch_id %}selected{% endif %}>{{ b[1] }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="col-sm-auto">
-                        <button type="submit" class="btn btn-success px-4" onclick="return checkSelected()">
-                            <i class="bi bi-cloud-download me-1"></i> Импортировать выбранные
-                        </button>
-                    </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Файл(ы) Excel (.xlsx)</label>
+                    <input type="file" name="files" class="form-control" accept=".xlsx" multiple required>
+                    <div class="form-text">Можно выбрать несколько файлов сразу</div>
                 </div>
+                <button type="submit" class="btn btn-success px-4">
+                    <i class="bi bi-cloud-upload me-1"></i> Импортировать
+                </button>
             </form>
-            {% elif folder_url %}
-            <p class="text-muted mb-0"><i class="bi bi-info-circle me-1"></i>В папке нет файлов Google Таблиц или .xlsx</p>
-            {% endif %}
-
-            {% else %}
-            <p class="text-muted mb-0"><i class="bi bi-arrow-up me-1"></i>Настройте сервисный аккаунт выше чтобы использовать Google Drive</p>
-            {% endif %}
-
         </div>
     </div>
 
-    <!-- ══ ЗАГРУЗИТЬ ФАЙЛ ВРУЧНУЮ ════════════════════════════════════════════ -->
-    <div class="card mb-3">
-        <div class="card-header" style="cursor:pointer"
-             onclick="document.getElementById('uploadSection').classList.toggle('d-none')">
-            <i class="bi bi-upload me-1"></i> Загрузить файл вручную
-            <i class="bi bi-chevron-down ms-2 text-muted" style="font-size:0.8rem"></i>
-        </div>
-        <div id="uploadSection" class="d-none">
-            <div class="card-body">
-                <form method="POST" enctype="multipart/form-data">
-                    <input type="hidden" name="action" value="upload">
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">Филиал</label>
-                        <select name="branch_id" class="form-select" required>
-                            <option value="">— выберите филиал —</option>
-                            {% for b in branches %}
-                            <option value="{{ b[0] }}">{{ b[1] }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">Файл(ы) Excel (.xlsx)</label>
-                        <input type="file" name="files" class="form-control" accept=".xlsx" multiple required>
-                        <div class="form-text">Можно выбрать несколько файлов сразу</div>
-                    </div>
-                    <button type="submit" class="btn btn-success px-4">
-                        <i class="bi bi-cloud-upload me-1"></i> Импортировать
-                    </button>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- ══ ИСТОРИЯ ИМПОРТОВ ══════════════════════════════════════════════════ -->
     {% if import_batches %}
     <div class="card mt-3">
         <div class="card-header d-flex justify-content-between align-items-center">
@@ -230,21 +95,4 @@
     {% endif %}
 
 </div>
-{% endblock %}
-
-{% block scripts %}
-<script>
-document.getElementById('selectAll').addEventListener('change', function() {
-    document.querySelectorAll('.file-cb').forEach(cb => cb.checked = this.checked);
-});
-function toggleRow(tr) {
-    const cb = tr.querySelector('.file-cb');
-    if (cb) cb.checked = !cb.checked;
-}
-function checkSelected() {
-    const count = document.querySelectorAll('.file-cb:checked').length;
-    if (count === 0) { alert('Выберите хотя бы один файл'); return false; }
-    return true;
-}
-</script>
 {% endblock %}
