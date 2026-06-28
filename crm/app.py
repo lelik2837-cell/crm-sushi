@@ -1355,6 +1355,58 @@ def api_revenue_year():
     return jsonify({'ok': True, 'total': sum(x['revenue'] for x in months_list), 'months': months_list})
 
 
+@app.route('/api/lfl')
+@login_required
+@owner_required
+def api_lfl():
+    from calendar import monthrange
+    today = date.today()
+    month_labels = ['', 'Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн',
+                    'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
+    with get_db() as conn:
+        months_seq = []
+        y, m = today.year, today.month
+        for _ in range(12):
+            months_seq.insert(0, (y, m))
+            m -= 1
+            if m == 0:
+                m = 12
+                y -= 1
+        result = []
+        for (yr, mo) in months_seq:
+            is_current = (yr == today.year and mo == today.month)
+            days_in_this = monthrange(yr, mo)[1]
+            days_in_last = monthrange(yr - 1, mo)[1]
+            if is_current:
+                d_from_this = date(yr, mo, 1).isoformat()
+                d_to_this   = today.isoformat()
+                d_from_last = date(yr - 1, mo, 1).isoformat()
+                d_to_last   = date(yr - 1, mo, min(today.day, days_in_last)).isoformat()
+            else:
+                d_from_this = date(yr, mo, 1).isoformat()
+                d_to_this   = date(yr, mo, days_in_this).isoformat()
+                d_from_last = date(yr - 1, mo, 1).isoformat()
+                d_to_last   = date(yr - 1, mo, days_in_last).isoformat()
+            rev_this = conn.execute(
+                'SELECT COALESCE(SUM(r.total_revenue),0) FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id WHERE s.date BETWEEN ? AND ?',
+                (d_from_this, d_to_this)
+            ).fetchone()[0] or 0
+            rev_last = conn.execute(
+                'SELECT COALESCE(SUM(r.total_revenue),0) FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id WHERE s.date BETWEEN ? AND ?',
+                (d_from_last, d_to_last)
+            ).fetchone()[0] or 0
+            lfl_pct = round((rev_this / rev_last - 1) * 100, 1) if rev_last > 0 else None
+            result.append({
+                'year': yr, 'month': mo,
+                'label': month_labels[mo] + " '" + str(yr)[-2:],
+                'this_year': int(rev_this),
+                'last_year': int(rev_last),
+                'lfl_pct': lfl_pct,
+                'is_current': is_current,
+            })
+    return jsonify({'ok': True, 'months': result})
+
+
 @app.route('/api/revenue-summary')
 @login_required
 @owner_required
@@ -1736,6 +1788,12 @@ def shift_view(shift_id):
         expense_cats_flat   = [(c['code'], c['label']) for c in expense_cats]
         income_cats_groups  = build_cats_groups(income_cats)
         income_cats_flat    = [(c['code'], c['label']) for c in income_cats]
+        seen_taxi_ids = set()
+        taxi_staff = []
+        for s in staff:
+            if s['role_snapshot'] != 'courier' and s['employee_id'] and s['employee_id'] not in seen_taxi_ids:
+                seen_taxi_ids.add(s['employee_id'])
+                taxi_staff.append(s)
         can_edit = (role == 'owner') or (shift['status'] == 'open')
         try:
             shift_weekday = date.fromisoformat(shift['date']).weekday()  # 0=Mon, 4=Fri, 5=Sat
@@ -1757,7 +1815,7 @@ def shift_view(shift_id):
         prev_actual_cash = (prev_day_row['kassa_nal'] or 0) if prev_day_row else None
         return render_template('shift.html',
             shift=shift, revenue=revenue, expenses=expenses, plus_entries=plus_entries,
-            staff=staff, employees=employees,
+            staff=staff, employees=employees, taxi_staff=taxi_staff,
             emp_addresses=emp_addresses,
             taxi_trips=taxi_trips, taxi_trip_emps=taxi_trip_emps,
             expense_categories=expense_cats_flat,

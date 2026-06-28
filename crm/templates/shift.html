@@ -519,10 +519,10 @@
             {% if can_edit %}
             <select class="field-select taxi-emp-sel" style="font-size:12px;">
               <option value="">— сотрудник —</option>
-              {% for emp in employees %}{% if emp.role != 'courier' %}
-              <option value="{{ emp.id }}" data-name="{{ emp.full_name }}" data-address="{{ emp_addresses.get(emp.id,'') or '' }}"
-                {% if tte.employee_id == emp.id %}selected{% endif %}>{{ emp.full_name }}</option>
-              {% endif %}{% endfor %}
+              {% for ts in taxi_staff %}
+              <option value="{{ ts.employee_id }}" data-name="{{ ts.full_name_snapshot }}" data-address="{{ emp_addresses.get(ts.employee_id,'') or '' }}"
+                {% if tte.employee_id == ts.employee_id %}selected{% endif %}>{{ ts.full_name_snapshot }}</option>
+              {% endfor %}
             </select>
             <input class="mini-input taxi-addr-input" type="text" placeholder="Адрес"
               value="{{ tte.address_snapshot or '' }}" style="font-size:12px;">
@@ -1413,8 +1413,8 @@ document.querySelectorAll('.staff-row[data-id], .courier-row[data-id]').forEach(
 updateKassa();
 
 // ── TAXI ─────────────────────────────────────────────────
-const TAXI_EMPS = [{% for emp in employees %}{% if emp.role != 'courier' %}
-  {id:{{ emp.id }}, name:{{ emp.full_name|tojson }}, addr:{{ (emp_addresses.get(emp.id,'')|string)|tojson }}},{% endif %}{% endfor %}
+const TAXI_EMPS = [{% for ts in taxi_staff %}
+  {id:{{ ts.employee_id }}, name:{{ ts.full_name_snapshot|tojson }}, addr:{{ (emp_addresses.get(ts.employee_id,'')|string)|tojson }}},{% endfor %}
 ];
 
 var taxiUsedEmpIds = new Set([{% for t in taxi_trips %}{% for tte in taxi_trip_emps[t.id] %}{% if tte.employee_id %}{{ tte.employee_id }},{% endif %}{% endfor %}{% endfor %}]);

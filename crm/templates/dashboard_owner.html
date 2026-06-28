@@ -164,6 +164,30 @@
   </div>
 </div>
 
+<!-- ══ LFL CARD ══ -->
+<div class="row g-3 mb-4">
+  <div class="col-12">
+    <div id="lfl-card" style="background:linear-gradient(135deg,#059669 0%,#10b981 60%,#34d399 100%); border-radius:20px; padding:24px 28px 20px; color:#fff; position:relative;">
+      <div style="display:flex; align-items:flex-start; gap:24px; flex-wrap:wrap;">
+        <!-- Left: big number -->
+        <div style="flex-shrink:0; min-width:120px;">
+          <div style="font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; opacity:.7; margin-bottom:6px;">LFL — Рост выручки</div>
+          <div style="display:flex; align-items:baseline; gap:3px; line-height:1;">
+            <span id="lfl-sign" style="font-size:36px; font-weight:800; letter-spacing:-1px; line-height:1.05;"></span>
+            <span id="lfl-pct-val" style="font-size:52px; font-weight:800; letter-spacing:-2px; line-height:1.05;">—</span>
+            <span id="lfl-pct-sym" style="font-size:28px; font-weight:700; opacity:.8; display:none;">%</span>
+          </div>
+          <div id="lfl-period-label" style="font-size:12px; opacity:.65; margin-top:4px;">к тому же периоду прошлого года</div>
+        </div>
+        <!-- Right: chart -->
+        <div style="flex:1; min-width:220px;">
+          <canvas id="lfl-canvas" height="90"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ══ KPI BLOCKS ══ -->
 {% if kpi_blocks %}
 <div class="card mb-4">
@@ -911,5 +935,101 @@ loadRevCard('month');
 if (window.matchMedia('(min-width: 992px)').matches) {
     toggleDayChart();
 }
+
+// ── LFL ─────────────────────────────────────────────────────────────
+var lflChart = null;
+
+function buildLflChart(months) {
+    if (lflChart) { lflChart.destroy(); lflChart = null; }
+    var canvas = document.getElementById('lfl-canvas');
+    if (!canvas) return;
+    var data = months.map(function(m) { return m.lfl_pct; });
+    var labels = months.map(function(m) { return m.label; });
+    var colors = data.map(function(v) {
+        if (v === null) return 'rgba(255,255,255,0.25)';
+        return v >= 0 ? 'rgba(255,255,255,0.7)' : 'rgba(255,100,100,0.75)';
+    });
+    lflChart = new Chart(canvas, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: data,
+                backgroundColor: colors,
+                hoverBackgroundColor: data.map(function(v) {
+                    return v === null ? 'rgba(255,255,255,0.4)' :
+                           v >= 0 ? 'rgba(255,255,255,0.95)' : 'rgba(255,80,80,0.95)';
+                }),
+                borderRadius: 5,
+                borderSkipped: false,
+            }]
+        },
+        options: {
+            responsive: true,
+            animation: { duration: 400 },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: function(ctx) {
+                            var v = ctx.parsed.y;
+                            return v === null ? 'Нет данных' : (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
+                        }
+                    },
+                    backgroundColor: 'rgba(0,0,0,.7)',
+                    titleColor: '#fff', bodyColor: '#fff',
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { color: 'rgba(255,255,255,.8)', font: { size: 10, weight: '600' } },
+                    grid: { display: false },
+                    border: { color: 'rgba(255,255,255,.15)' }
+                },
+                y: {
+                    ticks: {
+                        color: 'rgba(255,255,255,.65)',
+                        font: { size: 10 },
+                        callback: function(v) { return (v >= 0 ? '+' : '') + v + '%'; }
+                    },
+                    grid: { color: 'rgba(255,255,255,.12)' },
+                    border: { display: false }
+                }
+            }
+        }
+    });
+}
+
+function loadLfl() {
+    fetch('/api/lfl')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.ok) return;
+            var months = d.months;
+            buildLflChart(months);
+            // Show current month LFL as big number
+            var cur = months[months.length - 1];
+            var signEl = document.getElementById('lfl-sign');
+            var valEl  = document.getElementById('lfl-pct-val');
+            var symEl  = document.getElementById('lfl-pct-sym');
+            var lblEl  = document.getElementById('lfl-period-label');
+            if (cur && cur.lfl_pct !== null) {
+                var pct = cur.lfl_pct;
+                signEl.textContent = pct >= 0 ? '+' : '';
+                valEl.textContent  = Math.abs(pct).toFixed(1);
+                symEl.style.display = '';
+                signEl.style.color = pct >= 0 ? 'rgba(255,255,255,1)' : 'rgba(255,150,150,1)';
+                valEl.style.color  = pct >= 0 ? 'rgba(255,255,255,1)' : 'rgba(255,150,150,1)';
+                lblEl.textContent  = (cur.is_current ? 'тек. месяц, ' : '') + cur.label + ' к ' + (cur.year - 1);
+            } else {
+                signEl.textContent = '';
+                valEl.textContent  = '—';
+                symEl.style.display = 'none';
+                lblEl.textContent  = 'к тому же периоду прошлого года';
+            }
+        });
+}
+
+loadLfl();
 </script>
 {% endblock %}
