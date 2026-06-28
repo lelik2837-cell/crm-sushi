@@ -667,7 +667,7 @@
           <input type="text" class="mini-input time-inp sf-start" value="{{ s.shift_start or '10:00' }}" placeholder="10:00" maxlength="5" {% if not can_edit %}disabled{% endif %}>
           <input type="text" class="mini-input time-inp sf-end"   value="{{ s.shift_end   or '22:00' }}" placeholder="22:00" maxlength="5" {% if not can_edit %}disabled{% endif %}>
           <div class="field-calc sf-hours">{{ s.hours_worked or 0 }} ч</div>
-          <input class="mini-input sf-km" type="number" min="0" step="0.1" placeholder="0" value="{{ (s.km or 0)|int }}" {% if not can_edit %}disabled{% endif %}>
+          <input class="mini-input sf-km" type="number" min="0" step="0.1" placeholder="0" value="{{ (s.km or 0)|round(1) }}" {% if not can_edit %}disabled{% endif %}>
           <input class="mini-input sf-orders" type="number" min="0" placeholder="0" value="{{ s.orders or 0 }}" {% if not can_edit %}disabled{% endif %}>
           {% if can_edit %}
           <div class="bonus-btns"><button class="bonus-btn-prem" onclick="toggleBonus(this,'prem')">Премия</button><button class="bonus-btn-fine" onclick="toggleBonus(this,'fine')">Штраф</button></div>
