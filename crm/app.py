@@ -51,18 +51,18 @@ ROLE_LABELS = {
 
 # Hardcoded defaults — seeded into DB on first run
 _DEFAULT_EXPENSE_CATEGORIES = [
-    ('repair_plumbing', 'Ремонт сантех.', 1),
-    ('repair_grease', 'Чистка жироуловителя', 2),
-    ('repair_electric', 'Ремонт электрика', 3),
-    ('repair_fridge', 'Ремонт холод.оборуд.', 4),
-    ('repair_other', 'Ремонт другой', 5),
-    ('shop', 'Магазин / Аптека', 6),
-    ('taxi', 'Такси', 7),
-    ('cash_plus', 'Плюсы в кассу', 8),
-    ('oil', 'За масло отработанное', 9),
-    ('fish', 'Рыба (головы, хребты)', 10),
-    ('change', 'Размен внёс Алексей', 11),
-    ('other', 'Другое', 12),
+    ('repair_plumbing', 'Ремонт сантех.',       'expense', 1),
+    ('repair_grease',   'Чистка жироуловителя', 'expense', 2),
+    ('repair_electric', 'Ремонт электрика',     'expense', 3),
+    ('repair_fridge',   'Ремонт холод.оборуд.', 'expense', 4),
+    ('repair_other',    'Ремонт другой',        'expense', 5),
+    ('shop',            'Магазин / Аптека',     'expense', 6),
+    ('taxi',            'Такси',                'expense', 7),
+    ('cash_plus',       'Плюсы в кассу',        'income',  8),
+    ('oil',             'За масло отработанное','income',  9),
+    ('fish',            'Рыба (головы, хребты)','income',  10),
+    ('change',          'Размен внёс Алексей',  'income',  11),
+    ('other',           'Другое',               'expense', 12),
 ]
 
 ACTION_LABELS = {
@@ -682,10 +682,10 @@ def init_db():
         # Seed expense categories
         existing = conn.execute("SELECT COUNT(*) FROM expense_categories").fetchone()[0]
         if existing == 0:
-            for code, label, sort in _DEFAULT_EXPENSE_CATEGORIES:
+            for code, label, cat_type, sort in _DEFAULT_EXPENSE_CATEGORIES:
                 conn.execute(
-                    "INSERT OR IGNORE INTO expense_categories (code, label, sort_order) VALUES (?,?,?)",
-                    (code, label, sort)
+                    "INSERT OR IGNORE INTO expense_categories (code, label, type, sort_order) VALUES (?,?,?,?)",
+                    (code, label, cat_type, sort)
                 )
 
             conn.execute('''CREATE TABLE IF NOT EXISTS contractor_categories (
@@ -7162,10 +7162,10 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
 
     if plus_entries_import and not conn.execute(
             "SELECT id FROM cash_plus_entries WHERE shift_id=?", (shift_id,)).fetchone():
-        for pdesc, pamt in plus_entries_import:
+        for pcat, pdesc, pamt in plus_entries_import:
             conn.execute(
-                "INSERT INTO cash_plus_entries (shift_id, amount, amount_cash, description) VALUES (?,?,?,?)",
-                (shift_id, pamt, pamt, pdesc)
+                "INSERT INTO cash_plus_entries (shift_id, amount, amount_cash, category, description) VALUES (?,?,?,?,?)",
+                (shift_id, pamt, pamt, pcat, pdesc)
             )
 
     if terminal_entries and not conn.execute(
