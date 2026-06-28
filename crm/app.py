@@ -7257,6 +7257,7 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
                 )
 
     # Ремонт (rows 9-13 = Excel 10-14): категория из col B через _XL_CAT_MAP
+    # Если C:E содержит «стаф» — переопределяем в staff
     cur_cat = None
     for r in rows[9:14]:
         cat_str = r[1]
@@ -7266,14 +7267,17 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
             continue
         cash_e = _xf(r[5])
         card_e = _xf(r[6])
-        desc   = str(r[2]).strip() if r[2] and str(r[2]).strip() else None
+        if cash_e <= 0 and card_e <= 0:
+            continue
+        parts = [str(r[ci]).strip() for ci in (2, 3, 4) if len(r) > ci and r[ci] is not None and str(r[ci]).strip()]
+        desc   = ' '.join(parts) if parts else None
+        cat    = 'staff' if desc and 'стаф' in desc.lower() else cur_cat
         gulash = 1 if len(r) > 7 and r[7] is True else 0
-        if cash_e > 0 or card_e > 0:
-            conn.execute(
-                "INSERT INTO expenses (shift_id,category,description,amount_cash,amount_card,is_gulash) VALUES (?,?,?,?,?,?)",
-                (shift_id, cur_cat, desc, cash_e, card_e, gulash)
-            )
-            stats['expenses'] += 1
+        conn.execute(
+            "INSERT INTO expenses (shift_id,category,description,amount_cash,amount_card,is_gulash) VALUES (?,?,?,?,?,?)",
+            (shift_id, cat, desc, cash_e, card_e, gulash)
+        )
+        stats['expenses'] += 1
 
     # Магазин/Стафф (rows 14-19 = Excel 15-20): если C:E содержит «стаф» → staff, иначе → shop
     for r in rows[14:20]:
