@@ -7125,8 +7125,8 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
     for i in range(32, 36):
         if len(rows) <= i:
             break
-        amt  = _xf(rows[i][3])
-        desc = str(rows[i][1]).strip() if rows[i][1] else ''
+        amt  = _xf(rows[i][3])                                   # D col — сумма
+        desc = str(rows[i][2]).strip() if rows[i][2] else ''     # C col — комментарий
         if amt > 0:
             plus_entries_import.append(('cash_plus', desc, amt))
     plus_amount = sum(e[2] for e in plus_entries_import)
