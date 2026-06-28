@@ -70,10 +70,19 @@
                         {% for cat in exp_cats %}{% if cat.type == 'expense' and not cat.parent_id %}
                         {% set ns.found = true %}
                         <div class="{% if not cat.is_active %}opacity-50{% endif %}">
-                            <div class="d-flex align-items-center px-3 py-2 border-bottom bg-light">
+                            <div class="d-flex align-items-center px-3 py-2 border-bottom bg-light gap-1">
                                 <span class="fw-semibold flex-grow-1">{{ cat.label }}</span>
-                                <span class="badge bg-secondary me-2" style="font-size:10px;">{{ cat.code }}</span>
-                                <form method="POST" action="{{ url_for('toggle_expense_cat', cat_id=cat.id) }}" class="d-inline me-1">
+                                <span class="badge bg-secondary" style="font-size:10px;">{{ cat.code }}</span>
+                                {% if cat_branches.get(cat.id) %}
+                                <span class="badge bg-primary" style="font-size:10px;" title="Только выбранные филиалы">
+                                    <i class="bi bi-building"></i> {{ cat_branches[cat.id]|length }}
+                                </span>
+                                {% endif %}
+                                <button type="button" class="btn btn-sm btn-outline-primary" title="Редактировать"
+                                    onclick="openEditCat({{ cat.id }}, {{ cat.label|tojson }}, {{ (cat_branches.get(cat.id) or [])|tojson }})">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <form method="POST" action="{{ url_for('toggle_expense_cat', cat_id=cat.id) }}" class="d-inline">
                                     <button class="btn btn-sm {% if cat.is_active %}btn-outline-secondary{% else %}btn-outline-success{% endif %}" title="Показать/скрыть">
                                         <i class="bi bi-{% if cat.is_active %}eye-slash{% else %}eye{% endif %}"></i>
                                     </button>
@@ -84,11 +93,18 @@
                                 </form>
                             </div>
                             {% for sub in exp_cats %}{% if sub.parent_id == cat.id %}
-                            <div class="d-flex align-items-center px-3 py-1 border-bottom {% if not sub.is_active %}opacity-50{% endif %}" style="padding-left:2rem!important;">
+                            <div class="d-flex align-items-center px-3 py-1 border-bottom gap-1 {% if not sub.is_active %}opacity-50{% endif %}" style="padding-left:2rem!important;">
                                 <i class="bi bi-arrow-return-right text-muted me-2" style="font-size:11px;"></i>
                                 <span class="flex-grow-1 small">{{ sub.label }}</span>
-                                <span class="badge bg-light text-muted border me-2" style="font-size:10px;">{{ sub.code }}</span>
-                                <form method="POST" action="{{ url_for('toggle_expense_cat', cat_id=sub.id) }}" class="d-inline me-1">
+                                <span class="badge bg-light text-muted border" style="font-size:10px;">{{ sub.code }}</span>
+                                {% if cat_branches.get(sub.id) %}
+                                <span class="badge bg-primary" style="font-size:10px;"><i class="bi bi-building"></i> {{ cat_branches[sub.id]|length }}</span>
+                                {% endif %}
+                                <button type="button" class="btn btn-sm btn-outline-primary" title="Редактировать"
+                                    onclick="openEditCat({{ sub.id }}, {{ sub.label|tojson }}, {{ (cat_branches.get(sub.id) or [])|tojson }})">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <form method="POST" action="{{ url_for('toggle_expense_cat', cat_id=sub.id) }}" class="d-inline">
                                     <button class="btn btn-sm {% if sub.is_active %}btn-outline-secondary{% else %}btn-outline-success{% endif %}">
                                         <i class="bi bi-{% if sub.is_active %}eye-slash{% else %}eye{% endif %}"></i>
                                     </button>
@@ -117,10 +133,17 @@
                         {% for cat in exp_cats %}{% if cat.type == 'income' and not cat.parent_id %}
                         {% set ns2.found = true %}
                         <div class="{% if not cat.is_active %}opacity-50{% endif %}">
-                            <div class="d-flex align-items-center px-3 py-2 border-bottom bg-light">
+                            <div class="d-flex align-items-center px-3 py-2 border-bottom bg-light gap-1">
                                 <span class="fw-semibold flex-grow-1">{{ cat.label }}</span>
-                                <span class="badge bg-secondary me-2" style="font-size:10px;">{{ cat.code }}</span>
-                                <form method="POST" action="{{ url_for('toggle_expense_cat', cat_id=cat.id) }}" class="d-inline me-1">
+                                <span class="badge bg-secondary" style="font-size:10px;">{{ cat.code }}</span>
+                                {% if cat_branches.get(cat.id) %}
+                                <span class="badge bg-primary" style="font-size:10px;"><i class="bi bi-building"></i> {{ cat_branches[cat.id]|length }}</span>
+                                {% endif %}
+                                <button type="button" class="btn btn-sm btn-outline-primary" title="Редактировать"
+                                    onclick="openEditCat({{ cat.id }}, {{ cat.label|tojson }}, {{ (cat_branches.get(cat.id) or [])|tojson }})">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <form method="POST" action="{{ url_for('toggle_expense_cat', cat_id=cat.id) }}" class="d-inline">
                                     <button class="btn btn-sm {% if cat.is_active %}btn-outline-secondary{% else %}btn-outline-success{% endif %}">
                                         <i class="bi bi-{% if cat.is_active %}eye-slash{% else %}eye{% endif %}"></i>
                                     </button>
@@ -131,11 +154,18 @@
                                 </form>
                             </div>
                             {% for sub in exp_cats %}{% if sub.parent_id == cat.id %}
-                            <div class="d-flex align-items-center px-3 py-1 border-bottom {% if not sub.is_active %}opacity-50{% endif %}" style="padding-left:2rem!important;">
+                            <div class="d-flex align-items-center px-3 py-1 border-bottom gap-1 {% if not sub.is_active %}opacity-50{% endif %}" style="padding-left:2rem!important;">
                                 <i class="bi bi-arrow-return-right text-muted me-2" style="font-size:11px;"></i>
                                 <span class="flex-grow-1 small">{{ sub.label }}</span>
-                                <span class="badge bg-light text-muted border me-2" style="font-size:10px;">{{ sub.code }}</span>
-                                <form method="POST" action="{{ url_for('toggle_expense_cat', cat_id=sub.id) }}" class="d-inline me-1">
+                                <span class="badge bg-light text-muted border" style="font-size:10px;">{{ sub.code }}</span>
+                                {% if cat_branches.get(sub.id) %}
+                                <span class="badge bg-primary" style="font-size:10px;"><i class="bi bi-building"></i> {{ cat_branches[sub.id]|length }}</span>
+                                {% endif %}
+                                <button type="button" class="btn btn-sm btn-outline-primary" title="Редактировать"
+                                    onclick="openEditCat({{ sub.id }}, {{ sub.label|tojson }}, {{ (cat_branches.get(sub.id) or [])|tojson }})">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <form method="POST" action="{{ url_for('toggle_expense_cat', cat_id=sub.id) }}" class="d-inline">
                                     <button class="btn btn-sm {% if sub.is_active %}btn-outline-secondary{% else %}btn-outline-success{% endif %}">
                                         <i class="bi bi-{% if sub.is_active %}eye-slash{% else %}eye{% endif %}"></i>
                                     </button>
@@ -151,6 +181,50 @@
                         {% if not ns2.found %}
                         <div class="text-muted text-center py-3 small">Нет категорий доходов</div>
                         {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Модалка редактирования категории -->
+        <div class="modal fade" id="editCatModal" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>Редактировать категорию</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <!-- Название -->
+                        <form id="editCatNameForm" method="POST">
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Название</label>
+                                <div class="input-group">
+                                    <input type="text" name="label" id="editCatLabel" class="form-control" required>
+                                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                                </div>
+                            </div>
+                        </form>
+                        <hr>
+                        <!-- Филиалы -->
+                        <form id="editCatBranchForm" method="POST">
+                            <div class="mb-2">
+                                <label class="form-label fw-semibold">Отображать только на филиалах</label>
+                                <div class="form-text mb-2">Если ничего не выбрано — отображается на всех филиалах</div>
+                                <div id="editCatBranchList" class="d-flex flex-column gap-1">
+                                    {% for b in branches %}
+                                    <label class="form-check d-flex align-items-center gap-2 mb-0">
+                                        <input class="form-check-input edit-cat-branch-cb" type="checkbox"
+                                            name="branch_ids" value="{{ b.id }}">
+                                        <span class="small">{{ b.name }}</span>
+                                    </label>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            <button type="submit" class="btn btn-outline-primary w-100 mt-2">
+                                <i class="bi bi-building me-1"></i>Сохранить филиалы
+                            </button>
+                        </form>
                     </div>
                 </div>
             </div>
@@ -912,6 +986,16 @@ function copyUrl(inputId) {
         var btn = el.nextElementSibling;
         if (btn) { btn.innerHTML = '<i class="bi bi-check"></i>'; setTimeout(function(){ btn.innerHTML = '<i class="bi bi-copy"></i>'; }, 1500); }
     });
+}
+
+function openEditCat(catId, label, branchIds) {
+    document.getElementById('editCatLabel').value = label;
+    document.getElementById('editCatNameForm').action = '/settings/expense-cat/' + catId + '/edit';
+    document.getElementById('editCatBranchForm').action = '/settings/expense-cat/' + catId + '/branches';
+    document.querySelectorAll('.edit-cat-branch-cb').forEach(function(cb) {
+        cb.checked = branchIds.indexOf(parseInt(cb.value)) !== -1;
+    });
+    new bootstrap.Modal(document.getElementById('editCatModal')).show();
 }
 </script>
 {% endblock %}

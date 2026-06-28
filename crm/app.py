@@ -57,6 +57,7 @@ _DEFAULT_EXPENSE_CATEGORIES = [
     ('repair_fridge', 'Ремонт холод.оборуд.', 4),
     ('repair_other', 'Ремонт другой', 5),
     ('shop', 'Магазин / Аптека', 6),
+    ('staff', 'Стафф', 6.5),
     ('taxi', 'Такси', 7),
     ('cash_plus', 'Плюсы в кассу', 8),
     ('oil', 'За масло отработанное', 9),
@@ -163,10 +164,18 @@ def get_branch_groups(conn):
     return result
 
 
-def get_expense_categories(conn):
-    return conn.execute(
+def get_expense_categories(conn, branch_id=None):
+    all_cats = conn.execute(
         'SELECT id, code, label, type, parent_id FROM expense_categories WHERE is_active=1 ORDER BY sort_order, label'
     ).fetchall()
+    if not branch_id:
+        return all_cats
+    # Load branch restrictions
+    restricted = {}
+    for row in conn.execute('SELECT category_id, branch_id FROM expense_category_branches').fetchall():
+        restricted.setdefault(row['category_id'], []).append(row['branch_id'])
+    # Keep categories with no restriction or with matching branch
+    return [c for c in all_cats if not restricted.get(c['id']) or branch_id in restricted[c['id']]]
 
 
 # ─── BANK HELPERS ─────────────────────────────────────────────────────────────
@@ -1063,6 +1072,15 @@ def init_db():
             );
         ''')
 
+        # Branch restrictions per expense/income category
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS expense_category_branches (
+                category_id INTEGER NOT NULL REFERENCES expense_categories(id) ON DELETE CASCADE,
+                branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                PRIMARY KEY (category_id, branch_id)
+            );
+        ''')
+
         conn.commit()
 
 
@@ -1799,7 +1817,7 @@ def shift_view(shift_id):
             'SELECT terminal_number, amount FROM shift_terminals WHERE shift_id=? ORDER BY sort_order, id',
             (shift_id,)
         ).fetchall()
-        all_cats = get_expense_categories(conn)
+        all_cats = get_expense_categories(conn, branch_id=shift['branch_id'])
         expense_cats = [c for c in all_cats if c['type'] != 'income']
         income_cats  = [c for c in all_cats if c['type'] == 'income']
         expense_cats_groups = build_cats_groups(expense_cats)
@@ -3531,6 +3549,9 @@ def settings():
             'SELECT * FROM expense_categories ORDER BY COALESCE(parent_id,id), sort_order, label'
         ).fetchall()
         exp_cats_parents = [dict(c) for c in exp_cats if not c['parent_id']]
+        cat_branches = {}
+        for row in conn.execute('SELECT category_id, branch_id FROM expense_category_branches').fetchall():
+            cat_branches.setdefault(row['category_id'], []).append(row['branch_id'])
         kpi_blocks = conn.execute(
             'SELECT * FROM kpi_blocks ORDER BY sort_order, id'
         ).fetchall()
@@ -3565,6 +3586,7 @@ def settings():
         ).fetchall()
     return render_template('settings.html',
         exp_cats=exp_cats, exp_cats_parents=exp_cats_parents,
+        cat_branches=cat_branches,
         kpi_blocks=kpi_blocks,
         bonus_rules=bonus_rules, branches=branches,
         rate_templates=rate_templates,
@@ -3634,6 +3656,40 @@ def delete_expense_cat(cat_id):
         conn.execute('DELETE FROM expense_categories WHERE id=?', (cat_id,))
         conn.commit()
     flash('Категория удалена', 'success')
+    return redirect(url_for('settings'))
+
+
+@app.route('/settings/expense-cat/<int:cat_id>/edit', methods=['POST'])
+@login_required
+@owner_required
+def edit_expense_cat(cat_id):
+    label = request.form.get('label', '').strip()
+    if not label:
+        flash('Введите название', 'danger')
+        return redirect(url_for('settings'))
+    with get_db() as conn:
+        conn.execute('UPDATE expense_categories SET label=? WHERE id=?', (label, cat_id))
+        conn.commit()
+    flash('Категория обновлена', 'success')
+    return redirect(url_for('settings'))
+
+
+@app.route('/settings/expense-cat/<int:cat_id>/branches', methods=['POST'])
+@login_required
+@owner_required
+def set_expense_cat_branches(cat_id):
+    branch_ids = request.form.getlist('branch_ids')
+    with get_db() as conn:
+        conn.execute('DELETE FROM expense_category_branches WHERE category_id=?', (cat_id,))
+        for bid in branch_ids:
+            try:
+                conn.execute(
+                    'INSERT OR IGNORE INTO expense_category_branches (category_id, branch_id) VALUES (?,?)',
+                    (cat_id, int(bid))
+                )
+            except (ValueError, TypeError):
+                pass
+        conn.commit()
     return redirect(url_for('settings'))
 
 
@@ -7173,21 +7229,21 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
                 (shift_id, tn, ta, si)
             )
 
-    # Плюсы в кассу: D29=масло, D30=рыба, C33:C36=комментарий, D33:D36=сумма
+    # Плюсы в кассу: D29=рыба, D30=масло, C33:C36=комментарий, D33:D36=сумма
     if not conn.execute("SELECT id FROM cash_plus_entries WHERE shift_id=?", (shift_id,)).fetchone():
         if len(rows) > 28:
             amt = _xf(rows[28][3])
             if amt > 0:
                 conn.execute(
                     "INSERT INTO cash_plus_entries (shift_id, amount, amount_cash, category) VALUES (?,?,?,?)",
-                    (shift_id, amt, amt, 'oil')
+                    (shift_id, amt, amt, 'fish')
                 )
         if len(rows) > 29:
             amt = _xf(rows[29][3])
             if amt > 0:
                 conn.execute(
                     "INSERT INTO cash_plus_entries (shift_id, amount, amount_cash, category) VALUES (?,?,?,?)",
-                    (shift_id, amt, amt, 'fish')
+                    (shift_id, amt, amt, 'oil')
                 )
         for i in range(32, 36):
             if len(rows) <= i:
@@ -7200,8 +7256,9 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
                     (shift_id, amt, amt, 'cash_plus', desc)
                 )
 
+    # Ремонт (rows 9-13 = Excel 10-14): категория из col B через _XL_CAT_MAP
     cur_cat = None
-    for r in rows[9:20]:
+    for r in rows[9:14]:
         cat_str = r[1]
         if cat_str and isinstance(cat_str, str) and cat_str in _XL_CAT_MAP:
             cur_cat = _XL_CAT_MAP[cat_str]
@@ -7210,13 +7267,29 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
         cash_e = _xf(r[5])
         card_e = _xf(r[6])
         desc   = str(r[2]).strip() if r[2] and str(r[2]).strip() else None
-        gulash = 1 if r[7] is True else 0
+        gulash = 1 if len(r) > 7 and r[7] is True else 0
         if cash_e > 0 or card_e > 0:
             conn.execute(
                 "INSERT INTO expenses (shift_id,category,description,amount_cash,amount_card,is_gulash) VALUES (?,?,?,?,?,?)",
                 (shift_id, cur_cat, desc, cash_e, card_e, gulash)
             )
             stats['expenses'] += 1
+
+    # Магазин/Стафф (rows 14-19 = Excel 15-20): если C:E содержит «стаф» → staff, иначе → shop
+    for r in rows[14:20]:
+        cash_e = _xf(r[5]) if len(r) > 5 else 0.0
+        card_e = _xf(r[6]) if len(r) > 6 else 0.0
+        if cash_e <= 0 and card_e <= 0:
+            continue
+        parts = [str(r[ci]).strip() for ci in (2, 3, 4) if len(r) > ci and r[ci] is not None and str(r[ci]).strip()]
+        desc  = ' '.join(parts) if parts else None
+        cat   = 'staff' if desc and 'стаф' in desc.lower() else 'shop'
+        gulash = 1 if len(r) > 7 and r[7] is True else 0
+        conn.execute(
+            "INSERT INTO expenses (shift_id,category,description,amount_cash,amount_card,is_gulash) VALUES (?,?,?,?,?,?)",
+            (shift_id, cat, desc, cash_e, card_e, gulash)
+        )
+        stats['expenses'] += 1
 
     # Такси: C22:E27=адрес, F22:F27=карта, G22:G27=нал, H22:H27=гуляш
     if not conn.execute("SELECT id FROM taxi_trips WHERE shift_id=?", (shift_id,)).fetchone():
