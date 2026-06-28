@@ -7078,6 +7078,7 @@ _XL_CAT_MAP = {
     'Чистка жироуловителя': 'repair_grease', 'Ремонт электрик': 'repair_electric',
     'Ремонт холод.оборуд.': 'repair_fridge', 'Ремонт другой': 'repair_other',
     'Магазин / Апт.': 'shop', 'Магазин/Апт.': 'shop', 'Другое': 'other',
+    'Стафф': 'staff', 'Стаф': 'staff', 'СТАФФ': 'staff', 'СТАФ': 'staff',
 }
 
 _XL_SKIP = {
@@ -7229,21 +7230,21 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
                 (shift_id, tn, ta, si)
             )
 
-    # Плюсы в кассу: D29=рыба, D30=масло, C33:C36=комментарий, D33:D36=сумма
+    # Плюсы в кассу: D29=масло, D30=рыба, C33:C36=комментарий, D33:D36=сумма
     if not conn.execute("SELECT id FROM cash_plus_entries WHERE shift_id=?", (shift_id,)).fetchone():
         if len(rows) > 28:
             amt = _xf(rows[28][3])
             if amt > 0:
                 conn.execute(
                     "INSERT INTO cash_plus_entries (shift_id, amount, amount_cash, category) VALUES (?,?,?,?)",
-                    (shift_id, amt, amt, 'fish')
+                    (shift_id, amt, amt, 'oil')
                 )
         if len(rows) > 29:
             amt = _xf(rows[29][3])
             if amt > 0:
                 conn.execute(
                     "INSERT INTO cash_plus_entries (shift_id, amount, amount_cash, category) VALUES (?,?,?,?)",
-                    (shift_id, amt, amt, 'oil')
+                    (shift_id, amt, amt, 'fish')
                 )
         for i in range(32, 36):
             if len(rows) <= i:
@@ -7256,38 +7257,29 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
                     (shift_id, amt, amt, 'cash_plus', desc)
                 )
 
-    # Ремонт (rows 9-13 = Excel 10-14): категория из col B через _XL_CAT_MAP
-    # Если C:E содержит «стаф» — переопределяем в staff
+    # Расходы (rows 9-19 = Excel 10-20): категория из col B через _XL_CAT_MAP или 'стаф' в C:E/B
     cur_cat = None
-    for r in rows[9:14]:
-        cat_str = r[1]
-        if cat_str and isinstance(cat_str, str) and cat_str in _XL_CAT_MAP:
-            cur_cat = _XL_CAT_MAP[cat_str]
+    for ri, r in enumerate(rows[9:20]):
+        cat_str = r[1] if len(r) > 1 else None
+        if cat_str and isinstance(cat_str, str) and cat_str.strip():
+            s = cat_str.strip()
+            if s in _XL_CAT_MAP:
+                cur_cat = _XL_CAT_MAP[s]
+            elif 'стаф' in s.lower():
+                cur_cat = 'staff'
+        # Для строк 14-19 (Excel 15-20) без метки в B — дефолт shop
+        if cur_cat is None and ri >= 5:
+            cur_cat = 'shop'
         if cur_cat is None:
             continue
-        cash_e = _xf(r[5])
-        card_e = _xf(r[6])
-        if cash_e <= 0 and card_e <= 0:
-            continue
-        parts = [str(r[ci]).strip() for ci in (2, 3, 4) if len(r) > ci and r[ci] is not None and str(r[ci]).strip()]
-        desc   = ' '.join(parts) if parts else None
-        cat    = 'staff' if desc and 'стаф' in desc.lower() else cur_cat
-        gulash = 1 if len(r) > 7 and r[7] is True else 0
-        conn.execute(
-            "INSERT INTO expenses (shift_id,category,description,amount_cash,amount_card,is_gulash) VALUES (?,?,?,?,?,?)",
-            (shift_id, cat, desc, cash_e, card_e, gulash)
-        )
-        stats['expenses'] += 1
-
-    # Магазин/Стафф (rows 14-19 = Excel 15-20): если C:E содержит «стаф» → staff, иначе → shop
-    for r in rows[14:20]:
         cash_e = _xf(r[5]) if len(r) > 5 else 0.0
         card_e = _xf(r[6]) if len(r) > 6 else 0.0
         if cash_e <= 0 and card_e <= 0:
             continue
         parts = [str(r[ci]).strip() for ci in (2, 3, 4) if len(r) > ci and r[ci] is not None and str(r[ci]).strip()]
-        desc  = ' '.join(parts) if parts else None
-        cat   = 'staff' if desc and 'стаф' in desc.lower() else 'shop'
+        desc   = ' '.join(parts) if parts else None
+        # C:E содержит «стаф» — всегда staff, независимо от cur_cat
+        cat    = 'staff' if (desc and 'стаф' in desc.lower()) or cur_cat == 'staff' else cur_cat
         gulash = 1 if len(r) > 7 and r[7] is True else 0
         conn.execute(
             "INSERT INTO expenses (shift_id,category,description,amount_cash,amount_card,is_gulash) VALUES (?,?,?,?,?,?)",
