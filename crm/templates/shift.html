@@ -307,6 +307,8 @@
           <div style="background:#fff1f2; border:1.5px solid #fecdd3; border-radius:10px; padding:14px;">
             <div style="font-size:10px; color:#9f1239; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px;">Итого нал</div>
             <div id="kassa-nал" style="font-size:22px; font-weight:800; color:#be123c; line-height:1;">{{ (revenue.cash_amount or 0)|int }} ₽</div>
+            <input type="hidden" id="kassa-nal-hidden" class="rev-field" data-field="kassa_nal"
+                   value="{{ (revenue.kassa_nal or 0)|int }}">
           </div>
           <div style="background:#f0fdf4; border:1.5px solid #bbf7d0; border-radius:10px; padding:14px;">
             <div style="font-size:10px; color:#166534; font-weight:700; text-transform:uppercase; letter-spacing:.5px; margin-bottom:6px;">Итого безнал</div>
@@ -941,6 +943,8 @@ function updateKassa() {
   document.getElementById('kassa-nал').textContent = fmt(kassaNal);
   document.getElementById('kassa-nал').style.color = kassaNal < 0 ? '#dc2626' : '#be123c';
   document.getElementById('kassa-beznal').textContent = fmt(kassaBeznal);
+  // сохраняем вычисленное значение для передачи в БД
+  document.getElementById('kassa-nal-hidden').value = Math.round(kassaNal);
 }
 
 if (CAN_EDIT) {

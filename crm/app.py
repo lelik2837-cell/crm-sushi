@@ -800,6 +800,11 @@ def init_db():
         except Exception:
             pass
 
+        try:
+            conn.execute("ALTER TABLE shift_revenue ADD COLUMN kassa_nal REAL DEFAULT NULL")
+        except Exception:
+            pass
+
         # Add category and cash/card split to cash_plus_entries
         plus_cols = [r[1] for r in conn.execute("PRAGMA table_info(cash_plus_entries)").fetchall()]
         if 'category' not in plus_cols:
@@ -1899,7 +1904,7 @@ def save_revenue(shift_id):
                 pickup_revenue=?, pickup_orders=?,
                 cash_amount=?, card_amount=?, online_amount=?,
                 change_amount=?, actual_cash=?, terminal_last3=?, terminal_amount=?,
-                morning_cash=?
+                morning_cash=?, kassa_nal=?
             WHERE shift_id=?
         ''', (
             _f(data, 'total_revenue'), _f(data, 'delivery_revenue'), _i(data, 'delivery_orders'),
@@ -1907,7 +1912,7 @@ def save_revenue(shift_id):
             _f(data, 'cash_amount'), _f(data, 'card_amount'), _f(data, 'online_amount'),
             _f(data, 'change_amount'), _f(data, 'actual_cash'),
             data.get('terminal_last3', ''), _f(data, 'terminal_amount'),
-            _f(data, 'morning_cash'),
+            _f(data, 'morning_cash'), _f(data, 'kassa_nal'),
             shift_id
         ))
         desc = (f"нал {_fmt_money(data.get('cash_amount'))}, "
@@ -5868,6 +5873,7 @@ def shifts_archive():
                    )                                    as morning_cash,
                    COALESCE(r.change_amount, 0)        as change_amount,
                    r.actual_cash,
+                   r.kassa_nal,
                    (SELECT COALESCE(SUM(e.amount_cash),0)
                     FROM expenses e WHERE e.shift_id=s.id)  as exp_cash,
                    (SELECT COALESCE(SUM(es.total_amount),0)

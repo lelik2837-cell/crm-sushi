@@ -134,8 +134,8 @@
                 </thead>
                 <tbody>
                 {% for s in shifts %}
-                {% set kassa = (s.morning_cash + s.cash_amount + s.change_amount + s.plus_cash - (s.taxi_cash or 0) - s.exp_cash - s.paid_salary) | int %}
-                {% set diff = ((s.actual_cash or 0) - kassa) | int if s.actual_cash is not none else none %}
+                {% set kassa_nal = s.kassa_nal | int if s.kassa_nal is not none else none %}
+                {% set diff = ((s.actual_cash or 0) - kassa_nal) | int if (s.actual_cash is not none and kassa_nal is not none) else none %}
                 <tr>
                     <td class="fw-semibold">{{ s.date | date_fmt }}</td>
                     {% if is_owner %}<td class="text-muted small">{{ s.branch_name }}</td>{% endif %}
@@ -151,7 +151,11 @@
                         <span class="text-muted small"> / {{ s.orders if s.orders else '0' }}</span>
                     </td>
                     <td class="text-end fw-semibold">
-                        {{ "{:,.0f}".format(kassa).replace(',', ' ') }}&nbsp;₽
+                        {% if kassa_nal is not none %}
+                            {{ "{:,.0f}".format(kassa_nal).replace(',', ' ') }}&nbsp;₽
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
                     </td>
                     <td class="text-end fw-semibold">
                         {% if s.actual_cash is not none %}

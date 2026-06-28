@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"/Users/aleksey/Desktop/CRM sushi\" && if [ -n \"$(git status --porcelain)\" ]; then git add -A && git commit -m \"auto-deploy: $(date '+%Y-%m-%d %H:%M')\" && git push origin main; fi 2>/dev/null || true",
+            "timeout": 60,
+            "statusMessage": "Деплой в Railway..."
+          }
+        ]
+      }
+    ]
+  }
+}
