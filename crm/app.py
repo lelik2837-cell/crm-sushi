@@ -5641,7 +5641,15 @@ def gdrive_test():
         except Exception:
             ok(f'Тестовый файл (_crm_test_.txt) остался в папке — удалите вручную')
     except Exception as e:
-        err(f'Ошибка при загрузке файла: {e}')
+        import urllib.error as _ue
+        if isinstance(e, _ue.HTTPError):
+            try:
+                body = e.read().decode('utf-8', errors='replace')
+            except Exception:
+                body = '(не удалось прочитать тело ответа)'
+            err(f'Ошибка при загрузке файла: {e} — {body[:600]}')
+        else:
+            err(f'Ошибка при загрузке файла: {e}')
         return jsonify({'steps': steps})
 
     return jsonify({'steps': steps})
