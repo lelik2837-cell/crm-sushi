@@ -5545,6 +5545,108 @@ def gsheet_settings():
                            has_creds=bool(os.environ.get('GOOGLE_CREDENTIALS_JSON')))
 
 
+@app.route('/settings/gdrive-test', methods=['POST'])
+@login_required
+@owner_required
+def gdrive_test():
+    """Пошаговая диагностика подключения к Google Drive."""
+    steps = []
+    def ok(msg):  steps.append({'status': 'ok',    'msg': msg})
+    def err(msg): steps.append({'status': 'error', 'msg': msg})
+
+    creds_json = os.environ.get('GOOGLE_CREDENTIALS_JSON')
+    folder_id  = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
+
+    if not creds_json:
+        err('GOOGLE_CREDENTIALS_JSON не задана в Railway')
+        return jsonify({'steps': steps})
+    ok('GOOGLE_CREDENTIALS_JSON найдена')
+
+    if not folder_id:
+        err('GOOGLE_DRIVE_FOLDER_ID не задана в Railway')
+        return jsonify({'steps': steps})
+    ok(f'GOOGLE_DRIVE_FOLDER_ID = {folder_id}')
+
+    try:
+        import json as _j
+        creds_dict = _j.loads(creds_json)
+        client_email = creds_dict.get('client_email', '?')
+        ok(f'JSON ключ разобран, сервисный аккаунт: {client_email}')
+    except Exception as e:
+        err(f'Не удалось разобрать GOOGLE_CREDENTIALS_JSON: {e}')
+        return jsonify({'steps': steps})
+
+    try:
+        from google.oauth2.service_account import Credentials
+        import google.auth.transport.requests as _gatr
+        creds = Credentials.from_service_account_info(
+            creds_dict, scopes=['https://www.googleapis.com/auth/drive']
+        )
+        creds.refresh(_gatr.Request())
+        ok('Авторизация Google прошла успешно, токен получен')
+    except Exception as e:
+        err(f'Ошибка авторизации Google: {e}')
+        return jsonify({'steps': steps})
+
+    try:
+        import urllib.request as _ur
+        import json as _j
+        token = creds.token
+        list_req = _ur.Request(
+            f'https://www.googleapis.com/drive/v3/files?q=%27{folder_id}%27+in+parents&pageSize=1&fields=files(id,name)',
+            headers={'Authorization': f'Bearer {token}'}
+        )
+        with _ur.urlopen(list_req, timeout=15) as resp:
+            data = _j.loads(resp.read())
+        count = len(data.get('files', []))
+        ok(f'Доступ к папке есть (найдено файлов: {count})')
+    except Exception as e:
+        err(f'Нет доступа к папке Drive: {e}. Убедитесь что {client_email} добавлен как редактор папки.')
+        return jsonify({'steps': steps})
+
+    try:
+        import urllib.request as _ur
+        import json as _j
+        token = creds.token
+        test_content = b'CRM PAPA gdrive test'
+        boundary = 'GDriveTestBnd1234'
+        meta = _j.dumps({'name': '_crm_test_.txt', 'parents': [folder_id]})
+        body = (
+            f'--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'
+            f'{meta}\r\n'
+            f'--{boundary}\r\nContent-Type: text/plain\r\n\r\n'
+        ).encode() + test_content + f'\r\n--{boundary}--'.encode()
+        upload_req = _ur.Request(
+            'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+            data=body,
+            headers={
+                'Authorization': f'Bearer {token}',
+                'Content-Type': f'multipart/related; boundary="{boundary}"',
+            },
+            method='POST'
+        )
+        with _ur.urlopen(upload_req, timeout=30) as resp:
+            result = _j.loads(resp.read())
+        file_id = result.get('id', '?')
+        ok(f'Тестовый файл загружен в папку (id={file_id})')
+        # Delete test file
+        del_req = _ur.Request(
+            f'https://www.googleapis.com/drive/v3/files/{file_id}',
+            headers={'Authorization': f'Bearer {token}'},
+            method='DELETE'
+        )
+        try:
+            _ur.urlopen(del_req, timeout=10)
+            ok('Тестовый файл удалён')
+        except Exception:
+            ok(f'Тестовый файл (_crm_test_.txt) остался в папке — удалите вручную')
+    except Exception as e:
+        err(f'Ошибка при загрузке файла: {e}')
+        return jsonify({'steps': steps})
+
+    return jsonify({'steps': steps})
+
+
 # ─── HISTORY ──────────────────────────────────────────────────────────────────
 
 @app.route('/history')
