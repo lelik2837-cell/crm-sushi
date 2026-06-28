@@ -2515,14 +2515,15 @@ def _export_shift_to_gdrive_xlsx(shift_id):
 
             couriers = conn.execute(
                 "SELECT full_name_snapshot, hours_worked, km, orders, rate_snapshot, "
-                "rate_per_km_snapshot, rate_per_order_snapshot, bonus_comment, total_amount, is_paid "
+                "rate_per_km_snapshot, rate_per_order_snapshot, bonus_comment, "
+                "bonus_amount, penalty_amount, total_amount, is_paid "
                 "FROM employee_shifts WHERE shift_id=? AND role_snapshot='courier' ORDER BY full_name_snapshot",
                 (shift_id,)
             ).fetchall()
 
             non_couriers = conn.execute(
                 "SELECT full_name_snapshot, role_snapshot, rate_snapshot, shift_start, shift_end, "
-                "hours_worked, bonus_amount, penalty_amount, bonus_comment, total_amount, is_paid "
+                "hours_worked, bonus_amount, penalty_amount, bonus_comment, base_pay, total_amount, is_paid "
                 "FROM employee_shifts WHERE shift_id=? AND role_snapshot IN ('admin','sushi','cleaner','cook','packer') "
                 "ORDER BY role_snapshot, full_name_snapshot",
                 (shift_id,)
@@ -2596,6 +2597,8 @@ def _export_shift_to_gdrive_xlsx(shift_id):
             km_rate = c['rate_per_km_snapshot'] or 10
             or_rate = c['rate_per_order_snapshot'] or 100
             hr_rate = c['rate_snapshot'] or 0
+            bonus_amt   = c['bonus_amount'] or 0
+            penalty_amt = c['penalty_amount'] or 0
             w(r, 11, c['full_name_snapshot'])          # K
             w(r, 13, km)                               # M = km
             w(r, 14, round(km * km_rate, 2))           # N = km pay
@@ -2603,7 +2606,14 @@ def _export_shift_to_gdrive_xlsx(shift_id):
             w(r, 16, round(hours * hr_rate, 2))        # P = hrs pay
             w(r, 17, orders)                           # Q = orders
             w(r, 18, round(orders * or_rate, 2))       # R = ord pay
-            w(r, 19, c['bonus_comment'] or '')         # S = comment
+            if bonus_amt > 0:
+                w(r, 19, 'премия')                     # S = label
+                w(r, 20, bonus_amt)                    # T = amount
+            elif penalty_amt > 0:
+                w(r, 19, 'штраф')                      # S = label
+                w(r, 20, penalty_amt)                  # T = amount
+            else:
+                w(r, 19, c['bonus_comment'] or '')     # S = comment
             w(r, 21, 'Да' if c['is_paid'] else '')    # U = paid
             w(r, 22, c['total_amount'] or 0)           # V = total
 
@@ -2643,6 +2653,7 @@ def _export_shift_to_gdrive_xlsx(shift_id):
 
         def _write_staff(r, s):
             bonus_val = (s['bonus_amount'] or 0) - (s['penalty_amount'] or 0)
+            base_pay  = s['base_pay'] or 0
             w(r, 11, s['full_name_snapshot'])
             w(r, 13, s['rate_snapshot'] or 0)        # M = ставка
             if s['shift_start']:
@@ -2651,9 +2662,11 @@ def _export_shift_to_gdrive_xlsx(shift_id):
                 w(r, 15, s['shift_end'])              # O = конец
             w(r, 16, s['hours_worked'] or 0)          # P = часы
             if bonus_val:
-                w(r, 18, bonus_val)                   # R = премия/штраф
+                w(r, 18, bonus_val)                   # R = премия/штраф (legacy)
             if s['bonus_comment']:
                 w(r, 19, s['bonus_comment'])          # S = комментарий
+            if base_pay:
+                w(r, 20, base_pay)                    # T = база до премии/штрафа
             w(r, 21, 'Да' if s['is_paid'] else '')   # U = выплачено
             w(r, 22, s['total_amount'] or 0)          # V = итого
 
@@ -7435,7 +7448,21 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
         km      = _xf(r[12]); km_pay  = _xf(r[13])
         hours   = _xf(r[14]); hrs_pay = _xf(r[15])
         orders  = int(_xf(r[16])); ord_pay = _xf(r[17])
-        comment = str(r[18]).strip() if r[18] and str(r[18]) != 'Ничего' else ''
+        # S column: "премия"/"штраф" label; T column: amount
+        s_label  = str(r[18]).strip() if len(r) > 18 and r[18] else ''
+        t_amount = _xf(r[19]) if len(r) > 19 else 0.0
+        if 'премия' in s_label.lower():
+            bonus   = t_amount
+            penalty = 0.0
+            comment = ''
+        elif 'штраф' in s_label.lower():
+            bonus   = 0.0
+            penalty = t_amount
+            comment = ''
+        else:
+            bonus   = 0.0
+            penalty = 0.0
+            comment = s_label if s_label and s_label != 'Ничего' else ''
         paid    = 1 if r[20] == 'Да' else 0
         rate_km  = round(km_pay / km, 2) if km > 0 else 10.0
         rate_ord = round(ord_pay / orders, 2) if orders > 0 else 100.0
@@ -7448,6 +7475,7 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
                   hours=hours, km=km, orders=orders,
                   rate_km=rate_km, rate_ord=rate_ord, comment=comment,
                   start=start, end=end,
+                  bonus=bonus, penalty=penalty,
                   base_pay=hrs_pay + km_pay, total=total, paid=paid)
 
     for row_idx, r in enumerate(rows[9:22], start=9):
@@ -7469,16 +7497,25 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
             role = 'admin'
         else:
             role = 'sushi'
-        rate   = _xf(r[12])
-        start  = _xts(r[13])
-        end    = _xts(r[14])
-        hours  = _xt(r[15])
-        bval   = r[17]
-        bonus   = _xf(bval) if isinstance(bval, (int, float)) and bval > 0 else 0
-        penalty = abs(_xf(bval)) if isinstance(bval, (int, float)) and bval < 0 else 0
+        rate    = _xf(r[12])
+        start   = _xts(r[13])
+        end     = _xts(r[14])
+        hours   = _xt(r[15])
         comment = str(r[18]).strip() if r[18] and str(r[18]) != 'Ничего' else ''
         paid    = 1 if r[20] == 'Да' else 0
-        base    = round(rate * hours, 2)
+        # T column = база до премии/штрафа; V column = итого с премией/штрафом
+        t_base = _xf(r[19]) if len(r) > 19 else 0.0
+        if t_base > 0:
+            diff    = total - t_base
+            bonus   = round(max(0.0, diff), 2)
+            penalty = round(max(0.0, -diff), 2)
+            base    = t_base
+        else:
+            # Обратная совместимость: R column (index 17)
+            bval    = r[17]
+            bonus   = _xf(bval) if isinstance(bval, (int, float)) and bval > 0 else 0
+            penalty = abs(_xf(bval)) if isinstance(bval, (int, float)) and bval < 0 else 0
+            base    = round(rate * hours, 2)
         emp_id  = get_or_create(name, role, rate)
         add_shift(emp_id, name, role, rate,
                   hours=hours, start=start, end=end,
