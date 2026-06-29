@@ -126,29 +126,34 @@
 </div>
 
 {# ── Сводная таблица: даты × филиалы ── #}
+{# macro: цвет отклонения #}
+{%- macro dev_color(pct, has_plan) -%}
+{%- if not has_plan -%}#adb5bd{%- elif pct >= 100 -%}#198754{%- elif pct >= 90 -%}#fd7e14{%- else -%}#dc3545{%- endif -%}
+{%- endmacro -%}
 <div class="card mb-4">
     <div class="card-body p-0">
         <div class="table-responsive">
             <table class="table table-bordered table-sm mb-0 align-middle" id="rev-pivot-table"
-                   style="font-size:13px;min-width:{{ 120 + rev_branch_list|length * 160 }}px">
+                   style="font-size:13px;min-width:{{ 120 + rev_branch_list|length * 240 }}px">
                 <thead>
                     <tr class="table-dark">
                         <th rowspan="2" style="min-width:90px;vertical-align:middle;">Дата</th>
                         {% for b in rev_branch_list %}
-                        <th colspan="2" class="text-center" style="min-width:150px;">{{ b.name }}</th>
+                        <th colspan="3" class="text-center" style="min-width:220px;">{{ b.name }}</th>
                         {% endfor %}
-                        <th colspan="2" class="text-center" style="min-width:150px;">Итого</th>
+                        <th colspan="3" class="text-center" style="min-width:220px;">Итого</th>
                     </tr>
                     <tr class="table-secondary">
                         {% for b in rev_branch_list %}
                         <th class="text-end" style="font-size:11px;color:#1d4ed8;">Выручка</th>
                         <th class="text-end" style="font-size:11px;color:#198754;">
-                            План
-                            <i class="bi bi-pencil-fill" style="font-size:9px;opacity:.5;" title="Нажмите на ячейку для редактирования"></i>
+                            План <i class="bi bi-pencil-fill" style="font-size:9px;opacity:.5;"></i>
                         </th>
+                        <th class="text-end" style="font-size:11px;color:#6c757d;">Откл.</th>
                         {% endfor %}
                         <th class="text-end" style="font-size:11px;color:#1d4ed8;">Выручка</th>
                         <th class="text-end" style="font-size:11px;color:#198754;">План</th>
+                        <th class="text-end" style="font-size:11px;color:#6c757d;">Откл.</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -162,6 +167,8 @@
                     {% set cell = rev_pivot[d][b.id] %}
                     {% set _row.act  = _row.act  + cell.actual %}
                     {% set _row.plan = _row.plan + cell.plan   %}
+                    {% set _dpct = ((cell.actual / cell.plan * 100) | round(0) | int) if cell.plan > 0 else 0 %}
+                    {% set _damt = cell.actual - cell.plan %}
                     <td class="text-end" id="act-{{ d }}-{{ b.id }}"
                         data-act="{{ cell.actual | int }}"
                         style="color:{% if cell.actual > 0 %}#1d4ed8{% else %}#adb5bd{% endif %}">
@@ -177,7 +184,17 @@
                         style="cursor:pointer;{% if cell.plan > 0 %}color:#198754;{% else %}color:#adb5bd;{% endif %}background:#f0fdf4;">
                         {% if cell.plan > 0 %}{{ '{:,.0f}'.format(cell.plan).replace(',', ' ') }}{% else %}—{% endif %}
                     </td>
+                    <td class="text-end"
+                        id="dev-{{ d }}-{{ b.id }}"
+                        data-act="{{ cell.actual | int }}"
+                        data-plan="{{ cell.plan | int }}"
+                        style="font-size:12px;color:{{ dev_color(_dpct, cell.plan > 0) }};">
+                        {% if cell.plan > 0 %}{% if _damt >= 0 %}+{% endif %}{{ '{:,.0f}'.format(_damt).replace(',', ' ') }} ({{ _dpct }}%){% else %}—{% endif %}
+                    </td>
                     {% endfor %}
+                    {# Итого по строке #}
+                    {% set _rpct = ((_row.act / _row.plan * 100) | round(0) | int) if _row.plan > 0 else 0 %}
+                    {% set _rdamt = _row.act - _row.plan %}
                     <td class="text-end fw-semibold" id="row-act-total-{{ d }}"
                         style="color:{% if _row.act > 0 %}#1d4ed8{% else %}#adb5bd{% endif %}">
                         {% if _row.act > 0 %}{{ '{:,.0f}'.format(_row.act).replace(',', ' ') }}{% else %}—{% endif %}
@@ -185,6 +202,10 @@
                     <td class="text-end fw-semibold" id="row-plan-total-{{ d }}"
                         style="color:{% if _row.plan > 0 %}#198754{% else %}#adb5bd{% endif %}">
                         {% if _row.plan > 0 %}{{ '{:,.0f}'.format(_row.plan).replace(',', ' ') }}{% else %}—{% endif %}
+                    </td>
+                    <td class="text-end fw-semibold" id="row-dev-total-{{ d }}"
+                        style="font-size:12px;color:{{ dev_color(_rpct, _row.plan > 0) }};">
+                        {% if _row.plan > 0 %}{% if _rdamt >= 0 %}+{% endif %}{{ '{:,.0f}'.format(_rdamt).replace(',', ' ') }} ({{ _rpct }}%){% else %}—{% endif %}
                     </td>
                 </tr>
                 {% endfor %}
@@ -195,18 +216,30 @@
                         {% for b in rev_branch_list %}
                         {% set _col = namespace(act=0, plan=0) %}
                         {% for d in rev_dates %}{% set _col.act = _col.act + rev_pivot[d][b.id].actual %}{% set _col.plan = _col.plan + rev_pivot[d][b.id].plan %}{% endfor %}
+                        {% set _cpct = ((_col.act / _col.plan * 100) | round(0) | int) if _col.plan > 0 else 0 %}
+                        {% set _cdamt = _col.act - _col.plan %}
                         <td class="text-end" id="col-act-{{ b.id }}" style="color:#1d4ed8;">
                             {{ '{:,.0f}'.format(_col.act).replace(',', ' ') if _col.act else '—' }}
                         </td>
                         <td class="text-end" id="col-plan-{{ b.id }}" style="color:#198754;">
                             {{ '{:,.0f}'.format(_col.plan).replace(',', ' ') if _col.plan else '—' }}
                         </td>
+                        <td class="text-end" id="col-dev-{{ b.id }}"
+                            style="font-size:12px;color:{{ dev_color(_cpct, _col.plan > 0) }};">
+                            {% if _col.plan > 0 %}{% if _cdamt >= 0 %}+{% endif %}{{ '{:,.0f}'.format(_cdamt).replace(',', ' ') }} ({{ _cpct }}%){% else %}—{% endif %}
+                        </td>
                         {% endfor %}
+                        {% set _gpct = ((rev_total_actual / rev_total_plan * 100) | round(0) | int) if rev_total_plan > 0 else 0 %}
+                        {% set _gdamt = rev_total_actual - rev_total_plan %}
                         <td class="text-end" id="grand-act-total" style="color:#1d4ed8;">
                             {{ '{:,.0f}'.format(rev_total_actual).replace(',', ' ') if rev_total_actual else '—' }}
                         </td>
                         <td class="text-end" id="grand-plan-total" style="color:#198754;">
                             {{ '{:,.0f}'.format(rev_total_plan).replace(',', ' ') if rev_total_plan else '—' }}
+                        </td>
+                        <td class="text-end" id="grand-dev-total"
+                            style="font-size:12px;color:{{ dev_color(_gpct, rev_total_plan > 0) }};">
+                            {% if rev_total_plan > 0 %}{% if _gdamt >= 0 %}+{% endif %}{{ '{:,.0f}'.format(_gdamt).replace(',', ' ') }} ({{ _gpct }}%){% else %}—{% endif %}
                         </td>
                     </tr>
                 </tfoot>
@@ -534,6 +567,25 @@ function _fmt(n) {
     return v > 0 ? v.toLocaleString('ru-RU') : '—';
 }
 
+function _devColor(act, plan) {
+    if (plan <= 0) return '#adb5bd';
+    var pct = act / plan * 100;
+    return pct >= 100 ? '#198754' : pct >= 90 ? '#fd7e14' : '#dc3545';
+}
+
+function _devText(act, plan) {
+    if (plan <= 0) return '—';
+    var diff = act - plan;
+    var pct  = Math.round(act / plan * 100);
+    return (diff >= 0 ? '+' : '') + Math.round(diff).toLocaleString('ru-RU') + ' (' + pct + '%)';
+}
+
+function _renderDev(el, act, plan) {
+    if (!el) return;
+    el.textContent = _devText(act, plan);
+    el.style.color = _devColor(act, plan);
+}
+
 function editPlanCell(td) {
     if (td.querySelector('input')) return;
     var cur = parseFloat(td.dataset.val) || 0;
@@ -580,13 +632,18 @@ function updatePivotTotals() {
         REV_DATES.forEach(function(d) {
             var actEl  = document.getElementById('act-'  + d + '-' + bid);
             var planEl = document.getElementById('plan-' + d + '-' + bid);
-            if (actEl)  colAct  += parseFloat(actEl.dataset.act || 0);
-            if (planEl) colPlan += parseFloat(planEl.dataset.val || 0);
+            var devEl  = document.getElementById('dev-'  + d + '-' + bid);
+            var act  = parseFloat(actEl  ? actEl.dataset.act  || 0 : 0);
+            var plan = parseFloat(planEl ? planEl.dataset.val || 0 : 0);
+            _renderDev(devEl, act, plan);
+            colAct  += act;
+            colPlan += plan;
         });
         var ca = document.getElementById('col-act-'  + bid);
         var cp = document.getElementById('col-plan-' + bid);
         if (ca) ca.textContent = _fmt(colAct);
         if (cp) cp.textContent = _fmt(colPlan);
+        _renderDev(document.getElementById('col-dev-' + bid), colAct, colPlan);
         grandAct  += colAct;
         grandPlan += colPlan;
     });
@@ -597,13 +654,14 @@ function updatePivotTotals() {
         REV_BRANCH_IDS.forEach(function(bid) {
             var actEl  = document.getElementById('act-'  + d + '-' + bid);
             var planEl = document.getElementById('plan-' + d + '-' + bid);
-            if (actEl)  rowAct  += parseFloat(actEl.dataset.act || 0);
-            if (planEl) rowPlan += parseFloat(planEl.dataset.val || 0);
+            rowAct  += parseFloat(actEl  ? actEl.dataset.act  || 0 : 0);
+            rowPlan += parseFloat(planEl ? planEl.dataset.val || 0 : 0);
         });
         var ra = document.getElementById('row-act-total-'  + d);
         var rp = document.getElementById('row-plan-total-' + d);
         if (ra) { ra.textContent = _fmt(rowAct);  ra.style.color = rowAct  > 0 ? '#1d4ed8' : '#adb5bd'; }
         if (rp) { rp.textContent = _fmt(rowPlan); rp.style.color = rowPlan > 0 ? '#198754' : '#adb5bd'; }
+        _renderDev(document.getElementById('row-dev-total-' + d), rowAct, rowPlan);
     });
 
     // grand totals
@@ -611,6 +669,7 @@ function updatePivotTotals() {
     var gp = document.getElementById('grand-plan-total');
     if (ga) ga.textContent = _fmt(grandAct);
     if (gp) gp.textContent = _fmt(grandPlan);
+    _renderDev(document.getElementById('grand-dev-total'), grandAct, grandPlan);
 
     // summary cards
     var gac = document.getElementById('grand-actual-card');
