@@ -145,18 +145,25 @@
             <table class="table table-bordered table-sm mb-0 align-middle" id="rev-pivot-table"
                    style="font-size:13px;min-width:{{ 120 + rev_branch_list|length * 240 }}px">
                 <thead>
+                    {# Чередующиеся фоны филиалов: жёлтый / белый #}
+                    {%- set _BGS = ['#fefce8', '#f9fafb'] -%}
+                    {%- set _BGS_H1 = ['#fef9c3', '#e8f0fe'] -%}{# шапка строка 1 #}
+                    {%- set _BGS_H2 = ['#fef3c7', '#dbeafe'] -%}{# шапка строка 2 #}
+                    {%- set _BG_TOTAL = '#e2e8f0' -%}
+                    {%- set _BG_TOTAL_H = '#cbd5e1' -%}
                     {# Строка 1: названия филиалов с отклонением за период #}
-                    <tr style="background:#dbeafe;color:#1e3a5f;border-bottom:2px solid #93c5fd;">
-                        <th rowspan="2" style="min-width:90px;vertical-align:middle;background:#dbeafe;">Дата</th>
+                    <tr style="color:#1e3a5f;border-bottom:2px solid #94a3b8;">
+                        <th rowspan="2" style="min-width:90px;vertical-align:middle;background:#e2e8f0;">Дата</th>
                         {% for b in rev_branch_list %}
+                        {% set _bg1 = _BGS_H1[loop.index0 % 2] %}
                         {% set _hcol = namespace(act=0, plan=0) %}
                         {% for d in rev_dates %}{% set _hcol.act = _hcol.act + rev_pivot[d][b.id].actual %}{% set _hcol.plan = _hcol.plan + rev_pivot[d][b.id].plan %}{% endfor %}
                         {% set _hpct = ((_hcol.act / _hcol.plan * 100) | round(0) | int) if _hcol.plan > 0 else 0 %}
                         {% set _hdamt = _hcol.act - _hcol.plan %}
-                        <th colspan="3" class="text-center" style="min-width:220px;">
+                        <th colspan="3" class="text-center" style="min-width:220px;background:{{ _bg1 }};font-size:14px;font-weight:700;">
                             {{ b.name }}
                             {% if _hcol.plan > 0 and _hcol.act > 0 %}
-                            <span style="font-size:11px;font-weight:500;color:{{ dev_color(_hpct, true, true) }};">
+                            <span style="font-size:12px;font-weight:500;color:{{ dev_color(_hpct, true, true) }};">
                                 &nbsp;{{ dev_text(_hdamt, _hpct, true, true) }}
                             </span>
                             {% endif %}
@@ -164,27 +171,28 @@
                         {% endfor %}
                         {% set _gtpct = ((rev_total_actual / rev_total_plan * 100) | round(0) | int) if rev_total_plan > 0 else 0 %}
                         {% set _gtdamt = rev_total_actual - rev_total_plan %}
-                        <th colspan="3" class="text-center" style="min-width:220px;">
+                        <th colspan="3" class="text-center" style="min-width:220px;background:{{ _BG_TOTAL_H }};font-size:14px;font-weight:700;">
                             Итого
                             {% if rev_total_plan > 0 and rev_total_actual > 0 %}
-                            <span style="font-size:11px;font-weight:500;color:{{ dev_color(_gtpct, true, true) }};">
+                            <span style="font-size:12px;font-weight:500;color:{{ dev_color(_gtpct, true, true) }};">
                                 &nbsp;{{ dev_text(_gtdamt, _gtpct, true, true) }}
                             </span>
                             {% endif %}
                         </th>
                     </tr>
                     {# Строка 2: под-заголовки колонок #}
-                    <tr style="background:#eff6ff;color:#475569;">
+                    <tr style="color:#475569;">
                         {% for b in rev_branch_list %}
-                        <th class="text-end" style="font-size:11px;color:#1d4ed8;">Выручка</th>
-                        <th class="text-end" style="font-size:11px;color:#198754;">
+                        {% set _bg2 = _BGS_H2[loop.index0 % 2] %}
+                        <th class="text-end" style="font-size:11px;color:#1d4ed8;background:{{ _bg2 }};">Выручка</th>
+                        <th class="text-end" style="font-size:11px;color:#198754;background:{{ _bg2 }};">
                             План <i class="bi bi-pencil-fill" style="font-size:9px;opacity:.5;"></i>
                         </th>
-                        <th class="text-end" style="font-size:11px;color:#6c757d;">Откл.</th>
+                        <th class="text-end" style="font-size:11px;color:#6c757d;background:{{ _bg2 }};">Откл.</th>
                         {% endfor %}
-                        <th class="text-end" style="font-size:11px;color:#1d4ed8;">Выручка</th>
-                        <th class="text-end" style="font-size:11px;color:#198754;">План</th>
-                        <th class="text-end" style="font-size:11px;color:#6c757d;">Откл.</th>
+                        <th class="text-end" style="font-size:11px;color:#1d4ed8;background:{{ _BG_TOTAL }};">Выручка</th>
+                        <th class="text-end" style="font-size:11px;color:#198754;background:{{ _BG_TOTAL }};">План</th>
+                        <th class="text-end" style="font-size:11px;color:#6c757d;background:{{ _BG_TOTAL }};">Откл.</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -195,6 +203,7 @@
                         {{ d[8:10] }}.{{ d[5:7] }}.{{ d[:4] }}
                     </td>
                     {% for b in rev_branch_list %}
+                    {% set _cbg = _BGS[loop.index0 % 2] %}
                     {% set cell = rev_pivot[d][b.id] %}
                     {% set _row.act  = _row.act  + cell.actual %}
                     {% set _row.plan = _row.plan + cell.plan   %}
@@ -202,7 +211,7 @@
                     {% set _damt = cell.actual - cell.plan %}
                     <td class="text-end" id="act-{{ d }}-{{ b.id }}"
                         data-act="{{ cell.actual | int }}"
-                        style="color:{% if cell.actual > 0 %}#1d4ed8{% else %}#adb5bd{% endif %}">
+                        style="background:{{ _cbg }};color:{% if cell.actual > 0 %}#1d4ed8{% else %}#adb5bd{% endif %}">
                         {% if cell.actual > 0 %}{{ '{:,.0f}'.format(cell.actual).replace(',', ' ') }}{% else %}—{% endif %}
                     </td>
                     <td class="text-end plan-cell"
@@ -212,14 +221,14 @@
                         data-val="{{ cell.plan | int }}"
                         onclick="editPlanCell(this)"
                         title="Нажмите для редактирования"
-                        style="cursor:pointer;{% if cell.plan > 0 %}color:#198754;{% else %}color:#adb5bd;{% endif %}background:#f0fdf4;">
+                        style="cursor:pointer;background:#f0fdf4;{% if cell.plan > 0 %}color:#198754;{% else %}color:#adb5bd;{% endif %}">
                         {% if cell.plan > 0 %}{{ '{:,.0f}'.format(cell.plan).replace(',', ' ') }}{% else %}—{% endif %}
                     </td>
                     <td class="text-end"
                         id="dev-{{ d }}-{{ b.id }}"
                         data-act="{{ cell.actual | int }}"
                         data-plan="{{ cell.plan | int }}"
-                        style="font-size:12px;color:{{ dev_color(_dpct, cell.plan > 0, cell.actual > 0) }};">
+                        style="background:{{ _cbg }};font-size:12px;color:{{ dev_color(_dpct, cell.plan > 0, cell.actual > 0) }};">
                         {{ dev_text(_damt, _dpct, cell.plan > 0, cell.actual > 0) }}
                     </td>
                     {% endfor %}
@@ -249,14 +258,15 @@
                         {% for d in rev_dates %}{% set _col.act = _col.act + rev_pivot[d][b.id].actual %}{% set _col.plan = _col.plan + rev_pivot[d][b.id].plan %}{% endfor %}
                         {% set _cpct = ((_col.act / _col.plan * 100) | round(0) | int) if _col.plan > 0 else 0 %}
                         {% set _cdamt = _col.act - _col.plan %}
-                        <td class="text-end" id="col-act-{{ b.id }}" style="color:#1d4ed8;">
+                        {% set _fbg = _BGS[loop.index0 % 2] %}
+                        <td class="text-end" id="col-act-{{ b.id }}" style="background:{{ _fbg }};color:#1d4ed8;">
                             {{ '{:,.0f}'.format(_col.act).replace(',', ' ') if _col.act else '—' }}
                         </td>
-                        <td class="text-end" id="col-plan-{{ b.id }}" style="color:#198754;">
+                        <td class="text-end" id="col-plan-{{ b.id }}" style="background:{{ _fbg }};color:#198754;">
                             {{ '{:,.0f}'.format(_col.plan).replace(',', ' ') if _col.plan else '—' }}
                         </td>
                         <td class="text-end" id="col-dev-{{ b.id }}"
-                            style="font-size:12px;color:{{ dev_color(_cpct, _col.plan > 0, _col.act > 0) }};">
+                            style="background:{{ _fbg }};font-size:12px;color:{{ dev_color(_cpct, _col.plan > 0, _col.act > 0) }};">
                             {{ dev_text(_cdamt, _cpct, _col.plan > 0, _col.act > 0) }}
                         </td>
                         {% endfor %}
