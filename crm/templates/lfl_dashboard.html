@@ -69,6 +69,21 @@ var lflChart     = null;
 var lflMetric    = 'revenue';
 var lflBranchIds = [];
 
+// Авто-выбор группы НК при загрузке (как на дашборде)
+(function() {
+    var nkGroup = LFL_BRANCH_GROUPS.find(function(g) {
+        return g.abbr === 'НК' || g.name === 'НК' || g.name.indexOf('Новокузнецк') !== -1;
+    });
+    if (nkGroup && nkGroup.branch_ids && nkGroup.branch_ids.length) {
+        lflBranchIds = nkGroup.branch_ids.slice();
+        document.querySelectorAll('.lfl-branch-cb').forEach(function(cb) {
+            cb.checked = lflBranchIds.indexOf(parseInt(cb.value)) !== -1;
+        });
+        var allCb = document.getElementById('lfl-branch-all-cb');
+        if (allCb) allCb.checked = false;
+    }
+})();
+
 function updateLflBranchBtn() {
     var btn = document.getElementById('lfl-branch-abbr');
     if (!btn) return;
@@ -210,6 +225,7 @@ function loadLfl() {
     });
 }
 
+updateLflBranchBtn();
 loadLfl();
 </script>
 {% endblock %}

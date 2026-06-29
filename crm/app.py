@@ -1615,7 +1615,11 @@ def api_lfl():
             ).fetchone()[0] or 0
             if metric == 'revenue':
                 val_last += _manual_rev_total(conn, d_from_last, d_to_last, bids or None)
-            lfl_pct = round((val_this / val_last - 1) * 100, 1) if val_last > 0 else None
+            # val_this=0 → нет данных за этот период, не показываем как -100%
+            if val_this == 0:
+                lfl_pct = None
+            else:
+                lfl_pct = round((val_this / val_last - 1) * 100, 1) if val_last > 0 else None
             result.append({
                 'year': yr, 'month': mo,
                 'label': month_labels[mo] + " '" + str(yr)[-2:],
@@ -1624,6 +1628,12 @@ def api_lfl():
                 'lfl_pct': lfl_pct,
                 'is_current': is_current,
             })
+    # Обрезаем с обоих концов месяцы где вообще нет данных (оба года = 0)
+    meaningful = [i for i, r in enumerate(result) if r['this_year'] > 0 or r['last_year'] > 0]
+    if meaningful:
+        result = result[meaningful[0]:meaningful[-1] + 1]
+    else:
+        result = []
     return jsonify({'ok': True, 'months': result})
 
 
