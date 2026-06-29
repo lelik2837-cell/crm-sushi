@@ -1,4 +1,5 @@
 import ast
+import calendar
 import csv
 import io
 import operator as _op
@@ -1119,6 +1120,16 @@ def init_db():
                 branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
                 PRIMARY KEY (category_id, branch_id)
             );
+        ''')
+
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS revenue_plan (
+                branch_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                amount REAL NOT NULL DEFAULT 0,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (branch_id, date)
+            )
         ''')
 
         # Fix Russian-coded categories → correct English codes used by import
@@ -4154,12 +4165,20 @@ def edit_rate_template(tmpl_id):
 @login_required
 @owner_required
 def reports():
-    period = request.args.get('period', 'week')
     branch_ids = [bid for bid in request.args.getlist('branch_ids') if bid.isdigit()]
     active_tab = request.args.get('tab', 'shifts')
 
-    today = date.today().isoformat()
-    month_start = date.today().replace(day=1).isoformat()
+    _today = date.today()
+    _month_start = _today.replace(day=1).isoformat()
+    _month_end   = _today.replace(day=calendar.monthrange(_today.year, _today.month)[1]).isoformat()
+
+    r_date_from = request.args.get('r_date_from', _month_start)
+    r_date_to   = request.args.get('r_date_to',   _month_end)
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', r_date_from): r_date_from = _month_start
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', r_date_to):   r_date_to   = _month_end
+
+    today = _today.isoformat()
+    month_start = _month_start
     s_date_from = request.args.get('s_date_from', month_start)
     s_date_to   = request.args.get('s_date_to',   today)
     s_branch_id = request.args.get('s_branch_id', '')
@@ -4169,9 +4188,7 @@ def reports():
     with get_db() as conn:
         branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
 
-        date_filter   = "AND s.date >= date('now','-7 days')" if period == 'week' else \
-                        "AND s.date >= date('now','start of month')" if period == 'month' else \
-                        "AND s.date >= date('now','-30 days')"
+        date_filter = f"AND s.date BETWEEN '{r_date_from}' AND '{r_date_to}'"
         if branch_ids:
             ids_str = ','.join(str(int(bid)) for bid in branch_ids)
             branch_filter = f"AND s.branch_id IN ({ids_str})"
@@ -4224,6 +4241,53 @@ def reports():
             _dg[_d]['fot']     += _row['fot']
             _dg[_d]['branches'].append(dict(_row))
         day_groups = list(_dg.values())
+
+        # ── Сводная таблица выручки: даты × филиалы ──────────────────────────
+        rev_branch_list = [b for b in branches if not branch_ids or str(b['id']) in branch_ids]
+
+        # Все даты в диапазоне (включая будущие, где будет только план)
+        _rf = datetime.strptime(r_date_from, '%Y-%m-%d').date()
+        _rt = datetime.strptime(r_date_to,   '%Y-%m-%d').date()
+        rev_dates = []
+        _d = _rf
+        while _d <= _rt:
+            rev_dates.append(_d.isoformat())
+            _d += timedelta(days=1)
+
+        # Факт выручки по дням и филиалам
+        _act_bf = f"AND s.branch_id IN ({','.join(str(b['id']) for b in rev_branch_list)})" if rev_branch_list else ""
+        act_rows = conn.execute(f'''
+            SELECT s.date, s.branch_id, COALESCE(SUM(r.total_revenue), 0) as actual
+            FROM shifts s LEFT JOIN shift_revenue r ON r.shift_id = s.id
+            WHERE s.date BETWEEN ? AND ? {_act_bf}
+            GROUP BY s.date, s.branch_id
+        ''', [r_date_from, r_date_to]).fetchall()
+
+        # План по дням и филиалам
+        _plan_bf = f"AND branch_id IN ({','.join(str(b['id']) for b in rev_branch_list)})" if rev_branch_list else ""
+        plan_rows = conn.execute(f'''
+            SELECT branch_id, date, amount FROM revenue_plan
+            WHERE date BETWEEN ? AND ? {_plan_bf}
+        ''', [r_date_from, r_date_to]).fetchall()
+
+        # Сборка сводного словаря
+        rev_pivot = {}
+        for d in rev_dates:
+            rev_pivot[d] = {b['id']: {'actual': 0.0, 'plan': 0.0} for b in rev_branch_list}
+        for row in act_rows:
+            if row['date'] in rev_pivot and row['branch_id'] in rev_pivot[row['date']]:
+                rev_pivot[row['date']][row['branch_id']]['actual'] = float(row['actual'])
+        for row in plan_rows:
+            if row['date'] in rev_pivot and row['branch_id'] in rev_pivot[row['date']]:
+                rev_pivot[row['date']][row['branch_id']]['plan'] = float(row['amount'])
+
+        rev_total_actual = sum(
+            rev_pivot[d][b['id']]['actual'] for d in rev_dates for b in rev_branch_list
+        )
+        rev_total_plan = sum(
+            rev_pivot[d][b['id']]['plan'] for d in rev_dates for b in rev_branch_list
+        )
+
         salary_data = conn.execute(f'''
             SELECT es.full_name_snapshot, es.role_snapshot,
                    SUM(es.total_amount) as earned, SUM(es.paid_amount) as paid,
@@ -4393,7 +4457,7 @@ def reports():
 
     return render_template('reports.html',
         shifts_data=shifts_data, totals=totals, branches=branches,
-        salary_data=salary_data, period=period, selected_branches=branch_ids,
+        salary_data=salary_data, selected_branches=branch_ids,
         role_labels=ROLE_LABELS, active_tab=active_tab,
         sal_report=sal_report,
         s_date_from=s_date_from, s_date_to=s_date_to,
@@ -4401,11 +4465,128 @@ def reports():
         s_group=s_group, s_emps=s_emps,
         all_sal_emps=all_sal_emps, pivot_rows=pivot_rows, pivot_emps=pivot_emps,
         day_groups=day_groups,
+        r_date_from=r_date_from, r_date_to=r_date_to,
+        rev_branch_list=rev_branch_list, rev_dates=rev_dates,
+        rev_pivot=rev_pivot, rev_total_actual=rev_total_actual,
+        rev_total_plan=rev_total_plan,
         branch_groups=get_branch_groups(conn),
         pos_abbr_map=pos_abbr_map)
 
 
 # ─── EMPLOYEE SALARY DETAIL ───────────────────────────────────────────────────
+
+@app.route('/reports/revenue-plan/save', methods=['POST'])
+@login_required
+@owner_required
+def save_revenue_plan():
+    data = request.get_json(force=True)
+    branch_id = int(data.get('branch_id', 0))
+    d = str(data.get('date', ''))
+    amount = float(data.get('amount', 0) or 0)
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', d) or branch_id <= 0:
+        return jsonify({'ok': False, 'error': 'bad params'}), 400
+    with get_db() as conn:
+        conn.execute(
+            'INSERT OR REPLACE INTO revenue_plan (branch_id, date, amount, updated_at) VALUES (?,?,?,CURRENT_TIMESTAMP)',
+            (branch_id, d, amount)
+        )
+        conn.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/reports/revenue-plan/auto', methods=['POST'])
+@login_required
+@owner_required
+def auto_revenue_plan():
+    data = request.get_json(force=True)
+    total_plan  = float(data.get('total', 0) or 0)
+    date_from   = str(data.get('date_from', ''))
+    date_to     = str(data.get('date_to', ''))
+    branch_ids  = [int(b) for b in data.get('branch_ids', []) if str(b).isdigit()]
+
+    if total_plan <= 0 or not re.match(r'^\d{4}-\d{2}-\d{2}$', date_from) or \
+       not re.match(r'^\d{4}-\d{2}-\d{2}$', date_to):
+        return jsonify({'ok': False, 'error': 'bad params'}), 400
+
+    cur_from = datetime.strptime(date_from, '%Y-%m-%d').date()
+    cur_to   = datetime.strptime(date_to,   '%Y-%m-%d').date()
+    cur_dates = []
+    _d = cur_from
+    while _d <= cur_to:
+        cur_dates.append(_d)
+        _d += timedelta(days=1)
+
+    # Прошлый год: смещение 364 дня (52 нед.) — сохраняет день недели
+    offset = 364
+    ly_from = (cur_from - timedelta(days=offset)).isoformat()
+    ly_to   = (cur_to   - timedelta(days=offset)).isoformat()
+
+    with get_db() as conn:
+        if not branch_ids:
+            branch_ids = [r['id'] for r in conn.execute(
+                'SELECT id FROM branches WHERE is_active=1').fetchall()]
+
+        bf = f"AND s.branch_id IN ({','.join(str(b) for b in branch_ids)})"
+        ly_rows = conn.execute(f'''
+            SELECT s.date, s.branch_id, COALESCE(SUM(r.total_revenue), 0) as rev
+            FROM shifts s LEFT JOIN shift_revenue r ON r.shift_id = s.id
+            WHERE s.date BETWEEN ? AND ? {bf}
+            GROUP BY s.date, s.branch_id
+        ''', [ly_from, ly_to]).fetchall()
+
+        # Данные прошлого года: day_date → branch_id → revenue
+        ly_by_date = {}
+        for row in ly_rows:
+            ly_by_date.setdefault(row['date'], {})[row['branch_id']] = float(row['rev'])
+
+        ly_totals_by_date = {d: sum(v.values()) for d, v in ly_by_date.items()}
+        ly_grand_total = sum(ly_totals_by_date.values())
+
+        # Веса по датам
+        date_weights = {}
+        for cur_d in cur_dates:
+            ly_d = (cur_d - timedelta(days=offset)).isoformat()
+            if ly_grand_total > 0:
+                date_weights[cur_d.isoformat()] = ly_totals_by_date.get(ly_d, 0)
+            else:
+                date_weights[cur_d.isoformat()] = 1.0
+
+        w_total = sum(date_weights.values()) or len(cur_dates)
+        growth  = total_plan / w_total
+
+        # Записываем план в БД
+        for cur_d in cur_dates:
+            d_str   = cur_d.isoformat()
+            ly_d    = (cur_d - timedelta(days=offset)).isoformat()
+            day_amt = date_weights[d_str] * growth
+
+            ly_day    = ly_by_date.get(ly_d, {})
+            ly_day_t  = sum(ly_day.values()) or 0
+
+            for bid in branch_ids:
+                if ly_day_t > 0:
+                    share = ly_day.get(bid, 0) / ly_day_t
+                else:
+                    share = 1.0 / len(branch_ids)
+                amount = round(day_amt * share, 0)
+                conn.execute(
+                    'INSERT OR REPLACE INTO revenue_plan (branch_id, date, amount, updated_at) VALUES (?,?,?,CURRENT_TIMESTAMP)',
+                    (bid, d_str, amount)
+                )
+        conn.commit()
+
+        # Возвращаем обновлённый план для перерисовки
+        new_plan = conn.execute(f'''
+            SELECT branch_id, date, amount FROM revenue_plan
+            WHERE date BETWEEN ? AND ?
+            AND branch_id IN ({','.join(str(b) for b in branch_ids)})
+        ''', [date_from, date_to]).fetchall()
+
+    result = {}
+    for row in new_plan:
+        result.setdefault(row['date'], {})[row['branch_id']] = row['amount']
+    return jsonify({'ok': True, 'plan': result})
+
 
 @app.route('/reports/employee/<int:emp_id>')
 @login_required

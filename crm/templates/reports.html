@@ -9,7 +9,7 @@
 <ul class="nav nav-tabs mb-4" id="reportTabs">
     <li class="nav-item">
         <a class="nav-link {% if active_tab != 'salary' %}active{% endif %}"
-           href="{{ url_for('reports') }}?tab=shifts&period={{ period }}{% for bid in selected_branches %}&branch_ids={{ bid }}{% endfor %}">
+           href="{{ url_for('reports') }}?tab=shifts&r_date_from={{ r_date_from }}&r_date_to={{ r_date_to }}{% for bid in selected_branches %}&branch_ids={{ bid }}{% endfor %}">
             <i class="bi bi-graph-up-arrow"></i> Выручка
         </a>
     </li>
@@ -25,17 +25,18 @@
 {# ═══════════════════════════════════════════ ВКЛ. 1 — ПО СМЕНАМ #}
 {% if active_tab != 'salary' %}
 
+{# ── Фильтры выручки ── #}
 <div class="card mb-4">
     <div class="card-body">
-        <form method="GET" class="row g-2 align-items-end">
+        <form method="GET" class="row g-2 align-items-end" id="revFilterForm">
             <input type="hidden" name="tab" value="shifts">
-            <div class="col-md-3">
-                <label class="form-label small fw-semibold">Период</label>
-                <select name="period" class="form-select">
-                    <option value="week"   {% if period=='week'   %}selected{% endif %}>Последние 7 дней</option>
-                    <option value="month"  {% if period=='month'  %}selected{% endif %}>Текущий месяц</option>
-                    <option value="30days" {% if period=='30days' %}selected{% endif %}>Последние 30 дней</option>
-                </select>
+            <div class="col-6 col-md-2">
+                <label class="form-label small fw-semibold">С</label>
+                <input type="date" name="r_date_from" value="{{ r_date_from }}" class="form-control">
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label small fw-semibold">По</label>
+                <input type="date" name="r_date_to" value="{{ r_date_to }}" class="form-control">
             </div>
             <div class="col-md-4">
                 <label class="form-label small fw-semibold">Филиалы</label>
@@ -45,11 +46,9 @@
                         <span id="branchBtnLabel">{% if selected_branches %}Выбрано: {{ selected_branches|length }}{% else %}Все филиалы{% endif %}</span>
                         <i class="bi bi-chevron-down ms-2 small"></i>
                     </button>
-                    <ul class="dropdown-menu p-2 shadow" style="min-width:240px;max-height:380px;overflow-y:auto" id="branchDropdownMenu">
+                    <ul class="dropdown-menu p-2 shadow" style="min-width:240px;max-height:380px;overflow-y:auto">
                         {% if branch_groups %}
-                        <li>
-                            <div class="text-muted px-1 mb-1" style="font-size:0.75rem">ГРУППЫ</div>
-                        </li>
+                        <li><div class="text-muted px-1 mb-1" style="font-size:0.75rem">ГРУППЫ</div></li>
                         {% for g in branch_groups %}
                         <li class="mb-1">
                             <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1"
@@ -90,189 +89,127 @@
     </div>
 </div>
 
-{% if totals %}
-<div class="row g-3 mb-4">
+{# ── Карточки Факт / План / % ── #}
+{% set _pct = ((rev_total_actual / rev_total_plan * 100) | round(1)) if rev_total_plan > 0 else 0 %}
+<div class="row g-3 mb-3">
     <div class="col-6 col-md-3">
-        <div class="card metric-card p-3">
-            <div class="text-muted small">Выручка</div>
-            <div class="fw-bold fs-4">{{ '{:,.0f}'.format(totals.revenue or 0) }} ₽</div>
-        </div>
-    </div>
-    <div class="col-6 col-md-3">
-        <div class="card p-3" style="border-left:4px solid #0d6efd">
-            <div class="text-muted small">Доставка</div>
-            <div class="fw-bold fs-4">{{ '{:,.0f}'.format(totals.delivery or 0) }} ₽</div>
+        <div class="card p-3" style="border-left:4px solid #1d4ed8">
+            <div class="text-muted small">Факт за период</div>
+            <div class="fw-bold fs-5" id="grand-actual-card">{{ '{:,.0f}'.format(rev_total_actual).replace(',', ' ') }} ₽</div>
         </div>
     </div>
     <div class="col-6 col-md-3">
         <div class="card p-3" style="border-left:4px solid #198754">
-            <div class="text-muted small">Самовывоз</div>
-            <div class="fw-bold fs-4">{{ '{:,.0f}'.format(totals.pickup or 0) }} ₽</div>
+            <div class="text-muted small">План за период</div>
+            <div class="fw-bold fs-5" id="grand-plan-card">{{ '{:,.0f}'.format(rev_total_plan).replace(',', ' ') }} ₽</div>
         </div>
     </div>
-    <div class="col-6 col-md-3">
-        <div class="card p-3" style="border-left:4px solid #fd7e14">
-            <div class="text-muted small">Заказов</div>
-            <div class="fw-bold fs-4">{{ totals.orders or 0 }}</div>
+    <div class="col-6 col-md-2">
+        <div class="card p-3" style="border-left:4px solid {% if _pct >= 100 %}#198754{% elif _pct >= 80 %}#fd7e14{% else %}#dc3545{% endif %}">
+            <div class="text-muted small">Выполнение</div>
+            <div class="fw-bold fs-5" id="grand-pct-card">{{ _pct }}%</div>
         </div>
     </div>
-    <div class="col-6 col-md-3">
-        <div class="card p-3" style="border-left:4px solid #6c757d">
-            <div class="text-muted small">Наличные</div>
-            <div class="fw-bold fs-4">{{ '{:,.0f}'.format(totals.cash or 0) }} ₽</div>
-        </div>
-    </div>
-    <div class="col-6 col-md-3">
-        <div class="card p-3" style="border-left:4px solid #6f42c1">
-            <div class="text-muted small">Безналичные</div>
-            <div class="fw-bold fs-4">{{ '{:,.0f}'.format(totals.card or 0) }} ₽</div>
+    <div class="col-12 col-md-4">
+        <div class="card p-3">
+            <div class="text-muted small mb-1">Авто-план (общий за период)</div>
+            <div class="d-flex gap-2 align-items-center">
+                <input type="number" id="auto-plan-input" class="form-control form-control-sm"
+                       placeholder="Введите план, ₽" style="max-width:180px;">
+                <button class="btn btn-sm btn-success" onclick="autoDistributePlan()">
+                    <i class="bi bi-magic"></i> Авто
+                </button>
+                <span id="auto-plan-status" class="small text-muted"></span>
+            </div>
         </div>
     </div>
 </div>
-{% endif %}
 
+{# ── Сводная таблица: даты × филиалы ── #}
 <div class="card mb-4">
-    <div class="card-header bg-light fw-semibold d-flex align-items-center justify-content-between">
-        <span>По дням</span>
-        <div class="d-flex align-items-center" style="gap:6px;">
-            <!-- Branch selector -->
-            <div class="dropdown">
-                <button id="rev-report-branch-btn" type="button"
-                        data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
-                        title="Выбор филиалов"
-                        style="border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700;border:1.5px solid #94a3b8;background:transparent;color:#475569;cursor:pointer;display:inline-flex;align-items:center;white-space:nowrap;transition:all .15s;height:26px;flex-shrink:0;">
-                    <span id="rev-report-branch-abbr">Все</span>
-                </button>
-                <div class="dropdown-menu p-2 shadow" style="min-width:220px;max-height:320px;overflow-y:auto;">
-                    {% if branch_groups %}
-                    <div class="text-muted px-1 mb-1" style="font-size:0.7rem;font-weight:600;letter-spacing:.5px;">ГРУППЫ</div>
-                    {% for g in branch_groups %}
-                    <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1 mb-1"
-                            onclick="selectRevBranchGroup({{ g.branch_ids | tojson }})">
-                        {{ g.name }} <span class="text-muted">({{ g.branch_ids | length }})</span>
-                    </button>
-                    {% endfor %}
-                    <hr class="dropdown-divider my-1">
-                    {% endif %}
-                    <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2 mb-1" style="cursor:pointer;">
-                        <input type="checkbox" id="rev-report-branch-all-cb" checked onchange="toggleAllRevBranches(this)">
-                        <span class="fw-semibold small">Все филиалы</span>
-                    </label>
-                    <hr class="dropdown-divider my-1">
-                    {% for b in branches %}
-                    <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
-                        <input type="checkbox" class="rev-report-branch-cb" value="{{ b.id }}" onchange="onRevBranchChange()">
-                        <span class="fw-semibold d-lg-none" style="font-size:11px;min-width:22px;color:#6c757d;">{{ b.abbr if b.abbr else b.name[:3].upper() }}</span>
-                        <span class="small">{{ b.name }}</span>
-                    </label>
-                    {% endfor %}
-                </div>
-            </div>
-            <!-- Chart toggle (round) -->
-            <button id="rev-report-chart-btn" type="button" onclick="toggleRevChart()" title="График по дням"
-                    style="width:28px;height:28px;border-radius:50%;border:1.5px solid #94a3b8;background:transparent;color:#64748b;cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .15s;">
-                <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor"><rect x="1" y="8" width="2.5" height="6" rx="0.5"/><rect x="5" y="5" width="2.5" height="9" rx="0.5"/><rect x="9" y="2" width="2.5" height="12" rx="0.5"/><rect x="13" y="6" width="2.5" height="8" rx="0.5"/></svg>
-            </button>
-            <!-- Expand all -->
-            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleAllDays()">
-                <i class="bi bi-arrows-expand" id="toggle-all-icon"></i> <span id="toggle-all-label">Раскрыть все</span>
-            </button>
-        </div>
-    </div>
-    <!-- Day chart (hidden by default) -->
-    <div id="rev-report-chart-wrap" style="display:none;padding:14px 16px 4px;border-bottom:1px solid #e9ecef;">
-        <canvas id="rev-report-chart-canvas" height="110"></canvas>
-    </div>
     <div class="card-body p-0">
         <div class="table-responsive">
-            <table class="table table-hover mb-0 align-middle" id="days-table">
-                <thead class="table-light">
-                    <tr>
-                        <th style="width:36px;"></th>
-                        <th>Дата</th>
-                        <th class="text-end">Выручка</th>
-                        <th class="text-end">Самовывоз</th>
-                        <th class="text-end text-muted small">Самовывоз %</th>
-                        <th class="text-end">ФОТ</th>
-                        <th class="text-end text-muted small">ФОТ %</th>
+            <table class="table table-bordered table-sm mb-0 align-middle" id="rev-pivot-table"
+                   style="font-size:13px;min-width:{{ 120 + rev_branch_list|length * 160 }}px">
+                <thead>
+                    <tr class="table-dark">
+                        <th rowspan="2" style="min-width:90px;vertical-align:middle;">Дата</th>
+                        {% for b in rev_branch_list %}
+                        <th colspan="2" class="text-center" style="min-width:150px;">{{ b.name }}</th>
+                        {% endfor %}
+                        <th colspan="2" class="text-center" style="min-width:150px;">Итого</th>
+                    </tr>
+                    <tr class="table-secondary">
+                        {% for b in rev_branch_list %}
+                        <th class="text-end" style="font-size:11px;color:#1d4ed8;">Выручка</th>
+                        <th class="text-end" style="font-size:11px;color:#198754;">
+                            План
+                            <i class="bi bi-pencil-fill" style="font-size:9px;opacity:.5;" title="Нажмите на ячейку для редактирования"></i>
+                        </th>
+                        {% endfor %}
+                        <th class="text-end" style="font-size:11px;color:#1d4ed8;">Выручка</th>
+                        <th class="text-end" style="font-size:11px;color:#198754;">План</th>
                     </tr>
                 </thead>
                 <tbody>
-                {% for day in day_groups %}
-                {% set day_idx = loop.index %}
-                {% set drev = day.revenue %}
-                {% set dpct_pickup = ((day.pickup / drev * 100) | round(1)) if drev > 0 else 0 %}
-                {% set dpct_fot    = ((day.fot    / drev * 100) | round(1)) if drev > 0 else 0 %}
-                {# day header row #}
-                <tr class="day-header-row" data-day="{{ day_idx }}"
-                    onclick="toggleDay({{ day_idx }})"
-                    style="cursor:pointer; background:#f8f9fa;">
-                    <td class="text-center" style="color:#6c757d; font-size:13px;">
-                        <i class="bi bi-chevron-right day-chevron" id="chev-{{ day_idx }}"></i>
-                    </td>
-                    <td class="fw-bold">
-                        {% set d = day.date %}
+                {% for d in rev_dates %}
+                {% set _row = namespace(act=0, plan=0) %}
+                <tr id="row-{{ d }}">
+                    <td class="fw-semibold" style="white-space:nowrap;">
                         {{ d[8:10] }}.{{ d[5:7] }}.{{ d[:4] }}
-                        <span class="text-muted fw-normal small ms-1">({{ day.branches | length }} фил.)</span>
                     </td>
-                    <td class="text-end fw-bold" style="color:#1d4ed8;">{{ '{:,.0f}'.format(drev).replace(',', ' ') }} ₽</td>
-                    <td class="text-end fw-semibold">{{ '{:,.0f}'.format(day.pickup).replace(',', ' ') }} ₽</td>
-                    <td class="text-end">
-                        <span class="badge" style="background:#e0f2fe; color:#0369a1; font-weight:600;">{{ dpct_pickup }}%</span>
+                    {% for b in rev_branch_list %}
+                    {% set cell = rev_pivot[d][b.id] %}
+                    {% set _row.act  = _row.act  + cell.actual %}
+                    {% set _row.plan = _row.plan + cell.plan   %}
+                    <td class="text-end" id="act-{{ d }}-{{ b.id }}"
+                        data-act="{{ cell.actual | int }}"
+                        style="color:{% if cell.actual > 0 %}#1d4ed8{% else %}#adb5bd{% endif %}">
+                        {% if cell.actual > 0 %}{{ '{:,.0f}'.format(cell.actual).replace(',', ' ') }}{% else %}—{% endif %}
                     </td>
-                    <td class="text-end fw-semibold" style="color:#92400e;">{{ '{:,.0f}'.format(day.fot).replace(',', ' ') }} ₽</td>
-                    <td class="text-end">
-                        <span class="badge" style="background:#fef9c3; color:#854d0e; font-weight:600;">{{ dpct_fot }}%</span>
+                    <td class="text-end plan-cell"
+                        id="plan-{{ d }}-{{ b.id }}"
+                        data-branch="{{ b.id }}"
+                        data-date="{{ d }}"
+                        data-val="{{ cell.plan | int }}"
+                        onclick="editPlanCell(this)"
+                        title="Нажмите для редактирования"
+                        style="cursor:pointer;{% if cell.plan > 0 %}color:#198754;{% else %}color:#adb5bd;{% endif %}background:#f0fdf4;">
+                        {% if cell.plan > 0 %}{{ '{:,.0f}'.format(cell.plan).replace(',', ' ') }}{% else %}—{% endif %}
                     </td>
-                </tr>
-                {# branch detail rows (hidden by default) #}
-                {% for b in day.branches %}
-                {% set brev = b.revenue %}
-                {% set bpct_pickup = ((b.pickup / brev * 100) | round(1)) if brev > 0 else 0 %}
-                {% set bpct_fot    = ((b.fot    / brev * 100) | round(1)) if brev > 0 else 0 %}
-                <tr class="day-detail-row" data-day="{{ day_idx }}" style="display:none; background:#fff;">
-                    <td></td>
-                    <td class="ps-4 small">
-                        <i class="bi bi-shop text-muted me-1"></i>{{ b.branch_name }}
-                        {% if b.status == 'open' %}
-                        <span class="badge bg-warning text-dark ms-1" style="font-size:10px;">Открыта</span>
-                        {% endif %}
-                        <a href="{{ url_for('shift_view', shift_id=b.shift_id) }}"
-                           class="ms-1 text-muted" style="font-size:11px;" onclick="event.stopPropagation()">→</a>
+                    {% endfor %}
+                    <td class="text-end fw-semibold" id="row-act-total-{{ d }}"
+                        style="color:{% if _row.act > 0 %}#1d4ed8{% else %}#adb5bd{% endif %}">
+                        {% if _row.act > 0 %}{{ '{:,.0f}'.format(_row.act).replace(',', ' ') }}{% else %}—{% endif %}
                     </td>
-                    <td class="text-end small">{{ '{:,.0f}'.format(brev).replace(',', ' ') }} ₽</td>
-                    <td class="text-end small">{{ '{:,.0f}'.format(b.pickup).replace(',', ' ') }} ₽</td>
-                    <td class="text-end">
-                        <span class="text-muted small">{{ bpct_pickup }}%</span>
-                    </td>
-                    <td class="text-end small" style="color:#92400e;">{{ '{:,.0f}'.format(b.fot).replace(',', ' ') }} ₽</td>
-                    <td class="text-end">
-                        <span class="text-muted small">{{ bpct_fot }}%</span>
+                    <td class="text-end fw-semibold" id="row-plan-total-{{ d }}"
+                        style="color:{% if _row.plan > 0 %}#198754{% else %}#adb5bd{% endif %}">
+                        {% if _row.plan > 0 %}{{ '{:,.0f}'.format(_row.plan).replace(',', ' ') }}{% else %}—{% endif %}
                     </td>
                 </tr>
-                {% endfor %}
                 {% endfor %}
                 </tbody>
-                {% if totals %}
-                {% set trev = totals.revenue or 0 %}
-                {% set tpct_pickup = ((totals.pickup / trev * 100) | round(1)) if trev > 0 else 0 %}
-                {% set tpct_fot    = (((totals.fot or 0) / trev * 100) | round(1)) if trev > 0 else 0 %}
                 <tfoot class="table-light fw-bold">
                     <tr>
-                        <td></td>
                         <td>Итого</td>
-                        <td class="text-end" style="color:#1d4ed8;">{{ '{:,.0f}'.format(trev).replace(',', ' ') }} ₽</td>
-                        <td class="text-end">{{ '{:,.0f}'.format(totals.pickup or 0).replace(',', ' ') }} ₽</td>
-                        <td class="text-end">
-                            <span class="badge" style="background:#e0f2fe; color:#0369a1; font-weight:600;">{{ tpct_pickup }}%</span>
+                        {% for b in rev_branch_list %}
+                        {% set _col = namespace(act=0, plan=0) %}
+                        {% for d in rev_dates %}{% set _col.act = _col.act + rev_pivot[d][b.id].actual %}{% set _col.plan = _col.plan + rev_pivot[d][b.id].plan %}{% endfor %}
+                        <td class="text-end" id="col-act-{{ b.id }}" style="color:#1d4ed8;">
+                            {{ '{:,.0f}'.format(_col.act).replace(',', ' ') if _col.act else '—' }}
                         </td>
-                        <td class="text-end" style="color:#92400e;">{{ '{:,.0f}'.format(totals.fot or 0).replace(',', ' ') }} ₽</td>
-                        <td class="text-end">
-                            <span class="badge" style="background:#fef9c3; color:#854d0e; font-weight:600;">{{ tpct_fot }}%</span>
+                        <td class="text-end" id="col-plan-{{ b.id }}" style="color:#198754;">
+                            {{ '{:,.0f}'.format(_col.plan).replace(',', ' ') if _col.plan else '—' }}
+                        </td>
+                        {% endfor %}
+                        <td class="text-end" id="grand-act-total" style="color:#1d4ed8;">
+                            {{ '{:,.0f}'.format(rev_total_actual).replace(',', ' ') if rev_total_actual else '—' }}
+                        </td>
+                        <td class="text-end" id="grand-plan-total" style="color:#198754;">
+                            {{ '{:,.0f}'.format(rev_total_plan).replace(',', ' ') if rev_total_plan else '—' }}
                         </td>
                     </tr>
                 </tfoot>
-                {% endif %}
             </table>
         </div>
     </div>
@@ -587,192 +524,147 @@
 
 {% block scripts %}
 {% if active_tab != 'salary' %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
-// ── Revenue chart + branch filter ────────────────────────────────────────────
-var REV_BRANCHES      = [{% for b in branches %}{"id":{{ b.id }},"name":{{ b.name | tojson }}}{% if not loop.last %},{% endif %}{% endfor %}];
-var REV_BRANCH_GROUPS = {{ branch_groups | tojson }};
-var REV_DAY_GROUPS    = {{ day_groups | tojson }};
-var revBranchIds      = [];
-var revChartObj       = null;
-var revChartVisible   = false;
+// ── Revenue pivot: план inline-редактирование ──────────────────────────────
+var REV_BRANCH_IDS = [{% for b in rev_branch_list %}{{ b.id }}{% if not loop.last %},{% endif %}{% endfor %}];
+var REV_DATES      = {{ rev_dates | tojson }};
 
-(function() {
-    var nk = REV_BRANCH_GROUPS.find(function(g) { return g.name === 'НК'; });
-    if (nk && nk.branch_ids && nk.branch_ids.length) {
-        revBranchIds = nk.branch_ids.slice();
-    }
-    updateRevBranchBtn();
-})();
+function _fmt(n) {
+    var v = Math.round(n);
+    return v > 0 ? v.toLocaleString('ru-RU') : '—';
+}
 
-function _repIsDesktop() { return window.innerWidth >= 992; }
-
-function _revBranchLabel() {
-    if (!revBranchIds.length) return 'Все';
-    var grp = REV_BRANCH_GROUPS.find(function(g) {
-        return g.branch_ids.length === revBranchIds.length &&
-               g.branch_ids.every(function(id) { return revBranchIds.indexOf(id) >= 0; });
+function editPlanCell(td) {
+    if (td.querySelector('input')) return;
+    var cur = parseFloat(td.dataset.val) || 0;
+    var inp = document.createElement('input');
+    inp.type = 'number';
+    inp.value = cur || '';
+    inp.placeholder = '0';
+    inp.style.cssText = 'width:100%;border:none;background:#fffde7;text-align:right;font-size:13px;outline:none;padding:2px 4px;';
+    td.innerHTML = '';
+    td.appendChild(inp);
+    inp.focus();
+    inp.select();
+    inp.addEventListener('blur', function() { commitPlanCell(td, inp); });
+    inp.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') inp.blur();
+        if (e.key === 'Escape') { td.dataset.val = td.dataset.val; renderPlanCell(td, parseFloat(td.dataset.val)||0); }
     });
-    if (grp) return _repIsDesktop() ? grp.name : (grp.abbr || grp.name);
-    var bs = REV_BRANCHES.filter(function(b) { return revBranchIds.indexOf(b.id) >= 0; });
-    if (_repIsDesktop()) {
-        return bs.length === 1 ? bs[0].name : bs.length + ' филиалов';
-    }
-    return bs.length <= 2
-        ? bs.map(function(b){ return b.abbr || b.name.slice(0,3); }).join(',')
-        : bs.length + 'фил';
 }
 
-function updateRevBranchBtn() {
-    var el = document.getElementById('rev-report-branch-abbr');
-    if (el) el.textContent = _revBranchLabel();
+function commitPlanCell(td, inp) {
+    var amount = parseFloat(inp.value) || 0;
+    var branchId = parseInt(td.dataset.branch);
+    var date     = td.dataset.date;
+    td.dataset.val = amount;
+    renderPlanCell(td, amount);
+    fetch('/reports/revenue-plan/save', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({branch_id: branchId, date: date, amount: amount})
+    }).then(function() { updatePivotTotals(); });
 }
 
-function getFilteredRevDays() {
-    if (!revBranchIds.length) return REV_DAY_GROUPS;
-    return REV_DAY_GROUPS.map(function(day) {
-        var filtered = (day.branches || []).filter(function(b) {
-            return revBranchIds.indexOf(b.branch_id) >= 0;
+function renderPlanCell(td, amount) {
+    td.textContent = _fmt(amount);
+    td.style.color  = amount > 0 ? '#198754' : '#adb5bd';
+}
+
+function updatePivotTotals() {
+    var grandAct = 0, grandPlan = 0;
+
+    // per-column totals
+    REV_BRANCH_IDS.forEach(function(bid) {
+        var colAct = 0, colPlan = 0;
+        REV_DATES.forEach(function(d) {
+            var actEl  = document.getElementById('act-'  + d + '-' + bid);
+            var planEl = document.getElementById('plan-' + d + '-' + bid);
+            if (actEl)  colAct  += parseFloat(actEl.dataset.act || 0);
+            if (planEl) colPlan += parseFloat(planEl.dataset.val || 0);
         });
-        var rev = filtered.reduce(function(s, b){ return s + (b.revenue||0); }, 0);
-        return { date: day.date, revenue: rev };
-    }).filter(function(d){ return d.revenue > 0; });
-}
-
-function renderRevChart() {
-    var DOW = ['вс','пн','вт','ср','чт','пт','сб'];
-    var canvas = document.getElementById('rev-report-chart-canvas');
-    if (revChartObj) { revChartObj.destroy(); revChartObj = null; }
-    var days = getFilteredRevDays();
-    if (!days.length) return;
-    revChartObj = new Chart(canvas, {
-        type: 'bar',
-        data: {
-            labels: days.map(function(d){ return d.date.slice(8); }),
-            datasets: [{
-                data: days.map(function(d){ return d.revenue; }),
-                backgroundColor: '#818cf8',
-                hoverBackgroundColor: '#4f46e5',
-                borderRadius: 4,
-                borderSkipped: false,
-            }]
-        },
-        options: {
-            responsive: true, animation: { duration: 250 },
-            plugins: {
-                legend: { display: false },
-                tooltip: {
-                    callbacks: {
-                        title: function(ctx) {
-                            var raw = days[ctx[0].dataIndex].date;
-                            var d2 = new Date(raw+'T00:00:00');
-                            return raw.split('-').reverse().join('.') + ', ' + DOW[d2.getDay()];
-                        },
-                        label: function(ctx) {
-                            return Math.round(ctx.parsed.y).toLocaleString('ru-RU') + ' ₽';
-                        }
-                    },
-                    backgroundColor: 'rgba(0,0,0,.65)', titleColor: '#fff', bodyColor: '#fff'
-                }
-            },
-            scales: {
-                x: { ticks: { color: '#64748b', font: { size: 10, weight: '600' } }, grid: { display: false } },
-                y: {
-                    ticks: {
-                        color: '#94a3b8', font: { size: 9 },
-                        callback: function(v) {
-                            return v >= 1000000 ? (v/1000000).toFixed(1)+'М' :
-                                   v >= 1000    ? Math.round(v/1000)+'К' : v;
-                        }
-                    },
-                    grid: { color: '#f1f5f9' }
-                }
-            }
-        }
+        var ca = document.getElementById('col-act-'  + bid);
+        var cp = document.getElementById('col-plan-' + bid);
+        if (ca) ca.textContent = _fmt(colAct);
+        if (cp) cp.textContent = _fmt(colPlan);
+        grandAct  += colAct;
+        grandPlan += colPlan;
     });
-}
 
-function toggleRevChart() {
-    revChartVisible = !revChartVisible;
-    var wrap = document.getElementById('rev-report-chart-wrap');
-    var btn  = document.getElementById('rev-report-chart-btn');
-    wrap.style.display = revChartVisible ? '' : 'none';
-    if (btn) {
-        btn.style.border     = revChartVisible ? '1.5px solid #475569' : '1.5px solid #94a3b8';
-        btn.style.background = revChartVisible ? '#e2e8f0' : 'transparent';
-        btn.style.color      = revChartVisible ? '#1e293b' : '#64748b';
-    }
-    if (revChartVisible) renderRevChart();
-}
-
-function selectRevBranchGroup(ids) {
-    revBranchIds = ids.slice();
-    document.querySelectorAll('.rev-report-branch-cb').forEach(function(cb) {
-        cb.checked = ids.indexOf(parseInt(cb.value)) >= 0;
+    // per-row totals
+    REV_DATES.forEach(function(d) {
+        var rowAct = 0, rowPlan = 0;
+        REV_BRANCH_IDS.forEach(function(bid) {
+            var actEl  = document.getElementById('act-'  + d + '-' + bid);
+            var planEl = document.getElementById('plan-' + d + '-' + bid);
+            if (actEl)  rowAct  += parseFloat(actEl.dataset.act || 0);
+            if (planEl) rowPlan += parseFloat(planEl.dataset.val || 0);
+        });
+        var ra = document.getElementById('row-act-total-'  + d);
+        var rp = document.getElementById('row-plan-total-' + d);
+        if (ra) { ra.textContent = _fmt(rowAct);  ra.style.color = rowAct  > 0 ? '#1d4ed8' : '#adb5bd'; }
+        if (rp) { rp.textContent = _fmt(rowPlan); rp.style.color = rowPlan > 0 ? '#198754' : '#adb5bd'; }
     });
-    var allCb = document.getElementById('rev-report-branch-all-cb');
-    if (allCb) allCb.checked = false;
-    updateRevBranchBtn();
-    var dd = bootstrap.Dropdown.getOrCreateInstance(document.getElementById('rev-report-branch-btn'));
-    dd.hide();
-    if (revChartVisible) renderRevChart();
-}
 
-function toggleAllRevBranches(cb) {
-    if (cb.checked) {
-        document.querySelectorAll('.rev-report-branch-cb').forEach(function(c){ c.checked = false; });
-        revBranchIds = [];
-        updateRevBranchBtn();
-        if (revChartVisible) renderRevChart();
+    // grand totals
+    var ga = document.getElementById('grand-act-total');
+    var gp = document.getElementById('grand-plan-total');
+    if (ga) ga.textContent = _fmt(grandAct);
+    if (gp) gp.textContent = _fmt(grandPlan);
+
+    // summary cards
+    var gac = document.getElementById('grand-actual-card');
+    var gpc = document.getElementById('grand-plan-card');
+    var gpc2 = document.getElementById('grand-pct-card');
+    if (gac) gac.textContent = _fmt(grandAct) + ' ₽';
+    if (gpc) gpc.textContent = _fmt(grandPlan) + ' ₽';
+    if (gpc2) {
+        var pct = grandPlan > 0 ? Math.round(grandAct / grandPlan * 100) : 0;
+        gpc2.textContent = pct + '%';
     }
 }
 
-function onRevBranchChange() {
-    var checked = Array.from(document.querySelectorAll('.rev-report-branch-cb:checked'));
-    revBranchIds = checked.map(function(c){ return parseInt(c.value); });
-    var allCb = document.getElementById('rev-report-branch-all-cb');
-    if (allCb) allCb.checked = (revBranchIds.length === 0);
-    updateRevBranchBtn();
-    if (revChartVisible) renderRevChart();
+function autoDistributePlan() {
+    var total = parseFloat(document.getElementById('auto-plan-input').value);
+    if (!total || total <= 0) { alert('Введите общий план за период'); return; }
+    var status = document.getElementById('auto-plan-status');
+    if (status) status.textContent = 'Загрузка...';
+
+    fetch('/reports/revenue-plan/auto', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            total: total,
+            date_from: '{{ r_date_from }}',
+            date_to:   '{{ r_date_to }}',
+            branch_ids: REV_BRANCH_IDS
+        })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (!data.ok) { alert('Ошибка: ' + (data.error || '?')); return; }
+        // Update plan cells
+        Object.keys(data.plan).forEach(function(date) {
+            Object.keys(data.plan[date]).forEach(function(bid) {
+                var td = document.getElementById('plan-' + date + '-' + bid);
+                if (td) {
+                    td.dataset.val = data.plan[date][bid];
+                    renderPlanCell(td, data.plan[date][bid]);
+                }
+            });
+        });
+        updatePivotTotals();
+        if (status) status.textContent = 'Готово ✓';
+        setTimeout(function() { if (status) status.textContent = ''; }, 3000);
+    })
+    .catch(function() { if (status) status.textContent = 'Ошибка'; });
 }
+
 </script>
 {% endif %}
 <script>
-// ── Day grouping expand/collapse ──────────────────────────────────────────────
-var _expandedDays = {};
-
-function toggleDay(idx) {
-    var rows = document.querySelectorAll('.day-detail-row[data-day="' + idx + '"]');
-    var chev = document.getElementById('chev-' + idx);
-    var isOpen = _expandedDays[idx];
-    rows.forEach(function(r) { r.style.display = isOpen ? 'none' : ''; });
-    if (chev) {
-        chev.classList.toggle('bi-chevron-right', isOpen);
-        chev.classList.toggle('bi-chevron-down',  !isOpen);
-    }
-    _expandedDays[idx] = !isOpen;
-}
-
-function toggleAllDays() {
-    var allOpen = Object.values(_expandedDays).some(function(v) { return v; });
-    // if any open — collapse all; otherwise expand all
-    document.querySelectorAll('.day-header-row').forEach(function(row) {
-        var idx = row.dataset.day;
-        if (allOpen) {
-            if (_expandedDays[idx]) toggleDay(parseInt(idx));
-        } else {
-            if (!_expandedDays[idx]) toggleDay(parseInt(idx));
-        }
-    });
-    var icon  = document.getElementById('toggle-all-icon');
-    var label = document.getElementById('toggle-all-label');
-    var nowOpen = Object.values(_expandedDays).some(function(v) { return v; });
-    if (icon)  { icon.className  = 'bi ' + (nowOpen ? 'bi-arrows-collapse' : 'bi-arrows-expand'); }
-    if (label) { label.textContent = nowOpen ? 'Свернуть все' : 'Раскрыть все'; }
-}
-
 (function () {
-    // Branch dropdown (shifts tab)
+    // Branch dropdown (revenue tab)
     function onBranchCbChange() {
         var checked = Array.from(document.querySelectorAll('.branch-cb')).filter(function(c) { return c.checked; });
         var allCb = document.getElementById('branch-all-cb');
