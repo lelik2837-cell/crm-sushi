@@ -280,7 +280,7 @@
                         {% endif %}
                     </ul>
                 </li>
-                {% set settings_active = request.endpoint in ('settings','branches','users','employees','history') %}
+                {% set settings_active = request.endpoint in ('settings','branches','users','employees','history','revenue_manual') %}
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle {% if settings_active %}active{% endif %}"
                        href="#" data-bs-toggle="dropdown" aria-expanded="false">
@@ -336,6 +336,11 @@
                             </a>
                         </li>
                         <li><hr class="dropdown-divider"></li>
+                        <li>
+                            <a class="dropdown-item {% if request.endpoint=='revenue_manual' %}active{% endif %}" href="{{ url_for('revenue_manual') }}">
+                                <i class="bi bi-calendar2-plus me-2"></i>Старая выручка
+                            </a>
+                        </li>
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='gsheet_settings' %}active{% endif %}" href="{{ url_for('gsheet_settings') }}">
                                 <i class="bi bi-google me-2"></i>Экспорт в Google Sheets

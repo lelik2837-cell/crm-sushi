@@ -1131,6 +1131,14 @@ def init_db():
                 PRIMARY KEY (branch_id, date)
             )
         ''')
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS revenue_manual (
+                branch_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                amount REAL NOT NULL DEFAULT 0,
+                PRIMARY KEY (branch_id, date)
+            )
+        ''')
 
         # Fix Russian-coded categories → correct English codes used by import
         _code_fixes = [
@@ -4256,14 +4264,25 @@ def reports():
         _RU_DOW = ['пн','вт','ср','чт','пт','сб','вс']
         rev_date_dow = {d: _RU_DOW[datetime.strptime(d, '%Y-%m-%d').weekday()] for d in rev_dates}
 
-        # Факт выручки по дням и филиалам
-        _act_bf = f"AND s.branch_id IN ({','.join(str(b['id']) for b in rev_branch_list)})" if rev_branch_list else ""
+        # Факт выручки по дням и филиалам (смены имеют приоритет, fallback на revenue_manual)
+        _act_bf  = f"AND s.branch_id IN ({','.join(str(b['id']) for b in rev_branch_list)})" if rev_branch_list else ""
+        _man_bf  = f"AND m.branch_id IN ({','.join(str(b['id']) for b in rev_branch_list)})" if rev_branch_list else ""
         act_rows = conn.execute(f'''
-            SELECT s.date, s.branch_id, COALESCE(SUM(r.total_revenue), 0) as actual
-            FROM shifts s LEFT JOIN shift_revenue r ON r.shift_id = s.id
-            WHERE s.date BETWEEN ? AND ? {_act_bf}
-            GROUP BY s.date, s.branch_id
-        ''', [r_date_from, r_date_to]).fetchall()
+            SELECT date, branch_id, SUM(actual) as actual FROM (
+                SELECT s.date, s.branch_id, COALESCE(SUM(r.total_revenue), 0) as actual
+                FROM shifts s LEFT JOIN shift_revenue r ON r.shift_id = s.id
+                WHERE s.date BETWEEN ? AND ? {_act_bf}
+                GROUP BY s.date, s.branch_id
+                UNION ALL
+                SELECT m.date, m.branch_id, m.amount as actual
+                FROM revenue_manual m
+                WHERE m.date BETWEEN ? AND ? {_man_bf}
+                AND NOT EXISTS (
+                    SELECT 1 FROM shifts s2 WHERE s2.date = m.date AND s2.branch_id = m.branch_id
+                )
+            ) combined
+            GROUP BY date, branch_id
+        ''', [r_date_from, r_date_to, r_date_from, r_date_to]).fetchall()
 
         # План по дням и филиалам
         _plan_bf = f"AND branch_id IN ({','.join(str(b['id']) for b in rev_branch_list)})" if rev_branch_list else ""
@@ -4589,6 +4608,100 @@ def auto_revenue_plan():
     for row in new_plan:
         result.setdefault(row['date'], {})[row['branch_id']] = row['amount']
     return jsonify({'ok': True, 'plan': result})
+
+
+@app.route('/settings/revenue-manual')
+@login_required
+@owner_required
+def revenue_manual():
+    _today = date.today()
+    _prev_month = (_today.replace(day=1) - timedelta(days=1))
+    _default_from = _prev_month.replace(day=1).isoformat()
+    _default_to   = _prev_month.isoformat()
+
+    df = request.args.get('df', _default_from)
+    dt = request.args.get('dt', _default_to)
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', df): df = _default_from
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', dt): dt = _default_to
+
+    _df = datetime.strptime(df, '%Y-%m-%d').date()
+    _dt = datetime.strptime(dt, '%Y-%m-%d').date()
+    dates = []
+    _d = _df
+    while _d <= _dt:
+        dates.append(_d.isoformat())
+        _d += timedelta(days=1)
+
+    _RU_DOW = ['пн','вт','ср','чт','пт','сб','вс']
+    date_dow = {d: _RU_DOW[datetime.strptime(d, '%Y-%m-%d').weekday()] for d in dates}
+
+    _RU_MONTHS = ['','Январь','Февраль','Март','Апрель','Май','Июнь',
+                  'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь']
+    month_lbl = f"{_RU_MONTHS[_df.month]} {_df.year}"
+
+    with get_db() as conn:
+        branches = conn.execute(
+            'SELECT id, name FROM branches WHERE is_active=1 ORDER BY sort_order, id'
+        ).fetchall()
+
+        manual_rows = conn.execute('''
+            SELECT branch_id, date, amount FROM revenue_manual
+            WHERE date BETWEEN ? AND ?
+        ''', [df, dt]).fetchall()
+
+        # Смены за период (чтобы показать, где уже есть данные из смен)
+        shift_rows = conn.execute('''
+            SELECT s.date, s.branch_id, COALESCE(SUM(r.total_revenue), 0) as amount
+            FROM shifts s LEFT JOIN shift_revenue r ON r.shift_id = s.id
+            WHERE s.date BETWEEN ? AND ?
+            GROUP BY s.date, s.branch_id
+        ''', [df, dt]).fetchall()
+
+    # Сборка сводного словаря
+    pivot = {}
+    for d in dates:
+        pivot[d] = {b['id']: {'manual': 0.0, 'shift': 0.0, 'has_shift': False} for b in branches}
+
+    for row in manual_rows:
+        if row['date'] in pivot and row['branch_id'] in pivot[row['date']]:
+            pivot[row['date']][row['branch_id']]['manual'] = float(row['amount'])
+
+    for row in shift_rows:
+        if row['date'] in pivot and row['branch_id'] in pivot[row['date']]:
+            pivot[row['date']][row['branch_id']]['shift']     = float(row['amount'])
+            pivot[row['date']][row['branch_id']]['has_shift'] = True
+
+    return render_template('revenue_manual.html',
+        branches=branches, dates=dates, date_dow=date_dow,
+        pivot=pivot, df=df, dt=dt, month_lbl=month_lbl)
+
+
+@app.route('/settings/revenue-manual/save', methods=['POST'])
+@login_required
+@owner_required
+def revenue_manual_save():
+    items = request.get_json(force=True)
+    if not isinstance(items, list):
+        return jsonify({'ok': False}), 400
+    with get_db() as conn:
+        for item in items:
+            branch_id = item.get('branch_id')
+            d         = str(item.get('date', ''))
+            amount    = float(item.get('amount', 0) or 0)
+            if not branch_id or not re.match(r'^\d{4}-\d{2}-\d{2}$', d):
+                continue
+            if amount > 0:
+                conn.execute(
+                    'INSERT OR REPLACE INTO revenue_manual (branch_id, date, amount) VALUES (?,?,?)',
+                    (branch_id, d, amount)
+                )
+            else:
+                conn.execute(
+                    'DELETE FROM revenue_manual WHERE branch_id=? AND date=?',
+                    (branch_id, d)
+                )
+        conn.commit()
+    return jsonify({'ok': True})
 
 
 @app.route('/reports/employee/<int:emp_id>')
