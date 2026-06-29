@@ -15,7 +15,7 @@
         <label class="form-label small fw-semibold mb-1">Период</label>
         <div class="d-flex align-items-center gap-1" style="white-space:nowrap;">
           <button type="button" class="btn btn-sm btn-outline-secondary px-2" onclick="shiftMonth(-1)">‹</button>
-          <button type="button" class="btn btn-sm btn-outline-primary px-2" id="monthLabel" onclick="setCurrentMonth()">{{ month_lbl }}</button>
+          <button type="button" class="btn btn-sm btn-outline-primary px-2" id="monthLabel">{{ month_lbl }}</button>
           <button type="button" class="btn btn-sm btn-outline-secondary px-2" onclick="shiftMonth(1)">›</button>
           <input type="text" id="rangePicker" class="form-control form-control-sm" style="width:115px;" readonly placeholder="дд.мм — дд.мм">
         </div>
@@ -30,9 +30,10 @@
   <div class="alert alert-info py-2 mb-2 small d-flex gap-2 align-items-start">
     <i class="bi bi-info-circle-fill flex-shrink-0 mt-1"></i>
     <div>
-      <strong>Как заполнить из Excel:</strong> скопируйте диапазон (даты × филиалы) — строки это дни, столбцы это филиалы.
-      Кликните на первую ячейку в таблице (начало вставки) и нажмите <kbd>Ctrl+V</kbd>.
-      Ячейки <span class="badge" style="background:#e8f4fd;color:#0d6efd;border:1px solid #bee3f8;">из смен</span> редактировать нельзя — данные берутся из смен.
+      <strong>Вставка из Excel:</strong> скопируйте диапазон (строки = дни, столбцы = филиалы),
+      <strong>кликните один раз</strong> на стартовую ячейку (она подсветится синей рамкой) и нажмите <kbd>Ctrl+V</kbd>.
+      Для редактирования одной ячейки — <strong>двойной клик</strong>.
+      Ячейки <span style="color:#0369a1;font-style:italic;">курсивом</span> — из смен, редактировать нельзя.
     </div>
   </div>
 
@@ -59,17 +60,15 @@
             {% for b in branches %}
             {%- set cell = pivot[d][b.id] -%}
             {% if cell.has_shift %}
-            <td class="text-end" style="background:#f0f9ff;color:#0369a1;font-style:italic;" title="Данные из смен (редактирование недоступно)">
+            <td class="text-end" style="background:#f0f9ff;color:#0369a1;font-style:italic;"
+                title="Данные из смен — редактирование недоступно">
               {% if cell.shift > 0 %}{{ '{:,.0f}'.format(cell.shift).replace(',', ' ') }}{% else %}<span style="color:#94a3b8;">—</span>{% endif %}
-              <i class="bi bi-shield-check ms-1" style="font-size:10px;color:#0369a1;opacity:0.6;" title="из смен"></i>
             </td>
             {% else %}
             <td class="text-end rm-cell"
                 data-branch="{{ b.id }}"
                 data-date="{{ d }}"
                 data-val="{{ cell.manual | int }}"
-                onclick="editCell(this)"
-                title="Нажмите для редактирования"
                 style="cursor:pointer;{% if cell.manual > 0 %}color:#1d4ed8;{% else %}color:#adb5bd;{% endif %}">
               {% if cell.manual > 0 %}{{ '{:,.0f}'.format(cell.manual).replace(',', ' ') }}{% else %}—{% endif %}
             </td>
@@ -85,17 +84,20 @@
 
 <style>
 #rev-manual-table tbody tr:hover td {
-    box-shadow: inset 0 0 0 9999px rgba(99,102,241,0.06);
+    box-shadow: inset 0 0 0 9999px rgba(99,102,241,0.05);
 }
 #rev-manual-table td.rm-cell:hover {
-    box-shadow: inset 0 0 0 9999px rgba(99,102,241,0.15);
+    box-shadow: inset 0 0 0 9999px rgba(99,102,241,0.13);
+    cursor: pointer;
 }
-#rev-manual-table td.rm-cell-focused {
+#rev-manual-table td.rm-cell-selected {
     outline: 2px solid #6366f1;
     outline-offset: -2px;
+    box-shadow: inset 0 0 0 9999px rgba(99,102,241,0.10) !important;
 }
-#rev-manual-table td.rm-cell-pending {
-    background: #fef9c3 !important;
+#rev-manual-table td.rm-cell-editing {
+    outline: 2px solid #0d6efd;
+    outline-offset: -2px;
 }
 </style>
 
@@ -105,80 +107,101 @@ var ALL_BRANCHES = {{ branches | map(attribute='id') | list | tojson }};
 var DF = "{{ df }}";
 var DT = "{{ dt }}";
 
-// === Inline editing ===
-var focusedCell = null;
+// === Выделение ячейки (один клик) — для вставки из Excel ===
+var selectedCell = null;
+var editingCell  = null;
 
-function editCell(td) {
-    if (td === focusedCell) return;
-    if (focusedCell) focusedCell.classList.remove('rm-cell-focused');
-    focusedCell = td;
-    td.classList.add('rm-cell-focused');
-    var cur = parseFloat(String(td.dataset.val)) || 0;
+document.getElementById('rev-manual-table').addEventListener('click', function(e) {
+    var td = e.target.closest('td.rm-cell');
+    if (!td) return;
+    if (editingCell === td) return; // не снимаем фокус с редактируемой ячейки
+    if (selectedCell) selectedCell.classList.remove('rm-cell-selected');
+    selectedCell = td;
+    td.classList.add('rm-cell-selected');
+});
+
+// === Редактирование (двойной клик) ===
+document.getElementById('rev-manual-table').addEventListener('dblclick', function(e) {
+    var td = e.target.closest('td.rm-cell');
+    if (!td) return;
+    openEdit(td);
+});
+
+function openEdit(td) {
+    if (editingCell === td) return;
+    if (editingCell) closeEdit(editingCell, true);
+    if (selectedCell) selectedCell.classList.remove('rm-cell-selected');
+    selectedCell = null;
+    editingCell = td;
+    td.classList.add('rm-cell-editing');
+
+    var cur = parseFloat(td.dataset.val) || 0;
     var inp = document.createElement('input');
     inp.type = 'text';
-    inp.value = cur > 0 ? cur : '';
+    inp.value = cur > 0 ? String(cur) : '';
     inp.style.cssText = 'width:100%;border:none;background:transparent;text-align:right;outline:none;font-size:13px;';
     td.innerHTML = '';
     td.appendChild(inp);
     inp.focus();
     inp.select();
-    inp.addEventListener('blur',    function() { commitCell(td, inp); });
+
+    inp.addEventListener('blur', function() {
+        if (editingCell === td) closeEdit(td, true);
+    });
     inp.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
-        if (e.key === 'Escape') { inp.value = td.dataset.val; inp.blur(); }
+        if (e.key === 'Enter')  { e.preventDefault(); closeEdit(td, true); }
+        if (e.key === 'Escape') { e.preventDefault(); closeEdit(td, false); }
         if (e.key === 'Tab') {
             e.preventDefault();
-            inp.blur();
-            var next = findNextCell(td, e.shiftKey ? -1 : 1);
-            if (next) setTimeout(function() { editCell(next); }, 0);
+            var saved = closeEdit(td, true);
+            var next = nextCell(td, e.shiftKey ? -1 : 1);
+            if (next) setTimeout(function() { openEdit(next); }, 0);
         }
     });
 }
 
-function findNextCell(td, dir) {
-    var row = td.closest('tr');
-    var cells = Array.from(row.querySelectorAll('td.rm-cell'));
-    var idx = cells.indexOf(td);
-    return cells[idx + dir] || null;
-}
-
-function commitCell(td, inp) {
-    var amount = parseFloat(inp.value.replace(/[\s ]/g, '').replace(',', '.')) || 0;
+function closeEdit(td, save) {
+    var inp = td.querySelector('input');
+    var amount = 0;
+    if (inp) {
+        if (save) amount = parseFloat(inp.value.replace(/[\s ]/g, '').replace(',', '.')) || 0;
+        else      amount = parseFloat(td.dataset.val) || 0;
+    }
     renderCell(td, amount);
-    if (amount !== parseFloat(td.dataset.val)) {
+    if (save && amount !== parseFloat(td.dataset.val || 0)) {
         saveItems([{branch_id: parseInt(td.dataset.branch), date: td.dataset.date, amount: amount}]);
     }
+    td.classList.remove('rm-cell-editing');
+    editingCell = null;
+    return amount;
+}
+
+function nextCell(td, dir) {
+    var cells = Array.from(td.closest('tr').querySelectorAll('td.rm-cell'));
+    return cells[cells.indexOf(td) + dir] || null;
 }
 
 function renderCell(td, amount) {
     td.dataset.val = amount;
-    if (amount > 0) {
-        td.innerHTML = amount.toLocaleString('ru-RU', {maximumFractionDigits:0});
-        td.style.color = '#1d4ed8';
-    } else {
-        td.innerHTML = '—';
-        td.style.color = '#adb5bd';
-    }
-    td.classList.remove('rm-cell-focused', 'rm-cell-pending');
-    focusedCell = null;
+    td.innerHTML   = amount > 0
+        ? amount.toLocaleString('ru-RU', {maximumFractionDigits: 0})
+        : '—';
+    td.style.color = amount > 0 ? '#1d4ed8' : '#adb5bd';
 }
 
-// === Excel paste ===
+// === Вставка из Excel (Ctrl+V на выделенной ячейке) ===
 document.addEventListener('paste', function(e) {
-    if (!focusedCell) return;
+    if (!selectedCell || editingCell) return;
     e.preventDefault();
+
     var text = (e.clipboardData || window.clipboardData).getData('text/plain');
     var rows = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trimEnd().split('\n');
 
-    var startDate   = focusedCell.dataset.date;
-    var startBranch = parseInt(focusedCell.dataset.branch);
+    var startDate   = selectedCell.dataset.date;
+    var startBranch = parseInt(selectedCell.dataset.branch);
     var dateIdx0    = ALL_DATES.indexOf(startDate);
     var branchIdx0  = ALL_BRANCHES.indexOf(startBranch);
     if (dateIdx0 < 0 || branchIdx0 < 0) return;
-
-    // Commit current edit first
-    var inp = focusedCell.querySelector('input');
-    if (inp) { commitCell(focusedCell, inp); }
 
     var toSave = [];
     rows.forEach(function(rowStr, ri) {
@@ -190,25 +213,28 @@ document.addEventListener('paste', function(e) {
             var bIdx = branchIdx0 + ci;
             if (bIdx >= ALL_BRANCHES.length) return;
             var bid = ALL_BRANCHES[bIdx];
-            // Skip if cell doesn't exist (shift cell)
-            var td = document.querySelector('#rev-manual-table td.rm-cell[data-date="'+d+'"][data-branch="'+bid+'"]');
+            var td = document.querySelector(
+                '#rev-manual-table td.rm-cell[data-date="' + d + '"][data-branch="' + bid + '"]'
+            );
             if (!td) return;
-            var amount = parseFloat(val.replace(/[\s  ]/g, '').replace(',', '.')) || 0;
+            var amount = parseFloat(val.replace(/[\s ]/g, '').replace(',', '.')) || 0;
             renderCell(td, amount);
             toSave.push({branch_id: bid, date: d, amount: amount});
         });
     });
 
     if (toSave.length > 0) saveItems(toSave);
+
+    // Сдвигаем выделение на первую ячейку последней вставленной строки
+    if (selectedCell) selectedCell.classList.remove('rm-cell-selected');
+    selectedCell = null;
 });
 
-// Клик вне ячейки снимает фокус
+// Клик вне таблицы снимает выделение / завершает редактирование
 document.addEventListener('click', function(e) {
-    if (focusedCell && !focusedCell.contains(e.target)) {
-        var inp = focusedCell.querySelector('input');
-        if (inp) commitCell(focusedCell, inp);
-        else focusedCell.classList.remove('rm-cell-focused');
-    }
+    if (e.target.closest('#rev-manual-table')) return;
+    if (editingCell) closeEdit(editingCell, true);
+    if (selectedCell) { selectedCell.classList.remove('rm-cell-selected'); selectedCell = null; }
 });
 
 function saveItems(items) {
@@ -219,65 +245,42 @@ function saveItems(items) {
     }).catch(function(err) { console.error('save error', err); });
 }
 
-// === Flatpickr ===
-var _fp = flatpickr('#rangePicker', {
+// === Навигация по месяцам — только hidden inputs + submit, без flatpickr ===
+function _submitRange(df, dt) {
+    document.getElementById('df').value = df;
+    document.getElementById('dt').value = dt;
+    document.getElementById('filterForm').submit();
+}
+
+function shiftMonth(dir) {
+    var parts = DF.split('-');
+    var y = parseInt(parts[0]), m = parseInt(parts[1]) - 1;
+    m += dir;
+    if (m > 11) { m = 0;  y++; }
+    if (m < 0)  { m = 11; y--; }
+    var first   = y + '-' + String(m + 1).padStart(2, '0') + '-01';
+    var lastDay = new Date(y, m + 1, 0).getDate();
+    var last    = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
+    _submitRange(first, last);
+}
+
+// === Flatpickr только для ручного выбора диапазона ===
+flatpickr('#rangePicker', {
     mode: 'range',
-    locale: {
-        rangeSeparator: ' — ',
-        months: {
-            longhand: ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'],
-            shorthand: ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек']
-        },
-        weekdays: {
-            shorthand: ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'],
-            longhand:  ['Воскресенье','Понедельник','Вторник','Среда','Четверг','Пятница','Суббота']
-        },
-        firstDayOfWeek: 1
-    },
     dateFormat: 'Y-m-d',
     altInput: true,
     altFormat: 'd.m',
     defaultDate: [DF, DT],
     onChange: function(sel) {
         if (sel.length === 2) {
-            document.getElementById('df').value = _fmt(sel[0]);
-            document.getElementById('dt').value = _fmt(sel[1]);
-            _updateMonthLabel(sel[0]);
+            var fmt = function(d) {
+                return d.getFullYear() + '-' +
+                       String(d.getMonth() + 1).padStart(2, '0') + '-' +
+                       String(d.getDate()).padStart(2, '0');
+            };
+            _submitRange(fmt(sel[0]), fmt(sel[1]));
         }
     }
 });
-
-function _fmt(d) {
-    return d.getFullYear() + '-' +
-           String(d.getMonth()+1).padStart(2,'0') + '-' +
-           String(d.getDate()).padStart(2,'0');
-}
-
-function _updateMonthLabel(d) {
-    var MONTHS = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
-    document.getElementById('monthLabel').textContent = MONTHS[d.getMonth()] + ' ' + d.getFullYear();
-}
-
-function _setRange(df, dt) {
-    document.getElementById('df').value = df;
-    document.getElementById('dt').value = dt;
-    _fp.setDate([df, dt]);
-    _updateMonthLabel(new Date(df));
-    document.getElementById('filterForm').submit();
-}
-
-function setCurrentMonth() {
-    _setRange(DF.slice(0, 7) + '-01', DT);
-}
-
-function shiftMonth(dir) {
-    var d = new Date(DF + 'T00:00:00');
-    d.setMonth(d.getMonth() + dir);
-    var y = d.getFullYear(), m = d.getMonth();
-    var first = y + '-' + String(m+1).padStart(2,'0') + '-01';
-    var last  = new Date(y, m+1, 0);
-    var lastStr = last.getFullYear() + '-' + String(last.getMonth()+1).padStart(2,'0') + '-' + String(last.getDate()).padStart(2,'0');
-    _setRange(first, lastStr);
-}
 </script>
 {% endblock %}
