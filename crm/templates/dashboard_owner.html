@@ -12,6 +12,7 @@
         <button onclick="loadRevCard('today')" data-rp="today" class="rev-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Сегодня</button>
         <button onclick="loadRevCard('month')" data-rp="month" class="rev-period-btn rev-period-active" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.9); background:rgba(255,255,255,.25); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Месяц</button>
         <button onclick="loadRevCard('year')"  data-rp="year"  class="rev-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Год</button>
+        <button onclick="loadRevCard('all')"   data-rp="all"   class="rev-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Всё</button>
         <button id="rev-cal-btn" onclick="openRevCal()" title="Выбрать период" style="width:26px; height:26px; flex-shrink:0; border-radius:50%; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); cursor:pointer; padding:0; display:inline-flex; align-items:center; justify-content:center; transition:all .15s;">
           <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><path d="M3.5 0a.5.5 0 0 1 .5.5V1h8V.5a.5.5 0 0 1 1 0V1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h1V.5a.5.5 0 0 1 .5-.5zM1 4v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4H1z"/></svg>
         </button>
@@ -21,8 +22,9 @@
           <button id="dash-branch-btn" type="button"
             data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
             title="Выбор филиалов"
-            style="border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700;border:1.5px solid rgba(255,255,255,.45);background:rgba(255,255,255,.15);color:#fff;cursor:pointer;display:inline-flex;align-items:center;white-space:nowrap;flex-shrink:0;transition:all .15s;height:26px;">
-            <span id="dash-branch-abbr">НК</span>
+            style="width:32px;height:32px;border-radius:50%;border:1.5px solid rgba(255,255,255,.45);background:rgba(255,255,255,.15);color:#fff;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .15s;padding:0;gap:2px;flex-direction:column;">
+            <span id="dash-branch-abbr" style="font-size:9px;font-weight:800;line-height:1;letter-spacing:.3px;">НК</span>
+            <svg viewBox="0 0 8 5" width="8" height="5" fill="currentColor" style="opacity:.75;flex-shrink:0;"><path d="M0 0l4 5 4-5z"/></svg>
           </button>
           <div class="dropdown-menu p-2 shadow" style="min-width:220px;max-height:320px;overflow-y:auto;">
             {% if branch_groups %}
@@ -847,8 +849,8 @@ function loadRevCard(period) {
         dayToggleBtn.style.background = 'rgba(255,255,255,.12)';
         if (revDayChart) { revDayChart.destroy(); revDayChart = null; }
     }
-    // hide year-day toggle when leaving year mode
-    if (revPeriod !== 'year') {
+    // hide year-day toggle when leaving year/all mode
+    if (revPeriod !== 'year' && revPeriod !== 'all') {
         yearDayToggleBtn.style.display = 'none';
         if (revYearDayVisible) {
             revYearDayVisible = false;
@@ -862,7 +864,7 @@ function loadRevCard(period) {
     var isCustomMonthly = revPeriod === 'custom' && revCustomFrom && revCustomTo &&
         Math.round((new Date(revCustomTo) - new Date(revCustomFrom)) / 86400000) > 35;
 
-    if (revPeriod === 'year' || isCustomMonthly) {
+    if (revPeriod === 'year' || revPeriod === 'all' || isCustomMonthly) {
         branchesWrap.style.display = 'none';
         yearWrap.style.display     = '';
         monthDetail.style.display  = 'none';
@@ -876,6 +878,15 @@ function loadRevCard(period) {
                     if (!d.ok) return;
                     document.getElementById('rev-total').textContent = fmtNum(d.total);
                     document.getElementById('rev-period-label').textContent = 'рублей за ' + revYear;
+                    buildYearChart(d.months);
+                });
+        } else if (revPeriod === 'all') {
+            document.getElementById('rev-period-label').textContent = 'рублей за всё время';
+            fetch('/api/revenue-all' + (_revBranchSuffix() ? '?' + _revBranchSuffix().slice(1) : ''))
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    if (!d.ok) return;
+                    document.getElementById('rev-total').textContent = fmtNum(d.total);
                     buildYearChart(d.months);
                 });
         } else {

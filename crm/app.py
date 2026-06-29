@@ -1506,6 +1506,56 @@ def api_revenue_year():
     return jsonify({'ok': True, 'total': sum(x['revenue'] for x in months_list), 'months': months_list})
 
 
+@app.route('/api/revenue-all')
+@login_required
+@owner_required
+def api_revenue_all():
+    """Месячная выручка за весь период где есть данные (по выбранным филиалам)."""
+    raw_bids = request.args.get('branch_ids', '')
+    bids     = [int(x) for x in raw_bids.split(',') if x.strip().isdigit()]
+    bid_str  = f"AND s.branch_id IN ({','.join(str(b) for b in bids)})" if bids else ''
+    mbid_str = f"AND m.branch_id IN ({','.join(str(b) for b in bids)})" if bids else ''
+    today_iso = date.today().isoformat()
+    with get_db() as conn:
+        min_shift = conn.execute(
+            f'SELECT MIN(s.date) FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id WHERE 1=1 {bid_str}'
+        ).fetchone()[0]
+        min_manual = conn.execute(
+            f'SELECT MIN(date) FROM revenue_manual WHERE 1=1 {mbid_str}'
+        ).fetchone()[0]
+    candidates = [x for x in [min_shift, min_manual] if x]
+    if not candidates:
+        return jsonify({'ok': True, 'total': 0, 'months': []})
+    date_from = min(candidates)
+    bf = f"AND s.branch_id IN ({','.join('?'*len(bids))})" if bids else ''
+    with get_db() as conn:
+        rows = conn.execute(f'''
+            SELECT CAST(strftime('%Y', s.date) AS INTEGER) AS year,
+                   CAST(strftime('%m', s.date) AS INTEGER) AS month,
+                   COALESCE(SUM(r.total_revenue), 0) AS revenue
+            FROM shifts s JOIN shift_revenue r ON r.shift_id = s.id
+            WHERE s.date BETWEEN ? AND ? {bf}
+            GROUP BY year, month ORDER BY year, month
+        ''', [date_from, today_iso] + bids).fetchall()
+        manual_map = _manual_rev_by_month(conn, date_from, today_iso, bids or None)
+    rev = {(r['year'], r['month']): int(r['revenue']) for r in rows}
+    labels = ['', 'Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн',
+              'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
+    start = date.fromisoformat(date_from)
+    end   = date.today()
+    months_list = []
+    y, m = start.year, start.month
+    while (y < end.year) or (y == end.year and m <= end.month):
+        label = labels[m] + " '" + str(y)[-2:]
+        months_list.append({'year': y, 'month': m, 'label': label,
+                            'revenue': rev.get((y, m), 0) + int(manual_map.get((y, m), 0))})
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return jsonify({'ok': True, 'total': sum(x['revenue'] for x in months_list), 'months': months_list})
+
+
 @app.route('/api/revenue-months')
 @login_required
 @owner_required
