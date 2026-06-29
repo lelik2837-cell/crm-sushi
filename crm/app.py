@@ -5790,8 +5790,24 @@ def _backup_db_to_gdrive():
     if not os.path.exists(db_path):
         return False, f'Файл базы данных не найден: {db_path}'
 
-    with open(db_path, 'rb') as f:
-        db_bytes = f.read()
+    # Горячий снимок через SQLite backup API — гарантирует целостность файла
+    import io as _io
+    import tempfile as _tmp
+    with _tmp.NamedTemporaryFile(suffix='.db', delete=False) as tf:
+        tmp_path = tf.name
+    try:
+        src = sqlite3.connect(DATABASE)
+        dst = sqlite3.connect(tmp_path)
+        src.backup(dst)
+        dst.close()
+        src.close()
+        with open(tmp_path, 'rb') as f:
+            db_bytes = f.read()
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
 
     date_str = _dt.datetime.now().strftime('%Y-%m-%d_%H-%M')
     filename = f'crm_backup_{date_str}.db'
