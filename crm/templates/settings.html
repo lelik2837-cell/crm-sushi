@@ -511,8 +511,46 @@
 
     {% endif %}
 
-    <!-- ══ RATE TEMPLATES ══ -->
+    <!-- ══ RATE TEMPLATES + POSITIONS ══ -->
     {% if active_tab == 'rates' %}<div>
+
+        {# ── Должности ── #}
+        <div class="card mb-4">
+            <div class="card-header fw-bold bg-light d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-person-badge me-2"></i>Должности</span>
+                <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addPositionModal">
+                    <i class="bi bi-plus"></i> Добавить
+                </button>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm mb-0">
+                    <tbody>
+                    {% for pos in positions %}
+                    <tr>
+                        <td class="ps-3 py-2">
+                            <span class="fw-semibold">{{ pos.name }}</span>
+                            <span class="text-muted small ms-2">{{ pos.code }}</span>
+                        </td>
+                        <td class="text-end pe-3 py-2">
+                            <button class="btn btn-sm btn-outline-secondary me-1"
+                                onclick="openEditPosition({{ pos.id }}, '{{ pos.name }}')">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            <form method="POST" action="{{ url_for('delete_position', pos_id=pos.id) }}" class="d-inline"
+                                onsubmit="return confirm('Удалить должность «{{ pos.name }}»?')">
+                                <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td class="text-muted text-center py-3 small">Нет должностей</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        {# ── Ставки ── #}
         <div class="row g-4">
             <div class="col-md-5">
                 <div class="card">
@@ -522,11 +560,11 @@
                     <div class="card-body">
                         <form method="POST" action="{{ url_for('add_rate_template') }}">
                             <div class="mb-3">
-                                <label class="form-label fw-semibold">Роль</label>
-                                <select name="role" class="form-select" required
-                                    onchange="toggleRateTmplCourierFields(this.value)">
-                                    {% for code, label in role_labels.items() %}
-                                    <option value="{{ code }}">{{ label }}</option>
+                                <label class="form-label fw-semibold">Должность</label>
+                                <select name="role" class="form-select" required id="add-tmpl-role"
+                                    onchange="toggleRateTmplCourierFields(this.value, 'add')">
+                                    {% for pos in positions %}
+                                    <option value="{{ pos.code }}">{{ pos.name }}</option>
                                     {% endfor %}
                                 </select>
                             </div>
@@ -537,10 +575,23 @@
                             </div>
                             <div class="mb-3">
                                 <label class="form-label fw-semibold">Филиалы</label>
-                                <div class="d-flex flex-wrap gap-2">
+                                {# Группы как быстрый выбор #}
+                                {% if branch_groups_for_rates %}
+                                <div class="d-flex flex-wrap gap-1 mb-2">
+                                    {% for g in branch_groups_for_rates %}
+                                    <button type="button" class="btn btn-sm btn-outline-secondary"
+                                        onclick="selectBranchGroup('add', {{ g.branches | map(attribute='id') | list | tojson }})">
+                                        {{ g.name }}
+                                    </button>
+                                    {% endfor %}
+                                    <button type="button" class="btn btn-sm btn-outline-danger"
+                                        onclick="selectBranchGroup('add', [])">Снять все</button>
+                                </div>
+                                {% endif %}
+                                <div class="d-flex flex-wrap gap-2" id="add-branch-checks">
                                     {% for b in branches %}
                                     <div class="form-check">
-                                        <input class="form-check-input" type="checkbox"
+                                        <input class="form-check-input add-branch-cb" type="checkbox"
                                             name="branch_ids" value="{{ b.id }}" id="add-br-{{ b.id }}">
                                         <label class="form-check-label small" for="add-br-{{ b.id }}">{{ b.name }}</label>
                                     </div>
@@ -549,15 +600,15 @@
                                 <div class="form-text text-muted">Не выбрано — доступно для всех филиалов</div>
                             </div>
                             <div class="row g-2 mb-3">
-                                <div class="col-4" id="rtpl-rate-col">
+                                <div class="col-4" id="add-rate-col">
                                     <label class="form-label small">₽/час</label>
                                     <input type="number" name="rate" class="form-control" value="230" step="0.01" min="0">
                                 </div>
-                                <div class="col-4 rtpl-courier-only" style="display:none;">
+                                <div class="col-4 add-courier-only" style="display:none;">
                                     <label class="form-label small">₽/км</label>
                                     <input type="number" name="rate_per_km" class="form-control" value="10" step="0.01" min="0">
                                 </div>
-                                <div class="col-4 rtpl-courier-only" style="display:none;">
+                                <div class="col-4 add-courier-only" style="display:none;">
                                     <label class="form-label small">₽/заказ</label>
                                     <input type="number" name="rate_per_order" class="form-control" value="100" step="0.01" min="0">
                                 </div>
@@ -576,27 +627,33 @@
             <div class="col-md-7">
                 <div class="card">
                     <div class="card-header bg-light fw-bold">
-                        <i class="bi bi-list-ul"></i> Шаблоны ставок ({{ rate_templates|length }})
+                        <i class="bi bi-list-ul"></i> Ставки ({{ rate_templates|length }})
                     </div>
                     <div class="card-body p-0">
                         {% set ns = namespace(current_role='') %}
                         {% for tmpl in rate_templates %}
                         {% if tmpl.role != ns.current_role %}
                         {% set ns.current_role = tmpl.role %}
-                        <div class="px-3 py-2 bg-light border-bottom fw-semibold small text-muted" style="text-transform:uppercase;letter-spacing:.5px;">
+                        <div class="px-3 py-2 bg-light border-bottom fw-semibold small text-muted"
+                             style="text-transform:uppercase;letter-spacing:.5px;">
                             {{ role_labels.get(tmpl.role, tmpl.role) }}
                         </div>
                         {% endif %}
-                        <div class="d-flex align-items-center gap-2 px-3 py-2 border-bottom">
+                        {% set hist = tmpl_history.get(tmpl.id, []) %}
+                        {% set cur_branch_ids = tmpl_branches.get(tmpl.id, []) %}
+                        <div class="d-flex align-items-start gap-2 px-3 py-2 border-bottom">
                             <div class="flex-grow-1">
-                                <div>
-                                    <span class="fw-semibold">{{ tmpl.name }}</span>
-                                    <span class="text-muted small ms-2">{{ tmpl.rate }}₽/ч
-                                        {% if tmpl.role == 'courier' and tmpl.rate_per_km %}&nbsp;· {{ tmpl.rate_per_km }}₽/км{% endif %}
-                                        {% if tmpl.role == 'courier' and tmpl.rate_per_order %}&nbsp;· {{ tmpl.rate_per_order }}₽/заказ{% endif %}
-                                    </span>
+                                <div class="fw-semibold">{{ tmpl.name }}</div>
+                                <div class="text-muted small">
+                                    {% if tmpl.rate %}{{ tmpl.rate|int }}₽/ч{% endif %}
+                                    {% if tmpl.role == 'courier' %}
+                                        {% if tmpl.rate_per_km %} · {{ tmpl.rate_per_km|int }}₽/км{% endif %}
+                                        {% if tmpl.rate_per_order %} · {{ tmpl.rate_per_order|int }}₽/заказ{% endif %}
+                                    {% endif %}
+                                    {% if hist %}
+                                    · <span class="text-success">с {{ hist[0].valid_from | datefmt }}</span>
+                                    {% endif %}
                                 </div>
-                                {% set cur_branch_ids = tmpl_branches.get(tmpl.id, []) %}
                                 <div class="mt-1">
                                     {% if cur_branch_ids %}
                                         {% for b in branches %}{% if b.id in cur_branch_ids %}
@@ -607,30 +664,30 @@
                                     {% endif %}
                                 </div>
                             </div>
-                            <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal"
+                            <button class="btn btn-sm btn-outline-secondary mt-1" data-bs-toggle="modal"
                                 data-bs-target="#editTmplModal{{ tmpl.id }}">
                                 <i class="bi bi-pencil"></i>
                             </button>
-                            <form method="POST" action="{{ url_for('delete_rate_template', tmpl_id=tmpl.id) }}" class="d-inline"
+                            <form method="POST" action="{{ url_for('delete_rate_template', tmpl_id=tmpl.id) }}" class="d-inline mt-1"
                                 onsubmit="return confirm('Удалить ставку «{{ tmpl.name }}»?')">
                                 <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
                             </form>
                         </div>
                         {% else %}
-                        <div class="text-muted text-center py-4 small">Шаблоны ставок не добавлены</div>
+                        <div class="text-muted text-center py-4 small">Ставки не добавлены</div>
                         {% endfor %}
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Edit template modals -->
+        {# ── Модалы редактирования ставок ── #}
         {% for tmpl in rate_templates %}
         <div class="modal fade" id="editTmplModal{{ tmpl.id }}" tabindex="-1">
             <div class="modal-dialog">
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h5 class="modal-title">Редактировать ставку</h5>
+                        <h5 class="modal-title">Редактировать ставку — {{ tmpl.name }}</h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                     </div>
                     <form method="POST" action="{{ url_for('edit_rate_template', tmpl_id=tmpl.id) }}">
@@ -641,11 +698,23 @@
                             </div>
                             <div class="mb-3">
                                 <label class="form-label fw-semibold">Филиалы</label>
+                                {% if branch_groups_for_rates %}
+                                <div class="d-flex flex-wrap gap-1 mb-2">
+                                    {% for g in branch_groups_for_rates %}
+                                    <button type="button" class="btn btn-sm btn-outline-secondary"
+                                        onclick="selectBranchGroup('edit{{ tmpl.id }}', {{ g.branches | map(attribute='id') | list | tojson }})">
+                                        {{ g.name }}
+                                    </button>
+                                    {% endfor %}
+                                    <button type="button" class="btn btn-sm btn-outline-danger"
+                                        onclick="selectBranchGroup('edit{{ tmpl.id }}', [])">Снять все</button>
+                                </div>
+                                {% endif %}
                                 <div class="d-flex flex-wrap gap-2">
                                     {% set cur_branches = tmpl_branches.get(tmpl.id, []) %}
                                     {% for b in branches %}
                                     <div class="form-check">
-                                        <input class="form-check-input" type="checkbox"
+                                        <input class="form-check-input edit{{ tmpl.id }}-branch-cb" type="checkbox"
                                             name="branch_ids" value="{{ b.id }}"
                                             id="edit-br-{{ tmpl.id }}-{{ b.id }}"
                                             {% if b.id in cur_branches %}checked{% endif %}>
@@ -655,8 +724,8 @@
                                 </div>
                                 <div class="form-text text-muted">Не выбрано — для всех филиалов</div>
                             </div>
-                            <div class="border rounded p-3">
-                                <div class="fw-semibold small mb-2">Новая ставка</div>
+                            <div class="border rounded p-3 mb-3">
+                                <div class="fw-semibold small mb-2">Новая ставка (действует с даты ниже)</div>
                                 <div class="row g-2 mb-2">
                                     <div class="col{% if tmpl.role != 'courier' %}-12{% else %}-4{% endif %}">
                                         <label class="form-label small">₽/час</label>
@@ -678,16 +747,23 @@
                                         <label class="form-label small mb-0 text-muted">Действует с</label>
                                     </div>
                                     <div class="col">
-                                        <input type="date" name="valid_from" class="form-control form-control-sm">
+                                        <input type="date" name="valid_from" class="form-control form-control-sm" value="{{ today }}">
                                     </div>
                                 </div>
                             </div>
                             {% set hist = tmpl_history.get(tmpl.id, []) %}
                             {% if hist %}
-                            <div class="mt-3">
+                            <div class="border rounded p-2 bg-light">
                                 <div class="text-muted small fw-semibold mb-1">История ставок:</div>
-                                {% for h in hist[:5] %}
-                                <div class="small text-muted">{{ h.valid_from }} — {{ h.rate }}₽/ч{% if tmpl.role == 'courier' and h.rate_per_km %}, {{ h.rate_per_km }}₽/км{% endif %}</div>
+                                {% for h in hist[:6] %}
+                                <div class="small d-flex justify-content-between">
+                                    <span class="text-muted">с {{ h.valid_from | datefmt }}</span>
+                                    <span>
+                                        {% if h.rate %}{{ h.rate|int }}₽/ч{% endif %}
+                                        {% if tmpl.role == 'courier' and h.rate_per_km %} · {{ h.rate_per_km|int }}₽/км{% endif %}
+                                        {% if tmpl.role == 'courier' and h.rate_per_order %} · {{ h.rate_per_order|int }}₽/заказ{% endif %}
+                                    </span>
+                                </div>
                                 {% endfor %}
                             </div>
                             {% endif %}
@@ -701,6 +777,70 @@
             </div>
         </div>
         {% endfor %}
+
+        {# ── Модал добавления должности ── #}
+        <div class="modal fade" id="addPositionModal" tabindex="-1">
+            <div class="modal-dialog modal-sm">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Новая должность</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <form method="POST" action="{{ url_for('add_position') }}">
+                        <div class="modal-body">
+                            <input type="text" name="name" class="form-control" placeholder="Название, например «Кассир»" required>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Отмена</button>
+                            <button type="submit" class="btn btn-primary btn-sm">Добавить</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        {# ── Модал редактирования должности ── #}
+        <div class="modal fade" id="editPositionModal" tabindex="-1">
+            <div class="modal-dialog modal-sm">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Переименовать должность</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <form method="POST" id="editPositionForm">
+                        <div class="modal-body">
+                            <input type="text" name="name" id="editPositionName" class="form-control" required>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Отмена</button>
+                            <button type="submit" class="btn btn-primary btn-sm">Сохранить</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <script>
+        function toggleRateTmplCourierFields(role, prefix) {
+            const isCourier = role === 'courier';
+            document.querySelectorAll('.' + prefix + '-courier-only').forEach(el => {
+                el.style.display = isCourier ? '' : 'none';
+            });
+        }
+
+        function selectBranchGroup(prefix, ids) {
+            const cbs = document.querySelectorAll('.' + prefix + '-branch-cb');
+            cbs.forEach(cb => {
+                cb.checked = ids.length === 0 ? false : ids.includes(parseInt(cb.value));
+            });
+        }
+
+        function openEditPosition(id, name) {
+            document.getElementById('editPositionName').value = name;
+            document.getElementById('editPositionForm').action = '/settings/positions/' + id + '/edit';
+            new bootstrap.Modal(document.getElementById('editPositionModal')).show();
+        }
+        </script>
     </div>{% endif %}
 
     <!-- ══ API 1С ИНТЕГРАЦИЯ ══ -->
@@ -949,14 +1089,6 @@ function filterBonusRules() {
     });
 }
 
-function toggleRateTmplCourierFields(role) {
-    const isCourier = role === 'courier';
-    document.querySelectorAll('.rtpl-courier-only').forEach(el => {
-        el.style.display = isCourier ? '' : 'none';
-    });
-    const rateCol = document.getElementById('rtpl-rate-col');
-    if (rateCol) rateCol.className = isCourier ? 'col-4' : 'col-12';
-}
 
 // Category form: update parent dropdown based on selected type
 const CAT_PARENTS = {{ exp_cats_parents | tojson }};

@@ -49,6 +49,15 @@ ROLE_LABELS = {
     'cook': 'Повар',
 }
 
+
+def _reload_role_labels(conn):
+    global ROLE_LABELS
+    rows = conn.execute(
+        'SELECT code, name FROM positions WHERE is_active=1 ORDER BY sort_order, name'
+    ).fetchall()
+    if rows:
+        ROLE_LABELS = {r['code']: r['name'] for r in rows}
+
 # Hardcoded defaults — seeded into DB on first run
 _DEFAULT_EXPENSE_CATEGORIES = [
     ('repair_plumbing', 'Ремонт сантех.', 1),
@@ -655,6 +664,27 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         ''')
+
+        # Positions (должности) — replaces hardcoded ROLE_LABELS
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS positions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                sort_order INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1
+            );
+        ''')
+        # Seed from ROLE_LABELS if table is empty
+        if conn.execute('SELECT COUNT(*) FROM positions').fetchone()[0] == 0:
+            for i, (code, name) in enumerate(list(ROLE_LABELS.items())):
+                conn.execute(
+                    'INSERT OR IGNORE INTO positions (code, name, sort_order) VALUES (?,?,?)',
+                    (code, name, i * 10)
+                )
+        conn.commit()
+        # Reload ROLE_LABELS from DB so additions survive restarts
+        _reload_role_labels(conn)
 
         # Create taxi and address tables (safe no-ops if already exist — handled by schema IF NOT EXISTS)
         conn.executescript('''
@@ -3669,16 +3699,18 @@ def settings():
         rate_templates = conn.execute(
             'SELECT * FROM rate_templates ORDER BY role, name'
         ).fetchall()
-        # Branch associations per template (list, not set — Jinja2 can't call set())
         tmpl_branches = {}
         for row in conn.execute('SELECT template_id, branch_id FROM rate_template_branches').fetchall():
             tmpl_branches.setdefault(row['template_id'], []).append(row['branch_id'])
-        # Rate history per template
         tmpl_history = {}
         for row in conn.execute(
             'SELECT * FROM rate_template_history ORDER BY template_id, valid_from DESC'
         ).fetchall():
             tmpl_history.setdefault(row['template_id'], []).append(row)
+        positions = conn.execute(
+            'SELECT * FROM positions ORDER BY sort_order, name'
+        ).fetchall()
+        branch_groups_for_rates = get_branch_groups(conn)
         api_tokens = conn.execute('''
             SELECT t.*, b.name AS branch_name
             FROM api_1c_tokens t JOIN branches b ON b.id=t.branch_id
@@ -3698,7 +3730,8 @@ def settings():
         tmpl_branches=tmpl_branches, tmpl_history=tmpl_history,
         api_tokens=api_tokens, api_log=api_log,
         today=date.today().isoformat(),
-        formula_vars=FORMULA_VARS, role_labels=ROLE_LABELS)
+        formula_vars=FORMULA_VARS, role_labels=ROLE_LABELS,
+        positions=positions, branch_groups_for_rates=branch_groups_for_rates)
 
 
 @app.route('/settings/expense-cat/add', methods=['POST'])
@@ -3923,6 +3956,70 @@ def edit_bonus_rule(rule_id):
         conn.commit()
     flash('Правило обновлено', 'success')
     return redirect(url_for('settings') + '?tab=bonuses')
+
+
+# ─── POSITIONS (ДОЛЖНОСТИ) ────────────────────────────────────────────────────
+
+@app.route('/settings/positions/add', methods=['POST'])
+@login_required
+@owner_required
+def add_position():
+    name = request.form.get('name', '').strip()
+    if not name:
+        flash('Введите название должности', 'danger')
+        return redirect(url_for('settings') + '?tab=rates')
+    code = _slugify(name)
+    with get_db() as conn:
+        existing = conn.execute('SELECT id FROM positions WHERE code=?', (code,)).fetchone()
+        if existing:
+            code = code + '_' + str(int(datetime.now().timestamp()))[-4:]
+        max_sort = conn.execute('SELECT COALESCE(MAX(sort_order),0) FROM positions').fetchone()[0]
+        conn.execute(
+            'INSERT INTO positions (code, name, sort_order) VALUES (?,?,?)',
+            (code, name, max_sort + 10)
+        )
+        conn.commit()
+        _reload_role_labels(conn)
+    flash(f'Должность «{name}» добавлена', 'success')
+    return redirect(url_for('settings') + '?tab=rates')
+
+
+@app.route('/settings/positions/<int:pos_id>/edit', methods=['POST'])
+@login_required
+@owner_required
+def edit_position(pos_id):
+    name = request.form.get('name', '').strip()
+    if not name:
+        flash('Введите название', 'danger')
+        return redirect(url_for('settings') + '?tab=rates')
+    with get_db() as conn:
+        conn.execute('UPDATE positions SET name=? WHERE id=?', (name, pos_id))
+        conn.commit()
+        _reload_role_labels(conn)
+    flash('Должность переименована', 'success')
+    return redirect(url_for('settings') + '?tab=rates')
+
+
+@app.route('/settings/positions/<int:pos_id>/delete', methods=['POST'])
+@login_required
+@owner_required
+def delete_position(pos_id):
+    with get_db() as conn:
+        pos = conn.execute('SELECT code, name FROM positions WHERE id=?', (pos_id,)).fetchone()
+        if not pos:
+            flash('Должность не найдена', 'danger')
+            return redirect(url_for('settings') + '?tab=rates')
+        used = conn.execute(
+            'SELECT COUNT(*) FROM employee_shifts WHERE role_snapshot=?', (pos['code'],)
+        ).fetchone()[0]
+        if used:
+            flash(f'Нельзя удалить — должность «{pos["name"]}» используется в {used} сменах', 'danger')
+            return redirect(url_for('settings') + '?tab=rates')
+        conn.execute('DELETE FROM positions WHERE id=?', (pos_id,))
+        conn.commit()
+        _reload_role_labels(conn)
+    flash('Должность удалена', 'success')
+    return redirect(url_for('settings') + '?tab=rates')
 
 
 # ─── RATE TEMPLATES ───────────────────────────────────────────────────────────
