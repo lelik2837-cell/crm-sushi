@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% set active_tab = request.args.get('tab', 'categories') %}
-{% set tab_titles = {'categories': 'Категории расходов / доходов', 'kpi': 'КПИ блоки дашборда', 'bonuses': 'Премии', 'vars': 'Переменные формул', 'rates': 'Ставки сотрудников', 'api': 'Интеграция 1С / накладные'} %}
+{% set tab_titles = {'categories': 'Категории расходов / доходов', 'bonuses': 'Премии', 'rates': 'Ставки сотрудников', 'api': 'Интеграция 1С / накладные'} %}
 {% block title %}Настройки — {{ tab_titles.get(active_tab, '') }}{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">

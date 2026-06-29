@@ -263,6 +263,11 @@
                             </a>
                         </li>
                         <li>
+                            <a class="dropdown-item {% if request.endpoint=='change_settings' %}active{% endif %}" href="{{ url_for('change_settings') }}">
+                                <i class="bi bi-cash-coin me-2"></i>Размен
+                            </a>
+                        </li>
+                        <li>
                             <a class="dropdown-item {% if request.endpoint=='purchases' or (request.endpoint and 'purchases_import' in request.endpoint) %}active{% endif %}" href="{{ url_for('purchases') }}">
                                 <i class="bi bi-box-seam me-2"></i>Накладные
                             </a>
@@ -275,7 +280,7 @@
                         {% endif %}
                     </ul>
                 </li>
-                {% set settings_active = request.endpoint in ('settings','branches','users','employees','history','change_settings') %}
+                {% set settings_active = request.endpoint in ('settings','branches','users','employees','history') %}
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle {% if settings_active %}active{% endif %}"
                        href="#" data-bs-toggle="dropdown" aria-expanded="false">
@@ -297,11 +302,6 @@
                         <li>
                             <a class="dropdown-item {% if request.endpoint in ('import_shifts','excel_import') %}active{% endif %}" href="{{ url_for('import_shifts') }}">
                                 <i class="bi bi-cloud-upload me-2 text-primary"></i>Импорт смен
-                            </a>
-                        </li>
-                        <li>
-                            <a class="dropdown-item {% if request.endpoint=='shifts_bulk_delete' %}active{% endif %}" href="{{ url_for('shifts_bulk_delete') }}">
-                                <i class="bi bi-trash3 me-2 text-danger"></i>Удаление смен
                             </a>
                         </li>
                         <li><hr class="dropdown-divider"></li>
@@ -331,24 +331,8 @@
                             </a>
                         </li>
                         <li>
-                            <a class="dropdown-item {% if request.endpoint=='settings' and request.args.get('tab')=='kpi' %}active{% endif %}" href="{{ url_for('settings') }}?tab=kpi">
-                                <i class="bi bi-graph-up me-2"></i>КПИ блоки
-                            </a>
-                        </li>
-                        <li>
                             <a class="dropdown-item {% if request.endpoint=='settings' and request.args.get('tab')=='bonuses' %}active{% endif %}" href="{{ url_for('settings') }}?tab=bonuses">
                                 <i class="bi bi-star me-2"></i>Премии
-                            </a>
-                        </li>
-                        <li>
-                            <a class="dropdown-item {% if request.endpoint=='settings' and request.args.get('tab')=='vars' %}active{% endif %}" href="{{ url_for('settings') }}?tab=vars">
-                                <i class="bi bi-code-slash me-2"></i>Переменные формул
-                            </a>
-                        </li>
-                        <li><hr class="dropdown-divider"></li>
-                        <li>
-                            <a class="dropdown-item {% if request.endpoint=='change_settings' %}active{% endif %}" href="{{ url_for('change_settings') }}">
-                                <i class="bi bi-cash-coin me-2"></i>Размен
                             </a>
                         </li>
                         <li><hr class="dropdown-divider"></li>
