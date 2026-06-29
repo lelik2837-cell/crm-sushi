@@ -97,7 +97,7 @@
 </div>
 
 {# ── Карточки Факт / План / % ── #}
-{% set _pct = ((rev_total_actual / rev_total_plan * 100) | round(1)) if rev_total_plan > 0 else 0 %}
+{% set _pct = (((rev_total_actual - rev_total_plan) / rev_total_plan * 100) | round(1)) if rev_total_plan > 0 else 0 %}
 <div class="row g-3 mb-3">
     <div class="col-6 col-md-3">
         <div class="card p-3" style="border-left:4px solid #1d4ed8">
@@ -112,9 +112,9 @@
         </div>
     </div>
     <div class="col-6 col-md-2">
-        <div class="card p-3" style="border-left:4px solid {% if _pct >= 100 %}#198754{% elif _pct >= 80 %}#fd7e14{% else %}#dc3545{% endif %}">
-            <div class="text-muted small">Выполнение</div>
-            <div class="fw-bold fs-5" id="grand-pct-card">{{ _pct }}%</div>
+        <div class="card p-3" style="border-left:4px solid {% if _pct >= 0 %}#198754{% elif _pct >= -10 %}#fd7e14{% else %}#dc3545{% endif %}">
+            <div class="text-muted small">Отклонение</div>
+            <div class="fw-bold fs-5" id="grand-pct-card">{% if _pct > 0 %}+{% endif %}{{ _pct }}%</div>
         </div>
     </div>
     <div class="col-12 col-md-4">
@@ -134,10 +134,10 @@
 
 {# ── Сводная таблица: даты × филиалы ── #}
 {%- macro dev_color(pct, has_plan, has_act) -%}
-{%- if not has_plan or not has_act -%}#adb5bd{%- elif pct >= 100 -%}#198754{%- elif pct >= 90 -%}#fd7e14{%- else -%}#dc3545{%- endif -%}
+{%- if not has_plan or not has_act -%}#adb5bd{%- elif pct >= 0 -%}#198754{%- elif pct >= -10 -%}#fd7e14{%- else -%}#dc3545{%- endif -%}
 {%- endmacro -%}
 {%- macro dev_text(amt, pct, has_plan, has_act) -%}
-{%- if has_plan and has_act -%}{%- if amt >= 0 -%}+{%- endif -%}{{ '{:,.0f}'.format(amt).replace(',', ' ') }} ({{ pct }}%){%- else -%}—{%- endif -%}
+{%- if has_plan and has_act -%}{%- if amt >= 0 -%}+{%- endif -%}{{ '{:,.0f}'.format(amt).replace(',', ' ') }} ({%- if pct > 0 -%}+{%- endif -%}{{ pct }}%){%- else -%}—{%- endif -%}
 {%- endmacro -%}
 <div class="card mb-4">
     <div class="card-body p-0">
@@ -164,7 +164,7 @@
                         {% set _bg1 = _BGS_H1[loop.index0 % 2] %}
                         {% set _hcol = namespace(act=0, plan=0) %}
                         {% for d in rev_dates %}{% set _hcol.act = _hcol.act + rev_pivot[d][b.id].actual %}{% set _hcol.plan = _hcol.plan + rev_pivot[d][b.id].plan %}{% endfor %}
-                        {% set _hpct = ((_hcol.act / _hcol.plan * 100) | round(0) | int) if _hcol.plan > 0 else 0 %}
+                        {% set _hpct = (((_hcol.act - _hcol.plan) / _hcol.plan * 100) | round(0) | int) if _hcol.plan > 0 else 0 %}
                         {% set _hdamt = _hcol.act - _hcol.plan %}
                         <th colspan="3" class="text-center" style="min-width:220px;background:{{ _bg1 }};font-size:14px;font-weight:700;">
                             {{ b.name }}
@@ -175,7 +175,7 @@
                             {% endif %}
                         </th>
                         {% endfor %}
-                        {% set _gtpct = ((rev_total_actual / rev_total_plan * 100) | round(0) | int) if rev_total_plan > 0 else 0 %}
+                        {% set _gtpct = (((rev_total_actual - rev_total_plan) / rev_total_plan * 100) | round(0) | int) if rev_total_plan > 0 else 0 %}
                         {% set _gtdamt = rev_total_actual - rev_total_plan %}
                         <th colspan="3" class="text-center" style="min-width:220px;background:{{ _BG_TOTAL_H }};font-size:14px;font-weight:700;">
                             Итого
@@ -215,7 +215,7 @@
                     {% set cell = rev_pivot[d][b.id] %}
                     {% set _row.act  = _row.act  + cell.actual %}
                     {% set _row.plan = _row.plan + cell.plan   %}
-                    {% set _dpct = ((cell.actual / cell.plan * 100) | round(0) | int) if cell.plan > 0 else 0 %}
+                    {% set _dpct = (((cell.actual - cell.plan) / cell.plan * 100) | round(0) | int) if cell.plan > 0 else 0 %}
                     {% set _damt = cell.actual - cell.plan %}
                     <td class="text-end" id="act-{{ d }}-{{ b.id }}"
                         data-act="{{ cell.actual | int }}"
@@ -241,7 +241,7 @@
                     </td>
                     {% endfor %}
                     {# Итого по строке #}
-                    {% set _rpct = ((_row.act / _row.plan * 100) | round(0) | int) if _row.plan > 0 else 0 %}
+                    {% set _rpct = (((_row.act - _row.plan) / _row.plan * 100) | round(0) | int) if _row.plan > 0 else 0 %}
                     {% set _rdamt = _row.act - _row.plan %}
                     <td class="text-end fw-semibold" id="row-act-total-{{ d }}"
                         style="color:{% if _row.act > 0 %}#1d4ed8{% else %}#adb5bd{% endif %}">
@@ -264,7 +264,7 @@
                         {% for b in rev_branch_list %}
                         {% set _col = namespace(act=0, plan=0) %}
                         {% for d in rev_dates %}{% set _col.act = _col.act + rev_pivot[d][b.id].actual %}{% set _col.plan = _col.plan + rev_pivot[d][b.id].plan %}{% endfor %}
-                        {% set _cpct = ((_col.act / _col.plan * 100) | round(0) | int) if _col.plan > 0 else 0 %}
+                        {% set _cpct = (((_col.act - _col.plan) / _col.plan * 100) | round(0) | int) if _col.plan > 0 else 0 %}
                         {% set _cdamt = _col.act - _col.plan %}
                         {% set _fbg = _BGS[loop.index0 % 2] %}
                         <td class="text-end" id="col-act-{{ b.id }}" style="background:{{ _fbg }};color:#1d4ed8;">
@@ -278,7 +278,7 @@
                             {{ dev_text(_cdamt, _cpct, _col.plan > 0, _col.act > 0) }}
                         </td>
                         {% endfor %}
-                        {% set _gpct = ((rev_total_actual / rev_total_plan * 100) | round(0) | int) if rev_total_plan > 0 else 0 %}
+                        {% set _gpct = (((rev_total_actual - rev_total_plan) / rev_total_plan * 100) | round(0) | int) if rev_total_plan > 0 else 0 %}
                         {% set _gdamt = rev_total_actual - rev_total_plan %}
                         <td class="text-end" id="grand-act-total" style="color:#1d4ed8;">
                             {{ '{:,.0f}'.format(rev_total_actual).replace(',', ' ') if rev_total_actual else '—' }}
@@ -620,15 +620,15 @@ function _fmt(n) {
 
 function _devColor(act, plan) {
     if (act <= 0 || plan <= 0) return '#adb5bd';
-    var pct = act / plan * 100;
-    return pct >= 100 ? '#198754' : pct >= 90 ? '#fd7e14' : '#dc3545';
+    var pct = (act - plan) / plan * 100;
+    return pct >= 0 ? '#198754' : pct >= -10 ? '#fd7e14' : '#dc3545';
 }
 
 function _devText(act, plan) {
     if (act <= 0 || plan <= 0) return '—';
     var diff = act - plan;
-    var pct  = Math.round(act / plan * 100);
-    return (diff >= 0 ? '+' : '') + Math.round(diff).toLocaleString('ru-RU') + ' (' + pct + '%)';
+    var pct  = Math.round((act - plan) / plan * 100);
+    return (diff >= 0 ? '+' : '') + Math.round(diff).toLocaleString('ru-RU') + ' (' + (pct >= 0 ? '+' : '') + pct + '%)';
 }
 
 function _renderDev(el, act, plan) {
@@ -800,8 +800,9 @@ function updatePivotTotals() {
     if (gac) gac.textContent = _fmt(grandAct) + ' ₽';
     if (gpc) gpc.textContent = _fmt(grandPlan) + ' ₽';
     if (gpc2) {
-        var pct = grandPlan > 0 ? Math.round(grandAct / grandPlan * 100) : 0;
-        gpc2.textContent = pct + '%';
+        var pct = grandPlan > 0 ? Math.round((grandAct - grandPlan) / grandPlan * 100) : 0;
+        gpc2.textContent = (pct >= 0 ? '+' : '') + pct + '%';
+        gpc2.parentElement.style.borderLeftColor = pct >= 0 ? '#198754' : pct >= -10 ? '#fd7e14' : '#dc3545';
     }
 }
 
