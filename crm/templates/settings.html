@@ -529,11 +529,12 @@
                     <tr>
                         <td class="ps-3 py-2">
                             <span class="fw-semibold">{{ pos.name }}</span>
-                            <span class="text-muted small ms-2">{{ pos.code }}</span>
+                            {% if pos.abbr %}<span class="badge bg-secondary ms-2">{{ pos.abbr }}</span>{% endif %}
+                            <span class="text-muted small ms-1">{{ pos.code }}</span>
                         </td>
                         <td class="text-end pe-3 py-2">
                             <button class="btn btn-sm btn-outline-secondary me-1"
-                                onclick="openEditPosition({{ pos.id }}, '{{ pos.name }}')">
+                                onclick="openEditPosition({{ pos.id }}, '{{ pos.name }}', '{{ pos.abbr or '' }}')">
                                 <i class="bi bi-pencil"></i>
                             </button>
                             <form method="POST" action="{{ url_for('delete_position', pos_id=pos.id) }}" class="d-inline"
@@ -804,12 +805,22 @@
             <div class="modal-dialog modal-sm">
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h5 class="modal-title">Переименовать должность</h5>
+                        <h5 class="modal-title">Редактировать должность</h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                     </div>
                     <form method="POST" id="editPositionForm">
                         <div class="modal-body">
-                            <input type="text" name="name" id="editPositionName" class="form-control" required>
+                            <div class="mb-3">
+                                <label class="form-label small fw-semibold">Название</label>
+                                <input type="text" name="name" id="editPositionName" class="form-control" required>
+                            </div>
+                            <div>
+                                <label class="form-label small fw-semibold">Сокращение <span class="text-muted fw-normal">(до 4 символов)</span></label>
+                                <input type="text" name="abbr" id="editPositionAbbr" class="form-control"
+                                    maxlength="4" placeholder="Адм, Суш, Кур…"
+                                    style="text-transform:uppercase;width:100px;">
+                                <div class="form-text text-muted">Отображается в списке сотрудников вместо полного названия</div>
+                            </div>
                         </div>
                         <div class="modal-footer">
                             <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Отмена</button>
@@ -835,8 +846,9 @@
             });
         }
 
-        function openEditPosition(id, name) {
+        function openEditPosition(id, name, abbr) {
             document.getElementById('editPositionName').value = name;
+            document.getElementById('editPositionAbbr').value = abbr || '';
             document.getElementById('editPositionForm').action = '/settings/positions/' + id + '/edit';
             new bootstrap.Modal(document.getElementById('editPositionModal')).show();
         }

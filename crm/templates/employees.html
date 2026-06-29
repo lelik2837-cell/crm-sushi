@@ -89,9 +89,14 @@
                     <td class="fw-semibold">{{ emp.last_name or emp.full_name }}</td>
                     <td>{{ emp.first_name or '' }}</td>
                     <td>
+                        {% set extra = emp_roles_map.get(emp.id, []) %}
+                        {% if extra %}
+                            <span class="badge bg-secondary me-1" title="{{ role_labels.get(emp.role, emp.role) }}">{{ pos_abbr_map.get(emp.role, emp.role[:4].upper()) }}</span>{% for er in extra %}<span class="badge bg-secondary me-1" title="{{ role_labels.get(er.role, er.role) }}">{{ pos_abbr_map.get(er.role, er.role[:4].upper()) }}</span>{% endfor %}
+                        {% else %}
                         <span class="badge" style="background:{% if emp.role=='admin' %}#6f42c1{% elif emp.role=='sushi' %}#0d6efd{% elif emp.role=='packer' %}#198754{% elif emp.role=='courier' %}#fd7e14{% elif emp.role=='cleaner' %}#6c757d{% else %}#dc3545{% endif %}">
                             {{ role_labels.get(emp.role, emp.role) }}
                         </span>
+                        {% endif %}
                     </td>
                     <td class="text-end">{{ emp.rate }}</td>
                     <td class="text-end text-muted">{% if emp.role == 'courier' %}{{ emp.rate_per_km }}{% else %}—{% endif %}</td>

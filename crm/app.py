@@ -671,10 +671,15 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 code TEXT NOT NULL UNIQUE,
                 name TEXT NOT NULL,
+                abbr TEXT DEFAULT '',
                 sort_order INTEGER DEFAULT 0,
                 is_active INTEGER DEFAULT 1
             );
         ''')
+        try:
+            conn.execute("ALTER TABLE positions ADD COLUMN abbr TEXT DEFAULT ''")
+        except Exception:
+            pass
         # Seed from ROLE_LABELS if table is empty
         if conn.execute('SELECT COUNT(*) FROM positions').fetchone()[0] == 0:
             for i, (code, name) in enumerate(list(ROLE_LABELS.items())):
@@ -3024,6 +3029,12 @@ def employees():
         for row in conn.execute('SELECT * FROM employee_roles WHERE is_active=1 ORDER BY role').fetchall():
             emp_roles_map.setdefault(row['employee_id'], []).append(dict(row))
 
+        # Position abbreviations: code -> abbr
+        pos_abbr_map = {
+            r['code']: (r['abbr'] or r['name'][:4]).upper()
+            for r in conn.execute('SELECT code, name, abbr FROM positions').fetchall()
+        }
+
         shift_counts = {}
         all_emp_ids = [e['id'] for e in all_emps_for_hist]
         if all_emp_ids:
@@ -3056,6 +3067,7 @@ def employees():
                            selected_branches=selected_branches,
                            emp_branches_map=emp_branches_map,
                            emp_roles_map=emp_roles_map,
+                           pos_abbr_map=pos_abbr_map,
         role_labels=ROLE_LABELS, is_owner=(role == 'owner'),
                            rate_history=rate_history, address_history=address_history,
                            rate_templates=all_tmpls,
@@ -3989,14 +4001,15 @@ def add_position():
 @owner_required
 def edit_position(pos_id):
     name = request.form.get('name', '').strip()
+    abbr = request.form.get('abbr', '').strip()[:4].upper()
     if not name:
         flash('Введите название', 'danger')
         return redirect(url_for('settings') + '?tab=rates')
     with get_db() as conn:
-        conn.execute('UPDATE positions SET name=? WHERE id=?', (name, pos_id))
+        conn.execute('UPDATE positions SET name=?, abbr=? WHERE id=?', (name, abbr, pos_id))
         conn.commit()
         _reload_role_labels(conn)
-    flash('Должность переименована', 'success')
+    flash('Должность обновлена', 'success')
     return redirect(url_for('settings') + '?tab=rates')
 
 
