@@ -859,25 +859,40 @@ function loadRevCard(period) {
         }
     }
 
-    if (revPeriod === 'year') {
+    var isCustomMonthly = revPeriod === 'custom' && revCustomFrom && revCustomTo &&
+        Math.round((new Date(revCustomTo) - new Date(revCustomFrom)) / 86400000) > 35;
+
+    if (revPeriod === 'year' || isCustomMonthly) {
         branchesWrap.style.display = 'none';
         yearWrap.style.display     = '';
         monthDetail.style.display  = 'none';
         if (revChart) { revChart.destroy(); revChart = null; }
         clearMetrics();
 
-        fetch('/api/revenue-year')
-            .then(function(r) { return r.json(); })
-            .then(function(d) {
-                if (!d.ok) return;
-                document.getElementById('rev-total').textContent = fmtNum(d.total);
-                document.getElementById('rev-period-label').textContent = 'рублей за ' + revYear;
-                buildYearChart(d.months);
-            });
+        if (revPeriod === 'year') {
+            fetch('/api/revenue-year')
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    if (!d.ok) return;
+                    document.getElementById('rev-total').textContent = fmtNum(d.total);
+                    document.getElementById('rev-period-label').textContent = 'рублей за ' + revYear;
+                    buildYearChart(d.months);
+                });
+        } else {
+            var fmtLabelM = function(s) { return s.split('-').reverse().join('.'); };
+            document.getElementById('rev-period-label').textContent = fmtLabelM(revCustomFrom) + ' — ' + fmtLabelM(revCustomTo);
+            fetch('/api/revenue-months?date_from=' + revCustomFrom + '&date_to=' + revCustomTo + _revBranchSuffix())
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    if (!d.ok) return;
+                    document.getElementById('rev-total').textContent = fmtNum(d.total);
+                    buildYearChart(d.months);
+                });
+        }
         return;
     }
 
-    // today / month / custom
+    // today / month / custom (short, ≤35 days)
     branchesWrap.style.display = '';
     yearWrap.style.display     = 'none';
     if (revChart) { revChart.destroy(); revChart = null; }
@@ -889,7 +904,6 @@ function loadRevCard(period) {
     if (revPeriod === 'custom' && revCustomFrom && revCustomTo) {
         dateFrom = revCustomFrom;
         dateTo   = revCustomTo;
-        // показываем диапазон в подписи
         var fmtLabel = function(s) { return s.split('-').reverse().join('.'); };
         document.getElementById('rev-period-label').textContent = fmtLabel(dateFrom) + ' — ' + fmtLabel(dateTo);
     } else {

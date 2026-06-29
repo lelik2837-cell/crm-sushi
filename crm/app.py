@@ -1506,6 +1506,45 @@ def api_revenue_year():
     return jsonify({'ok': True, 'total': sum(x['revenue'] for x in months_list), 'months': months_list})
 
 
+@app.route('/api/revenue-months')
+@login_required
+@owner_required
+def api_revenue_months():
+    date_from = request.args.get('date_from')
+    date_to   = request.args.get('date_to', date.today().isoformat())
+    raw_bids  = request.args.get('branch_ids', '')
+    bids      = [int(x) for x in raw_bids.split(',') if x.strip().isdigit()]
+    bf        = f"AND s.branch_id IN ({','.join('?'*len(bids))})" if bids else ''
+    if not date_from:
+        return jsonify({'ok': False, 'error': 'date_from required'}), 400
+    with get_db() as conn:
+        rows = conn.execute(f'''
+            SELECT CAST(strftime('%Y', s.date) AS INTEGER) AS year,
+                   CAST(strftime('%m', s.date) AS INTEGER) AS month,
+                   COALESCE(SUM(r.total_revenue), 0) AS revenue
+            FROM shifts s JOIN shift_revenue r ON r.shift_id = s.id
+            WHERE s.date BETWEEN ? AND ? {bf}
+            GROUP BY year, month ORDER BY year, month
+        ''', [date_from, date_to] + bids).fetchall()
+        manual_map = _manual_rev_by_month(conn, date_from, date_to, bids or None)
+    rev = {(r['year'], r['month']): int(r['revenue']) for r in rows}
+    labels = ['', 'Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн',
+              'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
+    start = date.fromisoformat(date_from)
+    end   = date.fromisoformat(date_to)
+    months_list = []
+    y, m = start.year, start.month
+    while (y < end.year) or (y == end.year and m <= end.month):
+        label = labels[m] + " '" + str(y)[-2:]
+        months_list.append({'year': y, 'month': m, 'label': label,
+                            'revenue': rev.get((y, m), 0) + int(manual_map.get((y, m), 0))})
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return jsonify({'ok': True, 'total': sum(x['revenue'] for x in months_list), 'months': months_list})
+
+
 @app.route('/api/lfl')
 @login_required
 @owner_required
@@ -1523,14 +1562,32 @@ def api_lfl():
     month_labels = ['', 'Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн',
                     'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
     with get_db() as conn:
+        shift_where = f"WHERE s.branch_id IN ({','.join('?'*len(bids))})" if bids else ''
+        manual_where = f"WHERE branch_id IN ({','.join('?'*len(bids))})" if bids else ''
+        min_shift = conn.execute(
+            f'SELECT MIN(s.date) FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id {shift_where}', bids
+        ).fetchone()[0]
+        min_manual = conn.execute(
+            f'SELECT MIN(date) FROM revenue_manual {manual_where}', bids
+        ).fetchone()[0]
+        candidates = [x for x in [min_shift, min_manual] if x]
+        if candidates:
+            earliest = min(candidates)
+            start = date.fromisoformat(earliest[:10])
+            start_y, start_m = start.year, start.month
+        else:
+            start_y, start_m = today.year, today.month - 11
+            if start_m <= 0:
+                start_m += 12
+                start_y -= 1
         months_seq = []
-        y, m = today.year, today.month
-        for _ in range(12):
-            months_seq.insert(0, (y, m))
-            m -= 1
-            if m == 0:
-                m = 12
-                y -= 1
+        y, m = start_y, start_m
+        while (y < today.year) or (y == today.year and m <= today.month):
+            months_seq.append((y, m))
+            m += 1
+            if m > 12:
+                m = 1
+                y += 1
         result = []
         for (yr, mo) in months_seq:
             is_current = (yr == today.year and mo == today.month)
