@@ -8204,6 +8204,31 @@ def change_schedule_apply():
 
 init_db()
 
+# ─── АВТО-БЭКАП БАЗЫ КАЖДЫЙ ДЕНЬ В 03:00 ─────────────────────────────────────
+def _scheduled_backup():
+    try:
+        import datetime as _dt
+        ok, msg = _backup_db_to_gdrive()
+        if ok:
+            with get_db() as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO gsheet_settings (key, value) VALUES ('last_db_backup', ?)",
+                    (_dt.datetime.now().strftime('%d.%m.%Y %H:%M'),)
+                )
+                conn.commit()
+        print(f'[Backup] {"OK" if ok else "ERR"}: {msg}')
+    except Exception as e:
+        print(f'[Backup] exception: {e}')
+
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler
+    _scheduler = BackgroundScheduler(timezone='Asia/Novosibirsk')
+    _scheduler.add_job(_scheduled_backup, 'cron', hour=3, minute=0)
+    _scheduler.start()
+    print('[Backup] Планировщик запущен — бэкап каждый день в 03:00 НСК')
+except Exception as _e:
+    print(f'[Backup] Планировщик не запустился: {_e}')
+
 if __name__ == '__main__':
     print('\n' + '=' * 50)
     print('CRM Суши запущена!')
