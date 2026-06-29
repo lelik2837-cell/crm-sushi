@@ -36,13 +36,13 @@
             <input type="hidden" name="tab" value="shifts">
             <input type="hidden" name="r_date_from" id="r_df" value="{{ r_date_from }}">
             <input type="hidden" name="r_date_to"   id="r_dt" value="{{ r_date_to }}">
-            <div class="col-md-5">
+            <div class="col-auto">
                 <label class="form-label small fw-semibold">Период</label>
-                <div class="d-flex align-items-center gap-1 flex-wrap">
-                    <button type="button" class="btn btn-outline-secondary btn-sm px-2" style="font-size:16px;line-height:1;" onclick="shiftRevMonth(-1)" title="Предыдущий месяц">‹</button>
-                    <button type="button" class="btn btn-outline-primary btn-sm px-2 fw-semibold" id="revMonthLabel" onclick="setRevCurrentMonth()" title="Текущий месяц">{{ _month_lbl }}</button>
-                    <button type="button" class="btn btn-outline-secondary btn-sm px-2" style="font-size:16px;line-height:1;" onclick="shiftRevMonth(1)" title="Следующий месяц">›</button>
-                    <input type="text" id="revRangePicker" class="form-control form-control-sm" style="min-width:170px;max-width:200px;cursor:pointer;" readonly placeholder="дд.мм.гггг — дд.мм.гггг">
+                <div class="d-flex align-items-center gap-1" style="white-space:nowrap;">
+                    <button type="button" class="btn btn-outline-secondary btn-sm px-2" style="font-size:15px;line-height:1;" onclick="shiftRevMonth(-1)" title="Предыдущий месяц">‹</button>
+                    <button type="button" class="btn btn-outline-primary btn-sm px-2 fw-semibold" id="revMonthLabel" onclick="setRevCurrentMonth()" title="Текущий месяц" style="white-space:nowrap;">{{ _month_lbl }}</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm px-2" style="font-size:15px;line-height:1;" onclick="shiftRevMonth(1)" title="Следующий месяц">›</button>
+                    <input type="text" id="revRangePicker" class="form-control form-control-sm" style="width:110px;cursor:pointer;" readonly placeholder="дд.мм — дд.мм">
                 </div>
             </div>
             <div class="col-md-4">
@@ -675,7 +675,7 @@ document.addEventListener('DOMContentLoaded', function() {
             rangeSeparator: ' — '
         },
         altInput: true,
-        altFormat: 'd.m.Y',
+        altFormat: 'd.m',
         onClose: function(dates) {
             if (dates.length === 2) {
                 document.getElementById('r_df').value = _fmtDateStr(dates[0]);
