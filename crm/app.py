@@ -1473,6 +1473,9 @@ def api_kpi_values():
 @owner_required
 def api_revenue_year():
     today = date.today()
+    raw_bids = request.args.get('branch_ids', '')
+    bids     = [int(x) for x in raw_bids.split(',') if x.strip().isdigit()]
+    bf       = f"AND s.branch_id IN ({','.join('?'*len(bids))})" if bids else ''
     # скользящие 12 месяцев, заканчивающихся текущим
     start_m = today.month - 11
     start_y = today.year
@@ -1482,15 +1485,15 @@ def api_revenue_year():
     date_from = date(start_y, start_m, 1).isoformat()
     date_to   = today.isoformat()
     with get_db() as conn:
-        rows = conn.execute('''
+        rows = conn.execute(f'''
             SELECT CAST(strftime('%Y', s.date) AS INTEGER) AS year,
                    CAST(strftime('%m', s.date) AS INTEGER) AS month,
                    COALESCE(SUM(r.total_revenue), 0) AS revenue
             FROM shifts s JOIN shift_revenue r ON r.shift_id = s.id
-            WHERE s.date BETWEEN ? AND ?
+            WHERE s.date BETWEEN ? AND ? {bf}
             GROUP BY year, month ORDER BY year, month
-        ''', (date_from, date_to)).fetchall()
-        manual_map = _manual_rev_by_month(conn, date_from, date_to)
+        ''', [date_from, date_to] + bids).fetchall()
+        manual_map = _manual_rev_by_month(conn, date_from, date_to, bids or None)
     rev = {(r['year'], r['month']): int(r['revenue']) for r in rows}
     labels = ['', 'Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн',
               'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']

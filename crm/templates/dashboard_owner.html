@@ -866,7 +866,7 @@ function loadRevCard(period) {
         clearMetrics();
 
         if (revPeriod === 'year') {
-            fetch('/api/revenue-year')
+            fetch('/api/revenue-year' + (_revBranchSuffix() ? '?' + _revBranchSuffix().slice(1) : ''))
                 .then(function(r) { return r.json(); })
                 .then(function(d) {
                     if (!d.ok) return;
