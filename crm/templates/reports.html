@@ -206,7 +206,7 @@
                 {% set _row = namespace(act=0, plan=0) %}
                 <tr id="row-{{ d }}">
                     {%- set _dow = rev_date_dow[d] -%}
-                    {%- set _dow_color = '#8b0000' if _dow in ('пт','сб') else '#212529' -%}
+                    {%- set _dow_color = '#8b0000' if _dow in ('пт','сб','вс') else '#212529' -%}
                     <td class="fw-semibold" style="white-space:nowrap;color:{{ _dow_color }};">
                         {{ d[8:10] }}.{{ d[5:7] }}.{{ d[:4] }} <span style="font-weight:400;font-size:0.85em;">({{ _dow }})</span>
                     </td>
