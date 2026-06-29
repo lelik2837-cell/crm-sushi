@@ -89,11 +89,12 @@
                     <td class="fw-semibold">{{ emp.last_name or emp.full_name }}</td>
                     <td>{{ emp.first_name or '' }}</td>
                     <td>
+                        {% macro role_color(code) %}{% if code=='admin' %}#6f42c1{% elif code=='sushi' %}#0d6efd{% elif code=='packer' %}#198754{% elif code=='courier' %}#fd7e14{% elif code=='cleaner' %}#6c757d{% else %}#dc3545{% endif %}{% endmacro %}
                         {% set extra = emp_roles_map.get(emp.id, []) %}
                         {% if extra %}
-                            <span class="badge bg-secondary me-1" title="{{ role_labels.get(emp.role, emp.role) }}">{{ pos_abbr_map.get(emp.role, emp.role[:4].upper()) }}</span>{% for er in extra %}<span class="badge bg-secondary me-1" title="{{ role_labels.get(er.role, er.role) }}">{{ pos_abbr_map.get(er.role, er.role[:4].upper()) }}</span>{% endfor %}
+                            <span class="badge me-1" style="background:{{ role_color(emp.role) }}" title="{{ role_labels.get(emp.role, emp.role) }}">{{ pos_abbr_map.get(emp.role, emp.role[:4].upper()) }}</span>{% for er in extra %}<span class="badge me-1" style="background:{{ role_color(er.role) }}" title="{{ role_labels.get(er.role, er.role) }}">{{ pos_abbr_map.get(er.role, er.role[:4].upper()) }}</span>{% endfor %}
                         {% else %}
-                        <span class="badge" style="background:{% if emp.role=='admin' %}#6f42c1{% elif emp.role=='sushi' %}#0d6efd{% elif emp.role=='packer' %}#198754{% elif emp.role=='courier' %}#fd7e14{% elif emp.role=='cleaner' %}#6c757d{% else %}#dc3545{% endif %}">
+                        <span class="badge" style="background:{{ role_color(emp.role) }}">
                             {{ role_labels.get(emp.role, emp.role) }}
                         </span>
                         {% endif %}
