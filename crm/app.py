@@ -2952,37 +2952,54 @@ def delete_shift(shift_id):
 def employees():
     role = session.get('role')
     selected_branches = [bid for bid in request.args.getlist('branch_ids') if bid.isdigit()] if role == 'owner' else []
+    search = request.args.get('search', '').strip()
+    role_filter = request.args.get('role_filter', '').strip()
     with get_db() as conn:
+        def _emp_where(extra=''):
+            parts = [extra] if extra else []
+            if search:
+                parts.append(
+                    "(e.last_name LIKE ? OR e.first_name LIKE ? OR e.full_name LIKE ?)"
+                )
+            if role_filter:
+                parts.append("e.role = ?")
+            return (' AND ' + ' AND '.join(parts)) if parts else ''
+
+        def _emp_params(base_params):
+            p = list(base_params)
+            if search:
+                s = f'%{search}%'
+                p += [s, s, s]
+            if role_filter:
+                p.append(role_filter)
+            return p
+
         if role == 'owner':
             all_branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
             if selected_branches:
                 ids_str = ','.join(str(int(b)) for b in selected_branches)
-                emps = conn.execute(f'''
-                    SELECT e.*, b.name as branch_name
-                    FROM employees e LEFT JOIN branches b ON b.id=e.branch_id
-                    WHERE e.branch_id IN ({ids_str}) AND COALESCE(e.is_fired,0)=0
-                    ORDER BY b.name, e.role, e.full_name
-                ''').fetchall()
-                fired_emps = conn.execute(f'''
-                    SELECT e.*, b.name as branch_name
-                    FROM employees e LEFT JOIN branches b ON b.id=e.branch_id
-                    WHERE e.branch_id IN ({ids_str}) AND e.is_fired=1
-                    ORDER BY e.fired_at DESC, e.full_name
-                ''').fetchall()
+                branch_cond = f'e.branch_id IN ({ids_str})'
+                emps = conn.execute(
+                    f'SELECT e.*, b.name as branch_name FROM employees e LEFT JOIN branches b ON b.id=e.branch_id '
+                    f'WHERE {branch_cond} AND COALESCE(e.is_fired,0)=0{_emp_where()} ORDER BY b.name, e.role, e.full_name',
+                    _emp_params([])
+                ).fetchall()
+                fired_emps = conn.execute(
+                    f'SELECT e.*, b.name as branch_name FROM employees e LEFT JOIN branches b ON b.id=e.branch_id '
+                    f'WHERE {branch_cond} AND e.is_fired=1 ORDER BY e.fired_at DESC, e.full_name',
+                    []
+                ).fetchall()
                 branches = [b for b in all_branches if str(b['id']) in selected_branches]
             else:
-                emps = conn.execute('''
-                    SELECT e.*, b.name as branch_name
-                    FROM employees e LEFT JOIN branches b ON b.id=e.branch_id
-                    WHERE COALESCE(e.is_fired,0)=0
-                    ORDER BY b.name, e.role, e.full_name
-                ''').fetchall()
-                fired_emps = conn.execute('''
-                    SELECT e.*, b.name as branch_name
-                    FROM employees e LEFT JOIN branches b ON b.id=e.branch_id
-                    WHERE e.is_fired=1
-                    ORDER BY e.fired_at DESC, e.full_name
-                ''').fetchall()
+                emps = conn.execute(
+                    f'SELECT e.*, b.name as branch_name FROM employees e LEFT JOIN branches b ON b.id=e.branch_id '
+                    f'WHERE COALESCE(e.is_fired,0)=0{_emp_where()} ORDER BY b.name, e.role, e.full_name',
+                    _emp_params([])
+                ).fetchall()
+                fired_emps = conn.execute(
+                    'SELECT e.*, b.name as branch_name FROM employees e LEFT JOIN branches b ON b.id=e.branch_id '
+                    'WHERE e.is_fired=1 ORDER BY e.fired_at DESC, e.full_name'
+                ).fetchall()
                 branches = all_branches
         else:
             all_branches = []
@@ -3061,6 +3078,13 @@ def employees():
                 result.append(t)
         return result
 
+        # Build branch -> groups map for display
+    bgroups = get_branch_groups(conn)
+    branch_to_groups = {}  # branch_id -> [group_name, ...]
+    for g in bgroups:
+        for b in g.get('branches', []):
+            branch_to_groups.setdefault(b['id'], []).append(g['name'])
+
     return render_template('employees.html', employees=emps, fired_employees=fired_emps,
                            branches=branches,
                            all_branches=all_branches,
@@ -3068,14 +3092,18 @@ def employees():
                            emp_branches_map=emp_branches_map,
                            emp_roles_map=emp_roles_map,
                            pos_abbr_map=pos_abbr_map,
-        role_labels=ROLE_LABELS, is_owner=(role == 'owner'),
+                           role_labels=ROLE_LABELS, is_owner=(role == 'owner'),
                            rate_history=rate_history, address_history=address_history,
                            rate_templates=all_tmpls,
                            tmpl_branch_sets=tmpl_branch_sets,
                            tmpls_for_emp=tmpls_for_emp,
                            shift_counts=shift_counts,
                            today=date.today().isoformat(),
-                           branch_groups=get_branch_groups(conn))
+                           branch_groups=bgroups,
+                           branch_to_groups=branch_to_groups,
+                           search=search,
+                           role_filter=role_filter,
+                           positions=conn.execute('SELECT * FROM positions WHERE is_active=1 ORDER BY sort_order, name').fetchall())
 
 
 @app.route('/employees/add', methods=['POST'])

@@ -8,28 +8,38 @@
     </button>
 </div>
 
-{% if is_owner and all_branches|length > 1 %}
 <div class="card mb-4">
     <div class="card-body py-2">
-        <form method="GET" class="d-flex align-items-center gap-2 flex-wrap">
-            <span class="small fw-semibold text-muted">Филиалы:</span>
+        <form method="GET" id="empFilterForm" class="d-flex align-items-center gap-2 flex-wrap">
+            {# Поиск по имени #}
+            <div class="input-group input-group-sm" style="width:200px;">
+                <span class="input-group-text"><i class="bi bi-search"></i></span>
+                <input type="text" name="search" class="form-control" placeholder="Фамилия или имя"
+                    value="{{ search }}" autocomplete="off">
+            </div>
+            {# Фильтр по должности #}
+            <select name="role_filter" class="form-select form-select-sm" style="width:160px;" onchange="document.getElementById('empFilterForm').submit()">
+                <option value="">Все должности</option>
+                {% for pos in positions %}
+                <option value="{{ pos.code }}" {% if role_filter == pos.code %}selected{% endif %}>{{ pos.name }}</option>
+                {% endfor %}
+            </select>
+            {# Фильтр по филиалам (только владелец) #}
+            {% if is_owner and all_branches|length > 1 %}
             <div class="dropdown">
                 <button type="button" class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1"
-                        id="branchDropdownBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+                        data-bs-toggle="dropdown" data-bs-auto-close="outside">
                     <span id="branchBtnLabel">{% if selected_branches %}Выбрано: {{ selected_branches|length }}{% else %}Все филиалы{% endif %}</span>
                     <i class="bi bi-chevron-down small"></i>
                 </button>
-                <ul class="dropdown-menu p-2 shadow" style="min-width:240px;max-height:380px;overflow-y:auto" id="branchDropdownMenu">
+                <ul class="dropdown-menu p-2 shadow" style="min-width:240px;max-height:380px;overflow-y:auto">
                     {% if branch_groups %}
-                    <li>
-                        <div class="text-muted px-1 mb-1" style="font-size:0.75rem">ГРУППЫ</div>
-                    </li>
+                    <li><div class="text-muted px-1 mb-1" style="font-size:0.75rem">ГРУППЫ</div></li>
                     {% for g in branch_groups %}
                     <li class="mb-1">
                         <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1"
-                                onclick="selectBranchGroup({{ g.branch_ids | tojson }})">
+                                onclick="selectBranchGroup({{ g.branches | map(attribute='id') | list | tojson }})">
                             <i class="bi bi-collection me-1"></i>{{ g.name }}
-                            <span class="text-muted small">({{ g.branch_ids | length }})</span>
                         </button>
                     </li>
                     {% endfor %}
@@ -55,11 +65,14 @@
                     {% endfor %}
                 </ul>
             </div>
-            <button type="submit" class="btn btn-primary btn-sm">Показать</button>
+            {% endif %}
+            <button type="submit" class="btn btn-primary btn-sm">Найти</button>
+            {% if search or role_filter or selected_branches %}
+            <a href="{{ url_for('employees') }}" class="btn btn-outline-secondary btn-sm">Сбросить</a>
+            {% endif %}
         </form>
     </div>
 </div>
-{% endif %}
 
 {% for branch in branches %}
 {% set branch_emps = employees | selectattr('branch_id', 'equalto', branch.id) | list %}
@@ -71,14 +84,12 @@
     <div class="card-body p-0">
         <div class="table-responsive">
             <table class="table table-hover mb-0">
+                {% macro role_color(code) %}{% if code=='admin' %}#6f42c1{% elif code=='sushi' %}#0d6efd{% elif code=='packer' %}#198754{% elif code=='courier' %}#fd7e14{% elif code=='cleaner' %}#6c757d{% else %}#dc3545{% endif %}{% endmacro %}
                 <thead class="table-light">
                     <tr>
-                        <th>Фамилия</th>
-                        <th>Имя</th>
-                        <th>Роль</th>
-                        <th class="text-end">₽/час</th>
-                        <th class="text-end">₽/км</th>
-                        <th class="text-end">₽/заказ</th>
+                        <th>Сотрудник</th>
+                        <th>Должность</th>
+                        <th>Филиал / Группа</th>
                         <th class="text-center">Статус</th>
                         <th></th>
                     </tr>
@@ -86,22 +97,32 @@
                 <tbody>
                 {% for emp in branch_emps %}
                 <tr class="{% if not emp.is_active %}table-secondary opacity-50{% endif %}">
-                    <td class="fw-semibold">{{ emp.last_name or emp.full_name }}</td>
-                    <td>{{ emp.first_name or '' }}</td>
+                    <td class="fw-semibold">{{ (emp.last_name or '') ~ (' ' ~ emp.first_name if emp.first_name else '') or emp.full_name }}</td>
                     <td>
-                        {% macro role_color(code) %}{% if code=='admin' %}#6f42c1{% elif code=='sushi' %}#0d6efd{% elif code=='packer' %}#198754{% elif code=='courier' %}#fd7e14{% elif code=='cleaner' %}#6c757d{% else %}#dc3545{% endif %}{% endmacro %}
                         {% set extra = emp_roles_map.get(emp.id, []) %}
                         {% if extra %}
                             <span class="badge me-1" style="background:{{ role_color(emp.role) }}" title="{{ role_labels.get(emp.role, emp.role) }}">{{ pos_abbr_map.get(emp.role, emp.role[:4].upper()) }}</span>{% for er in extra %}<span class="badge me-1" style="background:{{ role_color(er.role) }}" title="{{ role_labels.get(er.role, er.role) }}">{{ pos_abbr_map.get(er.role, er.role[:4].upper()) }}</span>{% endfor %}
                         {% else %}
-                        <span class="badge" style="background:{{ role_color(emp.role) }}">
-                            {{ role_labels.get(emp.role, emp.role) }}
-                        </span>
+                        <span class="badge" style="background:{{ role_color(emp.role) }}">{{ role_labels.get(emp.role, emp.role) }}</span>
                         {% endif %}
                     </td>
-                    <td class="text-end">{{ emp.rate }}</td>
-                    <td class="text-end text-muted">{% if emp.role == 'courier' %}{{ emp.rate_per_km }}{% else %}—{% endif %}</td>
-                    <td class="text-end text-muted">{% if emp.role == 'courier' %}{{ emp.rate_per_order }}{% else %}—{% endif %}</td>
+                    <td class="small text-muted">
+                        {% set emp_bids = emp_branches_map.get(emp.id, [emp.branch_id] if emp.branch_id else []) %}
+                        {% if emp_bids %}
+                            {% set emp_groups = [] %}
+                            {% for bg in branch_groups %}
+                                {% set bg_ids = bg.branches | map(attribute='id') | list %}
+                                {% if emp_bids | select('in', bg_ids) | list | length == bg_ids | length and bg_ids | length == emp_bids | length %}
+                                    {% set _ = emp_groups.append(bg.name) %}
+                                {% endif %}
+                            {% endfor %}
+                            {% if emp_groups %}
+                                {% for gn in emp_groups %}<span class="badge bg-light text-dark border me-1">{{ gn }}</span>{% endfor %}
+                            {% else %}
+                                {{ emp.branch_name or '—' }}
+                            {% endif %}
+                        {% else %}—{% endif %}
+                    </td>
                     <td class="text-center">
                         {% if emp.is_active %}<span class="badge bg-success">Активен</span>
                         {% else %}<span class="badge bg-secondary">Неактивен</span>{% endif %}
@@ -157,6 +178,18 @@
                     {% if is_owner %}
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Филиалы</label>
+                        {% if branch_groups %}
+                        <div class="d-flex flex-wrap gap-1 mb-2">
+                            {% for g in branch_groups %}
+                            <button type="button" class="btn btn-sm btn-outline-primary"
+                                onclick="empSelectGroup('addEmp', {{ g.branches | map(attribute='id') | list | tojson }})">
+                                {{ g.name }}
+                            </button>
+                            {% endfor %}
+                            <button type="button" class="btn btn-sm btn-outline-secondary"
+                                onclick="empSelectGroup('addEmp', [])">Снять все</button>
+                        </div>
+                        {% endif %}
                         <div class="dropdown">
                             <button type="button" class="btn btn-outline-secondary w-100 text-start d-flex justify-content-between align-items-center"
                                     data-bs-toggle="dropdown" data-bs-auto-close="outside">
@@ -244,6 +277,18 @@
                     {% set cur_bids = emp_branches_map.get(emp.id, [emp.branch_id] if emp.branch_id else []) %}
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Филиалы</label>
+                        {% if branch_groups %}
+                        <div class="d-flex flex-wrap gap-1 mb-2">
+                            {% for g in branch_groups %}
+                            <button type="button" class="btn btn-sm btn-outline-primary"
+                                onclick="empSelectGroup('editEmp{{ emp.id }}', {{ g.branches | map(attribute='id') | list | tojson }})">
+                                {{ g.name }}
+                            </button>
+                            {% endfor %}
+                            <button type="button" class="btn btn-sm btn-outline-secondary"
+                                onclick="empSelectGroup('editEmp{{ emp.id }}', [])">Снять все</button>
+                        </div>
+                        {% endif %}
                         <div class="dropdown">
                             <button type="button" class="btn btn-outline-secondary w-100 text-start d-flex justify-content-between align-items-center"
                                     data-bs-toggle="dropdown" data-bs-auto-close="outside">
@@ -647,6 +692,16 @@ window.selectBranchGroup = function (ids) {
         if (ids.indexOf(parseInt(cb.value)) >= 0) cb.checked = true;
     });
     onBranchCbChange();
+};
+
+window.empSelectGroup = function(groupPrefix, ids) {
+    document.querySelectorAll('.emp-branch-cb[data-group="' + groupPrefix + '"]').forEach(function(cb) {
+        cb.checked = ids.length === 0 ? false : ids.indexOf(parseInt(cb.value)) >= 0;
+    });
+    // Update label
+    var checked = document.querySelectorAll('.emp-branch-cb[data-group="' + groupPrefix + '"]:checked');
+    var lbl = document.querySelector('.emp-branch-label[data-group="' + groupPrefix + '"]');
+    if (lbl) lbl.textContent = checked.length ? 'Выбрано: ' + checked.length : '— выберите филиал —';
 };
 </script>
 {% endblock %}
