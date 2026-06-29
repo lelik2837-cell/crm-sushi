@@ -2745,6 +2745,50 @@ def _export_shift_to_gdrive_xlsx(shift_id):
             w(28, 2, 'Смену закрыл(а):')
             w(28, 5, closed_by)
 
+        # ─── Descriptive labels (human-readable, do not conflict with importer) ─
+        # Importer never reads col A; reads col B only for specific string matches;
+        # col J (10) is never read; row 2 is above courier loop (rows[2:8]→rows 3-8);
+        # row 9 is above non-courier loop (rows[9:22]→rows 10-22).
+
+        # Branch header row 1
+        w(1, 1, 'Филиал:');      w(1, 2, shift['branch_name'])
+
+        # Revenue area — col A labels, col F context labels (importer reads D and G)
+        w(2, 1, 'Итого выручка:')
+        w(3, 1, 'Дата:');        w(3, 3, 'Утр. касса:')
+        w(4, 1, 'Доставка:');    w(4, 6, 'Выручка:')
+        w(5, 1, 'Наличные:');    w(5, 6, 'Доставка заказов:')
+        w(6, 1, 'Карта:');       w(6, 6, 'Самовывоз:')
+        w(7, 1, 'Онлайн:');      w(7, 6, 'Самовывоз заказов:')
+
+        # Размен / плюс в кассу labels (B col not read by importer for values)
+        w(29, 2, 'Масло:');      w(30, 2, 'Рыба:')
+        w(31, 2, 'Размен:');     w(33, 2, 'Плюс в кассу:')
+
+        # Expense section header (row 9, cols A-G; row 9 is not in expense import loop)
+        w(9, 1, 'РАСХОДЫ');      w(9, 2, 'Категория')
+        w(9, 6, 'Нал');          w(9, 7, 'Безнал')
+
+        # Courier column headers (row 2, cols J-V; row 2 is above courier loop rows 3-8)
+        w(2, 10, 'КУРЬЕРЫ')
+        w(2, 11, 'ФИО');         w(2, 13, 'КМ');      w(2, 14, 'За КМ')
+        w(2, 15, 'Часы');        w(2, 16, 'За часы')
+        w(2, 17, 'Заказов');     w(2, 18, 'Оплата')
+        w(2, 19, 'Бонус/Штраф'); w(2, 20, 'Сумма')
+        w(2, 21, 'Выплачено');   w(2, 22, 'ИТОГО')
+
+        # Non-courier column headers (row 9, cols J-V; row 9 not in non-courier loop)
+        w(9, 10, 'СОТРУДНИКИ')
+        w(9, 11, 'ФИО');         w(9, 12, 'Роль');    w(9, 13, 'Ставка')
+        w(9, 14, 'Начало');      w(9, 15, 'Конец');   w(9, 16, 'Часы')
+        w(9, 18, 'Бонус');       w(9, 19, 'Комментарий')
+        w(9, 20, 'База');        w(9, 21, 'Выплачено'); w(9, 22, 'ИТОГО')
+
+        # Sub-section labels in col J (never read by importer)
+        w(10, 10, 'Администраторы:')
+        w(15, 10, 'Сушисты:')
+        w(22, 10, 'Уборщица:')
+
         # ─── Save & upload to Google Drive ──────────────────────────────────
         buf = _io.BytesIO()
         wb.save(buf)
