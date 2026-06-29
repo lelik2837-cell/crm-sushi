@@ -4641,7 +4641,7 @@ def revenue_manual():
 
     with get_db() as conn:
         branches = conn.execute(
-            'SELECT id, name FROM branches WHERE is_active=1 ORDER BY sort_order, id'
+            'SELECT id, name FROM branches WHERE is_active=1 ORDER BY name'
         ).fetchall()
 
         manual_rows = conn.execute('''
