@@ -4251,10 +4251,11 @@ def reports():
         sal_where  = ' AND '.join(sal_conds)
         sal_having = 'HAVING SUM(es.total_amount) > SUM(es.paid_amount)' if s_unpaid == '1' else ''
 
-        sal_report = conn.execute(f'''
+        sal_rows_raw = conn.execute(f'''
             SELECT es.employee_id,
                    COALESCE(e.full_name, es.full_name_snapshot) AS name,
-                   COALESCE(e.role, es.role_snapshot)           AS role,
+                   es.role_snapshot                              AS role,
+                   b.id                                          AS branch_id,
                    b.name                                        AS branch_name,
                    COUNT(*)                                      AS shifts_count,
                    COALESCE(SUM(es.total_amount), 0)             AS earned,
@@ -4267,9 +4268,37 @@ def reports():
             WHERE {sal_where}
             GROUP BY COALESCE(CAST(es.employee_id AS TEXT), es.full_name_snapshot),
                      es.role_snapshot, b.id
-            {sal_having}
-            ORDER BY b.name, es.role_snapshot, COALESCE(e.full_name, es.full_name_snapshot)
+            ORDER BY COALESCE(e.full_name, es.full_name_snapshot), es.role_snapshot, b.name
         ''', sal_params).fetchall()
+
+        # Merge by employee: collect all roles + branches per person
+        from collections import OrderedDict as _OD2
+        _sal_map = _OD2()
+        for row in sal_rows_raw:
+            key = (row['employee_id'], row['name'])
+            if key not in _sal_map:
+                _sal_map[key] = {
+                    'employee_id': row['employee_id'],
+                    'name': row['name'],
+                    'roles': [],
+                    'branch_names': [],
+                    'shifts_count': 0,
+                    'earned': 0.0,
+                    'paid': 0.0,
+                    'debt': 0.0,
+                }
+            entry = _sal_map[key]
+            if row['role'] not in entry['roles']:
+                entry['roles'].append(row['role'])
+            if row['branch_name'] not in entry['branch_names']:
+                entry['branch_names'].append(row['branch_name'])
+            entry['shifts_count'] += row['shifts_count']
+            entry['earned'] += row['earned']
+            entry['paid']   += row['paid']
+            entry['debt']   += row['debt']
+        sal_report = list(_sal_map.values())
+        if s_unpaid == '1':
+            sal_report = [r for r in sal_report if r['debt'] > 0]
 
         # Список всех сотрудников в периоде (для дропдауна выбора)
         all_sal_emps = conn.execute(f'''
@@ -4357,6 +4386,11 @@ def reports():
             pivot_rows = list(periods.values())
             pivot_emps = emp_order
 
+        pos_abbr_map = {
+            r['code']: (r['abbr'] or r['name'][:4]).upper()
+            for r in conn.execute('SELECT code, name, abbr FROM positions').fetchall()
+        }
+
     return render_template('reports.html',
         shifts_data=shifts_data, totals=totals, branches=branches,
         salary_data=salary_data, period=period, selected_branches=branch_ids,
@@ -4367,7 +4401,8 @@ def reports():
         s_group=s_group, s_emps=s_emps,
         all_sal_emps=all_sal_emps, pivot_rows=pivot_rows, pivot_emps=pivot_emps,
         day_groups=day_groups,
-        branch_groups=get_branch_groups(conn))
+        branch_groups=get_branch_groups(conn),
+        pos_abbr_map=pos_abbr_map)
 
 
 # ─── EMPLOYEE SALARY DETAIL ───────────────────────────────────────────────────

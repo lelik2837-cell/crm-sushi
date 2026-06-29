@@ -307,7 +307,7 @@
                 </select>
             </div>
             <div class="col-6 col-md-2">
-                <label class="form-label small fw-semibold">Категория</label>
+                <label class="form-label small fw-semibold">Должность</label>
                 <select name="s_role" class="form-select">
                     <option value="">Все</option>
                     {% for code, label in role_labels.items() %}
@@ -510,8 +510,8 @@
             <thead class="table-light">
                 <tr>
                     <th class="sal-sort" style="cursor:pointer;user-select:none" title="Сортировать">Сотрудник <span class="sal-arrow text-muted small"></span></th>
-                    <th class="sal-sort" style="cursor:pointer;user-select:none" title="Сортировать">Категория <span class="sal-arrow text-muted small"></span></th>
-                    <th class="sal-sort" style="cursor:pointer;user-select:none" title="Сортировать">Филиал <span class="sal-arrow text-muted small"></span></th>
+                    <th class="sal-sort" style="cursor:pointer;user-select:none" title="Сортировать">Должность <span class="sal-arrow text-muted small"></span></th>
+                    <th class="sal-sort" style="cursor:pointer;user-select:none" title="Сортировать">Филиалы смен <span class="sal-arrow text-muted small"></span></th>
                     <th class="sal-sort text-center" style="cursor:pointer;user-select:none" title="Сортировать">Смен <span class="sal-arrow text-muted small"></span></th>
                     <th class="sal-sort text-end" style="cursor:pointer;user-select:none" title="Сортировать">Начислено <span class="sal-arrow text-muted small"></span></th>
                     <th class="sal-sort text-end" style="cursor:pointer;user-select:none" title="Сортировать">Выплачено <span class="sal-arrow text-muted small"></span></th>
@@ -532,12 +532,15 @@
                        target="_blank" class="text-decoration-none">{{ r.name }} <i class="bi bi-box-arrow-up-right small text-muted"></i></a>
                     {% else %}{{ r.name }}{% endif %}
                 </td>
-                <td data-val="{{ role_labels.get(r.role, r.role) }}">
-                    <span class="badge badge-role-{{ r.role }} text-white">
-                        {{ role_labels.get(r.role, r.role) }}
+                <td data-val="{{ r.roles | join(',') }}">
+                    {% for role_code in r.roles %}
+                    <span class="badge badge-role-{{ role_code }} text-white me-1"
+                          title="{{ role_labels.get(role_code, role_code) }}">
+                        {{ pos_abbr_map.get(role_code, role_code[:4].upper()) }}
                     </span>
+                    {% endfor %}
                 </td>
-                <td class="small text-muted" data-val="{{ r.branch_name }}">{{ r.branch_name }}</td>
+                <td class="small text-muted" data-val="{{ r.branch_names | join(', ') }}">{{ r.branch_names | join(', ') }}</td>
                 <td class="text-center" data-val="{{ r.shifts_count }}">{{ r.shifts_count }}</td>
                 <td class="text-end" data-val="{{ earned }}">{{ '{:,.0f}'.format(earned) }} ₽</td>
                 <td class="text-end text-success" data-val="{{ paid }}">{{ '{:,.0f}'.format(paid) }} ₽</td>
