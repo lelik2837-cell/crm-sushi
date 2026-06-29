@@ -2959,7 +2959,7 @@ def employees():
             parts = [extra] if extra else []
             if search:
                 parts.append(
-                    "(e.last_name LIKE ? OR e.first_name LIKE ? OR e.full_name LIKE ?)"
+                    "(LOWER(e.last_name) LIKE LOWER(?) OR LOWER(e.first_name) LIKE LOWER(?) OR LOWER(e.full_name) LIKE LOWER(?))"
                 )
             if role_filter:
                 parts.append("e.role = ?")
