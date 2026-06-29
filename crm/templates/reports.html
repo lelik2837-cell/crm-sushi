@@ -26,17 +26,24 @@
 {% if active_tab != 'salary' %}
 
 {# ── Фильтры выручки ── #}
+{% set _MONTHS_RU = ['','Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'] %}
+{% set _cur_m = r_date_from[5:7] | int %}
+{% set _cur_y = r_date_from[:4] %}
+{% set _month_lbl = _MONTHS_RU[_cur_m] ~ ' ' ~ _cur_y %}
 <div class="card mb-4">
     <div class="card-body">
         <form method="GET" class="row g-2 align-items-end" id="revFilterForm">
             <input type="hidden" name="tab" value="shifts">
-            <div class="col-6 col-md-2">
-                <label class="form-label small fw-semibold">С</label>
-                <input type="date" name="r_date_from" value="{{ r_date_from }}" class="form-control">
-            </div>
-            <div class="col-6 col-md-2">
-                <label class="form-label small fw-semibold">По</label>
-                <input type="date" name="r_date_to" value="{{ r_date_to }}" class="form-control">
+            <input type="hidden" name="r_date_from" id="r_df" value="{{ r_date_from }}">
+            <input type="hidden" name="r_date_to"   id="r_dt" value="{{ r_date_to }}">
+            <div class="col-md-5">
+                <label class="form-label small fw-semibold">Период</label>
+                <div class="d-flex align-items-center gap-1 flex-wrap">
+                    <button type="button" class="btn btn-outline-secondary btn-sm px-2" style="font-size:16px;line-height:1;" onclick="shiftRevMonth(-1)" title="Предыдущий месяц">‹</button>
+                    <button type="button" class="btn btn-outline-primary btn-sm px-2 fw-semibold" id="revMonthLabel" onclick="setRevCurrentMonth()" title="Текущий месяц">{{ _month_lbl }}</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm px-2" style="font-size:16px;line-height:1;" onclick="shiftRevMonth(1)" title="Следующий месяц">›</button>
+                    <input type="text" id="revRangePicker" class="form-control form-control-sm" style="min-width:170px;max-width:200px;cursor:pointer;" readonly placeholder="дд.мм.гггг — дд.мм.гггг">
+                </div>
             </div>
             <div class="col-md-4">
                 <label class="form-label small fw-semibold">Филиалы</label>
@@ -126,9 +133,11 @@
 </div>
 
 {# ── Сводная таблица: даты × филиалы ── #}
-{# macro: цвет отклонения #}
-{%- macro dev_color(pct, has_plan) -%}
-{%- if not has_plan -%}#adb5bd{%- elif pct >= 100 -%}#198754{%- elif pct >= 90 -%}#fd7e14{%- else -%}#dc3545{%- endif -%}
+{%- macro dev_color(pct, has_plan, has_act) -%}
+{%- if not has_plan or not has_act -%}#adb5bd{%- elif pct >= 100 -%}#198754{%- elif pct >= 90 -%}#fd7e14{%- else -%}#dc3545{%- endif -%}
+{%- endmacro -%}
+{%- macro dev_text(amt, pct, has_plan, has_act) -%}
+{%- if has_plan and has_act -%}{%- if amt >= 0 -%}+{%- endif -%}{{ '{:,.0f}'.format(amt).replace(',', ' ') }} ({{ pct }}%){%- else -%}—{%- endif -%}
 {%- endmacro -%}
 <div class="card mb-4">
     <div class="card-body p-0">
@@ -136,14 +145,36 @@
             <table class="table table-bordered table-sm mb-0 align-middle" id="rev-pivot-table"
                    style="font-size:13px;min-width:{{ 120 + rev_branch_list|length * 240 }}px">
                 <thead>
-                    <tr class="table-dark">
-                        <th rowspan="2" style="min-width:90px;vertical-align:middle;">Дата</th>
+                    {# Строка 1: названия филиалов с отклонением за период #}
+                    <tr style="background:#dbeafe;color:#1e3a5f;border-bottom:2px solid #93c5fd;">
+                        <th rowspan="2" style="min-width:90px;vertical-align:middle;background:#dbeafe;">Дата</th>
                         {% for b in rev_branch_list %}
-                        <th colspan="3" class="text-center" style="min-width:220px;">{{ b.name }}</th>
+                        {% set _hcol = namespace(act=0, plan=0) %}
+                        {% for d in rev_dates %}{% set _hcol.act = _hcol.act + rev_pivot[d][b.id].actual %}{% set _hcol.plan = _hcol.plan + rev_pivot[d][b.id].plan %}{% endfor %}
+                        {% set _hpct = ((_hcol.act / _hcol.plan * 100) | round(0) | int) if _hcol.plan > 0 else 0 %}
+                        {% set _hdamt = _hcol.act - _hcol.plan %}
+                        <th colspan="3" class="text-center" style="min-width:220px;">
+                            {{ b.name }}
+                            {% if _hcol.plan > 0 and _hcol.act > 0 %}
+                            <span style="font-size:11px;font-weight:500;color:{{ dev_color(_hpct, true, true) }};">
+                                &nbsp;{{ dev_text(_hdamt, _hpct, true, true) }}
+                            </span>
+                            {% endif %}
+                        </th>
                         {% endfor %}
-                        <th colspan="3" class="text-center" style="min-width:220px;">Итого</th>
+                        {% set _gtpct = ((rev_total_actual / rev_total_plan * 100) | round(0) | int) if rev_total_plan > 0 else 0 %}
+                        {% set _gtdamt = rev_total_actual - rev_total_plan %}
+                        <th colspan="3" class="text-center" style="min-width:220px;">
+                            Итого
+                            {% if rev_total_plan > 0 and rev_total_actual > 0 %}
+                            <span style="font-size:11px;font-weight:500;color:{{ dev_color(_gtpct, true, true) }};">
+                                &nbsp;{{ dev_text(_gtdamt, _gtpct, true, true) }}
+                            </span>
+                            {% endif %}
+                        </th>
                     </tr>
-                    <tr class="table-secondary">
+                    {# Строка 2: под-заголовки колонок #}
+                    <tr style="background:#eff6ff;color:#475569;">
                         {% for b in rev_branch_list %}
                         <th class="text-end" style="font-size:11px;color:#1d4ed8;">Выручка</th>
                         <th class="text-end" style="font-size:11px;color:#198754;">
@@ -188,8 +219,8 @@
                         id="dev-{{ d }}-{{ b.id }}"
                         data-act="{{ cell.actual | int }}"
                         data-plan="{{ cell.plan | int }}"
-                        style="font-size:12px;color:{{ dev_color(_dpct, cell.plan > 0) }};">
-                        {% if cell.plan > 0 %}{% if _damt >= 0 %}+{% endif %}{{ '{:,.0f}'.format(_damt).replace(',', ' ') }} ({{ _dpct }}%){% else %}—{% endif %}
+                        style="font-size:12px;color:{{ dev_color(_dpct, cell.plan > 0, cell.actual > 0) }};">
+                        {{ dev_text(_damt, _dpct, cell.plan > 0, cell.actual > 0) }}
                     </td>
                     {% endfor %}
                     {# Итого по строке #}
@@ -204,8 +235,8 @@
                         {% if _row.plan > 0 %}{{ '{:,.0f}'.format(_row.plan).replace(',', ' ') }}{% else %}—{% endif %}
                     </td>
                     <td class="text-end fw-semibold" id="row-dev-total-{{ d }}"
-                        style="font-size:12px;color:{{ dev_color(_rpct, _row.plan > 0) }};">
-                        {% if _row.plan > 0 %}{% if _rdamt >= 0 %}+{% endif %}{{ '{:,.0f}'.format(_rdamt).replace(',', ' ') }} ({{ _rpct }}%){% else %}—{% endif %}
+                        style="font-size:12px;color:{{ dev_color(_rpct, _row.plan > 0, _row.act > 0) }};">
+                        {{ dev_text(_rdamt, _rpct, _row.plan > 0, _row.act > 0) }}
                     </td>
                 </tr>
                 {% endfor %}
@@ -225,8 +256,8 @@
                             {{ '{:,.0f}'.format(_col.plan).replace(',', ' ') if _col.plan else '—' }}
                         </td>
                         <td class="text-end" id="col-dev-{{ b.id }}"
-                            style="font-size:12px;color:{{ dev_color(_cpct, _col.plan > 0) }};">
-                            {% if _col.plan > 0 %}{% if _cdamt >= 0 %}+{% endif %}{{ '{:,.0f}'.format(_cdamt).replace(',', ' ') }} ({{ _cpct }}%){% else %}—{% endif %}
+                            style="font-size:12px;color:{{ dev_color(_cpct, _col.plan > 0, _col.act > 0) }};">
+                            {{ dev_text(_cdamt, _cpct, _col.plan > 0, _col.act > 0) }}
                         </td>
                         {% endfor %}
                         {% set _gpct = ((rev_total_actual / rev_total_plan * 100) | round(0) | int) if rev_total_plan > 0 else 0 %}
@@ -238,8 +269,8 @@
                             {{ '{:,.0f}'.format(rev_total_plan).replace(',', ' ') if rev_total_plan else '—' }}
                         </td>
                         <td class="text-end" id="grand-dev-total"
-                            style="font-size:12px;color:{{ dev_color(_gpct, rev_total_plan > 0) }};">
-                            {% if rev_total_plan > 0 %}{% if _gdamt >= 0 %}+{% endif %}{{ '{:,.0f}'.format(_gdamt).replace(',', ' ') }} ({{ _gpct }}%){% else %}—{% endif %}
+                            style="font-size:12px;color:{{ dev_color(_gpct, rev_total_plan > 0, rev_total_actual > 0) }};">
+                            {{ dev_text(_gdamt, _gpct, rev_total_plan > 0, rev_total_actual > 0) }}
                         </td>
                     </tr>
                 </tfoot>
@@ -557,6 +588,8 @@
 
 {% block scripts %}
 {% if active_tab != 'salary' %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
 <script>
 // ── Revenue pivot: план inline-редактирование ──────────────────────────────
 var REV_BRANCH_IDS = [{% for b in rev_branch_list %}{{ b.id }}{% if not loop.last %},{% endif %}{% endfor %}];
@@ -568,13 +601,13 @@ function _fmt(n) {
 }
 
 function _devColor(act, plan) {
-    if (plan <= 0) return '#adb5bd';
+    if (act <= 0 || plan <= 0) return '#adb5bd';
     var pct = act / plan * 100;
     return pct >= 100 ? '#198754' : pct >= 90 ? '#fd7e14' : '#dc3545';
 }
 
 function _devText(act, plan) {
-    if (plan <= 0) return '—';
+    if (act <= 0 || plan <= 0) return '—';
     var diff = act - plan;
     var pct  = Math.round(act / plan * 100);
     return (diff >= 0 ? '+' : '') + Math.round(diff).toLocaleString('ru-RU') + ' (' + pct + '%)';
@@ -585,6 +618,77 @@ function _renderDev(el, act, plan) {
     el.textContent = _devText(act, plan);
     el.style.color = _devColor(act, plan);
 }
+
+// ── Flatpickr: выбор периода ────────────────────────────────────────────────
+var _FP_MONTHS = ['','Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+var _revFp = null;
+
+function _padz(n) { return n < 10 ? '0' + n : String(n); }
+
+function _fmtDateStr(d) {
+    return d.getFullYear() + '-' + _padz(d.getMonth() + 1) + '-' + _padz(d.getDate());
+}
+
+function _setRevRange(df, dt) {
+    document.getElementById('r_df').value = df;
+    document.getElementById('r_dt').value = dt;
+    if (_revFp) _revFp.setDate([df, dt], false);
+    // update month label
+    var m = parseInt(df.slice(5, 7));
+    var y = df.slice(0, 4);
+    var lbl = document.getElementById('revMonthLabel');
+    if (lbl) lbl.textContent = _FP_MONTHS[m] + ' ' + y;
+}
+
+function shiftRevMonth(dir) {
+    var from = new Date(document.getElementById('r_df').value + 'T00:00:00');
+    from.setMonth(from.getMonth() + dir);
+    from.setDate(1);
+    var to = new Date(from.getFullYear(), from.getMonth() + 1, 0);
+    _setRevRange(_fmtDateStr(from), _fmtDateStr(to));
+    document.getElementById('revFilterForm').submit();
+}
+
+function setRevCurrentMonth() {
+    var now = new Date();
+    var from = new Date(now.getFullYear(), now.getMonth(), 1);
+    var to   = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    _setRevRange(_fmtDateStr(from), _fmtDateStr(to));
+    document.getElementById('revFilterForm').submit();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    _revFp = flatpickr('#revRangePicker', {
+        mode: 'range',
+        dateFormat: 'Y-m-d',
+        defaultDate: [document.getElementById('r_df').value, document.getElementById('r_dt').value],
+        locale: {
+            weekdays: {
+                shorthand: ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'],
+                longhand:  ['Воскресенье','Понедельник','Вторник','Среда','Четверг','Пятница','Суббота']
+            },
+            months: {
+                shorthand: ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'],
+                longhand:  ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь']
+            },
+            firstDayOfWeek: 1,
+            rangeSeparator: ' — '
+        },
+        altInput: true,
+        altFormat: 'd.m.Y',
+        onClose: function(dates) {
+            if (dates.length === 2) {
+                document.getElementById('r_df').value = _fmtDateStr(dates[0]);
+                document.getElementById('r_dt').value = _fmtDateStr(dates[1]);
+                var m = dates[0].getMonth() + 1;
+                var y = dates[0].getFullYear();
+                var lbl = document.getElementById('revMonthLabel');
+                if (lbl) lbl.textContent = _FP_MONTHS[m] + ' ' + y;
+                document.getElementById('revFilterForm').submit();
+            }
+        }
+    });
+});
 
 function editPlanCell(td) {
     if (td.querySelector('input')) return;
