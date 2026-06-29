@@ -546,6 +546,46 @@ def build_cats_groups(cats):
     return groups
 
 
+def _manual_rev_total(conn, date_from, date_to, bids=None):
+    """Сумма revenue_manual за период там, где нет смен (fallback)."""
+    bf = f"AND m.branch_id IN ({','.join(str(b) for b in bids)})" if bids else ""
+    row = conn.execute(f'''
+        SELECT COALESCE(SUM(m.amount), 0) AS total
+        FROM revenue_manual m
+        WHERE m.date BETWEEN ? AND ? {bf}
+        AND NOT EXISTS (SELECT 1 FROM shifts s WHERE s.date=m.date AND s.branch_id=m.branch_id)
+    ''', [date_from, date_to]).fetchone()
+    return float(row['total'] or 0)
+
+
+def _manual_rev_by_month(conn, date_from, date_to, bids=None):
+    """Словарь (year, month) -> amount из revenue_manual (fallback)."""
+    bf = f"AND m.branch_id IN ({','.join(str(b) for b in bids)})" if bids else ""
+    rows = conn.execute(f'''
+        SELECT CAST(strftime('%Y', m.date) AS INTEGER) AS year,
+               CAST(strftime('%m', m.date) AS INTEGER) AS month,
+               COALESCE(SUM(m.amount), 0) AS total
+        FROM revenue_manual m
+        WHERE m.date BETWEEN ? AND ? {bf}
+        AND NOT EXISTS (SELECT 1 FROM shifts s WHERE s.date=m.date AND s.branch_id=m.branch_id)
+        GROUP BY year, month
+    ''', [date_from, date_to]).fetchall()
+    return {(r['year'], r['month']): float(r['total']) for r in rows}
+
+
+def _manual_rev_by_day(conn, date_from, date_to, bids=None):
+    """Словарь date -> amount из revenue_manual (fallback)."""
+    bf = f"AND m.branch_id IN ({','.join(str(b) for b in bids)})" if bids else ""
+    rows = conn.execute(f'''
+        SELECT m.date, COALESCE(SUM(m.amount), 0) AS total
+        FROM revenue_manual m
+        WHERE m.date BETWEEN ? AND ? {bf}
+        AND NOT EXISTS (SELECT 1 FROM shifts s WHERE s.date=m.date AND s.branch_id=m.branch_id)
+        GROUP BY m.date
+    ''', [date_from, date_to]).fetchall()
+    return {r['date']: float(r['total']) for r in rows}
+
+
 def get_kpi_values(conn, branch_id, date_from, date_to):
     bf = f"AND s.branch_id={int(branch_id)}" if branch_id else ""
     rev = conn.execute(f'''
@@ -578,7 +618,11 @@ def get_kpi_values(conn, branch_id, date_from, date_to):
     pay_by_role = {r['role_snapshot']: r['total'] for r in pay_rows}
     pay_total = sum(pay_by_role.values())
 
+    bids_kpi = [int(branch_id)] if branch_id else None
+    manual_rev = _manual_rev_total(conn, date_from, date_to, bids_kpi)
+
     vals = dict(rev)
+    vals['revenue'] = float(vals['revenue']) + manual_rev
     vals.update({
         'expenses_cash':  exp['expenses_cash'],
         'expenses_card':  exp['expenses_card'],
@@ -1324,6 +1368,11 @@ def dashboard():
                 FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id
                 WHERE s.date >= date('now','weekday 0','-7 days')
             ''').fetchone()
+            _week_from = conn.execute("SELECT date('now','weekday 0','-7 days')").fetchone()[0]
+            _week_to   = date.today().isoformat()
+            _manual_week = _manual_rev_total(conn, _week_from, _week_to)
+            weekly = dict(weekly)
+            weekly['total'] = float(weekly['total']) + _manual_week
             open_shifts = conn.execute('''
                 SELECT s.*, b.name as branch_name
                 FROM shifts s JOIN branches b ON b.id=s.branch_id
@@ -1344,6 +1393,10 @@ def dashboard():
                 JOIN shift_revenue r ON r.shift_id = s.id
                 WHERE s.date >= date('now', 'start of month')
             ''').fetchone()
+            _month_from = conn.execute("SELECT date('now','start of month')").fetchone()[0]
+            _manual_month = _manual_rev_total(conn, _month_from, date.today().isoformat())
+            month_rev = dict(month_rev)
+            month_rev['total_revenue'] = float(month_rev['total_revenue']) + _manual_month
             month_fot = conn.execute('''
                 SELECT COALESCE(SUM(es.total_amount), 0) AS fot
                 FROM employee_shifts es
@@ -1437,13 +1490,15 @@ def api_revenue_year():
             WHERE s.date BETWEEN ? AND ?
             GROUP BY year, month ORDER BY year, month
         ''', (date_from, date_to)).fetchall()
+        manual_map = _manual_rev_by_month(conn, date_from, date_to)
     rev = {(r['year'], r['month']): int(r['revenue']) for r in rows}
     labels = ['', 'Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн',
               'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
     months_list = []
     y, m = start_y, start_m
     for _ in range(12):
-        months_list.append({'year': y, 'month': m, 'label': labels[m], 'revenue': rev.get((y, m), 0)})
+        months_list.append({'year': y, 'month': m, 'label': labels[m],
+                            'revenue': rev.get((y, m), 0) + int(manual_map.get((y, m), 0))})
         m += 1
         if m > 12:
             m = 1
@@ -1495,10 +1550,14 @@ def api_lfl():
                 f'SELECT {agg} FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id WHERE s.date BETWEEN ? AND ? {bf}',
                 [d_from_this, d_to_this] + bids
             ).fetchone()[0] or 0
+            if metric == 'revenue':
+                val_this += _manual_rev_total(conn, d_from_this, d_to_this, bids or None)
             val_last = conn.execute(
                 f'SELECT {agg} FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id WHERE s.date BETWEEN ? AND ? {bf}',
                 [d_from_last, d_to_last] + bids
             ).fetchone()[0] or 0
+            if metric == 'revenue':
+                val_last += _manual_rev_total(conn, d_from_last, d_to_last, bids or None)
             lfl_pct = round((val_this / val_last - 1) * 100, 1) if val_last > 0 else None
             result.append({
                 'year': yr, 'month': mo,
@@ -1564,25 +1623,55 @@ def api_revenue_summary():
             WHERE s.date BETWEEN ? AND ? {bf}
             GROUP BY b.id, b.name
         ''', [date_from, date_to] + bids).fetchall()
+        # Manual revenue по филиалам (fallback)
+        mbf = f"AND m.branch_id IN ({','.join('?'*len(bids))})" if bids else ''
+        manual_branch_rows = conn.execute(f'''
+            SELECT m.branch_id, b.id, b.name, b.abbr,
+                   COALESCE(SUM(m.amount), 0) AS revenue
+            FROM revenue_manual m
+            JOIN branches b ON b.id = m.branch_id
+            WHERE m.date BETWEEN ? AND ? {mbf}
+            AND NOT EXISTS (SELECT 1 FROM shifts s WHERE s.date=m.date AND s.branch_id=m.branch_id)
+            GROUP BY m.branch_id
+        ''', [date_from, date_to] + bids).fetchall()
+        manual_total = _manual_rev_total(conn, date_from, date_to, bids or None)
 
-    total       = int(total_row['total'] or 0)
+    total       = int(total_row['total'] or 0) + int(manual_total)
     fot         = int(fot_row['fot'] or 0)
     courier_fot = int(courier_fot_row['courier_fot'] or 0)
     fot_by_name = {r['name']: {'fot': int(r['fot']), 'courier_fot': int(r['courier_fot'])} for r in branch_fot_rows}
+    manual_by_bid = {r['id']: {'name': r['name'], 'abbr': r['abbr'], 'revenue': int(r['revenue'])}
+                     for r in manual_branch_rows}
+    # Объединяем shift-филиалы и manual-филиалы
+    seen_bids = set()
     branches = []
     for br in branch_rev_rows:
         name = br['name'] or ''
         abbr = (br['abbr'] or '').strip() or name[:3].upper()
         bf_   = fot_by_name.get(name, {'fot': 0, 'courier_fot': 0})
+        man   = manual_by_bid.get(br['id'], {})
+        seen_bids.add(br['id'])
         branches.append({
             'abbr': abbr, 'name': name,
-            'revenue':         int(br['revenue']),
+            'revenue':         int(br['revenue']) + int(man.get('revenue', 0)),
             'pickup':          int(br['pickup']),
             'delivery_revenue':int(br['delivery_revenue']),
             'delivery_orders': int(br['delivery_orders']),
             'fot':             bf_['fot'],
             'courier_fot':     bf_['courier_fot'],
         })
+    # Филиалы только с manual-данными (без смен)
+    for bid, man in manual_by_bid.items():
+        if bid not in seen_bids:
+            name = man['name'] or ''
+            abbr = (man['abbr'] or '').strip() or name[:3].upper()
+            branches.append({
+                'abbr': abbr, 'name': name,
+                'revenue': man['revenue'],
+                'pickup': 0, 'delivery_revenue': 0, 'delivery_orders': 0,
+                'fot': 0, 'courier_fot': 0,
+            })
+    branches.sort(key=lambda x: -x['revenue'])
 
     return jsonify({
         'ok': True,
@@ -1615,9 +1704,13 @@ def api_revenue_days():
             WHERE s.date BETWEEN ? AND ? {bfilt}
             GROUP BY s.date ORDER BY s.date
         ''', [date_from, date_to] + bids).fetchall()
+        manual_days = _manual_rev_by_day(conn, date_from, date_to, bids or None)
+    rev_map = {r['date']: int(r['revenue']) for r in rows}
+    for d, amt in manual_days.items():
+        rev_map[d] = rev_map.get(d, 0) + int(amt)
     return jsonify({
         'ok': True,
-        'days': [{'date': r['date'], 'revenue': int(r['revenue'])} for r in rows]
+        'days': [{'date': d, 'revenue': rev_map[d]} for d in sorted(rev_map)]
     })
 
 
@@ -1648,7 +1741,8 @@ def api_fot_summary():
             WHERE s.date BETWEEN ? AND ? {bf}
             GROUP BY es.role_snapshot ORDER BY fot DESC
         ''', [date_from, date_to] + bids).fetchall()
-    revenue = int(rev_row['revenue'] or 0)
+        manual_rev = _manual_rev_total(conn, date_from, date_to, bids or None)
+    revenue = int(rev_row['revenue'] or 0) + int(manual_rev)
     fot     = int(fot_row['fot'] or 0)
     fot_pct = round(fot / revenue * 100, 1) if revenue > 0 else 0
     role_labels = {'admin':'Администраторы','sushi':'Сушисты','packer':'Упаковщики',
@@ -1699,8 +1793,13 @@ def api_fot_year():
             FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id
             WHERE s.date BETWEEN ? AND ? {bf} GROUP BY year,month
         ''', [date_from, date_to] + bids).fetchall()
+        manual_map = _manual_rev_by_month(conn, date_from, date_to, bids or None)
     fot_map = {(r['year'],r['month']): int(r['fot']) for r in fot_rows}
-    rev_map = {(r['year'],r['month']): int(r['revenue']) for r in rev_rows}
+    rev_map = {(r['year'],r['month']): int(r['revenue']) + int(manual_map.get((r['year'],r['month']), 0))
+               for r in rev_rows}
+    for k, v in manual_map.items():
+        if k not in rev_map:
+            rev_map[k] = int(v)
     labels  = ['','Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек']
     months_list = []
     y, m = start_y, start_m
@@ -1732,6 +1831,7 @@ def api_fot_days():
             WHERE s.date BETWEEN ? AND ? {bf}
             GROUP BY s.date ORDER BY s.date
         ''', [date_from, date_to] + bids).fetchall()
+        manual_days = _manual_rev_by_day(conn, date_from, date_to, bids or None)
         if role:
             fot_rows = conn.execute(f'''
                 SELECT s.date, COALESCE(SUM(es.total_amount),0) AS fot
@@ -1747,10 +1847,13 @@ def api_fot_days():
                 GROUP BY s.date ORDER BY s.date
             ''', [date_from, date_to] + bids).fetchall()
     rev_map = {r['date']: int(r['revenue']) for r in rev_rows}
+    for d, amt in manual_days.items():
+        rev_map[d] = rev_map.get(d, 0) + int(amt)
     fot_map = {r['date']: int(r['fot'])     for r in fot_rows}
+    all_dates = sorted(set(list(rev_map.keys()) + list(fot_map.keys())))
     days = []
-    for d in sorted(rev_map):
-        rv = rev_map[d]; fv = fot_map.get(d, 0)
+    for d in all_dates:
+        rv = rev_map.get(d, 0); fv = fot_map.get(d, 0)
         days.append({'date': d, 'fot': fv, 'revenue': rv,
                      'fot_pct': round(fv / rv * 100, 1) if rv > 0 else 0})
     return jsonify({'ok': True, 'days': days})
