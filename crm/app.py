@@ -4761,59 +4761,127 @@ def auto_revenue_plan():
         cur_dates.append(_d)
         _d += timedelta(days=1)
 
-    # Прошлый год: смещение 364 дня (52 нед.) — сохраняет день недели
-    offset = 364
-    ly_from = (cur_from - timedelta(days=offset)).isoformat()
-    ly_to   = (cur_to   - timedelta(days=offset)).isoformat()
+    # Сколько раз weekday d встречается в его месяце до него (0-based)
+    def _nth_occ(d):
+        return sum(1 for day in range(1, d.day)
+                   if date(d.year, d.month, day).weekday() == d.weekday())
+
+    # N-е вхождение (0-based) weekday в году/месяце; если n больше — возвращает последнее
+    def _get_nth_weekday(year, month, weekday, n):
+        last = None
+        count = -1
+        for day in range(1, calendar.monthrange(year, month)[1] + 1):
+            d = date(year, month, day)
+            if d.weekday() == weekday:
+                count += 1
+                last = d
+                if count == n:
+                    return d
+        return last
 
     with get_db() as conn:
         if not branch_ids:
             branch_ids = [r['id'] for r in conn.execute(
                 'SELECT id FROM branches WHERE is_active=1').fetchall()]
 
-        bf = f"AND s.branch_id IN ({','.join(str(b) for b in branch_ids)})"
-        ly_rows = conn.execute(f'''
-            SELECT s.date, s.branch_id, COALESCE(SUM(r.total_revenue), 0) as rev
-            FROM shifts s LEFT JOIN shift_revenue r ON r.shift_id = s.id
-            WHERE s.date BETWEEN ? AND ? {bf}
-            GROUP BY s.date, s.branch_id
-        ''', [ly_from, ly_to]).fetchall()
+        bf  = f"AND s.branch_id IN ({','.join(str(b) for b in branch_ids)})"
+        mbf = f"AND branch_id IN ({','.join(str(b) for b in branch_ids)})"
 
-        # Данные прошлого года: day_date → branch_id → revenue
-        ly_by_date = {}
-        for row in ly_rows:
-            ly_by_date.setdefault(row['date'], {})[row['branch_id']] = float(row['rev'])
+        # Уникальные (prev_year, month) для всех дат периода
+        prev_months = {(d.year - 1, d.month) for d in cur_dates}
 
-        ly_totals_by_date = {d: sum(v.values()) for d, v in ly_by_date.items()}
-        ly_grand_total = sum(ly_totals_by_date.values())
+        # Данные прошлого года: смены + ручная выручка (merged)
+        prev_by_date = {}   # date_str -> {branch_id: revenue}
+        for (py, pm) in prev_months:
+            ps = date(py, pm, 1).isoformat()
+            pe = date(py, pm, calendar.monthrange(py, pm)[1]).isoformat()
 
-        # Веса по датам
-        date_weights = {}
+            rows = conn.execute(f'''
+                SELECT s.date, s.branch_id, COALESCE(SUM(r.total_revenue), 0) as rev
+                FROM shifts s LEFT JOIN shift_revenue r ON r.shift_id = s.id
+                WHERE s.date BETWEEN ? AND ? {bf}
+                GROUP BY s.date, s.branch_id
+            ''', [ps, pe]).fetchall()
+            for row in rows:
+                prev_by_date.setdefault(row['date'], {})[row['branch_id']] = float(row['rev'])
+
+            man_rows = conn.execute(f'''
+                SELECT date, branch_id, amount FROM revenue_manual
+                WHERE date BETWEEN ? AND ? {mbf}
+            ''', [ps, pe]).fetchall()
+            for row in man_rows:
+                ds = row['date']; bid = row['branch_id']
+                if ds not in prev_by_date:
+                    prev_by_date[ds] = {}
+                if prev_by_date[ds].get(bid, 0) == 0:
+                    prev_by_date[ds][bid] = float(row['amount'])
+
+        prev_total_by_date = {ds: sum(v.values()) for ds, v in prev_by_date.items()}
+
+        # Выявляем праздничные дни прошлого года: не пт/сб, но выручка > 1.5× среднего для этого дня недели
+        # weekday: 4=Пт, 5=Сб
+        holiday_prev = set()   # set of date objects из прошлого года
+        for (py, pm) in prev_months:
+            dow_revs = {}
+            for ds, total in prev_total_by_date.items():
+                d = date.fromisoformat(ds)
+                if d.year == py and d.month == pm:
+                    dow_revs.setdefault(d.weekday(), []).append(total)
+            dow_avg = {dow: sum(vs) / len(vs) for dow, vs in dow_revs.items() if vs}
+            for ds, total in prev_total_by_date.items():
+                d = date.fromisoformat(ds)
+                if d.year == py and d.month == pm and d.weekday() not in (4, 5):
+                    if dow_avg.get(d.weekday(), 0) > 0 and total > dow_avg[d.weekday()] * 1.5:
+                        holiday_prev.add(d)
+
+        # Для каждой даты текущего периода находим дату-ориентир в прошлом году
+        # Праздники (не пт/сб с высокой выручкой) → та же календарная дата
+        # Остальные дни → выравнивание по позиции дня недели внутри месяца
+        date_mapping = {}   # cur_date -> prev_date
         for cur_d in cur_dates:
-            ly_d = (cur_d - timedelta(days=offset)).isoformat()
-            if ly_grand_total > 0:
-                date_weights[cur_d.isoformat()] = ly_totals_by_date.get(ly_d, 0)
-            else:
-                date_weights[cur_d.isoformat()] = 1.0
+            py  = cur_d.year - 1
+            m   = cur_d.month
+            dow = cur_d.weekday()
+            occ = _nth_occ(cur_d)
 
-        w_total = sum(date_weights.values()) or len(cur_dates)
-        growth  = total_plan / w_total
+            max_day  = calendar.monthrange(py, m)[1]
+            same_cal = date(py, m, min(cur_d.day, max_day))
+
+            if same_cal in holiday_prev:
+                # Та же дата прошлого года была праздником — привязываем без смещения
+                date_mapping[cur_d] = same_cal
+            else:
+                # Выравниваем по позиции: 1-я пятница → 1-я пятница прошлого года и т.д.
+                date_mapping[cur_d] = _get_nth_weekday(py, m, dow, occ)
+
+        # Веса = выручка прошлого года за день-ориентир
+        weights = {}
+        for cur_d in cur_dates:
+            prev_d = date_mapping.get(cur_d)
+            weights[cur_d] = prev_total_by_date.get(prev_d.isoformat(), 0) if prev_d else 0
+
+        total_weight = sum(weights.values())
+        if total_weight == 0:
+            for cur_d in cur_dates:
+                weights[cur_d] = 1.0
+            total_weight = float(len(cur_dates))
+
+        # Коэффициент роста: план / факт прошлого года
+        growth = total_plan / total_weight
 
         # Записываем план в БД
         for cur_d in cur_dates:
-            d_str   = cur_d.isoformat()
-            ly_d    = (cur_d - timedelta(days=offset)).isoformat()
-            day_amt = date_weights[d_str] * growth
+            d_str    = cur_d.isoformat()
+            prev_d   = date_mapping.get(cur_d)
+            prev_ds  = prev_d.isoformat() if prev_d else None
+            day_plan = weights[cur_d] * growth
 
-            ly_day    = ly_by_date.get(ly_d, {})
-            ly_day_t  = sum(ly_day.values()) or 0
+            py_branches = prev_by_date.get(prev_ds, {})
+            py_total    = sum(py_branches.values())
 
             for bid in branch_ids:
-                if ly_day_t > 0:
-                    share = ly_day.get(bid, 0) / ly_day_t
-                else:
-                    share = 1.0 / len(branch_ids)
-                amount = round(day_amt * share, 0)
+                share  = py_branches.get(bid, 0) / py_total if py_total > 0 else 1.0 / len(branch_ids)
+                amount = round(day_plan * share, 0)
                 conn.execute(
                     'INSERT OR REPLACE INTO revenue_plan (branch_id, date, amount, updated_at) VALUES (?,?,?,CURRENT_TIMESTAMP)',
                     (bid, d_str, amount)
