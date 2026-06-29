@@ -1517,7 +1517,7 @@ def api_revenue_all():
     raw_bids = request.args.get('branch_ids', '')
     bids     = [int(x) for x in raw_bids.split(',') if x.strip().isdigit()]
     bid_str  = f"AND s.branch_id IN ({','.join(str(b) for b in bids)})" if bids else ''
-    mbid_str = f"AND m.branch_id IN ({','.join(str(b) for b in bids)})" if bids else ''
+    mbid_str = f"AND branch_id IN ({','.join(str(b) for b in bids)})" if bids else ''
     today_iso = date.today().isoformat()
     with get_db() as conn:
         min_shift = conn.execute(
