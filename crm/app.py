@@ -5609,11 +5609,16 @@ def gsheet_settings():
             "SELECT value FROM gsheet_settings WHERE key='gdrive_refresh_token'"
         ).fetchone()
         gdrive_authorized = bool(row)
+        backup_row = conn.execute(
+            "SELECT value FROM gsheet_settings WHERE key='last_db_backup'"
+        ).fetchone()
+        last_db_backup = backup_row['value'] if backup_row else None
     return render_template('gsheet_settings.html', cfg=cfg, cols=GSHEET_COLS,
                            sheet_id=os.environ.get('GOOGLE_SHEET_ID', ''),
                            drive_folder_id=os.environ.get('GOOGLE_DRIVE_FOLDER_ID', ''),
                            has_creds=bool(os.environ.get('GOOGLE_CREDENTIALS_JSON')),
-                           gdrive_authorized=gdrive_authorized)
+                           gdrive_authorized=gdrive_authorized,
+                           last_db_backup=last_db_backup)
 
 
 @app.route('/settings/gdrive-auth')
@@ -5766,6 +5771,75 @@ def gdrive_test():
         return jsonify({'steps': steps})
 
     return jsonify({'steps': steps})
+
+
+def _backup_db_to_gdrive():
+    """Загрузить копию crm.db в Google Drive. Возвращает (ok: bool, msg: str)."""
+    import urllib.request as _ur
+    import datetime as _dt
+
+    token = _gdrive_get_oauth_token()
+    if not token:
+        return False, 'Google Drive не авторизован — откройте Настройки → Google Sheets'
+
+    folder_id = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
+    if not folder_id:
+        return False, 'GOOGLE_DRIVE_FOLDER_ID не задан в Railway'
+
+    db_path = DATABASE
+    if not os.path.exists(db_path):
+        return False, f'Файл базы данных не найден: {db_path}'
+
+    with open(db_path, 'rb') as f:
+        db_bytes = f.read()
+
+    date_str = _dt.datetime.now().strftime('%Y-%m-%d_%H-%M')
+    filename = f'crm_backup_{date_str}.db'
+    boundary = '---CrmDbBackupBnd8821'
+    meta_json = _json_lib.dumps({'name': filename, 'parents': [folder_id]})
+    body = (
+        f'--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'
+        f'{meta_json}\r\n'
+        f'--{boundary}\r\nContent-Type: application/octet-stream\r\n\r\n'
+    ).encode('utf-8') + db_bytes + f'\r\n--{boundary}--'.encode('utf-8')
+
+    req = _ur.Request(
+        'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+        data=body,
+        headers={
+            'Authorization': f'Bearer {token}',
+            'Content-Type': f'multipart/related; boundary="{boundary}"',
+        },
+        method='POST'
+    )
+    with _ur.urlopen(req, timeout=60) as resp:
+        result = _json_lib.loads(resp.read())
+
+    file_id = result.get('id', '?')
+    size_kb = len(db_bytes) // 1024
+    return True, f'Загружено: {filename} ({size_kb} КБ)'
+
+
+@app.route('/settings/backup-db', methods=['POST'])
+@login_required
+@owner_required
+def backup_db():
+    """Ручной запуск резервного копирования базы в Google Drive."""
+    try:
+        ok, msg = _backup_db_to_gdrive()
+        if ok:
+            with get_db() as conn:
+                import datetime as _dt
+                conn.execute(
+                    "INSERT OR REPLACE INTO gsheet_settings (key, value) VALUES ('last_db_backup', ?)",
+                    (_dt.datetime.now().strftime('%d.%m.%Y %H:%M'),)
+                )
+                conn.commit()
+            return jsonify({'status': 'ok', 'msg': msg})
+        else:
+            return jsonify({'status': 'error', 'msg': msg}), 400
+    except Exception as e:
+        return jsonify({'status': 'error', 'msg': str(e)}), 500
 
 
 # ─── HISTORY ──────────────────────────────────────────────────────────────────

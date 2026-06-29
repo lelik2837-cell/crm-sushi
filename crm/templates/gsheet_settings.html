@@ -105,6 +105,71 @@
     </div>
 </div>
 
+{# Резервная копия базы данных #}
+<div class="card mb-4">
+    <div class="card-header fw-semibold" style="background:#1a1a2e;color:#fff">
+        <i class="bi bi-shield-check me-2"></i>Резервная копия базы данных
+    </div>
+    <div class="card-body">
+        <p class="text-muted small mb-3">
+            Загружает полную копию базы данных (<code>crm.db</code>) в ту же папку Google Drive.
+            Файл называется <code>crm_backup_ДАТА_ВРЕМЯ.db</code>.
+            При необходимости восстановления — обратитесь к разработчику.
+        </p>
+        <div class="d-flex align-items-center gap-3">
+            {% if gdrive_authorized and drive_folder_id %}
+            <button class="btn btn-success" onclick="doBackup()" id="backup-btn">
+                <i class="bi bi-cloud-arrow-up me-1"></i>Создать резервную копию
+            </button>
+            {% if last_db_backup %}
+            <span class="text-muted small">Последний бэкап: <strong>{{ last_db_backup }}</strong></span>
+            {% endif %}
+            {% else %}
+            <span class="text-muted small">Сначала авторизуйте Google Drive и укажите папку выше.</span>
+            {% endif %}
+        </div>
+        <div id="backup-result" class="mt-3" style="display:none;"></div>
+    </div>
+</div>
+<script>
+function doBackup() {
+    const btn = document.getElementById('backup-btn');
+    const res = document.getElementById('backup-result');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Копирую...';
+    res.style.display = 'none';
+    fetch('/settings/backup-db', {method: 'POST', headers: {'Content-Type': 'application/json'}})
+    .then(r => r.json()).then(data => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-cloud-arrow-up me-1"></i>Создать резервную копию';
+        if (data.status === 'ok') {
+            res.innerHTML = '<span class="text-success small">✅ ' + data.msg + '</span>';
+            const ts = document.querySelector('#backup-result + * .last-backup-ts, .last-backup-ts');
+            // обновить метку времени без перезагрузки
+            const now = new Date();
+            const pad = n => String(n).padStart(2,'0');
+            const label = pad(now.getDate())+'.'+pad(now.getMonth()+1)+'.'+now.getFullYear()+' '+pad(now.getHours())+':'+pad(now.getMinutes());
+            const existing = document.querySelector('#backup-last');
+            if (existing) existing.textContent = label;
+            else {
+                const span = document.createElement('span');
+                span.className = 'text-muted small ms-3';
+                span.innerHTML = 'Последний бэкап: <strong id="backup-last">' + label + '</strong>';
+                btn.parentNode.appendChild(span);
+            }
+        } else {
+            res.innerHTML = '<span class="text-danger small">❌ ' + data.msg + '</span>';
+        }
+        res.style.display = 'block';
+    }).catch(e => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-cloud-arrow-up me-1"></i>Создать резервную копию';
+        res.innerHTML = '<span class="text-danger small">❌ Ошибка: ' + e + '</span>';
+        res.style.display = 'block';
+    });
+}
+</script>
+
 {# Настройки колонок #}
 <div class="card">
     <div class="card-header fw-semibold" style="background:#1a1a2e;color:#fff">
