@@ -4253,6 +4253,8 @@ def reports():
         while _d <= _rt:
             rev_dates.append(_d.isoformat())
             _d += timedelta(days=1)
+        _RU_DOW = ['пн','вт','ср','чт','пт','сб','вс']
+        rev_date_dow = {d: _RU_DOW[datetime.strptime(d, '%Y-%m-%d').weekday()] for d in rev_dates}
 
         # Факт выручки по дням и филиалам
         _act_bf = f"AND s.branch_id IN ({','.join(str(b['id']) for b in rev_branch_list)})" if rev_branch_list else ""
@@ -4467,6 +4469,7 @@ def reports():
         day_groups=day_groups,
         r_date_from=r_date_from, r_date_to=r_date_to,
         rev_branch_list=rev_branch_list, rev_dates=rev_dates,
+        rev_date_dow=rev_date_dow,
         rev_pivot=rev_pivot, rev_total_actual=rev_total_actual,
         rev_total_plan=rev_total_plan,
         branch_groups=get_branch_groups(conn),
