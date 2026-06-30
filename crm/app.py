@@ -1690,6 +1690,109 @@ def api_lfl():
     return jsonify({'ok': True, 'months': result})
 
 
+@app.route('/api/lfl-branches')
+@login_required
+@owner_required
+def api_lfl_branches():
+    """LFL за последний месяц с данными — разбивка по каждому филиалу."""
+    from calendar import monthrange as _mrange
+    today  = date.today()
+    metric = request.args.get('metric', 'revenue')
+    if metric == 'orders':
+        agg = 'COALESCE(SUM(r.delivery_orders),0) + COALESCE(SUM(r.pickup_orders),0)'
+    else:
+        agg = 'COALESCE(SUM(r.total_revenue),0)'
+
+    with get_db() as conn:
+        branches = conn.execute(
+            'SELECT id, name, abbr FROM branches WHERE is_active=1 ORDER BY id'
+        ).fetchall()
+        all_bids = [b['id'] for b in branches]
+        if not all_bids:
+            return jsonify({'ok': True, 'branches': [], 'month_label': ''})
+
+        # Находим последний месяц, где есть хоть какие-то данные (по всем филиалам суммарно)
+        bf_all = f"AND s.branch_id IN ({','.join('?'*len(all_bids))})"
+        earliest_shift = conn.execute(
+            f'SELECT MIN(s.date) FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id {bf_all}',
+            all_bids
+        ).fetchone()[0]
+        earliest_manual = conn.execute(
+            f"SELECT MIN(date) FROM revenue_manual WHERE branch_id IN ({','.join('?'*len(all_bids))})",
+            all_bids
+        ).fetchone()[0]
+        candidates = [x for x in [earliest_shift, earliest_manual] if x]
+        if not candidates:
+            return jsonify({'ok': True, 'branches': [], 'month_label': ''})
+
+        start = date.fromisoformat(min(candidates)[:10])
+        # Перебираем месяцы и берём последний с данными
+        last_month = None
+        y, m = start.year, start.month
+        while (y < today.year) or (y == today.year and m <= today.month):
+            is_cur = (y == today.year and m == today.month)
+            days_t = _mrange(y, m)[1]
+            days_l = _mrange(y - 1, m)[1]
+            d_from = date(y, m, 1).isoformat()
+            d_to   = today.isoformat() if is_cur else date(y, m, days_t).isoformat()
+            total_this = conn.execute(
+                f'SELECT {agg} FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id WHERE s.date BETWEEN ? AND ? {bf_all}',
+                [d_from, d_to] + all_bids
+            ).fetchone()[0] or 0
+            if metric == 'revenue':
+                total_this += _manual_rev_total(conn, d_from, d_to, all_bids)
+            if total_this > 0:
+                last_month = (y, m, is_cur, d_from, d_to, days_l)
+            m += 1
+            if m > 12: m = 1; y += 1
+
+        if not last_month:
+            return jsonify({'ok': True, 'branches': [], 'month_label': ''})
+
+        yr, mo, is_cur, d_from_this, d_to_this, days_l = last_month
+        d_from_last = date(yr - 1, mo, 1).isoformat()
+        d_to_last   = date(yr - 1, mo, min(today.day, days_l) if is_cur else days_l).isoformat()
+
+        month_names = ['', 'Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн',
+                       'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
+        month_label = month_names[mo] + " '" + str(yr)[-2:]
+        if is_cur:
+            month_label = 'тек. ' + month_label
+
+        result = []
+        for b in branches:
+            bid   = b['id']
+            bf1   = 'AND s.branch_id = ?'
+            this_ = conn.execute(
+                f'SELECT {agg} FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id WHERE s.date BETWEEN ? AND ? {bf1}',
+                [d_from_this, d_to_this, bid]
+            ).fetchone()[0] or 0
+            if metric == 'revenue':
+                this_ += _manual_rev_total(conn, d_from_this, d_to_this, [bid])
+            last_ = conn.execute(
+                f'SELECT {agg} FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id WHERE s.date BETWEEN ? AND ? {bf1}',
+                [d_from_last, d_to_last, bid]
+            ).fetchone()[0] or 0
+            if metric == 'revenue':
+                last_ += _manual_rev_total(conn, d_from_last, d_to_last, [bid])
+
+            if this_ == 0:
+                lfl_pct = None
+            else:
+                lfl_pct = round((this_ / last_ - 1) * 100, 1) if last_ > 0 else None
+
+            result.append({
+                'id':       bid,
+                'name':     b['name'],
+                'abbr':     b['abbr'] or b['name'][:3].upper(),
+                'this_year': int(this_),
+                'last_year': int(last_),
+                'lfl_pct':  lfl_pct,
+            })
+
+    return jsonify({'ok': True, 'branches': result, 'month_label': month_label})
+
+
 @app.route('/api/revenue-summary')
 @login_required
 @owner_required
