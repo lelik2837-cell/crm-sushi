@@ -6,7 +6,7 @@
 
   <!-- ══ LEFT: LFL card ══ -->
   <div class="col-12 col-lg-6">
-    <div id="lfl-card" style="background:linear-gradient(135deg,#16a34a 0%,#84cc16 55%,#ca8a04 100%); border-radius:20px; padding:28px 28px 24px; color:#fff; position:relative; display:flex; flex-direction:column;">
+    <div id="lfl-card" style="background:linear-gradient(135deg,#16a34a 0%,#0d9488 50%,#0284c7 100%); border-radius:20px; padding:28px 28px 24px; color:#fff; position:relative; display:flex; flex-direction:column;">
       <!-- Top: metric toggle + branch selector -->
       <div style="display:flex; gap:6px; margin-bottom:20px; align-items:center;">
         <button id="lfl-btn-rev" onclick="setLflMetric('revenue')"
@@ -269,7 +269,7 @@ function loadLfl() {
         var lblEl  = document.getElementById('lfl-period-label');
         if (cur && cur.lfl_pct !== null) {
             var pct = cur.lfl_pct;
-            signEl.textContent = pct >= 0 ? '+' : '';
+            signEl.textContent = pct >= 0 ? '+' : '−';
             valEl.textContent  = Math.abs(pct).toFixed(1);
             symEl.style.display = '';
             signEl.style.color = pct >= 0 ? '#fff' : 'rgba(255,150,150,1)';
