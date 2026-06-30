@@ -6,7 +6,7 @@
 
   <!-- ══ LEFT: LFL card ══ -->
   <div class="col-12 col-lg-6">
-    <div id="lfl-card" style="background:linear-gradient(135deg,#16a34a 0%,#84cc16 55%,#ca8a04 100%); border-radius:20px; padding:28px 28px 24px; color:#fff; position:relative;">
+    <div id="lfl-card" style="background:linear-gradient(135deg,#16a34a 0%,#84cc16 55%,#ca8a04 100%); border-radius:20px; padding:28px 28px 24px; color:#fff; position:relative; display:flex; flex-direction:column;">
       <!-- Top: metric toggle + branch selector -->
       <div style="display:flex; gap:6px; margin-bottom:20px; align-items:center;">
         <button id="lfl-btn-rev" onclick="setLflMetric('revenue')"
@@ -59,7 +59,9 @@
       <!-- Divider -->
       <div style="border-top:1px solid rgba(255,255,255,.2); margin-bottom:14px;"></div>
       <!-- Chart -->
-      <canvas id="lfl-canvas" height="180"></canvas>
+      <div style="position:relative; flex:1; min-height:160px;">
+        <canvas id="lfl-canvas"></canvas>
+      </div>
     </div>
   </div>
 
@@ -209,14 +211,15 @@ function buildLflChart(months) {
     if (lflChart) { lflChart.destroy(); lflChart = null; }
     var canvas = document.getElementById('lfl-canvas');
     if (!canvas) return;
-    var data   = months.map(function(m) { return m.lfl_pct; });
-    var labels = months.map(function(m) { return m.label; });
+    // Отфильтровываем месяцы без данных — не показываем пустое место
+    var filled = months.filter(function(m) { return m.lfl_pct !== null && m.lfl_pct !== undefined; });
+    if (!filled.length) return;
+    var data   = filled.map(function(m) { return m.lfl_pct; });
+    var labels = filled.map(function(m) { return m.label; });
     var colors = data.map(function(v) {
-        if (v === null) return 'rgba(255,255,255,0.2)';
         return v >= 0 ? 'rgba(255,255,255,0.65)' : 'rgba(255,100,100,0.75)';
     });
     var hoverColors = data.map(function(v) {
-        if (v === null) return 'rgba(255,255,255,0.35)';
         return v >= 0 ? 'rgba(255,255,255,0.95)' : 'rgba(255,80,80,0.95)';
     });
     lflChart = new Chart(canvas, {
@@ -227,6 +230,7 @@ function buildLflChart(months) {
         },
         options: {
             responsive: true,
+            maintainAspectRatio: false,
             animation: { duration: 400 },
             plugins: {
                 legend: { display: false },
@@ -234,7 +238,6 @@ function buildLflChart(months) {
                     callbacks: {
                         label: function(ctx) {
                             var v = ctx.parsed.y;
-                            if (v === null) return 'Нет данных';
                             return (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
                         }
                     },
