@@ -15,7 +15,7 @@
                     <th>Имя</th>
                     <th>Логин</th>
                     <th>Роль</th>
-                    <th>Филиал</th>
+                    <th>Филиалы</th>
                     <th></th>
                 </tr>
             </thead>
@@ -32,11 +32,18 @@
                 <td>
                     {% set ubs = user_branches_map.get(u.id, []) %}
                     {% if ubs %}
-                        {{ ubs | map(attribute='name') | join(', ') }}
-                    {% else %}—{% endif %}
+                        <span class="text-muted small">{{ ubs | map(attribute='name') | join(', ') }}</span>
+                    {% else %}<span class="text-muted">—</span>{% endif %}
                 </td>
-                <td class="text-end">
-                    <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#pwModal{{ u.id }}">
+                <td class="text-end" style="white-space:nowrap;">
+                    {% if u.role != 'owner' %}
+                    <button class="btn btn-sm btn-outline-primary me-1"
+                            data-bs-toggle="modal" data-bs-target="#brModal{{ u.id }}">
+                        <i class="bi bi-shop"></i> Филиалы
+                    </button>
+                    {% endif %}
+                    <button class="btn btn-sm btn-outline-secondary"
+                            data-bs-toggle="modal" data-bs-target="#pwModal{{ u.id }}">
                         <i class="bi bi-key"></i> Пароль
                     </button>
                 </td>
@@ -47,7 +54,42 @@
     </div>
 </div>
 
-<!-- Add User Modal -->
+{# ── Macro: branch picker with groups ── #}
+{% macro branch_picker(prefix, current_ids=[]) %}
+<div class="dropdown">
+    <button type="button" class="btn btn-outline-secondary w-100 text-start d-flex justify-content-between align-items-center"
+            id="{{ prefix }}BranchBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside">
+        <span id="{{ prefix }}BranchLabel">— не назначен —</span>
+        <i class="bi bi-chevron-down small"></i>
+    </button>
+    <div class="dropdown-menu p-2 shadow w-100" style="max-height:320px;overflow-y:auto;">
+        {% if branch_groups %}
+        <div class="text-muted px-1 mb-1" style="font-size:0.7rem;font-weight:700;letter-spacing:.5px;">ГРУППЫ</div>
+        <div class="d-flex flex-wrap gap-1 mb-2">
+            {% for g in branch_groups %}
+            <button type="button" class="btn btn-sm btn-outline-primary px-2 py-0 {{ prefix }}-group-btn"
+                    data-ids="{{ g.branch_ids | tojson | e }}"
+                    style="font-size:11px;border-radius:20px;">
+                {{ g.abbr or g.name }}
+            </button>
+            {% endfor %}
+        </div>
+        <hr class="my-1">
+        {% endif %}
+        <input type="text" class="form-control form-control-sm mb-2 {{ prefix }}-search" placeholder="Поиск..." autocomplete="off">
+        {% for b in branches %}
+        <div class="form-check {{ prefix }}-branch-item">
+            <input class="form-check-input {{ prefix }}-branch-cb" type="checkbox"
+                   name="branch_ids" value="{{ b.id }}" id="{{ prefix }}Br{{ b.id }}"
+                   {% if b.id in current_ids %}checked{% endif %}>
+            <label class="form-check-label w-100" for="{{ prefix }}Br{{ b.id }}" style="cursor:pointer">{{ b.name }}</label>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endmacro %}
+
+<!-- ══ Add User Modal ══ -->
 <div class="modal fade" id="addUserModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -78,23 +120,7 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Филиалы</label>
-                        <div class="dropdown">
-                            <button type="button" class="btn btn-outline-secondary w-100 text-start d-flex justify-content-between align-items-center"
-                                    id="addUserBranchBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside">
-                                <span id="addUserBranchLabel">— не назначен —</span>
-                                <i class="bi bi-chevron-down small"></i>
-                            </button>
-                            <div class="dropdown-menu p-2 shadow w-100" style="max-height:260px;overflow-y:auto">
-                                <input type="text" class="form-control form-control-sm mb-2" placeholder="Поиск..." id="addUserBranchSearch" autocomplete="off">
-                                {% for b in branches %}
-                                <div class="form-check add-branch-item">
-                                    <input class="form-check-input add-branch-cb" type="checkbox" name="branch_ids"
-                                           value="{{ b.id }}" id="addBr{{ b.id }}">
-                                    <label class="form-check-label w-100" for="addBr{{ b.id }}" style="cursor:pointer">{{ b.name }}</label>
-                                </div>
-                                {% endfor %}
-                            </div>
-                        </div>
+                        {{ branch_picker('add') }}
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -106,7 +132,33 @@
     </div>
 </div>
 
-<!-- Password Reset Modals -->
+<!-- ══ Edit Branches Modals ══ -->
+{% for u in users %}
+{% if u.role != 'owner' %}
+{% set cur_ids = user_branches_map.get(u.id, []) | map(attribute='id') | list %}
+<div class="modal fade" id="brModal{{ u.id }}" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Филиалы — {{ u.full_name }}</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('edit_user_branches', user_id=u.id) }}">
+                <div class="modal-body">
+                    {{ branch_picker('u' + u.id | string, cur_ids) }}
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endfor %}
+
+<!-- ══ Password Reset Modals ══ -->
 {% for u in users %}
 <div class="modal fade" id="pwModal{{ u.id }}" tabindex="-1">
     <div class="modal-dialog">
@@ -128,31 +180,53 @@
     </div>
 </div>
 {% endfor %}
-{% endblock %}
 
+{% endblock %}
 {% block scripts %}
 <script>
-(function () {
-    var cbs  = document.querySelectorAll('.add-branch-cb');
-    var lbl  = document.getElementById('addUserBranchLabel');
-    var srch = document.getElementById('addUserBranchSearch');
+// Инициализация picker'а для заданного префикса
+function initBranchPicker(prefix) {
+    var cbs    = document.querySelectorAll('.' + prefix + '-branch-cb');
+    var label  = document.getElementById(prefix + 'BranchLabel');
+    var search = document.querySelector('.' + prefix + '-search');
+    var groups = document.querySelectorAll('.' + prefix + '-group-btn');
 
     function updateLabel() {
         var checked = Array.from(cbs).filter(function(c){ return c.checked; });
-        lbl.textContent = checked.length
-            ? checked.map(function(c){ return c.closest('.add-branch-item').querySelector('label').textContent.trim(); }).join(', ')
-            : '— не назначен —';
+        if (!checked.length) { label.textContent = '— не назначен —'; return; }
+        label.textContent = checked.map(function(c){
+            return c.closest('.' + prefix + '-branch-item').querySelector('label').textContent.trim();
+        }).join(', ');
     }
+
     cbs.forEach(function(cb){ cb.addEventListener('change', updateLabel); });
 
-    if (srch) {
-        srch.addEventListener('input', function () {
+    // Кнопки групп
+    groups.forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var ids = JSON.parse(this.dataset.ids);
+            cbs.forEach(function(cb){ cb.checked = ids.indexOf(parseInt(cb.value)) !== -1; });
+            updateLabel();
+        });
+    });
+
+    // Поиск
+    if (search) {
+        search.addEventListener('input', function() {
             var q = this.value.toLowerCase();
-            document.querySelectorAll('.add-branch-item').forEach(function (el) {
+            document.querySelectorAll('.' + prefix + '-branch-item').forEach(function(el) {
                 el.style.display = el.querySelector('label').textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
             });
         });
     }
-})();
+
+    updateLabel();
+}
+
+// Инициализируем все picker'ы
+initBranchPicker('add');
+{% for u in users %}{% if u.role != 'owner' %}
+initBranchPicker('u{{ u.id }}');
+{% endif %}{% endfor %}
 </script>
 {% endblock %}
