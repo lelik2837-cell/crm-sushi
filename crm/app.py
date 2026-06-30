@@ -2141,19 +2141,27 @@ def open_shift():
                 return redirect(url_for('shift_view', shift_id=existing2['id']))
             raise
         shift_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
-        prev_cash_row = conn.execute('''
-            SELECT COALESCE(r.morning_cash, 0)
-                   + COALESCE(r.cash_amount, 0)
-                   + COALESCE(r.change_amount, 0)
-                   - COALESCE((SELECT SUM(e.amount_cash) FROM expenses e WHERE e.shift_id=s.id), 0)
-                   - COALESCE((SELECT SUM(es.total_amount) FROM employee_shifts es
-                                WHERE es.shift_id=s.id AND es.is_paid=1), 0)
-                   AS kassa_nal
-            FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id
-            WHERE s.branch_id=? AND s.date<?
-            ORDER BY s.date DESC LIMIT 1
-        ''', (int(branch_id), today)).fetchone()
-        prev_morning = (prev_cash_row['kassa_nal'] or 0) if prev_cash_row else 0
+        # Если пользователь ввёл факт вручную — используем его
+        _mc_raw = request.form.get('morning_cash', '').strip().replace('\xa0', '').replace(' ', '')
+        if _mc_raw:
+            try:
+                prev_morning = float(_mc_raw.replace(',', '.'))
+            except ValueError:
+                prev_morning = 0.0
+        else:
+            prev_cash_row = conn.execute('''
+                SELECT COALESCE(r.morning_cash, 0)
+                       + COALESCE(r.cash_amount, 0)
+                       + COALESCE(r.change_amount, 0)
+                       - COALESCE((SELECT SUM(e.amount_cash) FROM expenses e WHERE e.shift_id=s.id), 0)
+                       - COALESCE((SELECT SUM(es.total_amount) FROM employee_shifts es
+                                    WHERE es.shift_id=s.id AND es.is_paid=1), 0)
+                       AS kassa_nal
+                FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id
+                WHERE s.branch_id=? AND s.date<?
+                ORDER BY s.date DESC LIMIT 1
+            ''', (int(branch_id), today)).fetchone()
+            prev_morning = (prev_cash_row['kassa_nal'] or 0) if prev_cash_row else 0
         conn.execute(
             'INSERT INTO shift_revenue (shift_id, morning_cash) VALUES (?, ?)',
             (shift_id, prev_morning)
