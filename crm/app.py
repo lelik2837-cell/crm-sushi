@@ -4142,20 +4142,27 @@ def _send_reset_email(to_email, reset_url):
     msg['Subject'] = 'Восстановление пароля — CRMPAPA'
     msg['From']    = SMTP_FROM
     msg['To']      = to_email
-    text = f'Для сброса пароля перейдите по ссылке:\n{reset_url}\n\nСсылка действительна 1 час.'
+    text = f'Для сброса пароля перейдите по ссылке:\n{reset_url}\n\nСсылка действительна 2 часа.'
     html = f'''<div style="font-family:sans-serif;max-width:480px;margin:0 auto;">
         <h2 style="color:#c0392b;">CRMPAPA</h2>
         <p>Вы запросили сброс пароля. Нажмите кнопку ниже:</p>
         <a href="{reset_url}" style="display:inline-block;background:#c0392b;color:#fff;padding:12px 28px;
            border-radius:8px;text-decoration:none;font-weight:700;margin:12px 0;">Сбросить пароль</a>
-        <p style="color:#888;font-size:12px;margin-top:16px;">Ссылка действительна 1 час. Если вы не запрашивали сброс — просто проигнорируйте это письмо.</p>
+        <p style="color:#888;font-size:12px;margin-top:16px;">Ссылка действительна 2 часа. Если вы не запрашивали сброс — просто проигнорируйте это письмо.</p>
     </div>'''
     msg.attach(MIMEText(text, 'plain', 'utf-8'))
     msg.attach(MIMEText(html, 'html', 'utf-8'))
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as srv:
-        srv.starttls()
-        srv.login(SMTP_USER, SMTP_PASSWORD)
-        srv.sendmail(SMTP_USER, to_email, msg.as_string())
+    raw = msg.as_string()
+    def _do_send():
+        try:
+            srv = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15)
+            srv.starttls()
+            srv.login(SMTP_USER, SMTP_PASSWORD)
+            srv.sendmail(SMTP_USER, to_email, raw)
+            srv.quit()
+        except Exception as e:
+            logging.error(f'Background email error: {e}')
+    threading.Thread(target=_do_send, daemon=True).start()
 
 
 @app.route('/forgot-password', methods=['GET', 'POST'])
@@ -4176,12 +4183,7 @@ def forgot_password():
                 )
                 conn.commit()
                 reset_url = url_for('reset_password_token', token=token, _external=True)
-                try:
-                    _send_reset_email(email, reset_url)
-                except Exception as e:
-                    logging.error(f'Email send error: {e}')
-                    flash('Ошибка отправки письма. Проверьте настройки почты.', 'danger')
-                    return redirect(url_for('forgot_password'))
+                _send_reset_email(email, reset_url)
         flash('Если аккаунт с этой почтой существует — письмо отправлено. Проверьте входящие (и папку «Спам»).', 'info')
         return redirect(url_for('login'))
     return render_template('forgot_password.html')
