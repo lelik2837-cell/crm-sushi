@@ -1,111 +1,92 @@
 {% extends 'base.html' %}
-{% block title %}Главная{% endblock %}
+{% block title %}Открытие смены{% endblock %}
 {% block content %}
 
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <div>
-        <h4 class="fw-bold mb-0"><i class="bi bi-shop"></i>
-            {% if branches_shifts|length == 1 %}{{ branches_shifts[0].branch.name }}
-            {% elif branches_shifts|length > 1 %}Мои филиалы ({{ branches_shifts|length }})
-            {% else %}Нет филиала{% endif %}
-        </h4>
-        <small class="text-muted">{{ today }}</small>
-    </div>
-</div>
-
 {% if not branches_shifts %}
-<div class="alert alert-warning">У вашего аккаунта не назначен филиал. Обратитесь к владельцу.</div>
-
+<div class="alert alert-warning text-center">У вашего аккаунта не назначен филиал. Обратитесь к владельцу.</div>
 {% else %}
 
-<div class="row g-3 mb-4">
 {% for bs in branches_shifts %}
 {% set branch = bs.branch %}
 {% set shift  = bs.shift %}
-<div class="col-12 {% if branches_shifts|length > 1 %}col-md-6{% endif %}">
-    <div class="card h-100 {% if shift and shift.status == 'open' %}border-success{% elif shift %}border-secondary{% endif %}">
-        {% if branches_shifts|length > 1 %}
-        <div class="card-header bg-light fw-semibold py-2">
-            <i class="bi bi-shop"></i> {{ branch.name }}
-        </div>
-        {% endif %}
-        <div class="card-body">
-            {% if not shift %}
-            <div class="text-center py-3">
-                <div style="font-size:3rem">📋</div>
-                <p class="fw-semibold mt-2 mb-1">Смена не открыта</p>
-                <form method="POST" action="{{ url_for('open_shift') }}">
-                    <input type="hidden" name="branch_id" value="{{ branch.id }}">
-                    <button type="submit" class="btn btn-primary">
-                        <i class="bi bi-play-circle"></i> Открыть смену
-                    </button>
-                </form>
-            </div>
-            {% else %}
-            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
-                <div>
-                    <span class="fw-bold fs-6">Смена {{ shift.date }}</span>
-                    {% if shift.status == 'open' %}
-                    <span class="badge bg-success ms-2">🟢 Открыта</span>
-                    {% else %}
-                    <span class="badge bg-secondary ms-2">🔒 Закрыта</span>
-                    {% if shift.closed_by_name %}
-                    <small class="text-muted ms-2">{{ shift.closed_by_name }}</small>
-                    {% endif %}
-                    {% endif %}
-                </div>
-                <a href="{{ url_for('shift_view', shift_id=shift.id) }}" class="btn btn-primary btn-sm">
-                    <i class="bi bi-pencil-square"></i>
-                    {% if shift.status == 'open' %}Внести данные{% else %}Просмотреть{% endif %}
-                </a>
-            </div>
-            {% endif %}
-        </div>
+<div style="max-width:420px; margin:32px auto;">
+  <div style="background:#fff; border-radius:20px; box-shadow:0 4px 24px rgba(0,0,0,0.10); padding:36px 32px;">
+
+    <!-- Branch name -->
+    <div style="font-size:11px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:#94a3b8; margin-bottom:6px;">Филиал</div>
+    <div style="font-size:22px; font-weight:800; color:#1e293b; margin-bottom:4px;">{{ branch.name }}</div>
+    <div style="font-size:13px; color:#94a3b8; margin-bottom:28px;">{{ today }}</div>
+
+    {% if not shift %}
+    <!-- Shift not yet opened -->
+    <div style="border-top:1px solid #f1f5f9; padding-top:24px;">
+      <form method="POST" action="{{ url_for('open_shift') }}" id="open-form">
+        <input type="hidden" name="branch_id" value="{{ branch.id }}">
+
+        <label style="font-size:11px; font-weight:700; letter-spacing:.8px; text-transform:uppercase; color:#64748b; display:block; margin-bottom:8px;">Факт в кассе, ₽</label>
+        <input type="text" name="morning_cash" id="morning_cash" inputmode="numeric"
+          placeholder="0"
+          style="width:100%; font-size:32px; font-weight:800; color:#1e293b; border:none; border-bottom:2px solid #e2e8f0; background:transparent; outline:none; padding:4px 0 8px; margin-bottom:28px; letter-spacing:-1px; transition:border-color .15s;"
+          onfocus="this.style.borderColor='#6366f1'"
+          onblur="this.style.borderColor='#e2e8f0'">
+
+        <button type="submit"
+          style="width:100%; padding:14px; background:linear-gradient(135deg,#6366f1,#8b5cf6); color:#fff; border:none; border-radius:12px; font-size:16px; font-weight:700; cursor:pointer; letter-spacing:.3px; transition:opacity .15s;"
+          onmouseover="this.style.opacity='.88'" onmouseout="this.style.opacity='1'">
+          Открыть смену
+        </button>
+      </form>
     </div>
+
+    {% elif shift.status == 'open' %}
+    <!-- Shift open -->
+    <div style="border-top:1px solid #f1f5f9; padding-top:24px; text-align:center;">
+      <div style="display:inline-flex; align-items:center; gap:6px; background:#dcfce7; color:#15803d; border-radius:20px; padding:6px 14px; font-size:13px; font-weight:700; margin-bottom:20px;">
+        <span style="width:8px;height:8px;border-radius:50%;background:#16a34a;display:inline-block;"></span>
+        Смена открыта
+      </div>
+      <br>
+      <a href="{{ url_for('shift_view', shift_id=shift.id) }}"
+        style="display:inline-block; width:100%; padding:14px; background:linear-gradient(135deg,#6366f1,#8b5cf6); color:#fff; border-radius:12px; font-size:16px; font-weight:700; text-decoration:none; letter-spacing:.3px;">
+        Внести данные
+      </a>
+    </div>
+
+    {% else %}
+    <!-- Shift closed -->
+    <div style="border-top:1px solid #f1f5f9; padding-top:24px; text-align:center;">
+      <div style="display:inline-flex; align-items:center; gap:6px; background:#f1f5f9; color:#64748b; border-radius:20px; padding:6px 14px; font-size:13px; font-weight:700; margin-bottom:20px;">
+        🔒 Смена закрыта
+      </div>
+      <br>
+      <a href="{{ url_for('shift_view', shift_id=shift.id) }}"
+        style="display:inline-block; width:100%; padding:14px; background:#f1f5f9; color:#475569; border-radius:12px; font-size:15px; font-weight:600; text-decoration:none;">
+        Просмотреть смену
+      </a>
+    </div>
+    {% endif %}
+
+  </div>
 </div>
 {% endfor %}
-</div>
 
 {% endif %}
 
-<!-- Recent shifts -->
-{% if recent %}
-<div class="card mt-2">
-    <div class="card-header bg-light fw-semibold">
-        <i class="bi bi-clock-history"></i> Последние смены
-    </div>
-    <div class="card-body p-0">
-        <div class="table-responsive">
-            <table class="table table-hover mb-0">
-                <thead class="table-light">
-                    <tr>
-                        <th>Дата</th>
-                        {% if branches_shifts|length > 1 %}<th>Филиал</th>{% endif %}
-                        <th class="text-end">Выручка</th>
-                        <th class="text-center">Статус</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>
-                {% for r in recent %}
-                <tr>
-                    <td class="fw-semibold">{{ r.date }}</td>
-                    {% if branches_shifts|length > 1 %}<td class="text-muted small">{{ r.branch_name }}</td>{% endif %}
-                    <td class="text-end">{{ '{:,.0f}'.format(r.revenue) }} ₽</td>
-                    <td class="text-center">
-                        {% if r.status == 'open' %}
-                        <span class="badge bg-warning text-dark">Открыта</span>
-                        {% else %}
-                        <span class="badge bg-secondary">Закрыта</span>
-                        {% endif %}
-                    </td>
-                    <td><a href="{{ url_for('shift_view', shift_id=r.id) }}" class="btn btn-sm btn-outline-secondary">Открыть</a></td>
-                </tr>
-                {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-</div>
-{% endif %}
+<script>
+// Форматируем поле ввода как число с пробелами
+var inp = document.getElementById('morning_cash');
+if (inp) {
+    inp.addEventListener('input', function() {
+        var raw = this.value.replace(/\D/g, '');
+        this.value = raw ? parseInt(raw, 10).toLocaleString('ru-RU') : '';
+    });
+    // Перед отправкой — убираем форматирование
+    var form = document.getElementById('open-form');
+    if (form) {
+        form.addEventListener('submit', function() {
+            inp.value = inp.value.replace(/\D/g, '') || '0';
+        });
+    }
+}
+</script>
 {% endblock %}
