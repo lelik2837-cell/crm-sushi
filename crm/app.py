@@ -36,7 +36,7 @@ DATABASE = os.environ.get('DATABASE_PATH', os.path.join(os.path.dirname(os.path.
 SMTP_HOST     = 'smtp.gmail.com'
 SMTP_PORT     = 587
 SMTP_USER     = 'papasushi42@gmail.com'
-SMTP_PASSWORD = 'rfwfdkocfihbxnxz'
+SMTP_PASSWORD = 'ciznzwgctjqpvbli'
 SMTP_FROM     = 'CRMPAPA <papasushi42@gmail.com>'
 
 
