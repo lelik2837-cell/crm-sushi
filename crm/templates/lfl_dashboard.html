@@ -54,6 +54,8 @@
   <div id="lfl-period-label" style="font-size:14px; opacity:.6; margin-bottom:18px;">к тому же периоду прошлого года</div>
   <!-- Divider -->
   <div style="border-top:1px solid rgba(255,255,255,.2); margin-bottom:14px;"></div>
+  <!-- Branch LFL blocks -->
+  <div id="lfl-branches" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:7px; margin-bottom:16px;"></div>
   <!-- Chart -->
   <canvas id="lfl-canvas" height="180"></canvas>
 </div>
@@ -147,6 +149,31 @@ function setLflMetric(metric) {
     document.getElementById('lfl-card-title').textContent =
         isRev ? 'LFL — Рост выручки' : 'LFL — Рост заказов';
     loadLfl();
+    loadLflBranches();
+}
+
+function loadLflBranches() {
+    fetch('/api/lfl-branches?metric=' + lflMetric)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            var wrap = document.getElementById('lfl-branches');
+            if (!d.ok || !d.branches || !d.branches.length) { wrap.innerHTML = ''; return; }
+            wrap.innerHTML = d.branches.map(function(b) {
+                var pct    = b.lfl_pct;
+                var hasVal = pct !== null && pct !== undefined;
+                var color  = hasVal ? (pct >= 0 ? '#bbf7d0' : '#fca5a5') : 'rgba(255,255,255,.5)';
+                var txtClr = hasVal ? (pct >= 0 ? '#14532d' : '#7f1d1d') : 'rgba(255,255,255,.6)';
+                var pctStr = hasVal ? (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%' : '—';
+                return '<div style="background:rgba(0,0,0,.15);border-radius:10px;padding:8px 10px;">' +
+                    '<div style="display:flex;align-items:center;gap:5px;margin-bottom:5px;">' +
+                        '<span style="font-size:9px;font-weight:700;background:rgba(255,255,255,.18);border-radius:5px;padding:1px 5px;letter-spacing:.4px;flex-shrink:0;">' + b.abbr + '</span>' +
+                        '<span style="font-size:10px;opacity:.75;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + b.name + '</span>' +
+                    '</div>' +
+                    '<div style="font-size:17px;font-weight:800;letter-spacing:-.5px;color:' + color + ';">' + pctStr + '</div>' +
+                    '<div style="font-size:9px;opacity:.55;margin-top:2px;">' + d.month_label + '</div>' +
+                '</div>';
+            }).join('');
+        });
 }
 
 function buildLflChart(months) {
@@ -227,5 +254,6 @@ function loadLfl() {
 
 updateLflBranchBtn();
 loadLfl();
+loadLflBranches();
 </script>
 {% endblock %}
