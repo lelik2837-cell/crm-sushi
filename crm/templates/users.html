@@ -15,7 +15,7 @@
                     <th>Имя</th>
                     <th>Логин</th>
                     <th>Роль</th>
-                    <th>Филиалы</th>
+                    <th>Группа</th>
                     <th></th>
                 </tr>
             </thead>
@@ -30,22 +30,18 @@
                     {% else %}<span class="badge bg-secondary">Сотрудник</span>{% endif %}
                 </td>
                 <td>
-                    {% set ubs = user_branches_map.get(u.id, []) %}
-                    {% if ubs %}
-                        <span class="text-muted small">{{ ubs | map(attribute='name') | join(', ') }}</span>
+                    {% set grps = user_groups_map.get(u.id, []) %}
+                    {% if grps %}
+                        <span class="text-muted small">{{ grps | join(', ') }}</span>
                     {% else %}<span class="text-muted">—</span>{% endif %}
                 </td>
-                <td class="text-end" style="white-space:nowrap;">
+                <td class="text-end">
                     {% if u.role != 'owner' %}
-                    <button class="btn btn-sm btn-outline-primary me-1"
-                            data-bs-toggle="modal" data-bs-target="#brModal{{ u.id }}">
-                        <i class="bi bi-shop"></i> Филиалы
+                    <button class="btn btn-sm btn-outline-primary"
+                            data-bs-toggle="modal" data-bs-target="#editModal{{ u.id }}">
+                        <i class="bi bi-pencil"></i> Редактировать
                     </button>
                     {% endif %}
-                    <button class="btn btn-sm btn-outline-secondary"
-                            data-bs-toggle="modal" data-bs-target="#pwModal{{ u.id }}">
-                        <i class="bi bi-key"></i> Пароль
-                    </button>
                 </td>
             </tr>
             {% endfor %}
@@ -132,20 +128,43 @@
     </div>
 </div>
 
-<!-- ══ Edit Branches Modals ══ -->
+<!-- ══ Edit User Modals ══ -->
 {% for u in users %}
 {% if u.role != 'owner' %}
 {% set cur_ids = user_branches_map.get(u.id, []) | map(attribute='id') | list %}
-<div class="modal fade" id="brModal{{ u.id }}" tabindex="-1">
+<div class="modal fade" id="editModal{{ u.id }}" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title">Филиалы — {{ u.full_name }}</h5>
+                <h5 class="modal-title"><i class="bi bi-pencil"></i> Редактировать — {{ u.full_name }}</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
-            <form method="POST" action="{{ url_for('edit_user_branches', user_id=u.id) }}">
+            <form method="POST" action="{{ url_for('edit_user', user_id=u.id) }}">
                 <div class="modal-body">
-                    {{ branch_picker('u' + u.id | string, cur_ids) }}
+                    <div class="mb-3">
+                        <label class="form-label">Имя *</label>
+                        <input type="text" name="full_name" class="form-control" value="{{ u.full_name }}" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Логин *</label>
+                        <input type="text" name="username" class="form-control" value="{{ u.username }}" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Роль</label>
+                        <select name="role" class="form-select">
+                            <option value="admin" {% if u.role == 'admin' %}selected{% endif %}>Администратор</option>
+                            <option value="employee" {% if u.role == 'employee' %}selected{% endif %}>Сотрудник</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Филиалы</label>
+                        {{ branch_picker('e' + u.id | string, cur_ids) }}
+                    </div>
+                    <hr>
+                    <div class="mb-1">
+                        <label class="form-label">Новый пароль <span class="text-muted fw-normal">(оставьте пустым, чтобы не менять)</span></label>
+                        <input type="text" name="password" class="form-control" placeholder="Новый пароль">
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
@@ -158,33 +177,9 @@
 {% endif %}
 {% endfor %}
 
-<!-- ══ Password Reset Modals ══ -->
-{% for u in users %}
-<div class="modal fade" id="pwModal{{ u.id }}" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">Сменить пароль — {{ u.full_name }}</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <form method="POST" action="{{ url_for('reset_password', user_id=u.id) }}">
-                <div class="modal-body">
-                    <input type="text" name="password" class="form-control" placeholder="Новый пароль" required>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                    <button type="submit" class="btn btn-primary">Сохранить</button>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
-{% endfor %}
-
 {% endblock %}
 {% block scripts %}
 <script>
-// Инициализация picker'а для заданного префикса
 function initBranchPicker(prefix) {
     var cbs    = document.querySelectorAll('.' + prefix + '-branch-cb');
     var label  = document.getElementById(prefix + 'BranchLabel');
@@ -201,7 +196,6 @@ function initBranchPicker(prefix) {
 
     cbs.forEach(function(cb){ cb.addEventListener('change', updateLabel); });
 
-    // Кнопки групп
     groups.forEach(function(btn) {
         btn.addEventListener('click', function() {
             var ids = JSON.parse(this.dataset.ids);
@@ -210,7 +204,6 @@ function initBranchPicker(prefix) {
         });
     });
 
-    // Поиск
     if (search) {
         search.addEventListener('input', function() {
             var q = this.value.toLowerCase();
@@ -223,10 +216,9 @@ function initBranchPicker(prefix) {
     updateLabel();
 }
 
-// Инициализируем все picker'ы
 initBranchPicker('add');
 {% for u in users %}{% if u.role != 'owner' %}
-initBranchPicker('u{{ u.id }}');
+initBranchPicker('e{{ u.id }}');
 {% endif %}{% endfor %}
 </script>
 {% endblock %}

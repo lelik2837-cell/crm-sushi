@@ -4016,8 +4016,14 @@ def users():
             ORDER BY b.name
         ''').fetchall():
             user_branches_map.setdefault(row['user_id'], []).append({'id': row['id'], 'name': row['name']})
+    user_groups_map = {}
+    for uid, branch_list in user_branches_map.items():
+        ub_ids = set(b['id'] for b in branch_list)
+        grps = [g['abbr'] or g['name'] for g in branch_groups if set(g['branch_ids']) & ub_ids]
+        user_groups_map[uid] = grps
     return render_template('users.html', users=ulist, branches=branches,
-                           branch_groups=branch_groups, user_branches_map=user_branches_map)
+                           branch_groups=branch_groups, user_branches_map=user_branches_map,
+                           user_groups_map=user_groups_map)
 
 
 @app.route('/users/<int:user_id>/branches', methods=['POST'])
@@ -4085,6 +4091,42 @@ def reset_password(user_id):
         )
         conn.commit()
     flash('Пароль обновлён', 'success')
+    return redirect(url_for('users'))
+
+
+@app.route('/users/<int:user_id>/edit', methods=['POST'])
+@login_required
+@owner_required
+def edit_user(user_id):
+    full_name = request.form.get('full_name', '').strip()
+    username = request.form.get('username', '').strip()
+    role = request.form.get('role', 'admin')
+    password = request.form.get('password', '').strip()
+    branch_ids = [int(bid) for bid in request.form.getlist('branch_ids') if bid.isdigit()]
+    if not full_name or not username:
+        flash('Заполните все обязательные поля', 'danger')
+        return redirect(url_for('users'))
+    with get_db() as conn:
+        u = conn.execute('SELECT * FROM users WHERE id=?', (user_id,)).fetchone()
+        if not u:
+            flash('Пользователь не найден', 'danger')
+            return redirect(url_for('users'))
+        existing = conn.execute('SELECT id FROM users WHERE username=? AND id!=?', (username, user_id)).fetchone()
+        if existing:
+            flash('Логин уже занят', 'danger')
+            return redirect(url_for('users'))
+        conn.execute('UPDATE users SET full_name=?, username=?, role=? WHERE id=?',
+                     (full_name, username, role, user_id))
+        if password:
+            conn.execute('UPDATE users SET password_hash=? WHERE id=?',
+                         (generate_password_hash(password, method='pbkdf2:sha256'), user_id))
+        conn.execute('DELETE FROM user_branches WHERE user_id=?', (user_id,))
+        primary = branch_ids[0] if branch_ids else None
+        conn.execute('UPDATE users SET branch_id=? WHERE id=?', (primary, user_id))
+        for bid in branch_ids:
+            conn.execute('INSERT OR IGNORE INTO user_branches (user_id, branch_id) VALUES (?,?)', (user_id, bid))
+        conn.commit()
+    flash(f'Пользователь {full_name} обновлён', 'success')
     return redirect(url_for('users'))
 
 
