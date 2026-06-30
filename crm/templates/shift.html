@@ -1707,33 +1707,71 @@ function openCloseModal() {
     if (!errEl) {
       errEl = document.createElement('div');
       errEl.id = 'close-form-error';
-      errEl.style.cssText = 'color:#dc2626;font-size:13px;font-weight:600;margin-bottom:10px;padding:8px 12px;background:#fef2f2;border-radius:8px;border:1.5px solid #fecaca;display:none;';
+      errEl.style.cssText = 'color:#dc2626;font-size:13px;font-weight:600;margin-bottom:10px;padding:8px 12px;background:#fef2f2;border-radius:8px;border:1.5px solid #fecaca;display:none;white-space:pre-line;';
       form.insertBefore(errEl, form.querySelector('[style*="display:flex"]') || form.lastElementChild);
     }
     errEl.style.display = 'none';
-    // Проверка: кто закрыл
-    if (!hidden.value.trim()) {
-      e.preventDefault();
-      errEl.textContent = '⚠ Укажите, кто закрыл смену';
-      errEl.style.display = '';
-      if (sel.value === '__other__') custom.focus();
-      return;
+
+    var errors = [];
+
+    // 1. Кто закрыл
+    if (!hidden.value.trim()) errors.push('Укажите, кто закрыл смену');
+
+    // 2. Выручка: доставка + самовывоз = общая выручка
+    var delivRev = readNum(document.querySelector('.rev-field[data-field="delivery_revenue"]'));
+    var pickRev  = readNum(document.querySelector('.rev-field[data-field="pickup_revenue"]'));
+    var cashAmt  = readNum(document.querySelector('.rev-field[data-field="cash_amount"]'));
+    var cardAmt  = readNum(document.querySelector('.rev-field[data-field="card_amount"]'));
+    var onlAmt   = readNum(document.querySelector('.rev-field[data-field="online_amount"]'));
+    var totalRev = cashAmt + cardAmt + onlAmt;
+    if (Math.round(delivRev + pickRev) !== Math.round(totalRev)) {
+      errors.push('Выручка: доставка (' + Math.round(delivRev).toLocaleString('ru-RU') + ' ₽) + самовывоз (' + Math.round(pickRev).toLocaleString('ru-RU') + ' ₽) = ' + Math.round(delivRev + pickRev).toLocaleString('ru-RU') + ' ₽, а общая выручка = ' + Math.round(totalRev).toLocaleString('ru-RU') + ' ₽');
     }
-    // Проверка: причина расхождения
+
+    // 3. Заказы: доставка + самовывоз = общее количество
+    var dOrdEl   = document.querySelector('.rev-field[data-field="delivery_orders_real"]');
+    var pOrdEl   = document.querySelector('.rev-field[data-field="pickup_orders"]');
+    var tOrdEl   = document.querySelector('.rev-field[data-field="delivery_orders"]');
+    var delivOrd = dOrdEl ? (parseInt(dOrdEl.value) || 0) : 0;
+    var pickOrd  = pOrdEl ? (parseInt(pOrdEl.value) || 0) : 0;
+    var totalOrd = tOrdEl ? (parseInt(tOrdEl.value) || 0) : 0;
+    if (delivOrd + pickOrd !== totalOrd) {
+      errors.push('Заказы: доставка (' + delivOrd + ') + самовывоз (' + pickOrd + ') = ' + (delivOrd + pickOrd) + ', а всего заказов = ' + totalOrd);
+    }
+
+    // 4. Факт в кассе должен быть заполнен
+    var factCashEl = document.getElementById('actual-cash-input');
+    if (!factCashEl || factCashEl.value.trim() === '') {
+      errors.push('Не заполнен «Факт в кассе»');
+    }
+
+    // 5. Факт безнал должен быть заполнен (хотя бы одна строка терминала с суммой)
+    var beznalAmts = document.querySelectorAll('.beznal-amt');
+    var beznalFilled = Array.from(beznalAmts).some(function(el) { return el.value.trim() !== ''; });
+    if (!beznalFilled) {
+      errors.push('Не заполнен «Факт безнал» — внесите данные терминала(ов)');
+    }
+
+    // 6. Причина расхождения
     var diffBlock = document.getElementById('close-diff-block');
     var diffErr   = document.getElementById('close-diff-err');
     if (diffBlock && diffBlock.style.display !== 'none') {
       var ta = diffBlock.querySelector('textarea');
       if (ta && !ta.value.trim()) {
-        e.preventDefault();
         if (diffErr) diffErr.style.display = '';
-        ta.focus();
-        errEl.textContent = '⚠ Укажите причину расхождения наличных';
-        errEl.style.display = '';
-        return;
+        errors.push('Укажите причину расхождения наличных');
+      } else if (diffErr) {
+        diffErr.style.display = 'none';
       }
     }
-    if (diffErr) diffErr.style.display = 'none';
+
+    if (errors.length) {
+      e.preventDefault();
+      errEl.innerHTML = errors.map(function(s) { return '⚠ ' + s; }).join('\n');
+      errEl.style.display = '';
+      errEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      return;
+    }
   });
 
   syncHidden();
