@@ -4164,11 +4164,11 @@ def forgot_password():
         email = request.form.get('email', '').strip().lower()
         with get_db() as conn:
             user = conn.execute(
-                "SELECT * FROM users WHERE LOWER(email)=? AND email!=''", (email,)
+                "SELECT * FROM users WHERE LOWER(COALESCE(email,''))=? AND email!=''", (email,)
             ).fetchone()
             if user:
                 token = secrets.token_urlsafe(32)
-                expires = (datetime.now() + timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
+                expires = (datetime.utcnow() + timedelta(hours=2)).strftime('%Y-%m-%d %H:%M:%S')
                 conn.execute('DELETE FROM password_reset_tokens WHERE user_id=?', (user['id'],))
                 conn.execute(
                     'INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (?,?,?)',
@@ -4180,7 +4180,7 @@ def forgot_password():
                     _send_reset_email(email, reset_url)
                 except Exception as e:
                     logging.error(f'Email send error: {e}')
-                    flash('Ошибка отправки письма. Обратитесь к администратору.', 'danger')
+                    flash('Ошибка отправки письма. Проверьте настройки почты.', 'danger')
                     return redirect(url_for('forgot_password'))
         flash('Если аккаунт с этой почтой существует — письмо отправлено. Проверьте входящие (и папку «Спам»).', 'info')
         return redirect(url_for('login'))
@@ -4189,13 +4189,18 @@ def forgot_password():
 
 @app.route('/reset-password/<token>', methods=['GET', 'POST'])
 def reset_password_token(token):
-    with get_db() as conn:
+    conn = get_db()
+    try:
         row = conn.execute(
-            "SELECT * FROM password_reset_tokens WHERE token=? AND used=0 AND expires_at > datetime('now')",
+            'SELECT * FROM password_reset_tokens WHERE token=? AND used=0',
             (token,)
         ).fetchone()
         if not row:
-            flash('Ссылка недействительна или устарела. Запросите новую.', 'danger')
+            flash('Ссылка недействительна или уже была использована.', 'danger')
+            return redirect(url_for('forgot_password'))
+        expires_at = datetime.strptime(row['expires_at'], '%Y-%m-%d %H:%M:%S')
+        if datetime.utcnow() > expires_at:
+            flash('Ссылка устарела. Запросите новую.', 'danger')
             return redirect(url_for('forgot_password'))
         if request.method == 'POST':
             password = request.form.get('password', '').strip()
@@ -4210,7 +4215,9 @@ def reset_password_token(token):
             conn.commit()
             flash('Пароль успешно изменён. Войдите с новым паролем.', 'success')
             return redirect(url_for('login'))
-    return render_template('reset_password.html', token=token)
+        return render_template('reset_password.html', token=token)
+    finally:
+        conn.close()
 
 
 @app.route('/users/<int:user_id>/edit', methods=['POST'])
