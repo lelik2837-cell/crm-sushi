@@ -163,8 +163,8 @@
 <nav class="navbar navbar-expand-lg navbar-dark mb-4">
     <div class="container-fluid">
         <a class="navbar-brand" href="{{ url_for('dashboard') }}">CRMPAPA</a>
-        <!-- Mobile only: Дашборд dropdown слева от гамбургера -->
-        <div class="d-lg-none dropdown">
+        <!-- Mobile only: Дашборд dropdown слева от гамбургера (только owner) -->
+        <div class="d-lg-none dropdown" {% if session.get('role') != 'owner' %}style="display:none!important"{% endif %}>
             <button class="mobile-dash-btn dropdown-toggle" type="button"
                     data-bs-toggle="dropdown" aria-expanded="false">
                 <i class="bi bi-grid"></i> Дашборд
@@ -190,11 +190,12 @@
                 </li>
             </ul>
         </div>
-        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav">
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav" {% if session.get('role') != 'owner' %}style="display:none"{% endif %}>
             <span class="navbar-toggler-icon"></span>
         </button>
         <div class="collapse navbar-collapse" id="nav">
             <ul class="navbar-nav me-auto">
+            {% if session.get('role') == 'owner' %}
                 {% set dash_active = request.endpoint in ('dashboard', 'fot_dashboard', 'lfl_dashboard') %}
                 <li class="nav-item dropdown d-none d-lg-flex">
                     <a class="nav-link nav-link-dashboard dropdown-toggle {% if dash_active %}active{% endif %}"
@@ -349,6 +350,7 @@
                         {% endif %}
                     </ul>
                 </li>
+            {% endif %}{# owner nav #}
             </ul>
             <ul class="navbar-nav">
                 <li class="nav-item dropdown">
