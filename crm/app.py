@@ -1633,6 +1633,23 @@ def api_lfl():
             if start_m <= 0:
                 start_m += 12
                 start_y -= 1
+        # Филиалы с неполным первым месяцем — исключаем их вклад за этот месяц
+        _SKIP_KW = ('авиатор', 'новобайдаев', 'торез')
+        _all_br = conn.execute('SELECT id, name FROM branches WHERE is_active=1').fetchall()
+        skip_first = {}  # {branch_id: (first_year, first_month)}
+        for _b in _all_br:
+            if any(kw in _b['name'].lower() for kw in _SKIP_KW):
+                _bid = _b['id']
+                if bids and _bid not in bids:
+                    continue
+                _ms = conn.execute(
+                    'SELECT MIN(s.date) FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id WHERE s.branch_id=?', [_bid]
+                ).fetchone()[0]
+                _mm = conn.execute('SELECT MIN(date) FROM revenue_manual WHERE branch_id=?', [_bid]).fetchone()[0]
+                _c = [x for x in [_ms, _mm] if x]
+                if _c:
+                    _d = date.fromisoformat(min(_c)[:10])
+                    skip_first[_bid] = (_d.year, _d.month)
         months_seq = []
         y, m = start_y, start_m
         while (y < today.year) or (y == today.year and m <= today.month):
@@ -1668,6 +1685,24 @@ def api_lfl():
             ).fetchone()[0] or 0
             if metric == 'revenue':
                 val_last += _manual_rev_total(conn, d_from_last, d_to_last, bids or None)
+            # Вычитаем вклад филиалов с неполным первым месяцем
+            for _bid_sk, (_fy, _fm) in skip_first.items():
+                if yr == _fy and mo == _fm:
+                    _st = conn.execute(
+                        f'SELECT {agg} FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id WHERE s.date BETWEEN ? AND ? AND s.branch_id=?',
+                        [d_from_this, d_to_this, _bid_sk]
+                    ).fetchone()[0] or 0
+                    if metric == 'revenue':
+                        _st += _manual_rev_total(conn, d_from_this, d_to_this, [_bid_sk])
+                    val_this = max(0, val_this - _st)
+                if yr - 1 == _fy and mo == _fm:
+                    _sl = conn.execute(
+                        f'SELECT {agg} FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id WHERE s.date BETWEEN ? AND ? AND s.branch_id=?',
+                        [d_from_last, d_to_last, _bid_sk]
+                    ).fetchone()[0] or 0
+                    if metric == 'revenue':
+                        _sl += _manual_rev_total(conn, d_from_last, d_to_last, [_bid_sk])
+                    val_last = max(0, val_last - _sl)
             # val_this=0 → нет данных за этот период, не показываем как -100%
             if val_this == 0:
                 lfl_pct = None
@@ -1759,6 +1794,21 @@ def api_lfl_branches():
         if is_cur:
             month_label = 'тек. ' + month_label
 
+        # Филиалы с неполным первым месяцем
+        _SKIP_KW = ('авиатор', 'новобайдаев', 'торез')
+        skip_first_br = {}  # {branch_id: (first_year, first_month)}
+        for _b in branches:
+            if any(kw in _b['name'].lower() for kw in _SKIP_KW):
+                _bid = _b['id']
+                _ms = conn.execute(
+                    'SELECT MIN(s.date) FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id WHERE s.branch_id=?', [_bid]
+                ).fetchone()[0]
+                _mm = conn.execute('SELECT MIN(date) FROM revenue_manual WHERE branch_id=?', [_bid]).fetchone()[0]
+                _c = [x for x in [_ms, _mm] if x]
+                if _c:
+                    _d = date.fromisoformat(min(_c)[:10])
+                    skip_first_br[_bid] = (_d.year, _d.month)
+
         result = []
         for b in branches:
             bid   = b['id']
@@ -1778,6 +1828,13 @@ def api_lfl_branches():
 
             if this_ == 0:
                 lfl_pct = None
+            elif bid in skip_first_br:
+                # Если год назад был первый (неполный) месяц — не считаем LFL
+                _fy, _fm = skip_first_br[bid]
+                if yr - 1 == _fy and mo == _fm:
+                    lfl_pct = None
+                else:
+                    lfl_pct = round((this_ / last_ - 1) * 100, 1) if last_ > 0 else None
             else:
                 lfl_pct = round((this_ / last_ - 1) * 100, 1) if last_ > 0 else None
 
