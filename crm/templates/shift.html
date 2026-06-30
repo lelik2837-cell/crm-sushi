@@ -784,7 +784,8 @@
         </div>
         <div class="field-label">Причина расхождения</div>
         <textarea name="actual_cash_comment" class="field-input" rows="2"
-                  placeholder="Укажите причину расхождения..." required></textarea>
+                  placeholder="Укажите причину расхождения..."></textarea>
+        <div id="close-diff-err" style="display:none; color:#dc2626; font-size:12px; margin-top:4px; font-weight:600;">⚠ Укажите причину расхождения</div>
       </div>
       <div style="margin-bottom:14px;">
         <div class="field-label">Комментарий</div>
@@ -1649,7 +1650,12 @@ function openCloseModal() {
   var factInput = document.getElementById('actual-cash-input');
   var diffBlock = document.getElementById('close-diff-block');
   var diffValue = document.getElementById('close-diff-value');
+  var ta        = diffBlock ? diffBlock.querySelector('textarea') : null;
+  var diffErr   = document.getElementById('close-diff-err');
+  // Скрываем блок расхождения по умолчанию
   if (diffBlock) diffBlock.style.display = 'none';
+  if (ta) ta.required = false;
+  if (diffErr) diffErr.style.display = 'none';
   if (factInput && factInput.value.trim() && diffBlock) {
     var kassaText = (document.getElementById('kassa-nал') || {}).textContent || '0';
     var kassaVal = parseInt(kassaText.replace(/[^\d\-]/g, '')) || 0;
@@ -1661,7 +1667,6 @@ function openCloseModal() {
         diffValue.textContent = (diff > 0 ? '+' : '') + Math.round(diff).toLocaleString('ru-RU') + ' ₽';
         diffValue.style.color = diff < 0 ? '#dc2626' : '#16a34a';
       }
-      var ta = diffBlock.querySelector('textarea');
       if (ta) ta.required = true;
     }
   }
@@ -1698,11 +1703,37 @@ function openCloseModal() {
 
   form.addEventListener('submit', function (e) {
     syncHidden();
+    var errEl = document.getElementById('close-form-error');
+    if (!errEl) {
+      errEl = document.createElement('div');
+      errEl.id = 'close-form-error';
+      errEl.style.cssText = 'color:#dc2626;font-size:13px;font-weight:600;margin-bottom:10px;padding:8px 12px;background:#fef2f2;border-radius:8px;border:1.5px solid #fecaca;display:none;';
+      form.insertBefore(errEl, form.querySelector('[style*="display:flex"]') || form.lastElementChild);
+    }
+    errEl.style.display = 'none';
+    // Проверка: кто закрыл
     if (!hidden.value.trim()) {
       e.preventDefault();
-      alert('Укажите, кто закрыл смену');
+      errEl.textContent = '⚠ Укажите, кто закрыл смену';
+      errEl.style.display = '';
       if (sel.value === '__other__') custom.focus();
+      return;
     }
+    // Проверка: причина расхождения
+    var diffBlock = document.getElementById('close-diff-block');
+    var diffErr   = document.getElementById('close-diff-err');
+    if (diffBlock && diffBlock.style.display !== 'none') {
+      var ta = diffBlock.querySelector('textarea');
+      if (ta && !ta.value.trim()) {
+        e.preventDefault();
+        if (diffErr) diffErr.style.display = '';
+        ta.focus();
+        errEl.textContent = '⚠ Укажите причину расхождения наличных';
+        errEl.style.display = '';
+        return;
+      }
+    }
+    if (diffErr) diffErr.style.display = 'none';
   });
 
   syncHidden();
