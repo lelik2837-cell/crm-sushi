@@ -7,6 +7,10 @@ import os
 import re
 import sys
 import logging
+import smtplib
+import secrets
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from functools import wraps
 
 # Гарантируем что папка crm/ в пути — нужно для sber_api.py
@@ -28,6 +32,12 @@ app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 DATABASE = os.environ.get('DATABASE_PATH', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'crm.db'))
+
+SMTP_HOST     = 'smtp.gmail.com'
+SMTP_PORT     = 587
+SMTP_USER     = 'papasushi42@gmail.com'
+SMTP_PASSWORD = 'rfwfdkocfihbxnxz'
+SMTP_FROM     = 'CRMPAPA <papasushi42@gmail.com>'
 
 
 @app.template_filter('datefmt')
@@ -926,6 +936,32 @@ def init_db():
             conn.execute("ALTER TABLE branch_groups ADD COLUMN abbr TEXT DEFAULT ''")
         except Exception:
             pass
+
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN email TEXT DEFAULT ''")
+        except Exception:
+            pass
+
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token   TEXT NOT NULL UNIQUE,
+                expires_at TIMESTAMP NOT NULL,
+                used    INTEGER DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS invite_tokens (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                token      TEXT NOT NULL UNIQUE,
+                role       TEXT NOT NULL DEFAULT 'admin',
+                branch_ids TEXT NOT NULL DEFAULT '[]',
+                created_by INTEGER NOT NULL REFERENCES users(id),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP NOT NULL,
+                used       INTEGER DEFAULT 0,
+                used_by    INTEGER REFERENCES users(id)
+            );
+        ''')
 
         # Create bank module tables
         conn.executescript('''
@@ -4023,9 +4059,13 @@ def users():
         ub_ids = set(b['id'] for b in branch_list)
         grps = [g['abbr'] or g['name'] for g in branch_groups if set(g['branch_ids']) & ub_ids]
         user_groups_map[uid] = grps
+    new_invite_url = None
+    new_invite_token = request.args.get('new_invite', '')
+    if new_invite_token:
+        new_invite_url = url_for('accept_invite', token=new_invite_token, _external=True)
     return render_template('users.html', users=ulist, branches=branches,
                            branch_groups=branch_groups, user_branches_map=user_branches_map,
-                           user_groups_map=user_groups_map)
+                           user_groups_map=user_groups_map, new_invite_url=new_invite_url)
 
 
 @app.route('/users/<int:user_id>/branches', methods=['POST'])
@@ -4066,9 +4106,10 @@ def add_user():
         if existing:
             flash('Логин уже занят', 'danger')
             return redirect(url_for('users'))
+        email = request.form.get('email', '').strip().lower()
         conn.execute(
-            'INSERT INTO users (username, password_hash, role, full_name, branch_id) VALUES (?,?,?,?,?)',
-            (username, generate_password_hash(password, method='pbkdf2:sha256'), role, full_name, primary_branch_id)
+            'INSERT INTO users (username, password_hash, role, full_name, branch_id, email) VALUES (?,?,?,?,?,?)',
+            (username, generate_password_hash(password, method='pbkdf2:sha256'), role, full_name, primary_branch_id, email)
         )
         user_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
         for bid in branch_ids:
@@ -4096,6 +4137,82 @@ def reset_password(user_id):
     return redirect(url_for('users'))
 
 
+def _send_reset_email(to_email, reset_url):
+    msg = MIMEMultipart('alternative')
+    msg['Subject'] = 'Восстановление пароля — CRMPAPA'
+    msg['From']    = SMTP_FROM
+    msg['To']      = to_email
+    text = f'Для сброса пароля перейдите по ссылке:\n{reset_url}\n\nСсылка действительна 1 час.'
+    html = f'''<div style="font-family:sans-serif;max-width:480px;margin:0 auto;">
+        <h2 style="color:#c0392b;">CRMPAPA</h2>
+        <p>Вы запросили сброс пароля. Нажмите кнопку ниже:</p>
+        <a href="{reset_url}" style="display:inline-block;background:#c0392b;color:#fff;padding:12px 28px;
+           border-radius:8px;text-decoration:none;font-weight:700;margin:12px 0;">Сбросить пароль</a>
+        <p style="color:#888;font-size:12px;margin-top:16px;">Ссылка действительна 1 час. Если вы не запрашивали сброс — просто проигнорируйте это письмо.</p>
+    </div>'''
+    msg.attach(MIMEText(text, 'plain', 'utf-8'))
+    msg.attach(MIMEText(html, 'html', 'utf-8'))
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as srv:
+        srv.starttls()
+        srv.login(SMTP_USER, SMTP_PASSWORD)
+        srv.sendmail(SMTP_USER, to_email, msg.as_string())
+
+
+@app.route('/forgot-password', methods=['GET', 'POST'])
+def forgot_password():
+    if request.method == 'POST':
+        email = request.form.get('email', '').strip().lower()
+        with get_db() as conn:
+            user = conn.execute(
+                "SELECT * FROM users WHERE LOWER(email)=? AND email!=''", (email,)
+            ).fetchone()
+            if user:
+                token = secrets.token_urlsafe(32)
+                expires = (datetime.now() + timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
+                conn.execute('DELETE FROM password_reset_tokens WHERE user_id=?', (user['id'],))
+                conn.execute(
+                    'INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (?,?,?)',
+                    (user['id'], token, expires)
+                )
+                conn.commit()
+                reset_url = url_for('reset_password_token', token=token, _external=True)
+                try:
+                    _send_reset_email(email, reset_url)
+                except Exception as e:
+                    logging.error(f'Email send error: {e}')
+                    flash('Ошибка отправки письма. Обратитесь к администратору.', 'danger')
+                    return redirect(url_for('forgot_password'))
+        flash('Если аккаунт с этой почтой существует — письмо отправлено. Проверьте входящие (и папку «Спам»).', 'info')
+        return redirect(url_for('login'))
+    return render_template('forgot_password.html')
+
+
+@app.route('/reset-password/<token>', methods=['GET', 'POST'])
+def reset_password_token(token):
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM password_reset_tokens WHERE token=? AND used=0 AND expires_at > datetime('now')",
+            (token,)
+        ).fetchone()
+        if not row:
+            flash('Ссылка недействительна или устарела. Запросите новую.', 'danger')
+            return redirect(url_for('forgot_password'))
+        if request.method == 'POST':
+            password = request.form.get('password', '').strip()
+            if len(password) < 4:
+                flash('Пароль должен быть не короче 4 символов', 'danger')
+                return render_template('reset_password.html', token=token)
+            conn.execute(
+                'UPDATE users SET password_hash=? WHERE id=?',
+                (generate_password_hash(password, method='pbkdf2:sha256'), row['user_id'])
+            )
+            conn.execute('UPDATE password_reset_tokens SET used=1 WHERE id=?', (row['id'],))
+            conn.commit()
+            flash('Пароль успешно изменён. Войдите с новым паролем.', 'success')
+            return redirect(url_for('login'))
+    return render_template('reset_password.html', token=token)
+
+
 @app.route('/users/<int:user_id>/edit', methods=['POST'])
 @login_required
 @owner_required
@@ -4117,8 +4234,9 @@ def edit_user(user_id):
         if existing:
             flash('Логин уже занят', 'danger')
             return redirect(url_for('users'))
-        conn.execute('UPDATE users SET full_name=?, username=?, role=? WHERE id=?',
-                     (full_name, username, role, user_id))
+        email = request.form.get('email', '').strip().lower()
+        conn.execute('UPDATE users SET full_name=?, username=?, role=?, email=? WHERE id=?',
+                     (full_name, username, role, email, user_id))
         if password:
             conn.execute('UPDATE users SET password_hash=? WHERE id=?',
                          (generate_password_hash(password, method='pbkdf2:sha256'), user_id))
@@ -4130,6 +4248,67 @@ def edit_user(user_id):
         conn.commit()
     flash(f'Пользователь {full_name} обновлён', 'success')
     return redirect(url_for('users'))
+
+
+# ─── INVITE LINKS ─────────────────────────────────────────────────────────────
+
+@app.route('/users/invite/create', methods=['POST'])
+@login_required
+@owner_required
+def create_invite():
+    role = request.form.get('role', 'admin')
+    branch_ids = [int(b) for b in request.form.getlist('branch_ids') if b.isdigit()]
+    token = secrets.token_urlsafe(32)
+    expires = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+    with get_db() as conn:
+        conn.execute(
+            'INSERT INTO invite_tokens (token, role, branch_ids, created_by, expires_at) VALUES (?,?,?,?,?)',
+            (token, role, _json_lib.dumps(branch_ids), session['user_id'], expires)
+        )
+        conn.commit()
+    return redirect(url_for('users', new_invite=token))
+
+
+@app.route('/invite/<token>', methods=['GET', 'POST'])
+def accept_invite(token):
+    with get_db() as conn:
+        inv = conn.execute(
+            "SELECT * FROM invite_tokens WHERE token=? AND used=0 AND expires_at > datetime('now')",
+            (token,)
+        ).fetchone()
+        if not inv:
+            flash('Ссылка недействительна или устарела.', 'danger')
+            return redirect(url_for('login'))
+        if request.method == 'POST':
+            full_name = request.form.get('full_name', '').strip()
+            username  = request.form.get('username', '').strip()
+            email     = request.form.get('email', '').strip().lower()
+            password  = request.form.get('password', '').strip()
+            if not full_name or not username or not password:
+                flash('Заполните все обязательные поля', 'danger')
+                return render_template('accept_invite.html', token=token, inv=inv)
+            if len(password) < 4:
+                flash('Пароль должен быть не короче 4 символов', 'danger')
+                return render_template('accept_invite.html', token=token, inv=inv)
+            existing = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()
+            if existing:
+                flash('Этот логин уже занят, выберите другой', 'danger')
+                return render_template('accept_invite.html', token=token, inv=inv)
+            branch_ids = _json_lib.loads(inv['branch_ids'])
+            primary = branch_ids[0] if branch_ids else None
+            conn.execute(
+                'INSERT INTO users (username, password_hash, role, full_name, branch_id, email) VALUES (?,?,?,?,?,?)',
+                (username, generate_password_hash(password, method='pbkdf2:sha256'),
+                 inv['role'], full_name, primary, email)
+            )
+            new_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+            for bid in branch_ids:
+                conn.execute('INSERT OR IGNORE INTO user_branches (user_id, branch_id) VALUES (?,?)', (new_id, bid))
+            conn.execute('UPDATE invite_tokens SET used=1, used_by=? WHERE id=?', (new_id, inv['id']))
+            conn.commit()
+            flash('Аккаунт создан! Войдите с вашим логином и паролем.', 'success')
+            return redirect(url_for('login'))
+    return render_template('accept_invite.html', token=token, inv=inv)
 
 
 # ─── SETTINGS ─────────────────────────────────────────────────────────────────

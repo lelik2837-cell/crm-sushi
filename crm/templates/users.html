@@ -3,10 +3,29 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h4 class="fw-bold mb-0"><i class="bi bi-people"></i> Пользователи</h4>
-    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addUserModal">
-        <i class="bi bi-plus"></i> Добавить пользователя
-    </button>
+    <div class="d-flex gap-2">
+        <button class="btn btn-outline-success" data-bs-toggle="modal" data-bs-target="#inviteModal">
+            <i class="bi bi-link-45deg"></i> Ссылка-приглашение
+        </button>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addUserModal">
+            <i class="bi bi-plus"></i> Добавить пользователя
+        </button>
+    </div>
 </div>
+
+{% if new_invite_url %}
+<div class="alert alert-success d-flex align-items-start gap-2 mb-3">
+    <i class="bi bi-link-45deg fs-5 mt-1 flex-shrink-0"></i>
+    <div class="w-100">
+        <div class="fw-semibold mb-1">Ссылка-приглашение создана — скопируйте и отправьте пользователю:</div>
+        <div class="input-group">
+            <input type="text" class="form-control form-control-sm font-monospace" id="inviteLinkVal" value="{{ new_invite_url }}" readonly>
+            <button class="btn btn-sm btn-outline-secondary" onclick="navigator.clipboard.writeText(document.getElementById('inviteLinkVal').value); this.textContent='✓ Скопировано'">Копировать</button>
+        </div>
+        <div class="text-muted small mt-1">Ссылка действительна 7 дней.</div>
+    </div>
+</div>
+{% endif %}
 <div class="card">
     <div class="card-body p-0">
         <table class="table table-hover mb-0">
@@ -85,6 +104,38 @@
 </div>
 {% endmacro %}
 
+<!-- ══ Invite Modal ══ -->
+<div class="modal fade" id="inviteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-link-45deg"></i> Создать ссылку-приглашение</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" action="{{ url_for('create_invite') }}">
+                <div class="modal-body">
+                    <p class="text-muted small mb-3">Выберите роль и филиалы для нового пользователя. Он сам заполнит имя, логин и пароль по ссылке.</p>
+                    <div class="mb-3">
+                        <label class="form-label">Роль</label>
+                        <select name="role" class="form-select">
+                            <option value="admin">Администратор</option>
+                            <option value="employee">Сотрудник</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Филиалы</label>
+                        {{ branch_picker('inv') }}
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-success"><i class="bi bi-link-45deg"></i> Создать ссылку</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <!-- ══ Add User Modal ══ -->
 <div class="modal fade" id="addUserModal" tabindex="-1">
     <div class="modal-dialog">
@@ -106,6 +157,10 @@
                     <div class="mb-3">
                         <label class="form-label">Пароль *</label>
                         <input type="text" name="password" class="form-control" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Email <span class="text-muted fw-normal">(для восстановления пароля)</span></label>
+                        <input type="email" name="email" class="form-control" placeholder="example@gmail.com">
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Роль</label>
@@ -148,6 +203,10 @@
                     <div class="mb-3">
                         <label class="form-label">Логин *</label>
                         <input type="text" name="username" class="form-control" value="{{ u.username }}" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Email <span class="text-muted fw-normal">(для восстановления пароля)</span></label>
+                        <input type="email" name="email" class="form-control" value="{{ u.email or '' }}" placeholder="example@gmail.com">
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Роль</label>
@@ -217,6 +276,7 @@ function initBranchPicker(prefix) {
 }
 
 initBranchPicker('add');
+initBranchPicker('inv');
 {% for u in users %}{% if u.role != 'owner' %}
 initBranchPicker('e{{ u.id }}');
 {% endif %}{% endfor %}
