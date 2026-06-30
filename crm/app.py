@@ -84,6 +84,7 @@ ACTION_LABELS = {
     'staff_add':      ('Сотрудник +',  'success'),
     'staff_update':   ('Сотрудник ✎',  'warning'),
     'staff_delete':   ('Сотрудник −',  'danger'),
+    'shift_open':     ('Открытие',     'success'),
     'shift_close':    ('Закрытие',     'secondary'),
     'shift_reopen':   ('Переоткрытие', 'warning'),
     'salary_paid':    ('Выплата ЗП',   'primary'),
@@ -2141,6 +2142,7 @@ def open_shift():
                 return redirect(url_for('shift_view', shift_id=existing2['id']))
             raise
         shift_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        log_action(conn, 'shift_open', 'Смена открыта', shift_id=shift_id)
         # Если пользователь ввёл факт вручную — используем его
         _mc_raw = request.form.get('morning_cash', '').strip().replace('\xa0', '').replace(' ', '')
         if _mc_raw:
