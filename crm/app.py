@@ -4008,6 +4008,7 @@ def users():
             ORDER BY u.role, u.full_name
         ''').fetchall()
         branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        branch_groups = get_branch_groups(conn)
         user_branches_map = {}
         for row in conn.execute('''
             SELECT ub.user_id, b.name, b.id
@@ -4015,7 +4016,28 @@ def users():
             ORDER BY b.name
         ''').fetchall():
             user_branches_map.setdefault(row['user_id'], []).append({'id': row['id'], 'name': row['name']})
-    return render_template('users.html', users=ulist, branches=branches, user_branches_map=user_branches_map)
+    return render_template('users.html', users=ulist, branches=branches,
+                           branch_groups=branch_groups, user_branches_map=user_branches_map)
+
+
+@app.route('/users/<int:user_id>/branches', methods=['POST'])
+@login_required
+@owner_required
+def edit_user_branches(user_id):
+    branch_ids = [int(bid) for bid in request.form.getlist('branch_ids') if bid.isdigit()]
+    with get_db() as conn:
+        u = conn.execute('SELECT full_name FROM users WHERE id=?', (user_id,)).fetchone()
+        if not u:
+            flash('Пользователь не найден', 'danger')
+            return redirect(url_for('users'))
+        conn.execute('DELETE FROM user_branches WHERE user_id=?', (user_id,))
+        primary = branch_ids[0] if branch_ids else None
+        conn.execute('UPDATE users SET branch_id=? WHERE id=?', (primary, user_id))
+        for bid in branch_ids:
+            conn.execute('INSERT OR IGNORE INTO user_branches (user_id, branch_id) VALUES (?,?)', (user_id, bid))
+        conn.commit()
+    flash(f'Филиалы пользователя {u["full_name"]} обновлены', 'success')
+    return redirect(url_for('users'))
 
 
 @app.route('/users/add', methods=['POST'])
