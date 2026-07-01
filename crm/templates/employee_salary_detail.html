@@ -81,7 +81,7 @@
             </thead>
             <tbody>
             {% for r in shifts_data %}
-            {% set debt = (r.total_amount or 0) - (r.paid_amount or 0) %}
+            {% set debt = 0 if r.is_paid else (r.total_amount or 0) %}
             <tr>
                 <td class="fw-semibold">
                     {% set d = r.date %}
@@ -117,12 +117,10 @@
                     {% if r.penalty_amount %}−{{ '{:,.0f}'.format(r.penalty_amount) }} ₽{% else %}—{% endif %}
                 </td>
                 <td class="text-end fw-bold">{{ '{:,.0f}'.format(r.total_amount or 0) }} ₽</td>
-                <td class="text-end text-success">{{ '{:,.0f}'.format(r.paid_amount or 0) }} ₽</td>
+                <td class="text-end text-success">{{ '{:,.0f}'.format(r.total_amount if r.is_paid else 0) }} ₽</td>
                 <td class="text-center">
-                    {% if debt <= 0 %}
+                    {% if r.is_paid %}
                         <span class="badge bg-success">Выплачено</span>
-                    {% elif r.paid_amount and r.paid_amount > 0 %}
-                        <span class="badge bg-warning text-dark">Частично</span>
                     {% else %}
                         <span class="badge bg-danger">Не выплачено</span>
                     {% endif %}

@@ -5037,8 +5037,9 @@ def reports():
 
         salary_data = conn.execute(f'''
             SELECT es.full_name_snapshot, es.role_snapshot,
-                   SUM(es.total_amount) as earned, SUM(es.paid_amount) as paid,
-                   SUM(es.total_amount)-SUM(es.paid_amount) as debt,
+                   SUM(es.total_amount) as earned,
+                   SUM(CASE WHEN es.is_paid=1 THEN es.total_amount ELSE 0 END) as paid,
+                   SUM(CASE WHEN es.is_paid=0 THEN es.total_amount ELSE 0 END) as debt,
                    COUNT(*) as shifts_count
             FROM employee_shifts es
             JOIN shifts s ON s.id=es.shift_id
@@ -5060,7 +5061,7 @@ def reports():
             sal_conds.append('es.role_snapshot = ?')
             sal_params.append(s_role)
         sal_where  = ' AND '.join(sal_conds)
-        sal_having = 'HAVING SUM(es.total_amount) > SUM(es.paid_amount)' if s_unpaid == '1' else ''
+        sal_having = 'HAVING SUM(CASE WHEN es.is_paid=0 THEN es.total_amount ELSE 0 END) > 0' if s_unpaid == '1' else ''
 
         sal_rows_raw = conn.execute(f'''
             SELECT es.employee_id,
@@ -5070,8 +5071,8 @@ def reports():
                    b.name                                        AS branch_name,
                    COUNT(*)                                      AS shifts_count,
                    COALESCE(SUM(es.total_amount), 0)             AS earned,
-                   COALESCE(SUM(es.paid_amount),  0)             AS paid,
-                   COALESCE(SUM(es.total_amount - es.paid_amount), 0) AS debt
+                   COALESCE(SUM(CASE WHEN es.is_paid=1 THEN es.total_amount ELSE 0 END), 0) AS paid,
+                   COALESCE(SUM(CASE WHEN es.is_paid=0 THEN es.total_amount ELSE 0 END), 0) AS debt
             FROM employee_shifts es
             JOIN shifts    s ON s.id    = es.shift_id
             JOIN branches  b ON b.id    = s.branch_id
@@ -5138,7 +5139,7 @@ def reports():
                 SELECT s.date,
                        COALESCE(e2.full_name, es.full_name_snapshot) AS name,
                        COALESCE(es.total_amount, 0) AS earned,
-                       COALESCE(es.paid_amount,  0) AS paid
+                       CASE WHEN es.is_paid=1 THEN COALESCE(es.total_amount, 0) ELSE 0 END AS paid
                 FROM employee_shifts es
                 JOIN shifts s ON s.id = es.shift_id
                 LEFT JOIN employees e2 ON e2.id = es.employee_id
@@ -5530,7 +5531,7 @@ def employee_salary_detail(emp_id):
         ''', (emp_id, date_from, date_to)).fetchall()
 
         total_earned = sum(float(r['total_amount'] or 0) for r in shifts_data)
-        total_paid   = sum(float(r['paid_amount']   or 0) for r in shifts_data)
+        total_paid   = sum(float(r['total_amount'] if r['is_paid'] else 0) for r in shifts_data)
         total_debt   = total_earned - total_paid
 
     return render_template('employee_salary_detail.html',
