@@ -1937,8 +1937,18 @@ def api_revenue_summary():
             GROUP BY m.branch_id
         ''', [date_from, date_to] + bids).fetchall()
         manual_total = _manual_rev_total(conn, date_from, date_to, bids or None)
+        # Plan
+        plan_bf2 = f"AND branch_id IN ({','.join('?'*len(bids))})" if bids else ''
+        plan_rows = conn.execute(f'''
+            SELECT branch_id, COALESCE(SUM(amount), 0) AS plan
+            FROM revenue_plan
+            WHERE date BETWEEN ? AND ? {plan_bf2}
+            GROUP BY branch_id
+        ''', [date_from, date_to] + bids).fetchall()
+        plan_by_bid = {r['branch_id']: int(r['plan'] or 0) for r in plan_rows}
 
     total       = int(total_row['total'] or 0) + int(manual_total)
+    plan_total  = sum(plan_by_bid.values())
     fot         = int(fot_row['fot'] or 0)
     courier_fot = int(courier_fot_row['courier_fot'] or 0)
     fot_by_name = {r['name']: {'fot': int(r['fot']), 'courier_fot': int(r['courier_fot'])} for r in branch_fot_rows}
@@ -1952,7 +1962,8 @@ def api_revenue_summary():
         abbr = (br['abbr'] or '').strip() or name[:3].upper()
         bf_   = fot_by_name.get(name, {'fot': 0, 'courier_fot': 0})
         man   = manual_by_bid.get(br['id'], {})
-        seen_bids.add(br['id'])
+        bid_  = br['id']
+        seen_bids.add(bid_)
         branches.append({
             'abbr': abbr, 'name': name,
             'revenue':         int(br['revenue']) + int(man.get('revenue', 0)),
@@ -1961,6 +1972,7 @@ def api_revenue_summary():
             'delivery_orders': int(br['delivery_orders']),
             'fot':             bf_['fot'],
             'courier_fot':     bf_['courier_fot'],
+            'plan':            plan_by_bid.get(bid_, 0),
         })
     # Филиалы только с manual-данными (без смен)
     for bid, man in manual_by_bid.items():
@@ -1972,12 +1984,14 @@ def api_revenue_summary():
                 'revenue': man['revenue'],
                 'pickup': 0, 'delivery_revenue': 0, 'delivery_orders': 0,
                 'fot': 0, 'courier_fot': 0,
+                'plan': plan_by_bid.get(bid, 0),
             })
     branches.sort(key=lambda x: -x['revenue'])
 
     return jsonify({
         'ok': True,
         'total': total,
+        'plan_total': plan_total,
         'cash':  int(total_row['cash'] or 0),
         'card':  int(total_row['card'] or 0),
         'online': int(total_row['online'] or 0),

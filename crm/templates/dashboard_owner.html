@@ -72,7 +72,10 @@
       <div style="font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; opacity:.7; margin-bottom:6px;">Общая выручка</div>
       <!-- Big number -->
       <div id="rev-total" style="font-size:clamp(32px,6vw,52px); font-weight:800; letter-spacing:-1px; line-height:1.05; margin-bottom:2px;">—</div>
-      <div id="rev-period-label" style="font-size:14px; opacity:.6; margin-bottom:18px;">рублей</div>
+      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:18px;">
+        <div id="rev-period-label" style="font-size:14px; opacity:.6;">рублей</div>
+        <div id="rev-plan-diff" style="font-size:13px;font-weight:700;"></div>
+      </div>
       <!-- Divider -->
       <div style="border-top:1px solid rgba(255,255,255,.2); margin-bottom:14px;"></div>
       <!-- Branch list (today / month) -->
@@ -583,17 +586,40 @@ function clearMetrics() {
     updateRightMetrics({total:0,cash:0,card:0,online:0,fot:0,pickup:0,delivery:0,courier_fot:0,delivery_orders:0,branches:[]});
 }
 
+function showPlanDiff(actual, plan) {
+    var el = document.getElementById('rev-plan-diff');
+    if (!el) return;
+    if (!plan || plan <= 0) { el.textContent = ''; return; }
+    var diff = actual - plan;
+    var absDiff = Math.abs(diff);
+    var pct  = Math.round(absDiff / plan * 100);
+    var sign = diff >= 0 ? '+' : '−';
+    var color = diff >= 0 ? 'rgba(134,239,172,.95)' : 'rgba(252,165,165,.9)';
+    el.style.color = color;
+    el.textContent = sign + fmtNum(absDiff) + ' (' + pct + '%)';
+}
+
 function branchListHtml(branches, total) {
     if (!branches || !branches.length) return '<div style="opacity:.5;font-size:13px;">Нет данных</div>';
     return branches.map(function(b) {
-        var pct  = total > 0 ? Math.round(b.revenue / total * 100) : 0;
-        var barW = Math.min(100, pct);
+        var barW = Math.min(100, total > 0 ? Math.round(b.revenue / total * 100) : 0);
+        var rightHtml;
+        if (b.plan > 0) {
+            var diff = b.revenue - b.plan;
+            var pct  = Math.round(Math.abs(diff) / b.plan * 100);
+            var sign = diff >= 0 ? '+' : '−';
+            var col  = diff >= 0 ? 'rgba(134,239,172,.95)' : 'rgba(252,165,165,.9)';
+            rightHtml = fmtNum(b.revenue) + ' ₽ <span style="font-size:11px;font-weight:700;color:' + col + ';">(' + sign + pct + '%)</span>';
+        } else {
+            var pct2 = total > 0 ? Math.round(b.revenue / total * 100) : 0;
+            rightHtml = fmtNum(b.revenue) + ' ₽ <span style="opacity:.55;font-size:11px;">(' + pct2 + '%)</span>';
+        }
         return '<div style="display:flex;align-items:center;gap:8px;">' +
             '<span style="font-size:11px;font-weight:700;background:rgba(255,255,255,.18);border-radius:6px;padding:2px 7px;letter-spacing:.5px;min-width:36px;text-align:center;">' + b.abbr + '</span>' +
             '<div style="flex:1;">' +
               '<div style="display:flex;justify-content:space-between;margin-bottom:3px;">' +
                 '<span style="font-size:12px;opacity:.85;font-weight:500;">' + b.name + '</span>' +
-                '<span style="font-size:12px;font-weight:700;">' + fmtNum(b.revenue) + ' ₽ <span style="opacity:.55;font-size:11px;">(' + pct + '%)</span></span>' +
+                '<span style="font-size:12px;font-weight:700;">' + rightHtml + '</span>' +
               '</div>' +
               '<div style="height:3px;background:rgba(255,255,255,.15);border-radius:2px;">' +
                 '<div style="height:100%;width:' + barW + '%;background:rgba(255,255,255,.7);border-radius:2px;transition:width .4s;"></div>' +
@@ -863,6 +889,7 @@ function loadRevCard(period) {
         yearWrap.style.display     = '';
         monthDetail.style.display  = 'none';
         if (revChart) { revChart.destroy(); revChart = null; }
+        showPlanDiff(0, 0);
         clearMetrics();
 
         if (revPeriod === 'year') {
@@ -921,6 +948,7 @@ function loadRevCard(period) {
         .then(function(d) {
             if (!d.ok) return;
             document.getElementById('rev-total').textContent = fmtNum(d.total);
+            showPlanDiff(d.total, d.plan_total || 0);
             branchesWrap.innerHTML = branchListHtml(d.branches, d.total);
             updateRightMetrics(d);
         });
