@@ -1309,8 +1309,12 @@ function saveBonusRow(bonusRow) {
     })
   }).then(r => r.json()).then(d => {
     if (d.ok) {
-      if (d.auto_bonuses) applyAutoBonuses(d.auto_bonuses);
-      else {
+      if (d.auto_bonuses && d.auto_bonuses.length) {
+        const entry = d.auto_bonuses.find(b => String(b.id) === String(id));
+        const totalEl = staffRow.querySelector('.sf-total');
+        if (entry && totalEl) totalEl.textContent = Math.round(entry.total_amount) + ' ₽';
+        applyAutoBonuses(d.auto_bonuses);
+      } else {
         const totalEl = staffRow.querySelector('.sf-total');
         if (totalEl) totalEl.textContent = Math.round(newTotal) + ' ₽';
         updateKassa();
@@ -1461,7 +1465,7 @@ function _postStaff(empId, name, role, rate, rateKm) {
 function applyAutoBonuses(bonuses) {
   if (!bonuses || !bonuses.length) return;
   bonuses.forEach(b => {
-    const row = document.querySelector(`[data-id="${b.id}"]`);
+    const row = document.querySelector(`.staff-row[data-id="${b.id}"], .courier-row[data-id="${b.id}"]`);
     if (!row) return;
     row.dataset.autoBonus = b.auto_bonus || 0;
     const ab = Math.round(b.auto_bonus || 0);
