@@ -96,6 +96,12 @@
             <div class="fw-bold text-danger">{% if totals.salary_paid %}−{{ '{:,.0f}'.format(totals.salary_paid) }} ₽{% else %}—{% endif %}</div>
         </div>
     </div>
+    <div class="col-auto">
+        <div class="card border-0 bg-light px-3 py-2">
+            <div class="text-muted small">Такси нал (итого)</div>
+            <div class="fw-bold text-danger">{% if totals.taxi_cash %}−{{ '{:,.0f}'.format(totals.taxi_cash) }} ₽{% else %}—{% endif %}</div>
+        </div>
+    </div>
 </div>
 
 <div class="table-responsive">
@@ -110,6 +116,7 @@
             <th class="text-end" style="min-width:120px">Выручка нал</th>
             <th class="text-end" style="min-width:120px">Расходы нал</th>
             <th class="text-end" style="min-width:110px">ФОТ</th>
+            <th class="text-end" style="min-width:110px">Такси нал</th>
             <th class="text-end fw-bold" style="min-width:120px">Вечером</th>
             <th style="width:36px"></th>
         </tr>
@@ -138,6 +145,9 @@
         </td>
         <td class="text-end fw-semibold {% if day.salary_paid %}text-danger{% else %}text-muted{% endif %}">
             {% if day.salary_paid %}−{{ '{:,.0f}'.format(day.salary_paid) }} ₽{% else %}—{% endif %}
+        </td>
+        <td class="text-end fw-semibold {% if day.taxi_cash %}text-danger{% else %}text-muted{% endif %}">
+            {% if day.taxi_cash %}−{{ '{:,.0f}'.format(day.taxi_cash) }} ₽{% else %}—{% endif %}
         </td>
         <td class="text-end fw-bold {% if day.actual_cash %}text-success{% else %}text-muted{% endif %}">
             {% if day.actual_cash %}{{ '{:,.0f}'.format(day.actual_cash) }} ₽{% else %}—{% endif %}
@@ -170,6 +180,9 @@
         </td>
         <td class="text-end {% if s.salary_paid %}text-danger{% else %}text-muted{% endif %}">
             {% if s.salary_paid %}−{{ '{:,.0f}'.format(s.salary_paid) }} ₽{% else %}—{% endif %}
+        </td>
+        <td class="text-end {% if s.taxi_cash %}text-danger{% else %}text-muted{% endif %}">
+            {% if s.taxi_cash %}−{{ '{:,.0f}'.format(s.taxi_cash) }} ₽{% else %}—{% endif %}
         </td>
         <td class="text-end {% if s.actual_cash %}text-success fw-semibold{% else %}text-muted{% endif %}">
             {% if s.actual_cash %}{{ '{:,.0f}'.format(s.actual_cash) }} ₽{% else %}—{% endif %}

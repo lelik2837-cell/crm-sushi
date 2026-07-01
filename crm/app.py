@@ -5591,6 +5591,14 @@ def cash_flow_report():
             GROUP BY s.date, s.branch_id
         ''', (date_from, date_to)).fetchall()
 
+        taxi_rows = conn.execute(f'''
+            SELECT s.date, s.branch_id, COALESCE(SUM(tt.amount), 0) AS taxi_cash
+            FROM taxi_trips tt
+            JOIN shifts s ON s.id = tt.shift_id
+            WHERE tt.payment_type = 'cash' AND s.date BETWEEN ? AND ? {bf}
+            GROUP BY s.date, s.branch_id
+        ''', (date_from, date_to)).fetchall()
+
     exp_map = defaultdict(float)
     for r in expense_rows:
         exp_map[(r['date'], r['branch_id'])] += r['expenses_cash']
@@ -5599,19 +5607,25 @@ def cash_flow_report():
     for r in salary_rows:
         sal_map[(r['date'], r['branch_id'])] += r['salary_paid']
 
+    taxi_map = defaultdict(float)
+    for r in taxi_rows:
+        taxi_map[(r['date'], r['branch_id'])] += r['taxi_cash']
+
     days = {}
     for r in revenue_rows:
         d = r['date']
         bid = r['branch_id']
         exp  = exp_map.get((d, bid), 0)
         sal  = sal_map.get((d, bid), 0)
+        taxi = taxi_map.get((d, bid), 0)
         raz  = r['razmen']
         plus = r['plus_amount']
         mrn = r['morning_cash']
         if d not in days:
             days[d] = {'date': d, 'shifts': [], 'cash_revenue': 0.0,
                        'expenses_cash': 0.0, 'razmen': 0.0, 'plus_amount': 0.0,
-                       'morning_cash': 0.0, 'salary_paid': 0.0, 'actual_cash': 0.0}
+                       'morning_cash': 0.0, 'salary_paid': 0.0, 'taxi_cash': 0.0,
+                       'actual_cash': 0.0}
         days[d]['shifts'].append({
             'shift_id':    r['shift_id'],
             'branch_name': r['branch_name'],
@@ -5621,6 +5635,7 @@ def cash_flow_report():
             'plus_amount':  plus,
             'morning_cash': mrn,
             'salary_paid':  sal,
+            'taxi_cash':    taxi,
             'actual_cash':  r['actual_cash'],
             'actual_cash_comment': r['actual_cash_comment'],
         })
@@ -5630,6 +5645,7 @@ def cash_flow_report():
         days[d]['plus_amount']   += plus
         days[d]['morning_cash']  += mrn
         days[d]['salary_paid']   += sal
+        days[d]['taxi_cash']     += taxi
         days[d]['actual_cash']   += r['actual_cash']
 
     all_dates   = sorted(days.keys())
@@ -5647,6 +5663,7 @@ def cash_flow_report():
         'cash_revenue': sum(d['cash_revenue'] for d in sorted_days),
         'expenses_cash':sum(d['expenses_cash']for d in sorted_days),
         'salary_paid':  sum(d['salary_paid']  for d in sorted_days),
+        'taxi_cash':    sum(d['taxi_cash']    for d in sorted_days),
     }
 
     return render_template('cash_flow.html',
