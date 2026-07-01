@@ -2272,12 +2272,23 @@ def shift_view(shift_id):
                WHERE es.shift_id=? ORDER BY es.role_snapshot, es.full_name_snapshot''',
             (shift_id,)
         ).fetchall()
+        # Find all branches in same group(s) as this branch (for employee list)
+        group_branch_ids = conn.execute('''
+            SELECT DISTINCT bgm2.branch_id
+            FROM branch_group_members bgm1
+            JOIN branch_group_members bgm2 ON bgm2.group_id = bgm1.group_id
+            WHERE bgm1.branch_id = ?
+        ''', (shift['branch_id'],)).fetchall()
+        group_branch_ids = [r[0] for r in group_branch_ids]
+        if not group_branch_ids:
+            group_branch_ids = [shift['branch_id']]
+        emp_branch_placeholders = ','.join('?' * len(group_branch_ids))
         employees = conn.execute(
-            '''SELECT DISTINCT e.* FROM employees e
+            f'''SELECT DISTINCT e.* FROM employees e
                JOIN employee_branches eb ON eb.employee_id=e.id
-               WHERE eb.branch_id=? AND e.is_active=1
+               WHERE eb.branch_id IN ({emp_branch_placeholders}) AND e.is_active=1
                ORDER BY e.role, e.full_name''',
-            (shift['branch_id'],)
+            group_branch_ids
         ).fetchall()
         # Current address per employee (as of shift date)
         emp_addresses = {}
