@@ -1308,34 +1308,14 @@ function saveBonusRow(bonusRow) {
     bonusRow.parentNode.insertBefore(summary, bonusRow.nextSibling);
   }
 
-  // Считаем базу без обновления DOM (calcStaffTotal мог бы сбросить итого)
-  const rate    = parseFloat(staffRow.dataset.rate    || 0);
-  const rateKm  = parseFloat(staffRow.dataset.rateKm  || 0);
-  const rateOrd = parseFloat(staffRow.dataset.rateOrd || 0);
-  const start   = staffRow.querySelector('.sf-start')?.value || '';
-  const end     = staffRow.querySelector('.sf-end')?.value   || '';
-  const km      = parseFloat(staffRow.querySelector('.sf-km')?.value     || 0);
-  const orders  = parseFloat(staffRow.querySelector('.sf-orders')?.value || 0);
-  const hoursEl = staffRow.querySelector('.sf-hours');
-  let hours = hoursEl
-    ? (hoursEl.tagName === 'INPUT' ? parseFloat(hoursEl.value || 0) : parseFloat(hoursEl.textContent || 0))
-    : 0;
-  if (start && end) {
-    const [sh, sm] = start.split(':').map(Number);
-    const [eh, em] = end.split(':').map(Number);
-    let h = (eh * 60 + em - sh * 60 - sm) / 60;
-    if (h < 0) h += 24;
-    hours = Math.round(h * 4) / 4;
-  }
-  const base      = hours * rate + km * rateKm + orders * rateOrd;
-  const autoBonus = parseInt(staffRow.dataset.autoBonus || 0);
-  const newTotal  = base + bonusAmt - penaltyAmt + autoBonus;
+  const { base, autoBonus } = calcStaffTotal(staffRow);
+  const newTotal = base + bonusAmt - penaltyAmt + autoBonus;
 
   fetch(`/shift/${SHIFT_ID}/save-staff`, {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
       id, bonus_amount: bonusAmt, penalty_amount: penaltyAmt,
-      bonus_comment: comment, total_amount: newTotal
+      bonus_comment: comment, base_pay: base, total_amount: newTotal
     })
   }).then(r => r.json()).then(d => {
     if (d.ok) {
