@@ -1101,6 +1101,12 @@ def init_db():
                 UNIQUE(employee_id, role)
             );
         ''')
+        _er_cols = [r[1] for r in conn.execute("PRAGMA table_info(employee_roles)").fetchall()]
+        if 'rate_template_id' not in _er_cols:
+            conn.execute("ALTER TABLE employee_roles ADD COLUMN rate_template_id INTEGER REFERENCES rate_templates(id)")
+        _emp_tcols = [r[1] for r in conn.execute("PRAGMA table_info(employees)").fetchall()]
+        if 'rate_template_id' not in _emp_tcols:
+            conn.execute("ALTER TABLE employees ADD COLUMN rate_template_id INTEGER REFERENCES rate_templates(id)")
 
         # Feature: import batches for Excel imports
         conn.executescript('''
@@ -2290,6 +2296,29 @@ def shift_view(shift_id):
                ORDER BY e.role, e.full_name''',
             group_branch_ids
         ).fetchall()
+        # Extra roles for employees (for multi-role shift placement)
+        if employees:
+            emp_ids = [e['id'] for e in employees]
+            ph = ','.join('?' * len(emp_ids))
+            extra_rows = conn.execute(
+                f'SELECT employee_id, role, rate, rate_per_km, rate_per_order, rate_template_id FROM employee_roles WHERE employee_id IN ({ph}) AND is_active=1',
+                emp_ids
+            ).fetchall()
+            # Resolve rates from templates
+            emp_extra_roles = {}
+            for row in extra_rows:
+                r_rate = float(row['rate'] or 0)
+                r_km   = float(row['rate_per_km'] or 0)
+                r_ord  = float(row['rate_per_order'] or 0)
+                if row['rate_template_id']:
+                    tmpl = conn.execute('SELECT rate, rate_per_km, rate_per_order FROM rate_templates WHERE id=?', (row['rate_template_id'],)).fetchone()
+                    if tmpl:
+                        r_rate = float(tmpl['rate'] or 0)
+                        r_km   = float(tmpl['rate_per_km'] or 0)
+                        r_ord  = float(tmpl['rate_per_order'] or 0)
+                emp_extra_roles.setdefault(row['employee_id'], []).append({'role': row['role'], 'rate': r_rate, 'rate_per_km': r_km, 'rate_per_order': r_ord})
+        else:
+            emp_extra_roles = {}
         # Current address per employee (as of shift date)
         emp_addresses = {}
         for emp in employees:
@@ -2349,7 +2378,7 @@ def shift_view(shift_id):
         return render_template('shift.html',
             shift=shift, revenue=revenue, expenses=expenses, plus_entries=plus_entries,
             staff=staff, employees=employees, taxi_staff=taxi_staff,
-            emp_addresses=emp_addresses,
+            emp_addresses=emp_addresses, emp_extra_roles=emp_extra_roles,
             taxi_trips=taxi_trips, taxi_trip_emps=taxi_trip_emps,
             expense_categories=expense_cats_flat,
             expense_cats_groups=expense_cats_groups,
@@ -2572,37 +2601,39 @@ def save_staff(shift_id):
             auto_bonuses = calculate_bonuses(conn, shift_id)
         else:
             emp_id = data.get('employee_id')
+            role_snap = data.get('role_snapshot', '')
             if emp_id:
                 already = conn.execute(
-                    'SELECT id, role_snapshot FROM employee_shifts WHERE shift_id=? AND employee_id=?',
-                    (shift_id, emp_id)
+                    'SELECT id FROM employee_shifts WHERE shift_id=? AND employee_id=? AND role_snapshot=?',
+                    (shift_id, emp_id, role_snap)
                 ).fetchone()
                 if already:
-                    existing_role = already['role_snapshot'] or ''
-                    return jsonify({'ok': False, 'error': 'duplicate', 'existing_role': existing_role}), 200
+                    return jsonify({'ok': False, 'error': 'duplicate', 'existing_role': role_snap}), 200
             rate = _f(data, 'rate_snapshot')
             rate_km = _f(data, 'rate_per_km_snapshot')
             rate_ord = _f(data, 'rate_per_order_snapshot')
-            if emp_id:
-                # Look up rate active on the shift date
-                shift = conn.execute('SELECT date FROM shifts WHERE id=?', (shift_id,)).fetchone()
-                shift_date = shift['date'] if shift else date.today().isoformat()
-                hist = conn.execute('''
-                    SELECT rate, rate_per_km, rate_per_order
-                    FROM employee_rate_history
-                    WHERE employee_id=? AND effective_from <= ?
-                    ORDER BY effective_from DESC LIMIT 1
-                ''', (emp_id, shift_date)).fetchone()
-                if hist:
-                    rate = rate or hist['rate']
-                    rate_km = rate_km or hist['rate_per_km']
-                    rate_ord = rate_ord or hist['rate_per_order']
+            if emp_id and not rate:
+                # Look up rate by role: check extra roles first, then primary, then history
+                extra_role = conn.execute(
+                    'SELECT er.*, rt.rate AS tmpl_rate, rt.rate_per_km AS tmpl_km, rt.rate_per_order AS tmpl_ord '
+                    'FROM employee_roles er LEFT JOIN rate_templates rt ON rt.id=er.rate_template_id '
+                    'WHERE er.employee_id=? AND er.role=? AND er.is_active=1',
+                    (emp_id, role_snap)
+                ).fetchone()
+                if extra_role:
+                    rate = float(extra_role['tmpl_rate'] or extra_role['rate'] or 0)
+                    rate_km = float(extra_role['tmpl_km'] or extra_role['rate_per_km'] or 0)
+                    rate_ord = float(extra_role['tmpl_ord'] or extra_role['rate_per_order'] or 0)
                 else:
-                    emp = conn.execute('SELECT * FROM employees WHERE id=?', (emp_id,)).fetchone()
+                    emp = conn.execute(
+                        'SELECT e.*, rt.rate AS tmpl_rate, rt.rate_per_km AS tmpl_km, rt.rate_per_order AS tmpl_ord '
+                        'FROM employees e LEFT JOIN rate_templates rt ON rt.id=e.rate_template_id '
+                        'WHERE e.id=?', (emp_id,)
+                    ).fetchone()
                     if emp:
-                        rate = rate or emp['rate']
-                        rate_km = rate_km or emp['rate_per_km']
-                        rate_ord = rate_ord or emp['rate_per_order']
+                        rate = float(emp['tmpl_rate'] or emp['rate'] or 0)
+                        rate_km = float(emp['tmpl_km'] or emp['rate_per_km'] or 0)
+                        rate_ord = float(emp['tmpl_ord'] or emp['rate_per_order'] or 0)
             conn.execute('''
                 INSERT INTO employee_shifts
                 (shift_id, employee_id, full_name_snapshot, role_snapshot,
@@ -3400,7 +3431,11 @@ def employees():
                     "(LOWER(e.last_name) LIKE LOWER(?) OR LOWER(e.first_name) LIKE LOWER(?) OR LOWER(e.full_name) LIKE LOWER(?))"
                 )
             if role_filter:
-                parts.append("e.role = ?")
+                parts.append(
+                    "(e.role = ? OR EXISTS ("
+                    "SELECT 1 FROM employee_roles er "
+                    "WHERE er.employee_id=e.id AND er.role=? AND er.is_active=1))"
+                )
             return (' AND ' + ' AND '.join(parts)) if parts else ''
 
         def _emp_params(base_params):
@@ -3409,7 +3444,7 @@ def employees():
                 s = f'%{search}%'
                 p += [s, s, s]
             if role_filter:
-                p.append(role_filter)
+                p += [role_filter, role_filter]
             return p
 
         if role == 'owner':
@@ -3523,6 +3558,11 @@ def employees():
         for b in g.get('branches', []):
             branch_to_groups.setdefault(b['id'], []).append(g['name'])
 
+    # Group templates by role for JS/template use
+    tmpls_by_role = {}
+    for t in all_tmpls:
+        tmpls_by_role.setdefault(t['role'], []).append(dict(t))
+
     return render_template('employees.html', employees=emps, fired_employees=fired_emps,
                            branches=branches,
                            all_branches=all_branches,
@@ -3533,6 +3573,7 @@ def employees():
                            role_labels=ROLE_LABELS, is_owner=(role == 'owner'),
                            rate_history=rate_history, address_history=address_history,
                            rate_templates=all_tmpls,
+                           rate_templates_by_role=tmpls_by_role,
                            tmpl_branch_sets=tmpl_branch_sets,
                            tmpls_for_emp=tmpls_for_emp,
                            shift_counts=shift_counts,
@@ -3547,8 +3588,8 @@ def employees():
 @app.route('/employees/add', methods=['POST'])
 @login_required
 def add_employee():
-    role = session.get('role')
-    if role == 'owner':
+    sess_role = session.get('role')
+    if sess_role == 'owner':
         branch_ids_form = [bid for bid in request.form.getlist('branch_ids') if bid.isdigit()]
         branch_id = int(branch_ids_form[0]) if branch_ids_form else None
     else:
@@ -3558,18 +3599,27 @@ def add_employee():
     first_name = request.form.get('first_name', '').strip()
     full_name  = (last_name + (' ' + first_name if first_name else '')).strip()
     emp_role = request.form.get('role', 'sushi')
-    rate = float(request.form.get('rate', 0) or 0)
-    rate_km = float(request.form.get('rate_per_km', 10) or 10)
-    rate_ord = float(request.form.get('rate_per_order', 100) or 100)
+    rate_template_id = request.form.get('rate_template_id', '').strip() or None
+    if rate_template_id:
+        rate_template_id = int(rate_template_id)
     effective_from = request.form.get('effective_from') or date.today().isoformat()
     pay_monthly = 1 if request.form.get('pay_monthly') else 0
     if not full_name:
         flash('Введите фамилию сотрудника', 'danger')
         return redirect(url_for('employees'))
     with get_db() as conn:
+        if rate_template_id:
+            tmpl = conn.execute('SELECT * FROM rate_templates WHERE id=?', (rate_template_id,)).fetchone()
+            rate = float(tmpl['rate'] or 0) if tmpl else 0.0
+            rate_km = float(tmpl['rate_per_km'] or 0) if tmpl else 0.0
+            rate_ord = float(tmpl['rate_per_order'] or 0) if tmpl else 0.0
+        else:
+            rate = float(request.form.get('rate', 0) or 0)
+            rate_km = float(request.form.get('rate_per_km', 0) or 0)
+            rate_ord = float(request.form.get('rate_per_order', 0) or 0)
         conn.execute(
-            'INSERT INTO employees (branch_id, full_name, last_name, first_name, role, rate, rate_per_km, rate_per_order, pay_monthly) VALUES (?,?,?,?,?,?,?,?,?)',
-            (branch_id, full_name, last_name, first_name, emp_role, rate, rate_km, rate_ord, pay_monthly)
+            'INSERT INTO employees (branch_id, full_name, last_name, first_name, role, rate, rate_per_km, rate_per_order, pay_monthly, rate_template_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            (branch_id, full_name, last_name, first_name, emp_role, rate, rate_km, rate_ord, pay_monthly, rate_template_id)
         )
         emp_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
         conn.execute(
@@ -3680,21 +3730,39 @@ def edit_employee(emp_id):
     full_name  = (last_name + (' ' + first_name if first_name else '')).strip()
     address    = request.form.get('address', '').strip()
     address_from = request.form.get('address_from') or date.today().isoformat()
-    rate      = float(request.form.get('rate', 0) or 0)
-    rate_km   = float(request.form.get('rate_per_km', 10) or 10)
-    rate_ord  = float(request.form.get('rate_per_order', 100) or 100)
     rate_from = request.form.get('rate_from') or date.today().isoformat()
     pay_monthly = 1 if request.form.get('pay_monthly') else 0
+    emp_role = request.form.get('role', '').strip() or None
+    rate_template_id = request.form.get('rate_template_id', '').strip() or None
+    if rate_template_id:
+        rate_template_id = int(rate_template_id)
     with get_db() as conn:
         emp = conn.execute('SELECT * FROM employees WHERE id=?', (emp_id,)).fetchone()
         if not emp:
             flash('Сотрудник не найден', 'danger')
             return redirect(url_for('employees'))
+        if rate_template_id:
+            tmpl = conn.execute('SELECT * FROM rate_templates WHERE id=?', (rate_template_id,)).fetchone()
+            rate = float(tmpl['rate'] or 0) if tmpl else 0.0
+            rate_km = float(tmpl['rate_per_km'] or 0) if tmpl else 0.0
+            rate_ord = float(tmpl['rate_per_order'] or 0) if tmpl else 0.0
+        else:
+            rate = float(request.form.get('rate', 0) or 0)
+            rate_km = float(request.form.get('rate_per_km', 0) or 0)
+            rate_ord = float(request.form.get('rate_per_order', 0) or 0)
+        update_fields = 'rate=?, rate_per_km=?, rate_per_order=?, rate_template_id=?'
+        update_vals = [rate, rate_km, rate_ord, rate_template_id]
         if full_name:
-            conn.execute(
-                'UPDATE employees SET full_name=?, last_name=?, first_name=?, pay_monthly=? WHERE id=?',
-                (full_name, last_name, first_name, pay_monthly, emp_id)
-            )
+            update_fields += ', full_name=?, last_name=?, first_name=?, pay_monthly=?'
+            update_vals += [full_name, last_name, first_name, pay_monthly]
+        else:
+            update_fields += ', pay_monthly=?'
+            update_vals += [pay_monthly]
+        if emp_role and emp_role in ROLE_LABELS:
+            update_fields += ', role=?'
+            update_vals += [emp_role]
+        update_vals.append(emp_id)
+        conn.execute(f'UPDATE employees SET {update_fields} WHERE id=?', update_vals)
         if session.get('role') == 'owner':
             branch_ids_form = [bid for bid in request.form.getlist('branch_ids') if bid.isdigit()]
             if branch_ids_form:
@@ -3702,16 +3770,10 @@ def edit_employee(emp_id):
                 conn.execute('DELETE FROM employee_branches WHERE employee_id=?', (emp_id,))
                 for bid in branch_ids_form:
                     conn.execute('INSERT OR IGNORE INTO employee_branches (employee_id, branch_id) VALUES (?,?)', (emp_id, int(bid)))
-        # Rate: save to history; update current values only if rate_from <= today
         conn.execute(
             'INSERT INTO employee_rate_history (employee_id, rate, rate_per_km, rate_per_order, effective_from) VALUES (?,?,?,?,?)',
             (emp_id, rate, rate_km, rate_ord, rate_from)
         )
-        if rate_from <= date.today().isoformat():
-            conn.execute(
-                'UPDATE employees SET rate=?, rate_per_km=?, rate_per_order=? WHERE id=?',
-                (rate, rate_km, rate_ord, emp_id)
-            )
         if address:
             conn.execute(
                 'INSERT INTO employee_address_history (employee_id, address, valid_from) VALUES (?,?,?)',
@@ -7119,24 +7181,33 @@ def api_employee(emp_id):
 @owner_required
 def add_employee_role(emp_id):
     role = request.form.get('role', '').strip()
-    rate = float(request.form.get('rate', 0) or 0)
-    rate_km  = float(request.form.get('rate_per_km', 10) or 10)
-    rate_ord = float(request.form.get('rate_per_order', 100) or 100)
+    rate_template_id = request.form.get('rate_template_id', '').strip() or None
+    if rate_template_id:
+        rate_template_id = int(rate_template_id)
     if not role or role not in ROLE_LABELS:
         flash('Выберите должность', 'danger')
         return redirect(url_for('employees'))
     with get_db() as conn:
+        if rate_template_id:
+            tmpl = conn.execute('SELECT * FROM rate_templates WHERE id=?', (rate_template_id,)).fetchone()
+            rate = float(tmpl['rate'] or 0) if tmpl else 0.0
+            rate_km = float(tmpl['rate_per_km'] or 0) if tmpl else 0.0
+            rate_ord = float(tmpl['rate_per_order'] or 0) if tmpl else 0.0
+        else:
+            rate = float(request.form.get('rate', 0) or 0)
+            rate_km = float(request.form.get('rate_per_km', 0) or 0)
+            rate_ord = float(request.form.get('rate_per_order', 0) or 0)
         try:
             conn.execute(
-                'INSERT INTO employee_roles (employee_id, role, rate, rate_per_km, rate_per_order) VALUES (?,?,?,?,?)',
-                (emp_id, role, rate, rate_km, rate_ord)
+                'INSERT INTO employee_roles (employee_id, role, rate, rate_per_km, rate_per_order, rate_template_id) VALUES (?,?,?,?,?,?)',
+                (emp_id, role, rate, rate_km, rate_ord, rate_template_id)
             )
             conn.commit()
             flash('Должность добавлена', 'success')
         except Exception:
             conn.execute(
-                'UPDATE employee_roles SET rate=?, rate_per_km=?, rate_per_order=? WHERE employee_id=? AND role=?',
-                (rate, rate_km, rate_ord, emp_id, role)
+                'UPDATE employee_roles SET rate=?, rate_per_km=?, rate_per_order=?, rate_template_id=? WHERE employee_id=? AND role=?',
+                (rate, rate_km, rate_ord, rate_template_id, emp_id, role)
             )
             conn.commit()
             flash('Ставка по должности обновлена', 'success')
@@ -7151,6 +7222,27 @@ def delete_employee_role(role_id):
         conn.execute('DELETE FROM employee_roles WHERE id=?', (role_id,))
         conn.commit()
     flash('Должность удалена', 'success')
+    return redirect(url_for('employees'))
+
+
+@app.route('/employees/roles/<int:role_id>/update-template', methods=['POST'])
+@login_required
+def update_employee_role_template(role_id):
+    rate_template_id = request.form.get('rate_template_id', '').strip() or None
+    if rate_template_id:
+        rate_template_id = int(rate_template_id)
+    with get_db() as conn:
+        if rate_template_id:
+            tmpl = conn.execute('SELECT * FROM rate_templates WHERE id=?', (rate_template_id,)).fetchone()
+            if tmpl:
+                conn.execute(
+                    'UPDATE employee_roles SET rate=?, rate_per_km=?, rate_per_order=?, rate_template_id=? WHERE id=?',
+                    (float(tmpl['rate'] or 0), float(tmpl['rate_per_km'] or 0), float(tmpl['rate_per_order'] or 0), rate_template_id, role_id)
+                )
+        else:
+            conn.execute('UPDATE employee_roles SET rate_template_id=NULL WHERE id=?', (role_id,))
+        conn.commit()
+    flash('Ставка по должности обновлена', 'success')
     return redirect(url_for('employees'))
 
 

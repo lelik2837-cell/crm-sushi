@@ -1314,7 +1314,11 @@ const ROLE_GROUPS = {
 };
 
 const ALL_SHIFT_EMPLOYEES = [
-  {% for emp in employees %}{id:{{ emp.id }}, name:{{ emp.full_name|tojson }}, role:{{ emp.role|tojson }}, rate:{{ emp.rate }}, rateKm:{{ emp.rate_per_km }}},
+  {% for emp in employees %}
+  {id:{{ emp.id }}, name:{{ emp.full_name|tojson }}, role:{{ emp.role|tojson }}, rate:0, rateKm:0},
+  {% for er in emp_extra_roles.get(emp.id, []) %}
+  {id:{{ emp.id }}, name:{{ emp.full_name|tojson }}, role:{{ er.role|tojson }}, rate:0, rateKm:0},
+  {% endfor %}
   {% endfor %}
 ];
 
@@ -1324,15 +1328,14 @@ function showAddStaffInline(type) {
   const existing = body.querySelector('.inline-add-row');
   if (existing) { existing.remove(); return; }
   const allowed = ROLE_GROUPS[type] || [];
-  const addedIds = new Set(
-    Array.from(document.querySelectorAll('#' + type + '-body [data-employee-id]'))
-      .map(el => el.dataset.employeeId).filter(Boolean)
+  // Track already-added combinations of empId:role across ALL sections
+  const addedEmpRoles = new Set(
+    Array.from(document.querySelectorAll('[data-employee-id][data-role]'))
+      .map(el => el.dataset.employeeId + ':' + el.dataset.role).filter(Boolean)
   );
-  const opts = ALL_SHIFT_EMPLOYEES
-    .filter(e => allowed.includes(e.role) && !addedIds.has(String(e.id)))
-    .map(e => `<option value="${e.id}" data-name="${e.name.replace(/"/g,'&quot;')}" data-role="${e.role}" data-rate="${e.rate}" data-km="${e.rateKm}">${e.name}</option>`)
-    .join('');
-  const empList = ALL_SHIFT_EMPLOYEES.filter(e => allowed.includes(e.role) && !addedIds.has(String(e.id)));
+  const empList = ALL_SHIFT_EMPLOYEES.filter(e =>
+    allowed.includes(e.role) && !addedEmpRoles.has(String(e.id) + ':' + e.role)
+  );
   const row = document.createElement('div');
   row.className = 'inline-add-row';
   row.style.cssText = 'margin-top:8px; position:relative;';

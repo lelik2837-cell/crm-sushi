@@ -228,29 +228,28 @@
                         <label class="form-label fw-semibold"><i class="bi bi-geo-alt me-1"></i>Адрес развоза</label>
                         <input type="text" name="address" class="form-control" placeholder="ул. Пушкина, д. 5, кв. 12">
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold">Роль</label>
-                        <select name="role" id="add-role-sel" class="form-select" onchange="toggleCourierFields('add', this.value)">
-                            {% for code, label in role_labels.items() %}
-                            <option value="{{ code }}">{{ label }}</option>
-                            {% endfor %}
-                        </select>
+                    <div class="border rounded p-3 mb-3">
+                        <div class="fw-semibold mb-2">Основная должность</div>
+                        <div class="mb-2">
+                            <label class="form-label small fw-semibold">Должность</label>
+                            <select name="role" id="addEmpRole" class="form-select"
+                                    onchange="empRoleChange('addEmpRole','addEmpTmpl','addEmpRate','addEmpTmplId')">
+                                {% for code, label in role_labels.items() %}
+                                <option value="{{ code }}">{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-1">
+                            <label class="form-label small fw-semibold">Ставка</label>
+                            <select id="addEmpTmpl" class="form-select"
+                                    onchange="empTmplChange('addEmpTmpl','addEmpRate','addEmpTmplId')">
+                                <option value="">— выбрать ставку —</option>
+                            </select>
+                            <input type="hidden" name="rate_template_id" id="addEmpTmplId">
+                        </div>
+                        <div id="addEmpRate" class="small text-muted"></div>
                     </div>
-                    <div class="row g-2 mb-3">
-                        <div class="col-4">
-                            <label class="form-label fw-semibold">₽/час</label>
-                            <input type="number" name="rate" class="form-control" value="230" step="0.01">
-                        </div>
-                        <div class="col-4 courier-only-add" style="display:none;">
-                            <label class="form-label fw-semibold">₽/км</label>
-                            <input type="number" name="rate_per_km" class="form-control" value="10" step="0.01">
-                        </div>
-                        <div class="col-4 courier-only-add" style="display:none;">
-                            <label class="form-label fw-semibold">₽/заказ</label>
-                            <input type="number" name="rate_per_order" class="form-control" value="100" step="0.01">
-                        </div>
-                    </div>
-                    <div class="form-check">
+                    <div class="form-check mb-3">
                         <input class="form-check-input" type="checkbox" name="pay_monthly" id="addEmpPayMonthly" value="1">
                         <label class="form-check-label" for="addEmpPayMonthly">Выплачивать ЗП ежемесячно</label>
                     </div>
@@ -360,57 +359,45 @@
                         {% endif %}
                     </div>
 
-                    <!-- Ставка -->
-                    <div class="border rounded p-3">
-                        <div class="fw-semibold mb-2">Ставка</div>
-                        {% set role_tmpls = tmpls_for_emp(emp) | selectattr('role', 'equalto', emp.role) | list %}
-                        {% if role_tmpls %}
-                        <div class="mb-3">
-                            <label class="form-label small text-muted">Выбрать из шаблонов</label>
-                            <select class="form-select form-select-sm"
-                                onchange="applyRateTemplate(this, {{ emp.id }})">
-                                <option value="">— выбрать шаблон —</option>
-                                {% for t in role_tmpls %}
-                                <option value="{{ t.id }}"
-                                    data-rate="{{ t.rate }}"
-                                    data-km="{{ t.rate_per_km }}"
-                                    data-ord="{{ t.rate_per_order }}">
-                                    {{ t.name }} ({{ t.rate }}₽/ч{% if is_courier and t.rate_per_km %}, {{ t.rate_per_km }}₽/км{% endif %})
-                                </option>
+                    <!-- Должность + Ставка -->
+                    <div class="border rounded p-3 mb-3">
+                        <div class="fw-semibold mb-2">Основная должность</div>
+                        <div class="mb-2">
+                            <label class="form-label small fw-semibold">Должность</label>
+                            <select name="role" id="editEmpRole{{ emp.id }}" class="form-select"
+                                    onchange="empRoleChange('editEmpRole{{ emp.id }}','editEmpTmpl{{ emp.id }}','editEmpRateDisp{{ emp.id }}','editEmpTmplId{{ emp.id }}')">
+                                {% for code, label in role_labels.items() %}
+                                <option value="{{ code }}" {% if emp.role == code %}selected{% endif %}>{{ label }}</option>
                                 {% endfor %}
                             </select>
                         </div>
-                        {% endif %}
-                        <div class="row g-2 mb-2">
-                            <div class="col{% if not is_courier %}-12{% else %}-4{% endif %}">
-                                <label class="form-label small">₽/час</label>
-                                <input type="number" name="rate" id="rate-{{ emp.id }}" class="form-control" value="{{ emp.rate }}" step="0.01">
-                            </div>
-                            {% if is_courier %}
-                            <div class="col-4">
-                                <label class="form-label small">₽/км</label>
-                                <input type="number" name="rate_per_km" id="rate-km-{{ emp.id }}" class="form-control" value="{{ emp.rate_per_km }}" step="0.01">
-                            </div>
-                            <div class="col-4">
-                                <label class="form-label small">₽/заказ</label>
-                                <input type="number" name="rate_per_order" id="rate-ord-{{ emp.id }}" class="form-control" value="{{ emp.rate_per_order }}" step="0.01">
-                            </div>
+                        <div class="mb-1">
+                            <label class="form-label small fw-semibold">Ставка</label>
+                            <select id="editEmpTmpl{{ emp.id }}" class="form-select"
+                                    onchange="empTmplChange('editEmpTmpl{{ emp.id }}','editEmpRateDisp{{ emp.id }}','editEmpTmplId{{ emp.id }}')">
+                                <option value="">— выбрать ставку —</option>
+                                {% for t in rate_templates if t.role == emp.role %}
+                                <option value="{{ t.id }}"
+                                    data-rate="{{ t.rate }}" data-km="{{ t.rate_per_km }}" data-ord="{{ t.rate_per_order }}"
+                                    {% if emp.rate_template_id == t.id %}selected{% endif %}>
+                                    {{ t.name }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <input type="hidden" name="rate_template_id" id="editEmpTmplId{{ emp.id }}" value="{{ emp.rate_template_id or '' }}">
+                        </div>
+                        <div id="editEmpRateDisp{{ emp.id }}" class="small text-muted">
+                            {% if emp.rate_template_id %}
+                                {% for t in rate_templates if t.id == emp.rate_template_id %}{{ t.rate }}₽/ч{% if t.rate_per_km %} · {{ t.rate_per_km }}₽/км{% endif %}{% if t.rate_per_order %} · {{ t.rate_per_order }}₽/заказ{% endif %}{% endfor %}
+                            {% elif emp.rate %}
+                                {{ emp.rate }}₽/ч{% if emp.rate_per_km %} · {{ emp.rate_per_km }}₽/км{% endif %}{% if emp.rate_per_order %} · {{ emp.rate_per_order }}₽/заказ{% endif %}
                             {% endif %}
                         </div>
-                        <div class="row g-2 align-items-center">
-                            <div class="col-auto">
-                                <label class="form-label small mb-0 text-muted">Действует с</label>
-                            </div>
-                            <div class="col">
-                                <input type="date" name="rate_from" class="form-control form-control-sm"
-                                    value="{{ today }}">
-                            </div>
-                        </div>
                         {% if rate_history[emp.id] %}
-                        <div class="mt-2">
-                            <div class="text-muted small fw-semibold mb-1">История:</div>
+                        <div class="mt-2 pt-2 border-top">
+                            <div class="text-muted small fw-semibold mb-1">История ставок:</div>
                             {% for h in rate_history[emp.id][:3] %}
-                            <div class="small text-muted">{{ h.effective_from }} — {{ h.rate }}₽/ч{% if is_courier and h.rate_per_km %}, {{ h.rate_per_km }}₽/км{% endif %}{% if is_courier and h.rate_per_order %}, {{ h.rate_per_order }}₽/заказ{% endif %}</div>
+                            <div class="small text-muted">{{ h.effective_from }} — {{ h.rate }}₽/ч</div>
                             {% endfor %}
                         </div>
                         {% endif %}
@@ -434,15 +421,30 @@
             {% if is_owner %}
             <div class="px-3 pb-3">
                 <hr>
-                <div class="fw-semibold mb-2"><i class="bi bi-layers me-1"></i>Доп. должности и ставки</div>
+                <div class="fw-semibold mb-2"><i class="bi bi-layers me-1"></i>Дополнительные должности</div>
                 {% set extra_roles = emp_roles_map.get(emp.id, []) %}
                 {% if extra_roles %}
-                <div class="mb-2">
+                <div class="mb-3">
+                    {% macro role_color(code) %}{% if code=='admin' %}#6f42c1{% elif code=='sushi' %}#0d6efd{% elif code=='packer' %}#198754{% elif code=='courier' %}#fd7e14{% elif code=='cleaner' %}#6c757d{% else %}#dc3545{% endif %}{% endmacro %}
                     {% for er in extra_roles %}
-                    <div class="d-flex align-items-center gap-2 mb-1">
-                        <span class="badge badge-role-{{ er.role }} text-white">{{ role_labels.get(er.role, er.role) }}</span>
-                        <span class="small text-muted">{{ er.rate }}₽/ч{% if er.role == 'courier' %}, {{ er.rate_per_km }}₽/км, {{ er.rate_per_order }}₽/заказ{% endif %}</span>
-                        <form method="POST" action="{{ url_for('delete_employee_role', role_id=er.id) }}" class="d-inline ms-auto">
+                    <div class="d-flex align-items-center gap-2 mb-2 flex-wrap border rounded p-2">
+                        <span class="badge" style="background:{{ role_color(er.role) }}">{{ role_labels.get(er.role, er.role) }}</span>
+                        {% if er.rate %}<span class="small text-muted">{{ er.rate }}₽/ч</span>{% endif %}
+                        <form method="POST" action="{{ url_for('update_employee_role_template', role_id=er.id) }}"
+                              class="d-flex gap-1 align-items-center flex-grow-1">
+                            <select name="rate_template_id" class="form-select form-select-sm" style="min-width:160px">
+                                <option value="">— выбрать ставку —</option>
+                                {% for t in rate_templates if t.role == er.role %}
+                                <option value="{{ t.id }}" {% if er.rate_template_id == t.id %}selected{% endif %}>
+                                    {{ t.name }} — {{ t.rate }}₽/ч
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <button type="submit" class="btn btn-sm btn-outline-secondary py-0 px-2">
+                                <i class="bi bi-check2"></i>
+                            </button>
+                        </form>
+                        <form method="POST" action="{{ url_for('delete_employee_role', role_id=er.id) }}" class="d-inline">
                             <button class="btn btn-sm btn-outline-danger py-0 px-1" title="Удалить должность"
                                     onclick="return confirm('Удалить должность {{ role_labels.get(er.role, er.role) }}?')">
                                 <i class="bi bi-x"></i>
@@ -452,38 +454,37 @@
                     {% endfor %}
                 </div>
                 {% endif %}
-                <form method="POST" action="{{ url_for('add_employee_role', emp_id=emp.id) }}" class="mt-2">
-                    <div class="row g-2 align-items-end">
-                        <div class="col-5">
-                            <label class="form-label small">Должность</label>
-                            <select name="role" class="form-select form-select-sm" id="extra-role-sel-{{ emp.id }}"
-                                    onchange="toggleExtraRoleCourier(this, {{ emp.id }})">
-                                {% for code, label in role_labels.items() %}
-                                {% if code != emp.role %}
-                                <option value="{{ code }}">{{ label }}</option>
-                                {% endif %}
-                                {% endfor %}
-                            </select>
+                <!-- Добавить доп. должность -->
+                <div class="border rounded p-2">
+                    <div class="small text-muted fw-semibold mb-2">Добавить должность</div>
+                    <form method="POST" action="{{ url_for('add_employee_role', emp_id=emp.id) }}">
+                        <div class="d-flex gap-2 flex-wrap align-items-end">
+                            <div>
+                                <label class="form-label small mb-1">Должность</label>
+                                <select name="role" id="extraRoleSel{{ emp.id }}" class="form-select form-select-sm"
+                                        onchange="empRoleChange('extraRoleSel{{ emp.id }}','extraTmplSel{{ emp.id }}','extraRateDisp{{ emp.id }}','extraTmplId{{ emp.id }}')">
+                                    {% for code, label in role_labels.items() %}
+                                    <option value="{{ code }}">{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div>
+                                <label class="form-label small mb-1">Ставка</label>
+                                <select id="extraTmplSel{{ emp.id }}" class="form-select form-select-sm" style="min-width:160px"
+                                        onchange="empTmplChange('extraTmplSel{{ emp.id }}','extraRateDisp{{ emp.id }}','extraTmplId{{ emp.id }}')">
+                                    <option value="">— выбрать ставку —</option>
+                                </select>
+                                <input type="hidden" name="rate_template_id" id="extraTmplId{{ emp.id }}">
+                            </div>
+                            <div>
+                                <div id="extraRateDisp{{ emp.id }}" class="small text-muted mb-1"></div>
+                                <button type="submit" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-plus"></i> Добавить
+                                </button>
+                            </div>
                         </div>
-                        <div class="col-3">
-                            <label class="form-label small">₽/час</label>
-                            <input type="number" name="rate" class="form-control form-control-sm" value="0" step="0.01" id="extra-rate-{{ emp.id }}">
-                        </div>
-                        <div class="col-auto extra-courier-{{ emp.id }}" style="display:none">
-                            <label class="form-label small">₽/км</label>
-                            <input type="number" name="rate_per_km" class="form-control form-control-sm" value="10" step="0.01">
-                        </div>
-                        <div class="col-auto extra-courier-{{ emp.id }}" style="display:none">
-                            <label class="form-label small">₽/заказ</label>
-                            <input type="number" name="rate_per_order" class="form-control form-control-sm" value="100" step="0.01">
-                        </div>
-                        <div class="col-auto">
-                            <button class="btn btn-sm btn-outline-primary" type="submit">
-                                <i class="bi bi-plus"></i> Добавить
-                            </button>
-                        </div>
-                    </div>
-                </form>
+                    </form>
+                </div>
             </div>
             {% endif %}
 
@@ -620,29 +621,51 @@
 
 {% block scripts %}
 <script>
-function applyRateTemplate(sel, empId) {
-    if (!sel.value) return;
-    const opt = sel.options[sel.selectedIndex];
-    const r = document.getElementById('rate-'     + empId);
-    const k = document.getElementById('rate-km-'  + empId);
-    const o = document.getElementById('rate-ord-' + empId);
-    if (r) r.value = opt.dataset.rate || 0;
-    if (k) k.value = opt.dataset.km   || 0;
-    if (o) o.value = opt.dataset.ord  || 0;
-    sel.value = '';
+const TMPLS_BY_ROLE = {{ rate_templates_by_role | tojson }};
+
+function empRoleChange(roleSel, tmplSel, rateDisp, tmplHidden) {
+    const roleEl = document.getElementById(roleSel);
+    const tmplEl = document.getElementById(tmplSel);
+    const dispEl = document.getElementById(rateDisp);
+    const hidEl  = document.getElementById(tmplHidden);
+    if (!roleEl || !tmplEl) return;
+    const role = roleEl.value;
+    const tmpls = TMPLS_BY_ROLE[role] || [];
+    tmplEl.innerHTML = '<option value="">— выбрать ставку —</option>';
+    tmpls.forEach(function(t) {
+        const opt = document.createElement('option');
+        opt.value = t.id;
+        opt.textContent = t.name;
+        opt.dataset.rate = t.rate;
+        opt.dataset.km   = t.rate_per_km;
+        opt.dataset.ord  = t.rate_per_order;
+        tmplEl.appendChild(opt);
+    });
+    if (hidEl) hidEl.value = '';
+    if (dispEl) dispEl.textContent = '';
 }
 
-function toggleCourierFields(prefix, role) {
-    document.querySelectorAll('.courier-only-' + prefix).forEach(el => {
-        el.style.display = role === 'courier' ? '' : 'none';
-    });
-}
-
-function toggleExtraRoleCourier(sel, empId) {
-    var show = sel.value === 'courier';
-    document.querySelectorAll('.extra-courier-' + empId).forEach(function(el) {
-        el.style.display = show ? '' : 'none';
-    });
+function empTmplChange(tmplSel, rateDisp, tmplHidden) {
+    const tmplEl = document.getElementById(tmplSel);
+    const dispEl = document.getElementById(rateDisp);
+    const hidEl  = document.getElementById(tmplHidden);
+    if (!tmplEl) return;
+    const opt = tmplEl.options[tmplEl.selectedIndex];
+    if (!opt || !opt.value) {
+        if (hidEl) hidEl.value = '';
+        if (dispEl) dispEl.textContent = '';
+        return;
+    }
+    if (hidEl) hidEl.value = opt.value;
+    if (dispEl) {
+        const rate = parseFloat(opt.dataset.rate || 0);
+        const km   = parseFloat(opt.dataset.km   || 0);
+        const ord  = parseFloat(opt.dataset.ord  || 0);
+        let txt = rate ? rate + '₽/ч' : '';
+        if (km)  txt += (txt ? ' · ' : '') + km  + '₽/км';
+        if (ord) txt += (txt ? ' · ' : '') + ord + '₽/заказ';
+        dispEl.textContent = txt;
+    }
 }
 
 // Фильтр-дропдаун для филиалов сотрудника
@@ -703,10 +726,22 @@ window.empSelectGroup = function(groupPrefix, ids) {
     document.querySelectorAll('.emp-branch-cb[data-group="' + groupPrefix + '"]').forEach(function(cb) {
         cb.checked = ids.length === 0 ? false : ids.indexOf(parseInt(cb.value)) >= 0;
     });
-    // Update label
     var checked = document.querySelectorAll('.emp-branch-cb[data-group="' + groupPrefix + '"]:checked');
     var lbl = document.querySelector('.emp-branch-label[data-group="' + groupPrefix + '"]');
     if (lbl) lbl.textContent = checked.length ? 'Выбрано: ' + checked.length : '— выберите филиал —';
 };
+
+// Init template dropdowns on page load
+document.addEventListener('DOMContentLoaded', function() {
+    // Add employee modal — populate templates for default role
+    const addRoleEl = document.getElementById('addEmpRole');
+    if (addRoleEl) empRoleChange('addEmpRole', 'addEmpTmpl', 'addEmpRate', 'addEmpTmplId');
+
+    // Extra role forms — populate templates for default role
+    document.querySelectorAll('[id^="extraRoleSel"]').forEach(function(el) {
+        const empId = el.id.replace('extraRoleSel', '');
+        empRoleChange('extraRoleSel' + empId, 'extraTmplSel' + empId, 'extraRateDisp' + empId, 'extraTmplId' + empId);
+    });
+});
 </script>
 {% endblock %}
