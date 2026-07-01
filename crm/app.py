@@ -2597,6 +2597,14 @@ def save_staff(shift_id):
             else:
                 base_pay     = float(existing['base_pay'] or 0)
                 total_amount = base_pay + bonus_amount - penalty_amount + float(existing['auto_bonus'] or 0)
+            is_paid_flag = (1 if data['is_paid'] else 0) if 'is_paid' in data else int(existing['is_paid'] or 0)
+            # Keep paid_amount in sync with total_amount whenever employee is paid
+            if is_paid_flag:
+                paid_amount_val = total_amount
+            elif 'paid_amount' in data:
+                paid_amount_val = _f(data, 'paid_amount')
+            else:
+                paid_amount_val = float(existing['paid_amount'] or 0)
             conn.execute('''
                 UPDATE employee_shifts SET
                     full_name_snapshot=?, role_snapshot=?, rate_snapshot=?,
@@ -2611,9 +2619,7 @@ def save_staff(shift_id):
                 _pick('shift_start', ''), _pick('shift_end', ''), _pickf('hours_worked'),
                 _pickf('km'), _picki('orders'),
                 bonus_amount, penalty_amount, bonus_comment,
-                base_pay, total_amount,
-                (1 if data['is_paid'] else 0) if 'is_paid' in data else int(existing['is_paid'] or 0),
-                _pickf('paid_amount'),
+                base_pay, total_amount, is_paid_flag, paid_amount_val,
                 staff_id, shift_id
             ))
             name = data.get('full_name_snapshot', '')
@@ -5584,7 +5590,7 @@ def cash_flow_report():
         ''', (date_from, date_to)).fetchall()
 
         salary_rows = conn.execute(f'''
-            SELECT s.date, s.branch_id, COALESCE(SUM(es.paid_amount), 0) AS salary_paid
+            SELECT s.date, s.branch_id, COALESCE(SUM(es.total_amount), 0) AS salary_paid
             FROM employee_shifts es
             JOIN shifts s ON s.id = es.shift_id
             WHERE s.date BETWEEN ? AND ? {bf} AND es.is_paid = 1
