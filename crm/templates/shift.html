@@ -84,6 +84,7 @@
   .bonus-amount  { padding: 4px 8px; border: 1.5px solid #e5e7eb; border-radius: 6px; font-size: 12px; color: #374151; background: #f9fafb; width: 76px; flex-shrink: 0; }
   .bonus-comment { padding: 4px 8px; border: 1.5px solid #e5e7eb; border-radius: 6px; font-size: 12px; color: #374151; background: #f9fafb; flex: 1; min-width: 0; }
   .bonus-cancel { padding: 4px 9px; border-radius: 6px; background: #f3f4f6; color: #6b7280; border: 1.5px solid #e5e7eb; font-size: 11px; font-weight: 600; cursor: pointer; white-space: nowrap; flex-shrink: 0; }
+  .bonus-close-btn { padding: 2px 7px; border-radius: 5px; background: #f3f4f6; color: #9ca3af; border: 1.5px solid #e5e7eb; font-size: 12px; cursor: pointer; flex-shrink: 0; line-height: 1; }
   .bonus-save   { padding: 4px 9px; border-radius: 6px; background: #d1fae5; color: #059669; border: 1.5px solid #6ee7b7; font-size: 11px; font-weight: 600; cursor: pointer; white-space: nowrap; flex-shrink: 0; }
   .bonus-summary { display: none; align-items: center; gap: 8px; padding: 3px 0 8px 10px; border-bottom: 1px solid #f3f4f6; }
   .bonus-tag { flex: 1; padding: 5px 12px; border-radius: 7px; font-size: 12px; font-weight: 600; }
@@ -583,6 +584,7 @@
       </select>
       <input class="bonus-amount money-field" type="text" inputmode="numeric" placeholder="0" value="{{ (bv|abs)|int if hb else '' }}">
       <input class="bonus-comment" type="text" placeholder="Комментарий..." value="{{ s.bonus_comment or '' }}">
+      {% if can_edit %}<button class="bonus-close-btn" onclick="closeBonusRow(this)" title="Скрыть">✕</button>{% endif %}
     </div>
     {% if hb %}
     <div class="bonus-summary" style="display:flex;">
@@ -692,6 +694,7 @@
           </select>
           <input class="bonus-amount money-field" type="text" inputmode="numeric" placeholder="0" value="{{ (bonus_val|abs)|int if has_bonus else '' }}">
           <input class="bonus-comment" type="text" placeholder="Комментарий..." value="{{ s.bonus_comment or '' }}">
+          {% if can_edit %}<button class="bonus-close-btn" onclick="closeBonusRow(this)" title="Скрыть">✕</button>{% endif %}
         </div>
         {% if has_bonus %}
         <div class="bonus-summary" style="display:flex;">
@@ -1224,13 +1227,6 @@ function toggleBonus(btn, type) {
   if (!row) return;
   const bonusRow = row.nextElementSibling;
   if (!bonusRow?.classList.contains('staff-bonus-row')) return;
-  if (bonusRow.style.display === 'flex') {
-    // закрываем — показываем summary если есть
-    bonusRow.style.display = 'none';
-    const s = bonusRow.nextElementSibling;
-    if (s?.classList.contains('bonus-summary')) s.style.display = 'flex';
-    return;
-  }
   bonusRow.style.display = 'flex';
   if (type) {
     const sel = bonusRow.querySelector('.bonus-select');
@@ -1239,6 +1235,12 @@ function toggleBonus(btn, type) {
   const summary = bonusRow.nextElementSibling;
   if (summary?.classList.contains('bonus-summary')) summary.style.display = 'none';
   bonusRow.querySelector('.bonus-amount')?.focus();
+}
+function closeBonusRow(btn) {
+  const bonusRow = btn.closest('.staff-bonus-row');
+  bonusRow.style.display = 'none';
+  const summary = bonusRow.nextElementSibling;
+  if (summary?.classList.contains('bonus-summary')) summary.style.display = 'flex';
 }
 
 function editBonus(btn) {
@@ -1876,7 +1878,7 @@ function lockClosedShift() {
   ).forEach(el => { el.disabled = true; el.dataset.closedLock = '1'; });
   document.querySelectorAll(
     'button.btn-add, button.staff-del, button.bonus-btn-prem, button.bonus-btn-fine, ' +
-    'button.bonus-save, button.bonus-cancel, button.bonus-del-btn, button.bonus-edit-btn, ' +
+    'button.bonus-save, button.bonus-cancel, button.bonus-close-btn, button.bonus-del-btn, button.bonus-edit-btn, ' +
     'button.ph-btn-outline'
   ).forEach(el => { el.disabled = true; el.dataset.closedLock = '1'; });
 }
