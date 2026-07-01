@@ -2400,6 +2400,14 @@ def save_revenue(shift_id):
         return jsonify({'error': 'Нет доступа'}), 403
     data = request.json or {}
     with get_db() as conn:
+        # Preserve change_amount if not sent (it's managed by the change settings page)
+        if 'change_amount' not in data:
+            existing_rev = conn.execute(
+                'SELECT change_amount FROM shift_revenue WHERE shift_id=?', (shift_id,)
+            ).fetchone()
+            change_amount = float(existing_rev['change_amount'] or 0) if existing_rev else 0.0
+        else:
+            change_amount = _f(data, 'change_amount')
         conn.execute('''
             UPDATE shift_revenue SET
                 total_revenue=?, delivery_revenue=?, delivery_orders=?,
@@ -2412,7 +2420,7 @@ def save_revenue(shift_id):
             _f(data, 'total_revenue'), _f(data, 'delivery_revenue'), _i(data, 'delivery_orders'),
             _f(data, 'pickup_revenue'), _i(data, 'pickup_orders'),
             _f(data, 'cash_amount'), _f(data, 'card_amount'), _f(data, 'online_amount'),
-            _f(data, 'change_amount'), _f(data, 'actual_cash'),
+            change_amount, _f(data, 'actual_cash'),
             data.get('terminal_last3', ''), _f(data, 'terminal_amount'),
             _f(data, 'morning_cash'), _f(data, 'kassa_nal'),
             shift_id
