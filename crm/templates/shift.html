@@ -1173,8 +1173,12 @@ function autoSaveStaffRow(row) {
     body: JSON.stringify(data)
   }).then(r => r.json()).then(d => {
     if (d.ok) {
-      if (d.auto_bonuses) applyAutoBonuses(d.auto_bonuses);
-      else updateKassa();
+      if (d.auto_bonuses) {
+        applyAutoBonuses(d.auto_bonuses);
+        // restore locally-entered bonus that server doesn't know about yet
+        calcStaffTotal(row);
+        updateKassa();
+      } else updateKassa();
     }
   });
 }
