@@ -1233,6 +1233,79 @@ _manual_rev_by_day(conn, date_from, date_to, bids=None)   # {date: amount}
 
 Все ошибки показываются списком одновременно, форма не отправляется.
 
+### 91. Список пользователей — переработка
+
+- Убраны кнопки «Филиалы» и «Пароль» из строки таблицы
+- Добавлена колонка **«Группа»**: вычисляется на стороне Python (`user_groups_map`) — пересечение филиалов пользователя с группами
+- Единственная кнопка «Редактировать» открывает модал с полями: Имя, Логин, Email, Роль, Филиалы, Новый пароль
+- Бейджи ролей: owner=warning (Владелец), admin=primary (Администратор), director=info (Управляющий), employee=secondary (Сотрудник)
+- Роль Владелец (`owner`) — кнопка «Редактировать» не показывается
+- `user_branches_map` передаётся в шаблон для инициализации чекбоксов в модале редактирования
+
+### 92. История изменений — логирование открытия смен
+
+- Добавлена запись `log_action(conn, 'shift_open', 'Смена открыта', shift_id=shift_id)` в `open_shift()` после INSERT смены
+- `ACTION_LABELS` расширен: `'shift_open': ('Открытие', 'success')`
+- В отчёте «История» теперь видны события открытия смен
+
+### 93. Восстановление пароля через Gmail
+
+**Новые зависимости/конфиги в `app.py`:**
+```python
+import smtplib, threading
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+SMTP_HOST     = 'smtp.gmail.com'
+SMTP_PORT     = 587
+SMTP_USER     = 'papasushi42@gmail.com'
+SMTP_PASSWORD = 'ciznzwgctjqpvbli'
+SMTP_FROM     = 'CRMPAPA <papasushi42@gmail.com>'
+```
+
+**Новые таблицы (миграция):**
+- `password_reset_tokens (id, user_id, token, expires_at, used, created_at)`
+- Добавлена колонка `email TEXT DEFAULT ''` в таблицу `users` (если отсутствует)
+
+**Новые роуты:**
+- `GET/POST /forgot-password` — принимает email, создаёт токен (24 ч), отправляет письмо
+- `GET/POST /reset-password/<token>` — проверяет токен, принимает новый пароль
+
+**Отправка в фоне** (`threading.Thread`, `timeout=15`) — страница не зависает.
+
+**Сравнение времени через `datetime.utcnow()`** — исключает расхождение часовых поясов с SQLite.
+
+**Новые шаблоны:** `forgot_password.html`, `reset_password.html` — стиль как у `login.html`.
+
+**`login.html`:** добавлена ссылка «Забыли пароль?» под кнопкой входа.
+
+**`add_user` и `edit_user`:** сохраняют поле `email`.
+
+### 94. Ссылки-приглашения (invite links)
+
+**Новая таблица:**
+- `invite_tokens (id, token, role, branch_ids TEXT, expires_at, used, created_at)`
+- `branch_ids` хранится как JSON-строка
+
+**Новые роуты:**
+- `POST /users/invite/create` — owner выбирает роль и филиалы, создаёт токен на 7 дней, редирект на `/users?new_invite=TOKEN`
+- `GET/POST /invite/<token>` — самостоятельная регистрация: поля Имя, Логин, Email, Пароль
+
+**`users.html`:**
+- Кнопка «Ссылка-приглашение» в заголовке страницы
+- Модал с выбором роли и филиалов (макрос `branch_picker('inv')`)
+- Блок отображения готовой ссылки с кнопкой «Копировать» (через query-параметр `new_invite`)
+- `new_invite_url` передаётся из Python (не через flash — flash перехватывается в `base.html`)
+
+**Новый шаблон:** `accept_invite.html` — страница регистрации по ссылке.
+
+### 95. Роль «Управляющий» (director)
+
+- Добавлена роль `director` в `schema.sql`: `CHECK(role IN ('owner', 'admin', 'employee', 'director'))`
+- **Миграция БД:** при запуске `init_db()` — если в схеме таблицы `users` нет слова `'director'` → пересоздаёт таблицу с новым CHECK-constraint через `PRAGMA foreign_keys = OFF/ON` + `CREATE TABLE users_new … INSERT OR IGNORE … DROP … RENAME`
+- **IP-ограничение:** снято для `director` — `if user['role'] not in ('owner', 'director'):`
+- **Все формы:** роль «Управляющий» (`director`) добавлена в select создания/редактирования пользователя и в модал приглашения
+- **Исправлена ошибка Internal Server Error:** при попытке сохранить пользователя с ролью `director` на production-сервере, где таблица `users` создана без `'director'` в CHECK — решена миграцией (п. выше)
+
 ---
 
 ## Ожидает подтверждения / в процессе
