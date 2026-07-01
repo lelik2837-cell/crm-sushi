@@ -133,17 +133,38 @@
               {% for b in sel_branches %}
               {% set cell = grid.get(day.iso, {}).get(b.id) %}
               <td class="px-2 py-1 text-center">
-                {% if cell %}
-                  {% if cell.status == 'closed' %}
-                    {% if cell.change_amount %}
-                    <span style="font-size:13px; color:#9ca3af;">{{ cell.change_amount | money }}</span>
-                    {% else %}
-                    <span style="color:#d1d5db; font-size:13px;">—</span>
-                    {% endif %}
-                  {% else %}
-                  <div class="change-cell"
-                    {% if cell.status == 'future' %}data-mode="future" data-branch-id="{{ cell.branch_id }}" data-date="{{ cell.date }}"
-                    {% else %}data-shift-id="{{ cell.shift_id }}"{% endif %}>
+                {% if cell and cell.shift_id %}
+                  {% set is_closed = cell.status == 'closed' %}
+                  <div class="change-cell" data-shift-id="{{ cell.shift_id }}" data-status="{{ cell.status }}">
+                    <div class="change-view d-flex align-items-center justify-content-center gap-1 flex-wrap">
+                      {% if cell.change_amount %}
+                      <span class="change-val" style="font-size:13px; color:{% if is_closed %}#9ca3af{% else %}#374151{% endif %};">{{ cell.change_amount | money }}</span>
+                      {% endif %}
+                      <span class="d-flex gap-1 align-items-center">
+                        <i class="bi bi-pencil-square change-edit-btn" style="color:#9ca3af; font-size:13px; cursor:pointer;"
+                           onclick="startEdit(this.closest('.change-cell'))" title="Изменить размен"></i>
+                        {% if is_closed %}
+                        <i class="bi bi-unlock-fill shift-toggle-btn" style="color:#22c55e; font-size:13px; cursor:pointer;"
+                           onclick="reopenShift({{ cell.shift_id }}, this)" title="Открыть смену"></i>
+                        {% else %}
+                        <i class="bi bi-lock-fill shift-toggle-btn" style="color:#ef4444; font-size:13px; cursor:pointer;"
+                           onclick="closeShift({{ cell.shift_id }}, this)" title="Закрыть смену"></i>
+                        {% endif %}
+                      </span>
+                    </div>
+                    <div class="change-edit d-none d-flex align-items-center justify-content-center gap-1">
+                      <input type="number" class="form-control form-control-sm change-input" min="0" step="1"
+                             value="{{ cell.change_amount|int if cell.change_amount else '' }}"
+                             placeholder="" style="width:88px; font-size:13px; text-align:right;"
+                             onkeydown="if(event.key==='Enter') saveEdit(this.closest('.change-cell'))">
+                      <button type="button" class="btn btn-success btn-sm py-0 px-1"
+                              onclick="saveEdit(this.closest('.change-cell'))" title="Сохранить">
+                        <i class="bi bi-check-lg"></i>
+                      </button>
+                    </div>
+                  </div>
+                {% elif cell and cell.status == 'future' %}
+                  <div class="change-cell" data-mode="future" data-branch-id="{{ cell.branch_id }}" data-date="{{ cell.date }}">
                     <div class="change-view d-flex align-items-center justify-content-center gap-1">
                       {% if cell.change_amount %}<span class="change-val" style="font-size:13px; color:#374151;">{{ cell.change_amount | money }}</span>{% endif %}
                       <i class="bi bi-pencil-square change-edit-btn" style="color:#9ca3af; font-size:13px; cursor:pointer;" onclick="startEdit(this.closest('.change-cell'))"></i>
@@ -159,9 +180,8 @@
                       </button>
                     </div>
                   </div>
-                  {% endif %}
                 {% else %}
-                <span style="color:#d1d5db; font-size:13px;">—</span>
+                  <span style="color:#d1d5db; font-size:13px;">—</span>
                 {% endif %}
               </td>
               {% endfor %}
@@ -390,6 +410,27 @@ function saveEdit(cell) {
     cell.querySelector('.change-edit').classList.add('d-none');
     view.classList.remove('d-none');
   }).catch(() => showToast('Ошибка сохранения', 'danger'));
+}
+
+// ─── Shift open / close ──────────────────────────────────────────────────────
+function reopenShift(shiftId, btn) {
+  if (!confirm('Открыть смену?')) return;
+  btn.style.pointerEvents = 'none';
+  const fd = new FormData();
+  fetch(`/shift/${shiftId}/reopen`, {method: 'POST', body: fd})
+    .then(() => { showToast('Смена открыта'); setTimeout(() => location.reload(), 700); })
+    .catch(() => { showToast('Ошибка', 'danger'); btn.style.pointerEvents = ''; });
+}
+
+function closeShift(shiftId, btn) {
+  const name = (prompt('Кто закрывает смену?') || '').trim();
+  if (!name) return;
+  btn.style.pointerEvents = 'none';
+  const fd = new FormData();
+  fd.append('closed_by_name', name);
+  fetch(`/shift/${shiftId}/close`, {method: 'POST', body: fd})
+    .then(() => { showToast('Смена закрыта'); setTimeout(() => location.reload(), 700); })
+    .catch(() => { showToast('Ошибка', 'danger'); btn.style.pointerEvents = ''; });
 }
 
 // ─── Tab activation via URL hash ────────────────────────────────────────────
