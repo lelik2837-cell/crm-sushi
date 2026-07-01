@@ -1345,16 +1345,23 @@ function updateBonusSel(sel) {
 let _bonusDebounce = null;
 document.addEventListener('input', function(e) {
   if (!CAN_EDIT || !e.target.classList.contains('bonus-amount')) return;
+  const br = e.target.closest('.staff-bonus-row');
+  if (br) {
+    const staffRow = br.previousElementSibling;
+    if (staffRow?.dataset.id) calcStaffTotal(staffRow);
+  }
   clearTimeout(_bonusDebounce);
   _bonusDebounce = setTimeout(() => {
-    const br = e.target.closest('.staff-bonus-row');
     if (br) saveBonusRow(br);
   }, 600);
 });
 document.addEventListener('change', function(e) {
   if (!CAN_EDIT || !e.target.classList.contains('bonus-select')) return;
   const br = e.target.closest('.staff-bonus-row');
-  if (br && readNum(br.querySelector('.bonus-amount')) > 0) saveBonusRow(br);
+  if (!br) return;
+  const staffRow = br.previousElementSibling;
+  if (staffRow?.dataset.id) calcStaffTotal(staffRow);
+  if (readNum(br.querySelector('.bonus-amount')) > 0) saveBonusRow(br);
 });
 document.addEventListener('blur', function(e) {
   if (!CAN_EDIT) return;
