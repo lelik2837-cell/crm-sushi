@@ -584,6 +584,10 @@
       </select>
       <input class="bonus-amount money-field" type="text" inputmode="numeric" placeholder="0" value="{{ (bv|abs)|int if hb else '' }}">
       <input class="bonus-comment" type="text" placeholder="Комментарий..." value="{{ s.bonus_comment or '' }}">
+      {% if can_edit %}
+      <button class="bonus-cancel" onclick="closeBonusRow(this)">Отменить</button>
+      <button class="bonus-save" onclick="saveBonusRow(this.closest('.staff-bonus-row'));closeBonusRow(this)">Сохранить</button>
+      {% endif %}
     </div>
     {% if hb %}
     <div class="bonus-summary" style="display:flex;">
@@ -693,7 +697,11 @@
           </select>
           <input class="bonus-amount money-field" type="text" inputmode="numeric" placeholder="0" value="{{ (bonus_val|abs)|int if has_bonus else '' }}">
           <input class="bonus-comment" type="text" placeholder="Комментарий..." value="{{ s.bonus_comment or '' }}">
-            </div>
+          {% if can_edit %}
+          <button class="bonus-cancel" onclick="closeBonusRow(this)">Отменить</button>
+          <button class="bonus-save" onclick="saveBonusRow(this.closest('.staff-bonus-row'));closeBonusRow(this)">Сохранить</button>
+          {% endif %}
+        </div>
         {% if has_bonus %}
         <div class="bonus-summary" style="display:flex;">
           <span class="bonus-arrow">↳</span>
@@ -1346,33 +1354,21 @@ function updateBonusSel(sel) {
   sel.classList.toggle('bonus-sel-fine', sel.value === 'fine');
 }
 
-// ── Autosave bonus on input ───────────────────────────────────────────────────
+// ── Live total update while typing bonus (save happens on button click) ───────
 document.addEventListener('input', function(e) {
-  if (!CAN_EDIT || !e.target.classList.contains('bonus-amount')) return;
+  if (!e.target.classList.contains('bonus-amount')) return;
   const br = e.target.closest('.staff-bonus-row');
   if (!br) return;
   const staffRow = br.previousElementSibling;
   if (staffRow?.dataset.id) calcStaffTotal(staffRow);
-  saveBonusRow(br);
 });
 document.addEventListener('change', function(e) {
-  if (!CAN_EDIT || !e.target.classList.contains('bonus-select')) return;
+  if (!e.target.classList.contains('bonus-select')) return;
   const br = e.target.closest('.staff-bonus-row');
   if (!br) return;
   const staffRow = br.previousElementSibling;
   if (staffRow?.dataset.id) calcStaffTotal(staffRow);
-  if (readNum(br.querySelector('.bonus-amount')) > 0) saveBonusRow(br);
 });
-document.addEventListener('blur', function(e) {
-  if (!CAN_EDIT) return;
-  if (e.target.classList.contains('bonus-amount')) {
-    const br = e.target.closest('.staff-bonus-row');
-    if (br) saveBonusRow(br);
-  } else if (e.target.classList.contains('bonus-comment')) {
-    const br = e.target.closest('.staff-bonus-row');
-    if (br && readNum(br.querySelector('.bonus-amount')) > 0) saveBonusRow(br);
-  }
-}, true);
 
 // ── Add staff inline ──────────────────────────────────────────────────────────
 const ROLE_GROUPS = {
