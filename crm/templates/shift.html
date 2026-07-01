@@ -1121,7 +1121,18 @@ function calcStaffTotal(row) {
 
   const base      = hours * rate + km * rateKm + orders * rateOrd;
   const autoBonus = parseInt(row.dataset.autoBonus || 0);
-  const total     = base + autoBonus;
+
+  // Include manual bonus/penalty from adjacent bonus row
+  const bonusRowEl = row.nextElementSibling;
+  let manualBonus = 0, manualPenalty = 0;
+  if (bonusRowEl?.classList.contains('staff-bonus-row')) {
+    const bAmt = readNum(bonusRowEl.querySelector('.bonus-amount'));
+    const bPrem = bonusRowEl.querySelector('.bonus-select')?.value !== 'fine';
+    manualBonus   = bPrem ? bAmt : 0;
+    manualPenalty = bPrem ? 0 : bAmt;
+  }
+
+  const total   = base + autoBonus + manualBonus - manualPenalty;
   const abEl    = row.querySelector('.sf-auto-bonus');
   const totalEl = row.querySelector('.sf-total');
   if (abEl) abEl.textContent = autoBonus > 0 ? autoBonus : '—';
@@ -1344,9 +1355,15 @@ document.addEventListener('change', function(e) {
   if (br && readNum(br.querySelector('.bonus-amount')) > 0) saveBonusRow(br);
 });
 document.addEventListener('blur', function(e) {
-  if (!CAN_EDIT || !e.target.classList.contains('bonus-comment')) return;
-  const br = e.target.closest('.staff-bonus-row');
-  if (br && readNum(br.querySelector('.bonus-amount')) > 0) saveBonusRow(br);
+  if (!CAN_EDIT) return;
+  if (e.target.classList.contains('bonus-amount')) {
+    clearTimeout(_bonusDebounce);
+    const br = e.target.closest('.staff-bonus-row');
+    if (br) saveBonusRow(br);
+  } else if (e.target.classList.contains('bonus-comment')) {
+    const br = e.target.closest('.staff-bonus-row');
+    if (br && readNum(br.querySelector('.bonus-amount')) > 0) saveBonusRow(br);
+  }
 }, true);
 
 // ── Add staff inline ──────────────────────────────────────────────────────────
@@ -1818,6 +1835,34 @@ function openCloseModal() {
       errEl.style.display = '';
       errEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       return;
+    }
+
+    // Сохранить все бонусы/штрафы до закрытия смены
+    clearTimeout(_bonusDebounce);
+    var bonusPromises = [];
+    document.querySelectorAll('.staff-bonus-row').forEach(function(br) {
+      var staffRow = br.previousElementSibling;
+      var sid = parseInt((staffRow && staffRow.dataset.id) || 0);
+      if (!sid) return;
+      var amount  = readNum(br.querySelector('.bonus-amount'));
+      var isPrem  = br.querySelector('.bonus-select').value !== 'fine';
+      var comment = (br.querySelector('.bonus-comment') || {}).value || '';
+      bonusPromises.push(
+        fetch('/shift/' + SHIFT_ID + '/save-staff', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            id: sid,
+            bonus_amount:   isPrem ? amount : 0,
+            penalty_amount: isPrem ? 0 : amount,
+            bonus_comment: comment
+          })
+        }).catch(function() {})
+      );
+    });
+    if (bonusPromises.length > 0) {
+      e.preventDefault();
+      Promise.all(bonusPromises).then(function() { form.submit(); });
     }
   });
 
