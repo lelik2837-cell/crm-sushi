@@ -1355,7 +1355,7 @@ def login():
                 branch_ids = [user['branch_id']]
             # IP restriction: non-owners are limited to the branch matching their IP
             # Managers (управляющие) are exempt — they have access to all assigned branches
-            if user['role'] not in ('owner', 'manager'):
+            if user['role'] not in ('owner', 'director'):
                 client_ip = get_client_ip()
                 ip_branch = conn.execute(
                     "SELECT id FROM branches WHERE allowed_ip=? AND is_active=1",

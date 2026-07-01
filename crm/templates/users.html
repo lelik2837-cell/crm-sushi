@@ -46,7 +46,7 @@
                 <td>
                     {% if u.role == 'owner' %}<span class="badge bg-warning text-dark">Владелец</span>
                     {% elif u.role == 'admin' %}<span class="badge bg-primary">Администратор</span>
-                    {% elif u.role == 'manager' %}<span class="badge bg-info text-dark">Управляющий</span>
+                    {% elif u.role == 'director' %}<span class="badge bg-info text-dark">Управляющий</span>
                     {% else %}<span class="badge bg-secondary">Сотрудник</span>{% endif %}
                 </td>
                 <td>
@@ -120,7 +120,7 @@
                         <label class="form-label">Роль</label>
                         <select name="role" class="form-select">
                             <option value="admin">Администратор</option>
-                            <option value="manager">Управляющий</option>
+                            <option value="director">Управляющий</option>
                             <option value="employee">Сотрудник</option>
                         </select>
                     </div>
@@ -168,7 +168,7 @@
                         <label class="form-label">Роль</label>
                         <select name="role" class="form-select">
                             <option value="admin">Администратор</option>
-                            <option value="manager">Управляющий</option>
+                            <option value="director">Управляющий</option>
                             <option value="employee">Сотрудник</option>
                         </select>
                     </div>
@@ -215,7 +215,7 @@
                         <label class="form-label">Роль</label>
                         <select name="role" class="form-select">
                             <option value="admin" {% if u.role == 'admin' %}selected{% endif %}>Администратор</option>
-                            <option value="manager" {% if u.role == 'manager' %}selected{% endif %}>Управляющий</option>
+                            <option value="director" {% if u.role == 'director' %}selected{% endif %}>Управляющий</option>
                             <option value="employee" {% if u.role == 'employee' %}selected{% endif %}>Сотрудник</option>
                         </select>
                     </div>
