@@ -1120,6 +1120,15 @@ def init_db():
         if 'import_batch_id' not in _shifts_cols:
             conn.execute("ALTER TABLE shifts ADD COLUMN import_batch_id INTEGER REFERENCES import_batches(id)")
 
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS import_staging (
+                token TEXT PRIMARY KEY,
+                branch_id INTEGER,
+                data TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
         # Feature: fire/restore employees
         _emp_cols2 = [r[1] for r in conn.execute("PRAGMA table_info(employees)").fetchall()]
         if 'is_fired' not in _emp_cols2:
@@ -8644,11 +8653,12 @@ def _xts(t):
     return None
 
 
-def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
+def _xl_parse_sheet(ws, branch_id):
+    """Parse Excel sheet and return structured dict (no DB writes). Returns None if invalid."""
     from datetime import date as _d, datetime as _dt
     rows = list(ws.iter_rows(min_row=1, values_only=True))
     if len(rows) < 7:
-        return
+        return None
 
     date_val = rows[2][1] if len(rows) > 2 else None
     if isinstance(date_val, _dt):
@@ -8656,7 +8666,7 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
     elif isinstance(date_val, _d):
         shift_date = date_val
     else:
-        return
+        return None
 
     total_revenue = _xf(rows[1][5]) if len(rows) > 1 else 0
     delivery_rev  = _xf(rows[3][6]) if len(rows) > 3 else 0
@@ -8667,115 +8677,62 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
     online_amount = _xf(rows[6][3]) if len(rows) > 6 else 0
     pickup_ord    = int(_xf(rows[6][6])) if len(rows) > 6 else 0
 
-    terminal_amount = 0.0
-    terminal_codes  = []
-    actual_cash     = 0.0
-    closed_by_name  = None
+    actual_cash    = 0.0
+    closed_by_name = None
     for r in rows[25:]:
-        if r[4] == 'По терминалам:' and r[6] is not None:
-            terminal_amount = _xf(r[6])
         if r[1] == 'Факт в кассе:':
             actual_cash = _xf(r[3])
         if r[1] == 'Смену закрыл(а):':
             closed_by_name = str(r[4]).strip() if r[4] else None
-    # Терминалы: E29:F35 — номера (cols 4,5), G29:H35 — суммы (cols 6,7); rows 28-34
-    terminal_entries = []  # list of (code, amount)
+
+    terminal_entries = []
+    terminal_codes   = []
     for r in rows[28:35]:
         if len(r) < 7:
             continue
-        # Слот 1: E (col 4) + G (col 6)
         code1 = str(r[4]).strip() if r[4] is not None and str(r[4]).strip() else None
         amt1  = _xf(r[6])
         if code1 and amt1 > 0:
-            terminal_entries.append((code1, amt1))
+            terminal_entries.append([code1, amt1])
             terminal_codes.append(code1)
-        # Слот 2: F (col 5) + H (col 7)
         code2 = str(r[5]).strip() if len(r) > 5 and r[5] is not None and str(r[5]).strip() else None
         amt2  = _xf(r[7]) if len(r) > 7 else 0.0
         if code2 and amt2 > 0:
-            terminal_entries.append((code2, amt2))
+            terminal_entries.append([code2, amt2])
             terminal_codes.append(code2)
     terminal_amount = sum(a for _, a in terminal_entries)
 
     morning_cash  = _xf(rows[2][3]) if len(rows) > 2 else 0.0
     change_amount = _xf(rows[30][3]) if len(rows) > 30 else 0.0
-    # D29=масло, D30=рыба, D33:D36=другие плюсы
     plus_amount   = sum(_xf(rows[i][3]) for i in ([28, 29] + list(range(32, 36))) if len(rows) > i)
 
-    existing = conn.execute(
-        "SELECT id FROM shifts WHERE branch_id=? AND date=?",
-        (branch_id, shift_date.isoformat())
-    ).fetchone()
-    if existing:
-        shift_id = existing[0]
-    else:
-        status = 'closed' if closed_by_name else 'open'
-        conn.execute(
-            "INSERT INTO shifts (branch_id, date, status, closed_by_name, import_batch_id) VALUES (?,?,?,?,?)",
-            (branch_id, shift_date.isoformat(), status, closed_by_name, batch_id)
-        )
-        shift_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-        stats['shifts'] += 1
+    # Cash plus entries
+    cash_plus = []
+    if len(rows) > 28:
+        amt = _xf(rows[28][3])
+        if amt > 0:
+            cash_plus.append({'amount': amt, 'category': 'oil', 'description': ''})
+    if len(rows) > 29:
+        amt = _xf(rows[29][3])
+        if amt > 0:
+            cash_plus.append({'amount': amt, 'category': 'fish', 'description': ''})
+    for i in range(32, 36):
+        if len(rows) <= i:
+            break
+        amt = _xf(rows[i][3])
+        desc_parts = [str(rows[i][ci]).strip() for ci in (1, 2) if len(rows[i]) > ci and rows[i][ci] is not None and str(rows[i][ci]).strip()]
+        desc = ' '.join(desc_parts)
+        if amt > 0:
+            cash_plus.append({'amount': amt, 'category': 'cash_plus', 'description': desc})
 
-    if not conn.execute("SELECT id FROM shift_revenue WHERE shift_id=?", (shift_id,)).fetchone():
-        conn.execute(
-            """INSERT INTO shift_revenue
-               (shift_id, total_revenue, delivery_revenue, delivery_orders,
-                pickup_revenue, pickup_orders, cash_amount, card_amount,
-                online_amount, terminal_last3, terminal_amount, actual_cash,
-                change_amount, plus_amount, morning_cash)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (shift_id, total_revenue, delivery_rev, delivery_ord,
-             pickup_rev, pickup_ord, cash_amount, card_amount,
-             online_amount, ','.join(terminal_codes), terminal_amount, actual_cash,
-             change_amount, plus_amount, morning_cash)
-        )
-
-    # Терминалы → shift_terminals
-    if terminal_entries and not conn.execute(
-            "SELECT id FROM shift_terminals WHERE shift_id=?", (shift_id,)).fetchone():
-        for si, (tn, ta) in enumerate(terminal_entries):
-            conn.execute(
-                "INSERT INTO shift_terminals (shift_id, terminal_number, amount, sort_order) VALUES (?,?,?,?)",
-                (shift_id, tn, ta, si)
-            )
-
-    # Плюсы в кассу: D29=масло, D30=рыба, C33:C36=комментарий, D33:D36=сумма
-    if not conn.execute("SELECT id FROM cash_plus_entries WHERE shift_id=?", (shift_id,)).fetchone():
-        if len(rows) > 28:
-            amt = _xf(rows[28][3])
-            if amt > 0:
-                conn.execute(
-                    "INSERT INTO cash_plus_entries (shift_id, amount, amount_cash, category) VALUES (?,?,?,?)",
-                    (shift_id, amt, amt, 'oil')
-                )
-        if len(rows) > 29:
-            amt = _xf(rows[29][3])
-            if amt > 0:
-                conn.execute(
-                    "INSERT INTO cash_plus_entries (shift_id, amount, amount_cash, category) VALUES (?,?,?,?)",
-                    (shift_id, amt, amt, 'fish')
-                )
-        for i in range(32, 36):
-            if len(rows) <= i:
-                break
-            amt = _xf(rows[i][3])
-            desc_parts = [str(rows[i][ci]).strip() for ci in (1, 2) if len(rows[i]) > ci and rows[i][ci] is not None and str(rows[i][ci]).strip()]
-            desc = ' '.join(desc_parts)
-            if amt > 0:
-                conn.execute(
-                    "INSERT INTO cash_plus_entries (shift_id, amount, amount_cash, category, description) VALUES (?,?,?,?,?)",
-                    (shift_id, amt, amt, 'cash_plus', desc)
-                )
-
-    # Расходы:
-    # Ремонт — фиксированные строки (Excel 10-14 = rows 9-13)
+    # Expenses
+    expenses = []
     _REPAIR_ROWS = {
-        9:  'repair_plumbing',   # Excel 10: Ремонт сантех.
-        10: 'repair_grease',     # Excel 11: Чистка жироуловителя
-        11: 'repair_electric',   # Excel 12: Ремонт электрик
-        12: 'repair_fridge',     # Excel 13: Ремонт холод.оборуд.
-        13: 'repair_other',      # Excel 14: Ремонт другой
+        9:  'repair_plumbing',
+        10: 'repair_grease',
+        11: 'repair_electric',
+        12: 'repair_fridge',
+        13: 'repair_other',
     }
     for row_idx, cat in _REPAIR_ROWS.items():
         if len(rows) <= row_idx:
@@ -8785,102 +8742,46 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
         card_e = _xf(r[6]) if len(r) > 6 else 0.0
         if cash_e <= 0 and card_e <= 0:
             continue
-        parts = [str(r[ci]).strip() for ci in (2, 3, 4) if len(r) > ci and r[ci] is not None and str(r[ci]).strip()]
+        parts  = [str(r[ci]).strip() for ci in (2, 3, 4) if len(r) > ci and r[ci] is not None and str(r[ci]).strip()]
         desc   = ' '.join(parts) if parts else None
         gulash = 1 if len(r) > 7 and r[7] is True else 0
-        conn.execute(
-            "INSERT INTO expenses (shift_id,category,description,amount_cash,amount_card,is_gulash) VALUES (?,?,?,?,?,?)",
-            (shift_id, cat, desc, cash_e, card_e, gulash)
-        )
-        stats['expenses'] += 1
+        expenses.append({'category': cat, 'description': desc, 'cash': cash_e, 'card': card_e, 'gulash': gulash})
 
-    # Магазин / Стафф (Excel 15-20 = rows 14-19)
     for r in rows[14:20]:
         cash_e = _xf(r[5]) if len(r) > 5 else 0.0
         card_e = _xf(r[6]) if len(r) > 6 else 0.0
         if cash_e <= 0 and card_e <= 0:
             continue
-        parts = [str(r[ci]).strip() for ci in (2, 3, 4) if len(r) > ci and r[ci] is not None and str(r[ci]).strip()]
-        desc  = ' '.join(parts) if parts else None
-        cat   = 'staff' if desc and 'стаф' in desc.lower() else 'shop'
+        parts  = [str(r[ci]).strip() for ci in (2, 3, 4) if len(r) > ci and r[ci] is not None and str(r[ci]).strip()]
+        desc   = ' '.join(parts) if parts else None
+        cat    = 'staff' if desc and 'стаф' in desc.lower() else 'shop'
         gulash = 1 if len(r) > 7 and r[7] is True else 0
-        conn.execute(
-            "INSERT INTO expenses (shift_id,category,description,amount_cash,amount_card,is_gulash) VALUES (?,?,?,?,?,?)",
-            (shift_id, cat, desc, cash_e, card_e, gulash)
-        )
-        stats['expenses'] += 1
+        expenses.append({'category': cat, 'description': desc, 'cash': cash_e, 'card': card_e, 'gulash': gulash})
 
-    # Такси: C22:E27=адрес, F22:F27=карта, G22:G27=нал, H22:H27=гуляш
-    if not conn.execute("SELECT id FROM taxi_trips WHERE shift_id=?", (shift_id,)).fetchone():
-        for r in rows[21:27]:
-            if not r or len(r) < 7:
-                continue
-            parts = [str(r[ci]).strip() for ci in (2, 3, 4) if len(r) > ci and r[ci] is not None and str(r[ci]).strip()]
-            addr = ' '.join(parts) if parts else None
-            if not addr:
-                continue
-            card_t   = _xf(r[5])
-            cash_t   = _xf(r[6])
-            gulash_t = 1 if len(r) > 7 and r[7] else 0
-            if cash_t <= 0 and card_t <= 0:
-                continue
-            pay_type = 'cash' if cash_t > 0 else 'card'
-            amount   = cash_t if cash_t > 0 else card_t
-            conn.execute(
-                "INSERT INTO taxi_trips (shift_id, amount, payment_type, in_gulyash) VALUES (?,?,?,?)",
-                (shift_id, amount, pay_type, gulash_t)
-            )
-            trip_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-            conn.execute(
-                "INSERT INTO taxi_trip_employees (trip_id, name_snapshot, address_snapshot) VALUES (?,?,?)",
-                (trip_id, '—', addr)
-            )
-            stats['expenses'] += 1
+    # Taxi
+    taxi = []
+    for r in rows[21:27]:
+        if not r or len(r) < 7:
+            continue
+        parts  = [str(r[ci]).strip() for ci in (2, 3, 4) if len(r) > ci and r[ci] is not None and str(r[ci]).strip()]
+        addr   = ' '.join(parts) if parts else None
+        if not addr:
+            continue
+        card_t   = _xf(r[5])
+        cash_t   = _xf(r[6])
+        gulash_t = 1 if len(r) > 7 and r[7] else 0
+        if cash_t <= 0 and card_t <= 0:
+            continue
+        taxi.append({'addr': addr, 'cash': cash_t, 'card': card_t, 'gulash': gulash_t})
 
-    def get_or_create(name, role, rate):
-        r = conn.execute(
-            "SELECT id FROM employees WHERE full_name=? AND branch_id=?", (name, branch_id)
-        ).fetchone()
-        if r:
-            return r[0]
-        conn.execute(
-            "INSERT INTO employees (branch_id,full_name,role,rate,is_active) VALUES (?,?,?,?,1)",
-            (branch_id, name, role, rate)
-        )
-        eid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-        stats['employees'] += 1
-        return eid
-
-    def add_shift(emp_id, name, role, rate, hours=0, km=0, orders=0,
-                  rate_km=10, rate_ord=100, start=None, end=None,
-                  bonus=0, penalty=0, comment='', base_pay=0, total=0, paid=0):
-        if conn.execute(
-            "SELECT id FROM employee_shifts WHERE shift_id=? AND employee_id=?", (shift_id, emp_id)
-        ).fetchone():
-            return
-        conn.execute(
-            """INSERT INTO employee_shifts
-               (shift_id,employee_id,full_name_snapshot,role_snapshot,
-                rate_snapshot,rate_per_km_snapshot,rate_per_order_snapshot,
-                hours_worked,km,orders,shift_start,shift_end,
-                bonus_amount,penalty_amount,bonus_comment,
-                base_pay,total_amount,is_paid,paid_amount)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (shift_id, emp_id, name, role, rate, rate_km, rate_ord,
-             hours, km, orders, start, end,
-             bonus, penalty, comment, base_pay, total, paid, total if paid else 0)
-        )
-        stats['employee_shifts'] += 1
-
-    # Время курьеров: (строка_старт, кол_час, кол_мин, строка_конец, кол_час, кол_мин)
-    # M=12,N=13; R=17,S=18; V=21,W=22; строки 26,27→idx 25,26; 76,77→idx 75,76
+    # Courier times
     _COURIER_TIMES = [
-        (25, 12, 13, 26, 12, 13),  # Курьер 1: M26=ч, N26=м старт; M27=ч, N27=м конец
-        (25, 17, 18, 26, 17, 18),  # Курьер 2: R26=ч, S26=м старт; R27=ч, S27=м конец
-        (25, 21, 22, 26, 21, 22),  # Курьер 3: V26=ч, W26=м старт; V27=ч, W27=м конец
-        (75, 12, 13, 76, 12, 13),  # Курьер 4: M76=ч, N76=м старт; M77=ч, N77=м конец
-        (75, 17, 18, 76, 17, 18),  # Курьер 5: R76=ч, S76=м старт; R77=ч, S77=м конец
-        (75, 21, 22, 76, 21, 22),  # Курьер 6: V76=ч, W76=м старт; V77=ч, W77=м конец
+        (25, 12, 13, 26, 12, 13),
+        (25, 17, 18, 26, 17, 18),
+        (25, 21, 22, 26, 21, 22),
+        (75, 12, 13, 76, 12, 13),
+        (75, 17, 18, 76, 17, 18),
+        (75, 21, 22, 76, 21, 22),
     ]
 
     def _read_hm(row_idx, col_h, col_m):
@@ -8892,6 +8793,9 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
         if h is None:
             return None
         return f"{h:02d}:{m:02d}"
+
+    # Employees
+    employees = []
 
     for ci, r in enumerate(rows[2:8]):
         name = r[10]
@@ -8906,36 +8810,32 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
         km      = _xf(r[12]); km_pay  = _xf(r[13])
         hours   = _xf(r[14]); hrs_pay = _xf(r[15])
         orders  = int(_xf(r[16])); ord_pay = _xf(r[17])
-        # S column: "премия"/"штраф" label; T column: amount
         s_label  = str(r[18]).strip() if len(r) > 18 and r[18] else ''
         t_amount = _xf(r[19]) if len(r) > 19 else 0.0
         if 'премия' in s_label.lower():
-            bonus   = t_amount
-            penalty = 0.0
-            comment = ''
+            bonus = t_amount; penalty = 0.0; comment = ''
         elif 'штраф' in s_label.lower():
-            bonus   = 0.0
-            penalty = t_amount
-            comment = ''
+            bonus = 0.0; penalty = t_amount; comment = ''
         else:
-            bonus   = 0.0
-            penalty = 0.0
+            bonus = 0.0; penalty = 0.0
             comment = s_label if s_label and s_label != 'Ничего' else ''
-        paid    = 1 if r[20] == 'Да' else 0
+        paid     = 1 if r[20] == 'Да' else 0
         rate_km  = round(km_pay / km, 2) if km > 0 else 10.0
         rate_ord = round(ord_pay / orders, 2) if orders > 0 else 100.0
         rate_hr  = round(hrs_pay / hours, 2) if hours > 0 else 0.0
         sr, sh, sm, er, eh, em = _COURIER_TIMES[ci]
         start = _read_hm(sr, sh, sm)
         end   = _read_hm(er, eh, em)
-        emp_id = get_or_create(name, 'courier', rate_hr)
-        add_shift(emp_id, name, 'courier', rate_hr,
-                  hours=hours, km=km, orders=orders,
-                  rate_km=rate_km, rate_ord=rate_ord, comment=comment,
-                  start=start, end=end,
-                  bonus=bonus, penalty=penalty,
-                  base_pay=hrs_pay + km_pay, total=total, paid=paid)
+        employees.append({
+            'name': name, 'role': 'courier', 'rate': rate_hr,
+            'hours': hours, 'km': km, 'orders': orders,
+            'rate_km': rate_km, 'rate_ord': rate_ord,
+            'start': start, 'end': end,
+            'bonus': bonus, 'penalty': penalty, 'comment': comment,
+            'base_pay': hrs_pay + km_pay, 'total': total, 'paid': paid,
+        })
 
+    _VALID_ROLES = {'admin', 'cook', 'sushi', 'packer', 'cleaner', 'courier'}
     for row_idx, r in enumerate(rows[9:22], start=9):
         name = r[10]
         if not name or not isinstance(name, str) or name.strip() in _XL_SKIP:
@@ -8946,11 +8846,6 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
         total = _xf(r[21])
         if total == 0:
             continue
-        # Роль: сначала проверяем колонку L (записывается при экспорте из CRM),
-        # иначе определяем по позиции строки
-        # idx 9-13  (Excel 10-14) = по умолчанию admin
-        # idx 14-20 (Excel 15-21) = по умолчанию sushi
-        _VALID_ROLES = {'admin', 'cook', 'sushi', 'packer', 'cleaner', 'courier'}
         l_role = str(r[11]).strip().lower() if len(r) > 11 and r[11] else ''
         if name == 'Уборщица':
             role = 'cleaner'
@@ -8966,26 +8861,149 @@ def _xl_process_sheet(ws, branch_id, conn, stats, batch_id=None):
         hours   = _xt(r[15])
         comment = str(r[18]).strip() if r[18] and str(r[18]) != 'Ничего' else ''
         paid    = 1 if r[20] == 'Да' else 0
-        # T column = база до премии/штрафа; V column = итого с премией/штрафом
-        t_base = _xf(r[19]) if len(r) > 19 else 0.0
+        t_base  = _xf(r[19]) if len(r) > 19 else 0.0
         if t_base > 0:
             diff    = total - t_base
             bonus   = round(max(0.0, diff), 2)
             penalty = round(max(0.0, -diff), 2)
             base    = t_base
         else:
-            # Обратная совместимость: R column (index 17)
             bval    = r[17]
             bonus   = _xf(bval) if isinstance(bval, (int, float)) and bval > 0 else 0
             penalty = abs(_xf(bval)) if isinstance(bval, (int, float)) and bval < 0 else 0
             base    = round(rate * hours, 2)
-        emp_id  = get_or_create(name, role, rate)
-        add_shift(emp_id, name, role, rate,
-                  hours=hours, start=start, end=end,
-                  bonus=bonus, penalty=penalty, comment=comment,
-                  base_pay=base, total=total, paid=paid)
+        employees.append({
+            'name': name, 'role': role, 'rate': rate,
+            'hours': hours, 'km': 0.0, 'orders': 0,
+            'rate_km': 10.0, 'rate_ord': 100.0,
+            'start': start, 'end': end,
+            'bonus': bonus, 'penalty': penalty, 'comment': comment,
+            'base_pay': base, 'total': total, 'paid': paid,
+        })
 
-    conn.commit()
+    return {
+        'date': shift_date.isoformat(),
+        'branch_id': branch_id,
+        'closed_by_name': closed_by_name,
+        'revenue': {
+            'total_revenue': total_revenue,
+            'delivery_rev': delivery_rev,
+            'delivery_ord': delivery_ord,
+            'pickup_rev': pickup_rev,
+            'pickup_ord': pickup_ord,
+            'cash_amount': cash_amount,
+            'card_amount': card_amount,
+            'online_amount': online_amount,
+            'terminal_entries': terminal_entries,
+            'terminal_codes': terminal_codes,
+            'terminal_amount': terminal_amount,
+            'actual_cash': actual_cash,
+            'change_amount': change_amount,
+            'plus_amount': plus_amount,
+            'morning_cash': morning_cash,
+        },
+        'cash_plus': cash_plus,
+        'expenses': expenses,
+        'taxi': taxi,
+        'employees': employees,
+    }
+
+
+def _xl_import_sheet_from_parsed(sheet, emp_map, conn, stats, batch_id=None):
+    """Write a parsed sheet dict to the DB using emp_map {name -> employee_id}."""
+    branch_id      = sheet['branch_id']
+    shift_date     = sheet['date']
+    rev            = sheet['revenue']
+    closed_by_name = sheet['closed_by_name']
+
+    existing = conn.execute(
+        "SELECT id FROM shifts WHERE branch_id=? AND date=?", (branch_id, shift_date)
+    ).fetchone()
+    if existing:
+        shift_id = existing[0]
+    else:
+        status = 'closed' if closed_by_name else 'open'
+        conn.execute(
+            "INSERT INTO shifts (branch_id, date, status, closed_by_name, import_batch_id) VALUES (?,?,?,?,?)",
+            (branch_id, shift_date, status, closed_by_name, batch_id)
+        )
+        shift_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        stats['shifts'] += 1
+
+    if not conn.execute("SELECT id FROM shift_revenue WHERE shift_id=?", (shift_id,)).fetchone():
+        conn.execute(
+            """INSERT INTO shift_revenue
+               (shift_id, total_revenue, delivery_revenue, delivery_orders,
+                pickup_revenue, pickup_orders, cash_amount, card_amount,
+                online_amount, terminal_last3, terminal_amount, actual_cash,
+                change_amount, plus_amount, morning_cash)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (shift_id, rev['total_revenue'], rev['delivery_rev'], rev['delivery_ord'],
+             rev['pickup_rev'], rev['pickup_ord'], rev['cash_amount'], rev['card_amount'],
+             rev['online_amount'], ','.join(rev['terminal_codes']), rev['terminal_amount'],
+             rev['actual_cash'], rev['change_amount'], rev['plus_amount'], rev['morning_cash'])
+        )
+
+    if rev['terminal_entries'] and not conn.execute(
+            "SELECT id FROM shift_terminals WHERE shift_id=?", (shift_id,)).fetchone():
+        for si, (tn, ta) in enumerate(rev['terminal_entries']):
+            conn.execute(
+                "INSERT INTO shift_terminals (shift_id, terminal_number, amount, sort_order) VALUES (?,?,?,?)",
+                (shift_id, tn, ta, si)
+            )
+
+    if not conn.execute("SELECT id FROM cash_plus_entries WHERE shift_id=?", (shift_id,)).fetchone():
+        for cp in sheet['cash_plus']:
+            conn.execute(
+                "INSERT INTO cash_plus_entries (shift_id, amount, amount_cash, category, description) VALUES (?,?,?,?,?)",
+                (shift_id, cp['amount'], cp['amount'], cp['category'], cp.get('description', ''))
+            )
+
+    for exp in sheet['expenses']:
+        conn.execute(
+            "INSERT INTO expenses (shift_id,category,description,amount_cash,amount_card,is_gulash) VALUES (?,?,?,?,?,?)",
+            (shift_id, exp['category'], exp.get('description'), exp['cash'], exp['card'], exp['gulash'])
+        )
+        stats['expenses'] += 1
+
+    if not conn.execute("SELECT id FROM taxi_trips WHERE shift_id=?", (shift_id,)).fetchone():
+        for t in sheet['taxi']:
+            pay_type = 'cash' if t['cash'] > 0 else 'card'
+            amount   = t['cash'] if t['cash'] > 0 else t['card']
+            conn.execute(
+                "INSERT INTO taxi_trips (shift_id, amount, payment_type, in_gulyash) VALUES (?,?,?,?)",
+                (shift_id, amount, pay_type, t['gulash'])
+            )
+            trip_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.execute(
+                "INSERT INTO taxi_trip_employees (trip_id, name_snapshot, address_snapshot) VALUES (?,?,?)",
+                (trip_id, '—', t['addr'])
+            )
+            stats['expenses'] += 1
+
+    for emp in sheet['employees']:
+        name   = emp['name']
+        emp_id = emp_map.get(name)
+        if emp_id is None:
+            continue
+        if conn.execute(
+            "SELECT id FROM employee_shifts WHERE shift_id=? AND employee_id=?", (shift_id, emp_id)
+        ).fetchone():
+            continue
+        conn.execute(
+            """INSERT INTO employee_shifts
+               (shift_id,employee_id,full_name_snapshot,role_snapshot,
+                rate_snapshot,rate_per_km_snapshot,rate_per_order_snapshot,
+                hours_worked,km,orders,shift_start,shift_end,
+                bonus_amount,penalty_amount,bonus_comment,
+                base_pay,total_amount,is_paid,paid_amount)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (shift_id, emp_id, name, emp['role'], emp['rate'], emp['rate_km'], emp['rate_ord'],
+             emp['hours'], emp['km'], emp['orders'], emp['start'], emp['end'],
+             emp['bonus'], emp['penalty'], emp['comment'],
+             emp['base_pay'], emp['total'], emp['paid'], emp['total'] if emp['paid'] else 0)
+        )
+        stats['employee_shifts'] += 1
 
 
 @app.route('/excel-import', methods=['GET', 'POST'])
@@ -9094,7 +9112,7 @@ def shifts_bulk_delete():
 @login_required
 @owner_required
 def import_shifts():
-    import io as _io
+    import io as _io, json as _json, uuid as _uuid
 
     with get_db() as conn:
         branches = conn.execute(
@@ -9114,51 +9132,185 @@ def import_shifts():
 
         if not branch_id_int:
             flash('Выберите филиал', 'danger')
-        elif not files or all(f.filename == '' for f in files):
+            return redirect(url_for('import_shifts'))
+        if not files or all(f.filename == '' for f in files):
             flash('Выберите хотя бы один файл', 'danger')
-        else:
-            try:
-                import openpyxl
-            except ImportError:
-                flash('Библиотека openpyxl не установлена на сервере', 'danger')
-                return redirect(url_for('import_shifts'))
+            return redirect(url_for('import_shifts'))
 
-            with get_db() as conn:
-                for file in files:
-                    if not file.filename.lower().endswith('.xlsx'):
-                        continue
-                    data = file.read()
-                    wb = openpyxl.load_workbook(_io.BytesIO(data), data_only=True)
-                    file_stats = {'shifts': 0, 'expenses': 0, 'employees': 0, 'employee_shifts': 0}
-                    conn.execute(
-                        'INSERT INTO import_batches (branch_id, filename, imported_by) VALUES (?,?,?)',
-                        (branch_id_int, file.filename, session.get('user_id'))
-                    )
-                    batch_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
-                    for sheet_name in wb.sheetnames:
-                        if sheet_name not in _XL_DAY_SHEETS:
-                            continue
-                        ws = wb[sheet_name]
-                        stats = {'shifts': 0, 'expenses': 0, 'employees': 0, 'employee_shifts': 0}
-                        _xl_process_sheet(ws, branch_id_int, conn, stats, batch_id=batch_id)
-                        for k in file_stats:
-                            file_stats[k] += stats[k]
-                    conn.execute(
-                        '''UPDATE import_batches SET shifts_created=?, expenses_created=?,
-                           employees_created=?, employee_shifts_created=? WHERE id=?''',
-                        (file_stats['shifts'], file_stats['expenses'],
-                         file_stats['employees'], file_stats['employee_shifts'], batch_id)
-                    )
-                    flash(
-                        f'«{file.filename}»: смен +{file_stats["shifts"]}, '
-                        f'расходов +{file_stats["expenses"]}, '
-                        f'записей ЗП +{file_stats["employee_shifts"]}',
-                        'success'
-                    )
-        return redirect(url_for('import_shifts'))
+        try:
+            import openpyxl
+        except ImportError:
+            flash('Библиотека openpyxl не установлена на сервере', 'danger')
+            return redirect(url_for('import_shifts'))
+
+        # Parse all sheets without writing to DB
+        parsed_files = []
+        for file in files:
+            if not file.filename.lower().endswith('.xlsx'):
+                continue
+            data = file.read()
+            wb   = openpyxl.load_workbook(_io.BytesIO(data), data_only=True)
+            sheets = []
+            for sheet_name in wb.sheetnames:
+                if sheet_name not in _XL_DAY_SHEETS:
+                    continue
+                parsed = _xl_parse_sheet(wb[sheet_name], branch_id_int)
+                if parsed:
+                    parsed['sheet_name'] = sheet_name
+                    sheets.append(parsed)
+            if sheets:
+                parsed_files.append({'filename': file.filename, 'sheets': sheets})
+
+        if not parsed_files:
+            flash('Подходящих листов (ПН–ВС) с данными не найдено в файлах', 'warning')
+            return redirect(url_for('import_shifts'))
+
+        # Collect unique employees (by name)
+        unique_emp_map = {}   # name -> {name, roles: set, rate, first_role}
+        for pf in parsed_files:
+            for sheet in pf['sheets']:
+                for emp in sheet['employees']:
+                    n = emp['name']
+                    if n not in unique_emp_map:
+                        unique_emp_map[n] = {'name': n, 'roles': [], 'rate': emp['rate']}
+                    if emp['role'] not in unique_emp_map[n]['roles']:
+                        unique_emp_map[n]['roles'].append(emp['role'])
+        unique_employees = list(unique_emp_map.values())
+
+        # Store parsed data to staging table
+        token = _uuid.uuid4().hex
+        staging_data = _json.dumps({
+            'branch_id': branch_id_int,
+            'files': parsed_files,
+            'unique_employees': unique_employees,
+            'user_id': session.get('user_id'),
+        }, ensure_ascii=False)
+
+        with get_db() as conn:
+            # Clean up old staging records (> 1 hour)
+            conn.execute("DELETE FROM import_staging WHERE created_at < datetime('now', '-1 hour')")
+            conn.execute(
+                "INSERT INTO import_staging (token, branch_id, data) VALUES (?,?,?)",
+                (token, branch_id_int, staging_data)
+            )
+            conn.commit()
+
+        return redirect(url_for('import_shifts_confirm', token=token))
 
     return render_template('import_shifts.html',
                            branches=branches, import_batches=import_batches)
+
+
+@app.route('/gdrive-import/confirm/<token>', methods=['GET', 'POST'])
+@login_required
+@owner_required
+def import_shifts_confirm(token):
+    import json as _json
+
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT data FROM import_staging WHERE token=?", (token,)
+        ).fetchone()
+        if not row:
+            flash('Сессия истекла или ссылка недействительна. Загрузите файлы снова.', 'danger')
+            return redirect(url_for('import_shifts'))
+        staging = _json.loads(row['data'])
+
+        if request.method == 'GET':
+            employees_db = conn.execute(
+                """SELECT e.id, e.full_name, e.role, b.name as branch_name
+                   FROM employees e
+                   LEFT JOIN branches b ON b.id = e.branch_id
+                   WHERE e.is_active=1 AND COALESCE(e.is_fired,0)=0
+                   ORDER BY e.full_name"""
+            ).fetchall()
+            branch = conn.execute(
+                "SELECT name FROM branches WHERE id=?", (staging['branch_id'],)
+            ).fetchone()
+
+            # Build auto-suggestion: match by full_name (case-insensitive)
+            db_names = {e['full_name'].lower(): e['id'] for e in employees_db}
+            suggestions = {}
+            for emp in staging['unique_employees']:
+                match_id = db_names.get(emp['name'].lower())
+                suggestions[emp['name']] = match_id  # None if no match
+
+            # Count sheets/dates across all files
+            total_sheets = sum(len(pf['sheets']) for pf in staging['files'])
+
+            return render_template(
+                'import_shifts_confirm.html',
+                staging=staging,
+                employees_db=employees_db,
+                branch_name=branch['name'] if branch else '—',
+                suggestions=suggestions,
+                total_sheets=total_sheets,
+                token=token,
+                role_labels=ROLE_LABELS,
+            )
+
+        # POST: process mapping and do the actual import
+        unique_employees = staging['unique_employees']
+        emp_map = {}   # name -> employee_id
+
+        for i, emp in enumerate(unique_employees):
+            name   = emp['name']
+            action = request.form.get(f'action_{i}', 'skip')
+
+            if action.startswith('existing:'):
+                emp_id = int(action.split(':', 1)[1])
+                emp_map[name] = emp_id
+                # Optionally add role to employee profile
+                if request.form.get(f'add_role_{i}') == '1':
+                    for role in emp['roles']:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO employee_roles (employee_id, role, is_active) VALUES (?,?,1)",
+                            (emp_id, role)
+                        )
+            elif action == 'new':
+                new_name = request.form.get(f'new_name_{i}', name).strip() or name
+                new_rate = float(request.form.get(f'new_rate_{i}', '0') or '0')
+                primary_role = emp['roles'][0] if emp['roles'] else 'admin'
+                conn.execute(
+                    "INSERT INTO employees (branch_id, full_name, role, rate, is_active) VALUES (?,?,?,?,1)",
+                    (staging['branch_id'], new_name, primary_role, new_rate)
+                )
+                new_emp_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                emp_map[name] = new_emp_id
+            # action == 'skip': emp_map[name] stays absent → employee skipped
+
+        # Import all sheets
+        total_stats = {'shifts': 0, 'expenses': 0, 'employees': 0, 'employee_shifts': 0}
+        for pf in staging['files']:
+            conn.execute(
+                "INSERT INTO import_batches (branch_id, filename, imported_by) VALUES (?,?,?)",
+                (staging['branch_id'], pf['filename'], staging.get('user_id'))
+            )
+            batch_id   = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            file_stats = {'shifts': 0, 'expenses': 0, 'employees': 0, 'employee_shifts': 0}
+
+            for sheet in pf['sheets']:
+                _xl_import_sheet_from_parsed(sheet, emp_map, conn, file_stats, batch_id=batch_id)
+
+            conn.execute(
+                '''UPDATE import_batches SET shifts_created=?, expenses_created=?,
+                   employees_created=?, employee_shifts_created=? WHERE id=?''',
+                (file_stats['shifts'], file_stats['expenses'],
+                 file_stats['employees'], file_stats['employee_shifts'], batch_id)
+            )
+            for k in total_stats:
+                total_stats[k] += file_stats[k]
+            flash(
+                f'«{pf["filename"]}»: смен +{file_stats["shifts"]}, '
+                f'расходов +{file_stats["expenses"]}, '
+                f'записей ЗП +{file_stats["employee_shifts"]}',
+                'success'
+            )
+
+        conn.execute("DELETE FROM import_staging WHERE token=?", (token,))
+        conn.commit()
+
+    return redirect(url_for('import_shifts'))
 
 
 # ─── CHANGE (РАЗМЕН) SETTINGS ────────────────────────────────────────────────

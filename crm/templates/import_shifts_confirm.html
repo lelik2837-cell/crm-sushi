@@ -1,0 +1,225 @@
+{% extends 'base.html' %}
+{% block title %}Сопоставление сотрудников — Импорт смен{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="row mb-3">
+    <div class="col">
+      <h4 class="mb-0"><i class="bi bi-people me-2"></i>Сопоставление сотрудников</h4>
+      <p class="text-muted mt-1 mb-0">
+        Филиал: <strong>{{ branch_name }}</strong> &nbsp;·&nbsp;
+        Листов к импорту: <strong>{{ total_sheets }}</strong> &nbsp;·&nbsp;
+        Сотрудников в файле: <strong>{{ staging.unique_employees | length }}</strong>
+      </p>
+    </div>
+    <div class="col-auto d-flex align-items-center gap-2">
+      <a href="{{ url_for('import_shifts') }}" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-x-lg me-1"></i>Отмена
+      </a>
+    </div>
+  </div>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in messages %}
+    <div class="alert alert-{{ 'success' if cat == 'success' else cat }} alert-dismissible fade show">
+      {{ msg }}
+      <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endfor %}
+  {% endwith %}
+
+  <form method="POST" action="{{ url_for('import_shifts_confirm', token=token) }}" id="confirmForm">
+
+    {% if staging.unique_employees %}
+    <div class="card mb-3">
+      <div class="card-header">
+        <i class="bi bi-arrow-left-right me-1 text-primary"></i>
+        Сотрудники из файла → Сотрудники в базе
+      </div>
+      <div class="card-body p-0">
+        <div class="alert alert-info m-3 mb-0 py-2" style="font-size:0.88rem">
+          <i class="bi bi-info-circle me-1"></i>
+          Для каждого сотрудника из файла выберите: кто это в базе, или создайте нового, или пропустите.
+          Совпадения по имени подставлены автоматически — проверьте их.
+        </div>
+        <div class="table-responsive">
+          <table class="table table-hover mb-0 align-middle" style="font-size:0.9rem">
+            <thead class="table-light">
+              <tr>
+                <th style="width:28%">Имя в файле</th>
+                <th style="width:12%">Должность</th>
+                <th style="width:60%">Сотрудник в базе</th>
+              </tr>
+            </thead>
+            <tbody>
+            {% for emp in staging.unique_employees %}
+            {% set i = loop.index0 %}
+            {% set auto_id = suggestions.get(emp.name) %}
+            <tr>
+              <td>
+                <strong>{{ emp.name }}</strong>
+              </td>
+              <td>
+                {% for role in emp.roles %}
+                <span class="badge bg-secondary" style="font-size:0.75rem">
+                  {{ role_labels.get(role, role) }}
+                </span>
+                {% endfor %}
+              </td>
+              <td>
+                <select class="form-select form-select-sm emp-action-select"
+                        name="action_{{ i }}"
+                        data-idx="{{ i }}"
+                        data-emp-name="{{ emp.name | e }}"
+                        data-default-name="{{ emp.name | e }}"
+                        data-default-rate="{{ emp.rate }}"
+                        style="max-width:380px">
+                  <option value="skip">— Пропустить этого сотрудника —</option>
+                  <optgroup label="Существующие сотрудники">
+                    {% for db_emp in employees_db %}
+                    <option value="existing:{{ db_emp.id }}"
+                      {% if auto_id == db_emp.id %}selected{% endif %}>
+                      {{ db_emp.full_name }}
+                      {%- if db_emp.branch_name %} ({{ db_emp.branch_name }}){% endif %}
+                      — {{ role_labels.get(db_emp.role, db_emp.role) }}
+                    </option>
+                    {% endfor %}
+                  </optgroup>
+                  <optgroup label="——————">
+                    <option value="new">➕ Создать нового сотрудника</option>
+                  </optgroup>
+                </select>
+
+                <!-- Поля для нового сотрудника -->
+                <div class="new-emp-fields mt-2" id="new_fields_{{ i }}" style="display:none">
+                  <div class="d-flex gap-2 flex-wrap">
+                    <div>
+                      <label class="form-label mb-1" style="font-size:0.82rem">ФИО</label>
+                      <input type="text" class="form-control form-control-sm"
+                             name="new_name_{{ i }}" id="new_name_{{ i }}"
+                             placeholder="Имя сотрудника" style="width:220px">
+                    </div>
+                    <div>
+                      <label class="form-label mb-1" style="font-size:0.82rem">Ставка ₽/ч</label>
+                      <input type="number" class="form-control form-control-sm"
+                             name="new_rate_{{ i }}" id="new_rate_{{ i }}"
+                             placeholder="0" min="0" style="width:100px">
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Чекбокс: добавить доп. должность в профиль -->
+                <div class="add-role-div mt-1" id="add_role_div_{{ i }}" style="display:none">
+                  <label class="form-check-label" style="font-size:0.82rem; color:#475569; cursor:pointer">
+                    <input type="checkbox" class="form-check-input me-1"
+                           name="add_role_{{ i }}" value="1">
+                    Добавить должность
+                    {% for role in emp.roles %}
+                    «{{ role_labels.get(role, role) }}»{% if not loop.last %}, {% endif %}
+                    {% endfor %}
+                    в профиль сотрудника
+                  </label>
+                </div>
+
+              </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    {% else %}
+    <div class="alert alert-info">
+      <i class="bi bi-info-circle me-1"></i>
+      В файлах не найдено сотрудников с ненулевой суммой. Данные будут импортированы без записей ЗП.
+    </div>
+    {% endif %}
+
+    <!-- Сводка -->
+    <div class="card mb-3">
+      <div class="card-header"><i class="bi bi-list-check me-1"></i>Что будет импортировано</div>
+      <div class="card-body py-2">
+        {% for pf in staging.files %}
+        <div class="fw-semibold mb-1"><i class="bi bi-file-earmark-excel text-success me-1"></i>{{ pf.filename }}</div>
+        <ul class="mb-2" style="font-size:0.88rem">
+          {% for sheet in pf.sheets %}
+          <li>
+            {{ sheet.sheet_name }} — {{ sheet.date | datefmt }}
+            {% if sheet.closed_by_name %}
+            <span class="badge bg-secondary" style="font-size:0.75rem">закрыта</span>
+            {% endif %}
+            {% if sheet.employees %}
+            · {{ sheet.employees | length }} сотр.
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="d-flex gap-2 mb-4">
+      <button type="submit" class="btn btn-success px-4" id="submitBtn">
+        <i class="bi bi-cloud-upload me-1"></i>Импортировать
+      </button>
+      <a href="{{ url_for('import_shifts') }}" class="btn btn-outline-secondary">Отмена</a>
+    </div>
+
+  </form>
+</div>
+
+<script>
+// role labels for JS
+const ROLE_LABELS = {{ role_labels | tojson }};
+
+document.querySelectorAll('.emp-action-select').forEach(function(sel) {
+  function update() {
+    var idx = sel.dataset.idx;
+    var val = sel.value;
+    var newFields = document.getElementById('new_fields_' + idx);
+    var addRoleDiv = document.getElementById('add_role_div_' + idx);
+
+    if (val === 'new') {
+      newFields.style.display = 'block';
+      addRoleDiv.style.display = 'none';
+      // Pre-fill name and rate
+      var nameInput = document.getElementById('new_name_' + idx);
+      var rateInput = document.getElementById('new_rate_' + idx);
+      if (nameInput && !nameInput.value) nameInput.value = sel.dataset.defaultName;
+      if (rateInput && !rateInput.value) rateInput.value = sel.dataset.defaultRate;
+    } else if (val.startsWith('existing:')) {
+      newFields.style.display = 'none';
+      addRoleDiv.style.display = 'block';
+    } else {
+      newFields.style.display = 'none';
+      addRoleDiv.style.display = 'none';
+    }
+  }
+  sel.addEventListener('change', update);
+  update(); // init on page load
+});
+
+document.getElementById('submitBtn').addEventListener('click', function(e) {
+  // Check that no "new" employee has empty name
+  var ok = true;
+  document.querySelectorAll('.emp-action-select').forEach(function(sel) {
+    if (sel.value === 'new') {
+      var idx = sel.dataset.idx;
+      var nameInput = document.getElementById('new_name_' + idx);
+      if (!nameInput || !nameInput.value.trim()) {
+        nameInput.classList.add('is-invalid');
+        ok = false;
+      } else {
+        nameInput.classList.remove('is-invalid');
+      }
+    }
+  });
+  if (!ok) {
+    e.preventDefault();
+    alert('Заполните имя для всех новых сотрудников');
+  }
+});
+</script>
+{% endblock %}
