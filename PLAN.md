@@ -1315,6 +1315,142 @@ SMTP_FROM     = 'CRMPAPA <papasushi42@gmail.com>'
 
 ---
 
+## Сессия 2026-07-01 (продолжение)
+
+### 96. Итого нал в смене — учёт доп. премии и авто-премии
+
+**Проблема:** `updateKassa()` читал `sf-total` из DOM (мог быть устаревшим), не знал о ручном бонусе из поля ввода.
+
+**Исправление в `updateKassa` (`shift.html`):**
+```javascript
+let paidSalary = 0;
+document.querySelectorAll('.staff-row[data-id], .courier-row[data-id]').forEach(row => {
+    if (row.querySelector('.sf-paid')?.value === 'yes') {
+        paidSalary += calcStaffTotal(row).total;
+    }
+});
+```
+Теперь всегда вызывается `calcStaffTotal(row)` — читает `dataset.autoBonus` и текущее значение поля ввода бонуса.
+
+**Исправление в `autoSaveStaffRow` (после получения авто-премии):**
+```javascript
+if (d.auto_bonuses) {
+    applyAutoBonuses(d.auto_bonuses);
+    calcStaffTotal(row);   // восстанавливает локально введённый бонус
+    updateKassa();
+} else updateKassa();
+```
+Раньше `applyAutoBonuses` перезаписывал `sf-total` серверным значением, не зная о незасохранённом бонусе.
+
+**Живое обновление при вводе бонуса вручную (event listeners):**
+```javascript
+document.addEventListener('input', e => {
+    if (!e.target.classList.contains('bonus-amount')) return;
+    const br = e.target.closest('.staff-bonus-row');
+    const staffRow = br?.previousElementSibling;
+    if (staffRow?.dataset.id) { calcStaffTotal(staffRow); updateKassa(); }
+});
+document.addEventListener('change', e => {
+    if (!e.target.classList.contains('bonus-select')) return;
+    // аналогично
+});
+```
+
+### 97. saveBonusRow — base_pay всегда передаётся в запросе
+
+**Проблема:** при сохранении доп. премии «Итого» показывало только сумму бонуса, без базовой ставки.
+
+**Причина:** `saveBonusRow` отправлял `{bonus_amount, total_amount}` без `base_pay`. Сервер брал `existing['base_pay']` — мог быть 0, если `autoSaveStaffRow` ещё не выполнялся.
+
+**Исправление:**
+```javascript
+const { base, autoBonus } = calcStaffTotal(staffRow);
+const newTotal = base + bonusAmt - penaltyAmt + autoBonus;
+fetch(`/shift/${SHIFT_ID}/save-staff`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+        id, bonus_amount: bonusAmt, penalty_amount: penaltyAmt,
+        bonus_comment: comment, base_pay: base, total_amount: newTotal
+    })
+```
+Убран 23-строчный дублирующий расчёт часов/ставки, который был ненадёжным.
+
+### 98. ФОТ в отчёте «Движение наличных» — учёт всех составляющих ЗП
+
+**Проблема:** запрос использовал `SUM(es.paid_amount)` — поле не обновлялось после добавления бонусов к уже выплаченной смене.
+
+**Исправление запроса (`cash_flow_report` в `app.py`):**
+```python
+salary_rows = conn.execute(f'''
+    SELECT s.date, s.branch_id, COALESCE(SUM(es.total_amount), 0) AS salary_paid
+    FROM employee_shifts es
+    JOIN shifts s ON s.id = es.shift_id
+    WHERE s.date BETWEEN ? AND ? {bf} AND es.is_paid = 1
+    GROUP BY s.date, s.branch_id
+''', (date_from, date_to)).fetchall()
+```
+
+**Синхронизация `paid_amount` с `total_amount` в `save_staff` (`app.py`):**
+```python
+if is_paid_flag:
+    paid_amount_val = total_amount   # всегда синхронизируем при выплате
+elif 'paid_amount' in data:
+    paid_amount_val = _f(data, 'paid_amount')
+else:
+    paid_amount_val = float(existing['paid_amount'] or 0)
+```
+
+**Синхронизация `paid_amount` в `calculate_bonuses`:**
+```python
+conn.execute(
+    'UPDATE employee_shifts SET auto_bonus=?, total_amount=?, '
+    'paid_amount = CASE WHEN is_paid=1 THEN ? ELSE paid_amount END '
+    'WHERE id=?',
+    (ab, new_total, new_total, s['id'])
+)
+```
+
+### 99. Такси за наличные в отчёте «Движение наличных»
+
+**Новый SQL-запрос в `cash_flow_report`:**
+```python
+taxi_rows = conn.execute(f'''
+    SELECT s.date, s.branch_id, COALESCE(SUM(tt.amount), 0) AS taxi_cash
+    FROM taxi_trips tt
+    JOIN shifts s ON s.id = tt.shift_id
+    WHERE tt.payment_type = 'cash' AND s.date BETWEEN ? AND ? {bf}
+    GROUP BY s.date, s.branch_id
+''', (date_from, date_to)).fetchall()
+taxi_map = defaultdict(float)
+for r in taxi_rows:
+    taxi_map[(r['date'], r['branch_id'])] += r['taxi_cash']
+```
+Значение `taxi_cash` добавлено в каждую запись дня/филиала и в итоги `totals`.
+
+**`cash_flow.html`:** добавлена карточка «Такси нал (итого)» над таблицей и колонка «Такси нал» в таблицу (вычитается из кассы, красным).
+
+### 100. ЗП везде заменена на total_amount (вместо paid_amount)
+
+**Проблема:** `paid_amount` не обновлялось при добавлении бонусов/штрафов после отметки «выплачено». Все отчёты показывали устаревшие суммы.
+
+**Обновлённые SQL-запросы в `app.py`:**
+
+| Место | Было | Стало |
+|-------|------|-------|
+| salary_report (~5040) | `SUM(es.paid_amount) as paid` | `SUM(CASE WHEN es.is_paid=1 THEN es.total_amount ELSE 0 END) as paid` |
+| salary_report debt (~5041) | `SUM(es.paid_amount)` для долга | `CASE WHEN es.is_paid=0 THEN es.total_amount ELSE 0 END` |
+| sal_having (~5063) | по `paid_amount` | `HAVING SUM(CASE WHEN es.is_paid=0 THEN es.total_amount ELSE 0 END) > 0` |
+| branch detail (~5073-5074) | `COALESCE(SUM(es.paid_amount), 0)` | `COALESCE(SUM(CASE WHEN es.is_paid=1 THEN es.total_amount ELSE 0 END), 0)` |
+| employee detail (~5141) | `COALESCE(es.paid_amount, 0)` | `CASE WHEN es.is_paid=1 THEN COALESCE(es.total_amount, 0) ELSE 0 END` |
+| employee detail Python (~5533) | `sum(r['paid_amount'] or 0)` | `sum(float(r['total_amount'] if r['is_paid'] else 0) for r in ...)` |
+
+**`employee_salary_detail.html`:**
+- `{% set debt = 0 if r.is_paid else (r.total_amount or 0) %}`
+- Колонка «Выплачено»: `r.total_amount if r.is_paid else 0`
+- Убран бейдж «Частично» (нет частичных выплат в новой логике)
+
+---
+
 ## Глобальные стандарты UI (обязательно везде)
 
 ### Формат даты
