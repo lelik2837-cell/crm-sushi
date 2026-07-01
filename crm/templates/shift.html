@@ -583,10 +583,6 @@
       </select>
       <input class="bonus-amount money-field" type="text" inputmode="numeric" placeholder="0" value="{{ (bv|abs)|int if hb else '' }}">
       <input class="bonus-comment" type="text" placeholder="Комментарий..." value="{{ s.bonus_comment or '' }}">
-      {% if can_edit %}
-      <button class="bonus-cancel" onclick="closeBonus(this)">Отменить</button>
-      <button class="bonus-save" onclick="saveBonusRow(this)">Сохранить</button>
-      {% endif %}
     </div>
     {% if hb %}
     <div class="bonus-summary" style="display:flex;">
@@ -696,10 +692,6 @@
           </select>
           <input class="bonus-amount money-field" type="text" inputmode="numeric" placeholder="0" value="{{ (bonus_val|abs)|int if has_bonus else '' }}">
           <input class="bonus-comment" type="text" placeholder="Комментарий..." value="{{ s.bonus_comment or '' }}">
-          {% if can_edit %}
-          <button class="bonus-cancel" onclick="closeBonus(this)">Отменить</button>
-          <button class="bonus-save" onclick="saveBonusRow(this)">Сохранить</button>
-          {% endif %}
         </div>
         {% if has_bonus %}
         <div class="bonus-summary" style="display:flex;">
@@ -1221,24 +1213,29 @@ function toggleBonus(btn, type) {
   if (!row) return;
   const bonusRow = row.nextElementSibling;
   if (!bonusRow?.classList.contains('staff-bonus-row')) return;
+  if (bonusRow.style.display === 'flex') {
+    // закрываем — показываем summary если есть
+    bonusRow.style.display = 'none';
+    const s = bonusRow.nextElementSibling;
+    if (s?.classList.contains('bonus-summary')) s.style.display = 'flex';
+    return;
+  }
   bonusRow.style.display = 'flex';
-  // предвыбор Премия или Штраф
   if (type) {
     const sel = bonusRow.querySelector('.bonus-select');
     if (sel) { sel.value = type; updateBonusSel(sel); }
   }
-  // скрыть summary если открыт
   const summary = bonusRow.nextElementSibling;
   if (summary?.classList.contains('bonus-summary')) summary.style.display = 'none';
+  bonusRow.querySelector('.bonus-amount')?.focus();
 }
-
-function closeBonus(btn) { btn.closest('.staff-bonus-row').style.display = 'none'; }
 
 function editBonus(btn) {
   const summary = btn.closest('.bonus-summary');
   const bonusRow = summary.previousElementSibling;
   bonusRow.style.display = 'flex';
   summary.style.display = 'none';
+  bonusRow.querySelector('.bonus-amount')?.focus();
 }
 
 function deleteBonusRow(btn) {
@@ -1247,7 +1244,6 @@ function deleteBonusRow(btn) {
   const staffRow = bonusRow.previousElementSibling;
   summary.remove();
   bonusRow.style.display = 'none';
-  // save zeroed bonus to DB
   const id = parseInt(staffRow?.dataset.id || 0);
   if (!id) return;
   fetch(`/shift/${SHIFT_ID}/save-staff`, {
@@ -1259,41 +1255,64 @@ function deleteBonusRow(btn) {
   });
 }
 
-function saveBonusRow(btn) {
-  const bonusRow = btn.closest('.staff-bonus-row');
+function saveBonusRow(bonusRow) {
+  if (!CAN_EDIT) return;
   const staffRow = bonusRow.previousElementSibling;
   const id = parseInt(staffRow?.dataset.id || 0);
-  const isPrem = bonusRow.querySelector('.bonus-select').value === 'prem';
-  const amount = readNum(bonusRow.querySelector('.bonus-amount'));
-  const comment = bonusRow.querySelector('.bonus-comment').value;
-
-  // Show summary
-  let existing = bonusRow.nextElementSibling;
-  if (existing?.classList.contains('bonus-summary')) existing.remove();
-  const text = (isPrem ? '▲ Премия' : '▲ Штраф') + (amount ? ': ' + amount + ' ₽' : '') + (comment ? ' — ' + comment : '');
-  const summary = document.createElement('div');
-  summary.className = 'bonus-summary'; summary.style.display = 'flex';
-  summary.innerHTML = `<span class="bonus-arrow">↳</span><div class="bonus-tag ${isPrem ? 'bonus-tag-prem' : 'bonus-tag-fine'}">${text}</div><button class="bonus-action bonus-edit-btn" onclick="editBonus(this)">✎</button><button class="bonus-action bonus-del-btn" onclick="deleteBonusRow(this)">✕</button>`;
-  bonusRow.parentNode.insertBefore(summary, bonusRow.nextSibling);
-  bonusRow.style.display = 'none';
-
   if (!id) return;
-  const { base, autoBonus } = calcStaffTotal(staffRow);
+  const isPrem  = bonusRow.querySelector('.bonus-select').value === 'prem';
+  const amount  = readNum(bonusRow.querySelector('.bonus-amount'));
+  const comment = bonusRow.querySelector('.bonus-comment').value;
   const bonusAmt   = isPrem ? amount : 0;
   const penaltyAmt = isPrem ? 0 : amount;
+
+  // Обновить / создать summary (скрыт пока bonusRow открыт)
+  let existing = bonusRow.nextElementSibling;
+  if (existing?.classList.contains('bonus-summary')) existing.remove();
+  if (amount > 0) {
+    const text = (isPrem ? '▲ Премия' : '▲ Штраф') + ': ' + amount + ' ₽' + (comment ? ' — ' + comment : '');
+    const summary = document.createElement('div');
+    summary.className = 'bonus-summary';
+    summary.style.display = bonusRow.style.display === 'flex' ? 'none' : 'flex';
+    summary.innerHTML = `<span class="bonus-arrow">↳</span><div class="bonus-tag ${isPrem ? 'bonus-tag-prem' : 'bonus-tag-fine'}">${text}</div><button class="bonus-action bonus-edit-btn" onclick="editBonus(this)">✎</button><button class="bonus-action bonus-del-btn" onclick="deleteBonusRow(this)">✕</button>`;
+    bonusRow.parentNode.insertBefore(summary, bonusRow.nextSibling);
+  }
+
+  // Считаем базу без обновления DOM (calcStaffTotal мог бы сбросить итого)
+  const rate    = parseFloat(staffRow.dataset.rate    || 0);
+  const rateKm  = parseFloat(staffRow.dataset.rateKm  || 0);
+  const rateOrd = parseFloat(staffRow.dataset.rateOrd || 0);
+  const start   = staffRow.querySelector('.sf-start')?.value || '';
+  const end     = staffRow.querySelector('.sf-end')?.value   || '';
+  const km      = parseFloat(staffRow.querySelector('.sf-km')?.value     || 0);
+  const orders  = parseFloat(staffRow.querySelector('.sf-orders')?.value || 0);
+  const hoursEl = staffRow.querySelector('.sf-hours');
+  let hours = hoursEl
+    ? (hoursEl.tagName === 'INPUT' ? parseFloat(hoursEl.value || 0) : parseFloat(hoursEl.textContent || 0))
+    : 0;
+  if (start && end) {
+    const [sh, sm] = start.split(':').map(Number);
+    const [eh, em] = end.split(':').map(Number);
+    let h = (eh * 60 + em - sh * 60 - sm) / 60;
+    if (h < 0) h += 24;
+    hours = Math.round(h * 4) / 4;
+  }
+  const base      = hours * rate + km * rateKm + orders * rateOrd;
+  const autoBonus = parseInt(staffRow.dataset.autoBonus || 0);
+  const newTotal  = base + bonusAmt - penaltyAmt + autoBonus;
+
   fetch(`/shift/${SHIFT_ID}/save-staff`, {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
       id, bonus_amount: bonusAmt, penalty_amount: penaltyAmt,
-      bonus_comment: comment,
-      total_amount: base + bonusAmt - penaltyAmt + autoBonus
+      bonus_comment: comment, total_amount: newTotal
     })
   }).then(r => r.json()).then(d => {
     if (d.ok) {
       if (d.auto_bonuses) applyAutoBonuses(d.auto_bonuses);
       else {
         const totalEl = staffRow.querySelector('.sf-total');
-        if (totalEl) totalEl.textContent = Math.round(base + bonusAmt - penaltyAmt + autoBonus) + ' ₽';
+        if (totalEl) totalEl.textContent = Math.round(newTotal) + ' ₽';
         updateKassa();
       }
     }
@@ -1304,6 +1323,27 @@ function updateBonusSel(sel) {
   sel.classList.toggle('bonus-sel-prem', sel.value === 'prem');
   sel.classList.toggle('bonus-sel-fine', sel.value === 'fine');
 }
+
+// ── Autosave bonus on input ───────────────────────────────────────────────────
+let _bonusDebounce = null;
+document.addEventListener('input', function(e) {
+  if (!CAN_EDIT || !e.target.classList.contains('bonus-amount')) return;
+  clearTimeout(_bonusDebounce);
+  _bonusDebounce = setTimeout(() => {
+    const br = e.target.closest('.staff-bonus-row');
+    if (br) saveBonusRow(br);
+  }, 600);
+});
+document.addEventListener('change', function(e) {
+  if (!CAN_EDIT || !e.target.classList.contains('bonus-select')) return;
+  const br = e.target.closest('.staff-bonus-row');
+  if (br && readNum(br.querySelector('.bonus-amount')) > 0) saveBonusRow(br);
+});
+document.addEventListener('blur', function(e) {
+  if (!CAN_EDIT || !e.target.classList.contains('bonus-comment')) return;
+  const br = e.target.closest('.staff-bonus-row');
+  if (br && readNum(br.querySelector('.bonus-amount')) > 0) saveBonusRow(br);
+}, true);
 
 // ── Add staff inline ──────────────────────────────────────────────────────────
 const ROLE_GROUPS = {
