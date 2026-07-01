@@ -576,7 +576,7 @@
       {% endif %}
       {% if can_edit %}<button class="staff-del" onclick="deleteStaff(this, {{ s.id }})">✕</button>{% else %}<div></div>{% endif %}
     </div>
-    <div class="staff-bonus-row" {% if hb and can_edit %}style="display:flex"{% endif %}>
+    <div class="staff-bonus-row">
       <span class="bonus-arrow">↳</span>
       <select class="bonus-select {% if bv >= 0 %}bonus-sel-prem{% else %}bonus-sel-fine{% endif %}" onchange="updateBonusSel(this)">
         <option value="prem" {% if bv >= 0 %}selected{% endif %}>Премия</option>
@@ -590,7 +590,7 @@
       {% endif %}
     </div>
     {% if hb %}
-    <div class="bonus-summary" {% if not can_edit %}style="display:flex;"{% endif %}>
+    <div class="bonus-summary" style="display:flex;">
       <span class="bonus-arrow">↳</span>
       <div class="bonus-tag {% if bv >= 0 %}bonus-tag-prem{% else %}bonus-tag-fine{% endif %}">
         {% if bv >= 0 %}▲ Премия{% else %}▲ Штраф{% endif %}: {{ (bv|abs)|int }} ₽{% if s.bonus_comment %} — {{ s.bonus_comment }}{% endif %}
@@ -689,7 +689,7 @@
           <button class="staff-del" onclick="deleteStaff(this, {{ s.id }})">✕</button>
           {% else %}<div></div>{% endif %}
         </div>
-        <div class="staff-bonus-row" {% if has_bonus and can_edit %}style="display:flex"{% endif %}>
+        <div class="staff-bonus-row">
           <span class="bonus-arrow">↳</span>
           <select class="bonus-select {% if bonus_val >= 0 %}bonus-sel-prem{% else %}bonus-sel-fine{% endif %}" onchange="updateBonusSel(this)">
             <option value="prem" {% if bonus_val >= 0 %}selected{% endif %}>Премия</option>
@@ -703,7 +703,7 @@
           {% endif %}
         </div>
         {% if has_bonus %}
-        <div class="bonus-summary" {% if not can_edit %}style="display:flex;"{% endif %}>
+        <div class="bonus-summary" style="display:flex;">
           <span class="bonus-arrow">↳</span>
           <div class="bonus-tag {% if bonus_val >= 0 %}bonus-tag-prem{% else %}bonus-tag-fine{% endif %}">
             {% if bonus_val >= 0 %}▲ Премия{% else %}▲ Штраф{% endif %}: {{ (bonus_val|abs)|int }} ₽{% if s.bonus_comment %} — {{ s.bonus_comment }}{% endif %}
