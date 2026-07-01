@@ -89,6 +89,7 @@
                     <tr>
                         <th>Сотрудник</th>
                         <th>Должность</th>
+                        <th class="text-center" title="Адрес развоза заполнен">Развоз</th>
                         <th>Филиал / Группа</th>
                         <th class="text-center">Статус</th>
                         <th></th>
@@ -105,6 +106,10 @@
                         {% else %}
                         <span class="badge" style="background:{{ role_color(emp.role) }}">{{ role_labels.get(emp.role, emp.role) }}</span>
                         {% endif %}
+                    </td>
+                    <td class="text-center">
+                        {% set addr_hist = address_history.get(emp.id, []) %}
+                        {% if addr_hist and addr_hist[0].address %}✅{% else %}—{% endif %}
                     </td>
                     <td class="small text-muted">
                         {% set emp_bids = emp_branches_map.get(emp.id, [emp.branch_id] if emp.branch_id else []) %}
