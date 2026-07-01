@@ -1183,7 +1183,14 @@ function deleteStaff(btn, id) {
   fetch(`/shift/${SHIFT_ID}/delete-staff/${id}`, { method: 'POST' })
     .then(r => r.json()).then(d => {
       if (d.ok) {
-        btn.closest('[data-id]').remove();
+        const staffRow = btn.closest('[data-id]');
+        let next = staffRow.nextElementSibling;
+        while (next && (next.classList.contains('staff-bonus-row') || next.classList.contains('bonus-summary'))) {
+          const toRemove = next;
+          next = next.nextElementSibling;
+          toRemove.remove();
+        }
+        staffRow.remove();
         if (d.auto_bonuses) applyAutoBonuses(d.auto_bonuses);
         else updateKassa();
       }
