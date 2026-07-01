@@ -942,6 +942,32 @@ def init_db():
         except Exception:
             pass
 
+        # Expand role CHECK constraint to include 'director' if needed
+        schema_row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
+        ).fetchone()
+        if schema_row and 'director' not in schema_row['sql']:
+            conn.executescript('''
+                PRAGMA foreign_keys = OFF;
+                CREATE TABLE IF NOT EXISTS users_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK(role IN ('owner','admin','employee','director')),
+                    full_name TEXT NOT NULL,
+                    branch_id INTEGER REFERENCES branches(id),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    email TEXT DEFAULT ''
+                );
+                INSERT OR IGNORE INTO users_new
+                    SELECT id, username, password_hash, role, full_name, branch_id, created_at, COALESCE(email,'')
+                    FROM users;
+                DROP TABLE users;
+                ALTER TABLE users_new RENAME TO users;
+                PRAGMA foreign_keys = ON;
+            ''')
+            logging.info('Migrated users table: added director role')
+
         conn.executescript('''
             CREATE TABLE IF NOT EXISTS password_reset_tokens (
                 id      INTEGER PRIMARY KEY AUTOINCREMENT,
