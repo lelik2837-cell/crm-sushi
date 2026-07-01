@@ -1364,14 +1364,14 @@ document.addEventListener('input', function(e) {
   const br = e.target.closest('.staff-bonus-row');
   if (!br) return;
   const staffRow = br.previousElementSibling;
-  if (staffRow?.dataset.id) calcStaffTotal(staffRow);
+  if (staffRow?.dataset.id) { calcStaffTotal(staffRow); updateKassa(); }
 });
 document.addEventListener('change', function(e) {
   if (!e.target.classList.contains('bonus-select')) return;
   const br = e.target.closest('.staff-bonus-row');
   if (!br) return;
   const staffRow = br.previousElementSibling;
-  if (staffRow?.dataset.id) calcStaffTotal(staffRow);
+  if (staffRow?.dataset.id) { calcStaffTotal(staffRow); updateKassa(); }
 });
 
 // ── Add staff inline ──────────────────────────────────────────────────────────

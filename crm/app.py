@@ -7382,7 +7382,12 @@ def calculate_bonuses(conn, shift_id):
     for s in staff:
         ab = auto_bonus_per_id.get(s['id'], 0)
         new_total = round(float(s['base_pay'] or 0) + float(s['bonus_amount'] or 0) + ab - float(s['penalty_amount'] or 0))
-        conn.execute('UPDATE employee_shifts SET auto_bonus=?, total_amount=? WHERE id=?', (ab, new_total, s['id']))
+        conn.execute(
+            'UPDATE employee_shifts SET auto_bonus=?, total_amount=?, '
+            'paid_amount = CASE WHEN is_paid=1 THEN ? ELSE paid_amount END '
+            'WHERE id=?',
+            (ab, new_total, new_total, s['id'])
+        )
         results.append({'id': s['id'], 'auto_bonus': ab, 'total_amount': new_total})
     return results
 
