@@ -1342,18 +1342,13 @@ function updateBonusSel(sel) {
 }
 
 // ── Autosave bonus on input ───────────────────────────────────────────────────
-let _bonusDebounce = null;
 document.addEventListener('input', function(e) {
   if (!CAN_EDIT || !e.target.classList.contains('bonus-amount')) return;
   const br = e.target.closest('.staff-bonus-row');
-  if (br) {
-    const staffRow = br.previousElementSibling;
-    if (staffRow?.dataset.id) calcStaffTotal(staffRow);
-  }
-  clearTimeout(_bonusDebounce);
-  _bonusDebounce = setTimeout(() => {
-    if (br) saveBonusRow(br);
-  }, 600);
+  if (!br) return;
+  const staffRow = br.previousElementSibling;
+  if (staffRow?.dataset.id) calcStaffTotal(staffRow);
+  saveBonusRow(br);
 });
 document.addEventListener('change', function(e) {
   if (!CAN_EDIT || !e.target.classList.contains('bonus-select')) return;
@@ -1366,7 +1361,6 @@ document.addEventListener('change', function(e) {
 document.addEventListener('blur', function(e) {
   if (!CAN_EDIT) return;
   if (e.target.classList.contains('bonus-amount')) {
-    clearTimeout(_bonusDebounce);
     const br = e.target.closest('.staff-bonus-row');
     if (br) saveBonusRow(br);
   } else if (e.target.classList.contains('bonus-comment')) {
