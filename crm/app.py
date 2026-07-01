@@ -2375,6 +2375,18 @@ def shift_view(shift_id):
             ORDER BY s.date DESC LIMIT 1
         ''', (shift['branch_id'], shift['date'])).fetchone()
         prev_actual_cash = (prev_day_row['kassa_nal'] or 0) if prev_day_row else None
+        bonus_rules_rows = conn.execute(
+            'SELECT role, threshold_pct, bonus_pct FROM bonus_rules '
+            'WHERE is_active=1 AND (branch_id IS NULL OR branch_id=?) '
+            'ORDER BY role, threshold_pct DESC', (shift['branch_id'],)
+        ).fetchall()
+        # Deduplicate by role+threshold keeping branch-specific over global
+        _seen_br = {}
+        for r in bonus_rules_rows:
+            key = (r['role'], r['threshold_pct'])
+            if key not in _seen_br:
+                _seen_br[key] = {'role': r['role'], 'threshold_pct': float(r['threshold_pct']), 'bonus_pct': float(r['bonus_pct'])}
+        bonus_rules_list = list(_seen_br.values())
         return render_template('shift.html',
             shift=shift, revenue=revenue, expenses=expenses, plus_entries=plus_entries,
             staff=staff, employees=employees, taxi_staff=taxi_staff,
@@ -2384,11 +2396,12 @@ def shift_view(shift_id):
             expense_cats_groups=expense_cats_groups,
             income_categories=income_cats_flat,
             income_cats_groups=income_cats_groups,
-        role_labels=ROLE_LABELS,
+            role_labels=ROLE_LABELS,
             can_edit=can_edit,
             is_owner=(role == 'owner'),
             shift_weekday=shift_weekday,
             prev_actual_cash=prev_actual_cash,
+            bonus_rules_list=bonus_rules_list,
             shift_terminals=[{'terminal_number': r['terminal_number'], 'amount': r['amount']}
                              for r in shift_terminals_rows])
 

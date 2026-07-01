@@ -614,7 +614,10 @@
 
   <!-- BLOCK: АДМИНЫ -->
   <div class="s-card">
-    <div class="s-card-header"><div class="s-card-title"><div class="s-card-icon icon-purple">👔</div>Админы</div></div>
+    <div class="s-card-header">
+      <div class="s-card-title"><div class="s-card-icon icon-purple">👔</div>Админы</div>
+      <div id="hint-admin" style="font-size:10px;color:#9ca3af;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:55%;text-align:right;"></div>
+    </div>
     <div class="s-card-body">
       {{ staff_cols() }}
       <div id="admin-body">{% for s in staff %}{% if s.role_snapshot == 'admin' %}{{ staff_row_tpl(s) }}{% endif %}{% endfor %}</div>
@@ -624,7 +627,10 @@
 
   <!-- BLOCK: ПОВАРА -->
   <div class="s-card">
-    <div class="s-card-header"><div class="s-card-title"><div class="s-card-icon icon-blue">👨‍🍳</div>Повара</div></div>
+    <div class="s-card-header">
+      <div class="s-card-title"><div class="s-card-icon icon-blue">👨‍🍳</div>Повара</div>
+      <div id="hint-cook" style="font-size:10px;color:#9ca3af;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:55%;text-align:right;"></div>
+    </div>
     <div class="s-card-body">
       {{ staff_cols() }}
       <div id="cook-body">{% for s in staff %}{% if s.role_snapshot in ('cook','sushi','packer') %}{{ staff_row_tpl(s) }}{% endif %}{% endfor %}</div>
@@ -813,6 +819,7 @@ const CAN_EDIT = {{ 'true' if can_edit else 'false' }};
 const SHIFT_IS_CLOSED = {{ 'true' if shift.status == 'closed' else 'false' }};
 const IS_OWNER = {{ 'true' if is_owner else 'false' }};
 const SHIFT_WEEKDAY = {{ shift_weekday }};  // 0=Пн, 4=Пт, 5=Сб
+const BONUS_RULES = {{ bonus_rules_list | tojson }};
 const EXPENSE_CATS_GROUPS = {{ expense_cats_groups | tojson }};
 function getFirstCatCode() {
   if (!EXPENSE_CATS_GROUPS.length) return 'other';
@@ -1205,6 +1212,7 @@ function deleteStaff(btn, id) {
         staffRow.remove();
         if (d.auto_bonuses) applyAutoBonuses(d.auto_bonuses);
         else updateKassa();
+        updateBonusHints();
       }
     });
 }
@@ -1227,6 +1235,7 @@ document.querySelectorAll('.staff-row .sf-start, .staff-row .sf-end, .courier-ro
     const row = el.closest('[data-id]');
     calcStaffTotal(row);
     autoSaveStaffRow(row);
+    updateBonusHints();
   });
 });
 document.querySelectorAll('.courier-row .sf-km, .courier-row .sf-orders').forEach(el => {
@@ -1498,9 +1507,51 @@ document.querySelectorAll('input[type="number"]').forEach(el => {
   el.addEventListener('change', () => { if (parseFloat(el.value) < 0) el.value = 0; });
 });
 
+// ── BONUS HINTS ──────────────────────────────────────────────
+function fmtK(v) {
+  if (v >= 1000) return Math.round(v / 1000) + ' тыс';
+  return Math.round(v) + '';
+}
+function updateBonusHints() {
+  // Roles that have hints: admin → #hint-admin, cook/sushi/packer → #hint-cook
+  const roleToHint = {admin: 'hint-admin', cook: 'hint-cook', sushi: 'hint-cook', packer: 'hint-cook'};
+  const payrolls = {};
+  document.querySelectorAll('.staff-row[data-role]').forEach(row => {
+    const role = row.dataset.role;
+    if (!roleToHint[role]) return;
+    const { base } = calcStaffTotal(row);
+    payrolls[role] = (payrolls[role] || 0) + base;
+  });
+  // Group rules by role, already sorted DESC by threshold_pct from server
+  const rulesByRole = {};
+  BONUS_RULES.forEach(r => { (rulesByRole[r.role] = rulesByRole[r.role] || []).push(r); });
+  // Build hint per hint element
+  const hintTexts = {};
+  Object.entries(rulesByRole).forEach(([role, rules]) => {
+    const hintId = roleToHint[role];
+    if (!hintId) return;
+    // Sum payroll for this hint (admin → admin only; cook hint → cook+sushi+packer)
+    let totalPayroll = 0;
+    Object.entries(payrolls).forEach(([r, p]) => { if (roleToHint[r] === hintId) totalPayroll += p; });
+    if (totalPayroll <= 0) { hintTexts[hintId] = ''; return; }
+    // Sort DESC by threshold_pct (highest = easiest = 1х)
+    const sorted = [...rules].sort((a, b) => b.threshold_pct - a.threshold_pct);
+    const parts = sorted.map((r, i) => {
+      const rev = Math.round(totalPayroll * 100 / r.threshold_pct / 1000) * 1000;
+      return `${i+1}х от ${rev.toLocaleString('ru-RU')}`;
+    });
+    hintTexts[hintId] = 'премия: ' + parts.join(', ');
+  });
+  ['hint-admin', 'hint-cook'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = hintTexts[id] || '';
+  });
+}
+
 // init
 document.querySelectorAll('.staff-row[data-id], .courier-row[data-id]').forEach(row => calcStaffTotal(row));
 updateKassa();
+updateBonusHints();
 
 // ── TAXI ─────────────────────────────────────────────────
 const TAXI_EMPS = [{% for ts in taxi_staff %}
