@@ -2566,15 +2566,29 @@ def save_staff(shift_id):
     staff_id = data.get('id')
     with get_db() as conn:
         if staff_id:
-            # Preserve bonus fields if client didn't send them (e.g. hours-only autosave)
             existing = conn.execute(
-                'SELECT bonus_amount, penalty_amount, bonus_comment FROM employee_shifts WHERE id=? AND shift_id=?',
+                'SELECT * FROM employee_shifts WHERE id=? AND shift_id=?',
                 (staff_id, shift_id)
             ).fetchone()
+            if not existing:
+                return jsonify({'ok': False, 'error': 'not found'}), 404
+            def _pick(key, default=None):
+                return data[key] if key in data else (existing[key] if existing else default)
+            def _pickf(key):
+                return float(data[key]) if key in data else float(existing[key] or 0)
+            def _picki(key):
+                return int(data[key]) if key in data else int(existing[key] or 0)
             has_bonus = 'bonus_amount' in data
-            bonus_amount  = _f(data, 'bonus_amount')  if has_bonus else float(existing['bonus_amount']  or 0 if existing else 0)
-            penalty_amount = _f(data, 'penalty_amount') if has_bonus else float(existing['penalty_amount'] or 0 if existing else 0)
-            bonus_comment  = data.get('bonus_comment', (existing['bonus_comment'] or '') if existing else '') if has_bonus else ((existing['bonus_comment'] or '') if existing else '')
+            bonus_amount   = _f(data, 'bonus_amount')   if has_bonus else float(existing['bonus_amount']  or 0)
+            penalty_amount = _f(data, 'penalty_amount') if has_bonus else float(existing['penalty_amount'] or 0)
+            bonus_comment  = data['bonus_comment']       if 'bonus_comment' in data else (existing['bonus_comment'] or '')
+            # Recompute total if base fields were sent; otherwise preserve base_pay and recompute from bonus
+            if 'base_pay' in data:
+                base_pay     = _f(data, 'base_pay')
+                total_amount = _f(data, 'total_amount')
+            else:
+                base_pay     = float(existing['base_pay'] or 0)
+                total_amount = base_pay + bonus_amount - penalty_amount + float(existing['auto_bonus'] or 0)
             conn.execute('''
                 UPDATE employee_shifts SET
                     full_name_snapshot=?, role_snapshot=?, rate_snapshot=?,
@@ -2584,13 +2598,14 @@ def save_staff(shift_id):
                     base_pay=?, total_amount=?, is_paid=?, paid_amount=?
                 WHERE id=? AND shift_id=?
             ''', (
-                data.get('full_name_snapshot', ''), data.get('role_snapshot', ''),
-                _f(data, 'rate_snapshot'), _f(data, 'rate_per_km_snapshot'), _f(data, 'rate_per_order_snapshot'),
-                data.get('shift_start', ''), data.get('shift_end', ''), _f(data, 'hours_worked'),
-                _f(data, 'km'), _i(data, 'orders'),
+                _pick('full_name_snapshot', ''), _pick('role_snapshot', ''),
+                _pickf('rate_snapshot'), _pickf('rate_per_km_snapshot'), _pickf('rate_per_order_snapshot'),
+                _pick('shift_start', ''), _pick('shift_end', ''), _pickf('hours_worked'),
+                _pickf('km'), _picki('orders'),
                 bonus_amount, penalty_amount, bonus_comment,
-                _f(data, 'base_pay'), _f(data, 'total_amount'),
-                1 if data.get('is_paid') else 0, _f(data, 'paid_amount'),
+                base_pay, total_amount,
+                (1 if data['is_paid'] else 0) if 'is_paid' in data else int(existing['is_paid'] or 0),
+                _pickf('paid_amount'),
                 staff_id, shift_id
             ))
             name = data.get('full_name_snapshot', '')
