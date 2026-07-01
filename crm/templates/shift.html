@@ -584,7 +584,6 @@
       </select>
       <input class="bonus-amount money-field" type="text" inputmode="numeric" placeholder="0" value="{{ (bv|abs)|int if hb else '' }}">
       <input class="bonus-comment" type="text" placeholder="Комментарий..." value="{{ s.bonus_comment or '' }}">
-      {% if can_edit %}<button class="bonus-close-btn" onclick="closeBonusRow(this)" title="Скрыть">✕</button>{% endif %}
     </div>
     {% if hb %}
     <div class="bonus-summary" style="display:flex;">
@@ -694,8 +693,7 @@
           </select>
           <input class="bonus-amount money-field" type="text" inputmode="numeric" placeholder="0" value="{{ (bonus_val|abs)|int if has_bonus else '' }}">
           <input class="bonus-comment" type="text" placeholder="Комментарий..." value="{{ s.bonus_comment or '' }}">
-          {% if can_edit %}<button class="bonus-close-btn" onclick="closeBonusRow(this)" title="Скрыть">✕</button>{% endif %}
-        </div>
+            </div>
         {% if has_bonus %}
         <div class="bonus-summary" style="display:flex;">
           <span class="bonus-arrow">↳</span>
