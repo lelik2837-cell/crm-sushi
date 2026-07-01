@@ -930,11 +930,11 @@ function updateKassa() {
   });
 
   // Выплаченная ЗП вычитается из кассы нал
+  // Используем calcStaffTotal чтобы всегда включать авто-премию и вручную введённый бонус
   let paidSalary = 0;
   document.querySelectorAll('.staff-row[data-id], .courier-row[data-id]').forEach(row => {
     if (row.querySelector('.sf-paid')?.value === 'yes') {
-      const txt = row.querySelector('.sf-total')?.textContent || '0';
-      paidSalary += parseFloat(txt.replace(/[^\d.-]/g, '')) || 0;
+      paidSalary += calcStaffTotal(row).total;
     }
   });
 
