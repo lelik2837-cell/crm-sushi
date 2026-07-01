@@ -137,11 +137,6 @@
                             data-bs-target="#editModal{{ emp.id }}">
                             <i class="bi bi-pencil"></i> Редактировать
                         </button>
-                        <form method="POST" action="{{ url_for('toggle_employee', emp_id=emp.id) }}" class="d-inline">
-                            <button class="btn btn-sm {% if emp.is_active %}btn-outline-danger{% else %}btn-outline-success{% endif %}">
-                                {% if emp.is_active %}<i class="bi bi-pause"></i>{% else %}<i class="bi bi-play"></i>{% endif %}
-                            </button>
-                        </form>
                         {% if is_owner %}
                         {% if shift_counts.get(emp.id, 0) > 0 %}
                         <button class="btn btn-sm btn-outline-danger ms-1"
@@ -536,11 +531,16 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Переназначить смены на:</label>
-                        <select name="target_id" class="form-select" required>
+                        <input type="text" class="form-control form-control-sm mb-1 reassign-search"
+                               placeholder="Поиск по имени..."
+                               data-target="reassignSelect{{ emp.id }}"
+                               autocomplete="off">
+                        <select name="target_id" id="reassignSelect{{ emp.id }}" class="form-select" required size="6">
                             <option value="">— выберите сотрудника —</option>
                             {% for other in employees %}
                             {% if other.id != emp.id %}
                             <option value="{{ other.id }}"
+                                data-label="{{ other.full_name|lower }} {{ (other.branch_name or '')|lower }}"
                                 {% if other.branch_id == emp.branch_id %}
                                 style="font-weight:600"
                                 {% endif %}>
@@ -741,6 +741,19 @@ document.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('[id^="extraRoleSel"]').forEach(function(el) {
         const empId = el.id.replace('extraRoleSel', '');
         empRoleChange('extraRoleSel' + empId, 'extraTmplSel' + empId, 'extraRateDisp' + empId, 'extraTmplId' + empId);
+    });
+
+    // Поиск в списке перераспределения
+    document.querySelectorAll('.reassign-search').forEach(function(inp) {
+        inp.addEventListener('input', function() {
+            const q = inp.value.trim().toLowerCase();
+            const sel = document.getElementById(inp.dataset.target);
+            if (!sel) return;
+            Array.from(sel.options).forEach(function(opt) {
+                if (!opt.value) { opt.hidden = false; return; }
+                opt.hidden = q && !opt.dataset.label.includes(q);
+            });
+        });
     });
 });
 </script>

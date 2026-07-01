@@ -42,7 +42,7 @@
       <div class="card metric-card" style="border-left-color:#198754">
         <div class="card-body py-2">
           <div class="text-muted small">Поступления</div>
-          <div class="fs-5 fw-bold text-success">{{ total_credit.val|money }} ₽</div>
+          <div class="fs-5 fw-bold text-success">{{ total_credit.val|money_cents }} ₽</div>
         </div>
       </div>
     </div>
@@ -50,7 +50,7 @@
       <div class="card metric-card">
         <div class="card-body py-2">
           <div class="text-muted small">Списания</div>
-          <div class="fs-5 fw-bold text-danger">{{ (total_debit.val|abs)|money }} ₽</div>
+          <div class="fs-5 fw-bold text-danger">{{ (total_debit.val|abs)|money_cents }} ₽</div>
         </div>
       </div>
     </div>
@@ -178,10 +178,10 @@
               <td class="text-nowrap">{{ t.txn_date }}</td>
               <td class="text-end fw-semibold text-nowrap
                 {% if t.is_ignored %}text-muted{% elif t.amount > 0 %}text-success{% else %}text-danger{% endif %}">
-                {% if t.amount > 0 %}+{% endif %}{{ t.amount|money }} ₽
+                {% if t.amount > 0 %}+{% endif %}{{ t.amount|money_cents }} ₽
                 {% if t.commission_extracted %}
-                  <br><span class="text-muted fw-normal" style="font-size:0.72rem">ком. {{ t.commission_extracted|money }} ₽</span>
-                  <br><span class="text-success fw-normal" style="font-size:0.72rem">брутто {{ (t.amount + t.commission_extracted)|money }} ₽</span>
+                  <br><span class="text-muted fw-normal" style="font-size:0.72rem">ком. {{ t.commission_extracted|money_cents }} ₽</span>
+                  <br><span class="text-success fw-normal" style="font-size:0.72rem">брутто {{ (t.amount + t.commission_extracted)|money_cents }} ₽</span>
                 {% endif %}
               </td>
               <td class="small" title="{{ t.counterparty or '' }}">{{ t.counterparty[:50] if t.counterparty else '—' }}</td>

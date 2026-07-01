@@ -7438,6 +7438,21 @@ def money_filter(value):
         return str(value)
 
 
+@app.template_filter('money_cents')
+def money_cents_filter(value):
+    try:
+        v = float(value or 0)
+        frac = round(abs(v) % 1, 2)
+        if frac > 0:
+            whole = '{:,.0f}'.format(abs(int(v))).replace(',', ' ')
+            cents = '{:02d}'.format(round(frac * 100))
+            sign = '-' if v < 0 else ''
+            return f'{sign}{whole},{cents}'
+        return '{:,.0f}'.format(v).replace(',', ' ')
+    except Exception:
+        return str(value)
+
+
 @app.template_filter('datetime_fmt')
 def datetime_fmt(value):
     if not value:
