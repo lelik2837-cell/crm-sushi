@@ -378,7 +378,7 @@
       </div>
       <div id="expenses-body">
       {% for exp in expenses %}
-      <div class="expense-row" data-id="{{ exp.id }}">
+      <div class="expense-row" data-id="{{ exp.id }}" data-cash="{{ (exp.amount_cash or 0)|moneyval }}" data-card="{{ (exp.amount_card or 0)|moneyval }}">
         {% if can_edit %}
         <div class="expense-row-main">
           <select class="field-select field-input-sm exp-cat" style="font-size:12px; padding:5px 24px 5px 8px;">
@@ -963,9 +963,17 @@ function updateKassa() {
 
   let expCash = 0, expCard = 0;
   document.querySelectorAll('#expenses-body [data-id]').forEach(row => {
-    const amt  = readDecimal(row.querySelector('.exp-amount'));
-    const type = row.querySelector('.exp-paytype')?.value;
-    if (type === 'cash') expCash += amt; else expCard += amt;
+    const inp  = row.querySelector('.exp-amount');
+    const payEl = row.querySelector('.exp-paytype');
+    if (inp && payEl) {
+      // редактируемый режим — читаем из полей
+      const amt = readDecimal(inp);
+      if (payEl.value === 'cash') expCash += amt; else expCard += amt;
+    } else {
+      // read-only режим (администратор) — читаем из data-атрибутов
+      expCash += parseFloat(row.dataset.cash) || 0;
+      expCard += parseFloat(row.dataset.card) || 0;
+    }
   });
 
   // Выплаченная ЗП вычитается из кассы нал
