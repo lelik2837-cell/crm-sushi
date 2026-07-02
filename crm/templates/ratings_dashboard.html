@@ -1,0 +1,132 @@
+{% extends 'base.html' %}
+{% block title %}Рейтинги{% endblock %}
+{% block content %}
+
+<div class="row g-3 mb-4">
+  <div class="col-12">
+    <div style="background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 55%,#e2e8f0 100%); border:1px solid #e5e7eb; border-radius:20px; padding:28px 28px 24px; color:#1e293b;">
+
+      <!-- Период + метрика -->
+      <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; justify-content:space-between; margin-bottom:22px;">
+        <div style="display:flex; gap:6px; flex-wrap:wrap;">
+          <button class="rat-period-btn" data-rp="today" onclick="setPeriod('today')"
+            style="font-size:12px; padding:5px 14px; border-radius:20px; border:1.5px solid #e2e8f0; background:#1e293b; color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Сегодня</button>
+          <button class="rat-period-btn" data-rp="month" onclick="setPeriod('month')"
+            style="font-size:12px; padding:5px 14px; border-radius:20px; border:1.5px solid #e2e8f0; background:#f1f5f9; color:#475569; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Месяц</button>
+        </div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap;">
+          <button class="rat-metric-btn" data-rm="revenue" onclick="setMetric('revenue')"
+            style="font-size:12px; padding:5px 12px; border-radius:20px; border:1.5px solid #e2e8f0; background:#1e293b; color:#fff; cursor:pointer; font-weight:600; letter-spacing:.2px; transition:all .15s;">Выручка</button>
+          <button class="rat-metric-btn" data-rm="fot_pct" onclick="setMetric('fot_pct')"
+            style="font-size:12px; padding:5px 12px; border-radius:20px; border:1.5px solid #e2e8f0; background:#f1f5f9; color:#475569; cursor:pointer; font-weight:600; letter-spacing:.2px; transition:all .15s;">ФОТ %</button>
+          <button class="rat-metric-btn" data-rm="fot_rub" onclick="setMetric('fot_rub')"
+            style="font-size:12px; padding:5px 12px; border-radius:20px; border:1.5px solid #e2e8f0; background:#f1f5f9; color:#475569; cursor:pointer; font-weight:600; letter-spacing:.2px; transition:all .15s;">ФОТ ₽</button>
+          <button class="rat-metric-btn" data-rm="pickup" onclick="setMetric('pickup')"
+            style="font-size:12px; padding:5px 12px; border-radius:20px; border:1.5px solid #e2e8f0; background:#f1f5f9; color:#475569; cursor:pointer; font-weight:600; letter-spacing:.2px; transition:all .15s;">Самовывоз</button>
+          <button class="rat-metric-btn" data-rm="delivery" onclick="setMetric('delivery')"
+            style="font-size:12px; padding:5px 12px; border-radius:20px; border:1.5px solid #e2e8f0; background:#f1f5f9; color:#475569; cursor:pointer; font-weight:600; letter-spacing:.2px; transition:all .15s;">Доставка</button>
+        </div>
+      </div>
+
+      <div style="font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:#94a3b8; margin-bottom:16px;" id="ratings-title">
+        Рейтинг филиалов — выручка
+      </div>
+
+      <div id="ratings-list">
+        <div style="text-align:center; color:#94a3b8; padding:20px 0; font-size:13px;">Загрузка...</div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+var currentPeriod = 'today';
+var currentMetric = 'revenue';
+
+var METRICS = {
+  revenue:  { label: 'выручка',    unit: '₽', get: function(b) { return b.revenue; } },
+  fot_pct:  { label: 'ФОТ, %',     unit: '%', get: function(b) { return b.revenue > 0 ? (b.fot / b.revenue * 100) : 0; } },
+  fot_rub:  { label: 'ФОТ, ₽',     unit: '₽', get: function(b) { return b.fot; } },
+  pickup:   { label: 'самовывоз',  unit: '₽', get: function(b) { return b.pickup; } },
+  delivery: { label: 'доставка',   unit: '₽', get: function(b) { return b.delivery_revenue; } }
+};
+
+function fmtNum(n) { return Math.round(n).toLocaleString('ru-RU'); }
+
+function updateTitle() {
+  var metric = METRICS[currentMetric];
+  var periodLabel = currentPeriod === 'today' ? 'сегодня' : 'за месяц';
+  document.getElementById('ratings-title').textContent = 'Рейтинг филиалов — ' + metric.label + ', ' + periodLabel;
+}
+
+function renderRatings(rows, metric) {
+  var listEl = document.getElementById('ratings-list');
+  if (!rows.length) {
+    listEl.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:20px 0;font-size:13px;">Нет данных</div>';
+    return;
+  }
+  var maxVal = Math.max.apply(null, rows.map(function(r) { return Math.abs(r.value); })) || 1;
+  listEl.innerHTML = rows.map(function(r, i) {
+    var w = Math.max(2, Math.round(Math.abs(r.value) / maxVal * 100));
+    var valStr = metric.unit === '%'
+      ? (Math.round(r.value * 10) / 10).toLocaleString('ru-RU') + ' %'
+      : fmtNum(r.value) + ' ₽';
+    return '<div style="display:flex; align-items:center; gap:12px; padding:7px 0;">' +
+      '<div style="width:24px; flex-shrink:0; text-align:center; font-weight:800; color:#94a3b8; font-size:13px;">' + (i + 1) + '</div>' +
+      '<div style="flex:1; background:#eef1f5; border-radius:8px; height:28px; position:relative; overflow:hidden;">' +
+        '<div style="height:100%; width:' + w + '%; border-radius:8px; background:linear-gradient(90deg,#cbd5e1,#94a3b8); transition:width .4s;"></div>' +
+      '</div>' +
+      '<div style="min-width:140px; font-size:13px; font-weight:700; color:#1e293b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' + r.name + '</div>' +
+      '<div style="min-width:100px; text-align:right; font-size:13px; font-weight:700; color:#475569;">' + valStr + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function loadRatings() {
+  updateTitle();
+  var today = new Date();
+  var pad = function(n) { return n < 10 ? '0' + n : n; };
+  var fmt = function(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); };
+  var dateTo   = fmt(today);
+  var dateFrom = currentPeriod === 'today' ? dateTo : fmt(today).slice(0, 7) + '-01';
+
+  document.getElementById('ratings-list').innerHTML =
+    '<div style="text-align:center;color:#94a3b8;padding:20px 0;font-size:13px;">Загрузка...</div>';
+
+  fetch('/api/revenue-summary?date_from=' + dateFrom + '&date_to=' + dateTo)
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (!d.ok) return;
+      var metric = METRICS[currentMetric];
+      var rows = (d.branches || []).map(function(b) {
+        return { name: b.name, value: metric.get(b) };
+      });
+      rows.sort(function(a, b) { return b.value - a.value; });
+      renderRatings(rows, metric);
+    });
+}
+
+function setPeriod(p) {
+  currentPeriod = p;
+  document.querySelectorAll('.rat-period-btn').forEach(function(b) {
+    var active = b.dataset.rp === p;
+    b.style.background = active ? '#1e293b' : '#f1f5f9';
+    b.style.color       = active ? '#fff' : '#475569';
+  });
+  loadRatings();
+}
+
+function setMetric(m) {
+  currentMetric = m;
+  document.querySelectorAll('.rat-metric-btn').forEach(function(b) {
+    var active = b.dataset.rm === m;
+    b.style.background = active ? '#1e293b' : '#f1f5f9';
+    b.style.color       = active ? '#fff' : '#475569';
+  });
+  loadRatings();
+}
+
+loadRatings();
+</script>
+{% endblock %}

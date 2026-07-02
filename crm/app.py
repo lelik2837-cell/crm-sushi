@@ -1317,6 +1317,24 @@ def get_client_ip():
     return request.remote_addr
 
 
+def _calc_prev_kassa_nal(conn, branch_id, before_date):
+    """Итого нал в кассе последней смены филиала до указанной даты (переносится как утренняя касса следующего дня)."""
+    row = conn.execute('''
+        SELECT COALESCE(r.morning_cash, 0)
+               + COALESCE(r.cash_amount, 0)
+               + COALESCE(r.change_amount, 0)
+               + COALESCE((SELECT SUM(cp.amount_cash) FROM cash_plus_entries cp WHERE cp.shift_id=s.id), 0)
+               - COALESCE((SELECT SUM(e.amount_cash) FROM expenses e WHERE e.shift_id=s.id), 0)
+               - COALESCE((SELECT SUM(es.total_amount) FROM employee_shifts es
+                            WHERE es.shift_id=s.id AND es.is_paid=1), 0)
+               AS kassa_nal
+        FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id
+        WHERE s.branch_id=? AND s.date<?
+        ORDER BY s.date DESC LIMIT 1
+    ''', (branch_id, before_date)).fetchone()
+    return (row['kassa_nal'] or 0) if row else 0
+
+
 def _apply_change_amount_to_shift(conn, shift_id, branch_id, shift_date):
     """Apply change_amount to shift: override table first, then schedule rules."""
     try:
@@ -1505,7 +1523,8 @@ def dashboard():
                     'WHERE s.branch_id=? AND s.date=?',
                     (bid, today)
                 ).fetchone()
-                branches_shifts.append({'branch': branch, 'shift': shift})
+                suggested_morning_cash = 0 if shift else int(round(_calc_prev_kassa_nal(conn, bid, today)))
+                branches_shifts.append({'branch': branch, 'shift': shift, 'suggested_morning_cash': suggested_morning_cash})
             if bids:
                 ids_str = ','.join(str(int(b)) for b in bids)
                 recent = conn.execute(f'''
@@ -2195,6 +2214,13 @@ def lfl_dashboard():
     return render_template('lfl_dashboard.html', branches=branches, branch_groups=branch_groups)
 
 
+@app.route('/ratings')
+@login_required
+@owner_required
+def ratings_dashboard():
+    return render_template('ratings_dashboard.html')
+
+
 # ─── SHIFTS ───────────────────────────────────────────────────────────────────
 
 @app.route('/shift/open', methods=['POST'])
@@ -2243,20 +2269,7 @@ def open_shift():
             except ValueError:
                 prev_morning = 0.0
         else:
-            prev_cash_row = conn.execute('''
-                SELECT COALESCE(r.morning_cash, 0)
-                       + COALESCE(r.cash_amount, 0)
-                       + COALESCE(r.change_amount, 0)
-                       + COALESCE((SELECT SUM(cp.amount_cash) FROM cash_plus_entries cp WHERE cp.shift_id=s.id), 0)
-                       - COALESCE((SELECT SUM(e.amount_cash) FROM expenses e WHERE e.shift_id=s.id), 0)
-                       - COALESCE((SELECT SUM(es.total_amount) FROM employee_shifts es
-                                    WHERE es.shift_id=s.id AND es.is_paid=1), 0)
-                       AS kassa_nal
-                FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id
-                WHERE s.branch_id=? AND s.date<?
-                ORDER BY s.date DESC LIMIT 1
-            ''', (int(branch_id), today)).fetchone()
-            prev_morning = (prev_cash_row['kassa_nal'] or 0) if prev_cash_row else 0
+            prev_morning = _calc_prev_kassa_nal(conn, int(branch_id), today)
         conn.execute(
             'INSERT INTO shift_revenue (shift_id, morning_cash) VALUES (?, ?)',
             (shift_id, prev_morning)
@@ -2377,20 +2390,7 @@ def shift_view(shift_id):
         except Exception:
             shift_weekday = 0
         # Утром в кассе: итого нал предыдущего дня по этому филиалу
-        prev_day_row = conn.execute('''
-            SELECT COALESCE(r.morning_cash, 0)
-                   + COALESCE(r.cash_amount, 0)
-                   + COALESCE(r.change_amount, 0)
-                   + COALESCE((SELECT SUM(cp.amount_cash) FROM cash_plus_entries cp WHERE cp.shift_id=s.id), 0)
-                   - COALESCE((SELECT SUM(e.amount_cash) FROM expenses e WHERE e.shift_id=s.id), 0)
-                   - COALESCE((SELECT SUM(es.total_amount) FROM employee_shifts es
-                                WHERE es.shift_id=s.id AND es.is_paid=1), 0)
-                   AS kassa_nal
-            FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id
-            WHERE s.branch_id=? AND s.date<?
-            ORDER BY s.date DESC LIMIT 1
-        ''', (shift['branch_id'], shift['date'])).fetchone()
-        prev_actual_cash = (prev_day_row['kassa_nal'] or 0) if prev_day_row else None
+        prev_actual_cash = _calc_prev_kassa_nal(conn, shift['branch_id'], shift['date'])
         bonus_rules_rows = conn.execute(
             'SELECT role, threshold_pct, bonus_pct FROM bonus_rules '
             'WHERE is_active=1 AND (branch_id IS NULL OR branch_id=?) '

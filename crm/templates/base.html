@@ -188,6 +188,12 @@
                         <i class="bi bi-graph-up-arrow me-2"></i>LFL
                     </a>
                 </li>
+                <li>
+                    <a class="dropdown-item {% if request.endpoint=='ratings_dashboard' %}active{% endif %}"
+                       href="{{ url_for('ratings_dashboard') }}">
+                        <i class="bi bi-trophy me-2"></i>Рейтинги
+                    </a>
+                </li>
             </ul>
         </div>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav" {% if session.get('role') != 'owner' %}style="display:none"{% endif %}>
@@ -196,7 +202,7 @@
         <div class="collapse navbar-collapse" id="nav">
             <ul class="navbar-nav me-auto">
             {% if session.get('role') == 'owner' %}
-                {% set dash_active = request.endpoint in ('dashboard', 'fot_dashboard', 'lfl_dashboard') %}
+                {% set dash_active = request.endpoint in ('dashboard', 'fot_dashboard', 'lfl_dashboard', 'ratings_dashboard') %}
                 <li class="nav-item dropdown d-none d-lg-flex">
                     <a class="nav-link nav-link-dashboard dropdown-toggle {% if dash_active %}active{% endif %}"
                        href="#" data-bs-toggle="dropdown" aria-expanded="false">
@@ -216,6 +222,11 @@
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='lfl_dashboard' %}active{% endif %}" href="{{ url_for('lfl_dashboard') }}">
                                 <i class="bi bi-graph-up-arrow me-2"></i>LFL
+                            </a>
+                        </li>
+                        <li>
+                            <a class="dropdown-item {% if request.endpoint=='ratings_dashboard' %}active{% endif %}" href="{{ url_for('ratings_dashboard') }}">
+                                <i class="bi bi-trophy me-2"></i>Рейтинги
                             </a>
                         </li>
                     </ul>
