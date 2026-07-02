@@ -22,15 +22,11 @@
     <div style="border-top:1px solid #f1f5f9; padding-top:24px;">
       <form method="POST" action="{{ url_for('open_shift') }}" id="open-form">
         <input type="hidden" name="branch_id" value="{{ branch.id }}">
+        <input type="hidden" name="morning_cash" value="{{ bs.suggested_morning_cash|int }}">
 
-        <label style="font-size:11px; font-weight:700; letter-spacing:.8px; text-transform:uppercase; color:#64748b; display:block; margin-bottom:8px;">Факт в кассе, ₽</label>
-        <input type="text" name="morning_cash" id="morning_cash" inputmode="numeric"
-          placeholder="0"
-          value="{{ bs.suggested_morning_cash|int|string if bs.suggested_morning_cash else '' }}"
-          style="width:100%; font-size:32px; font-weight:800; color:#1e293b; border:none; border-bottom:2px solid #e2e8f0; background:transparent; outline:none; padding:4px 0 8px; margin-bottom:6px; letter-spacing:-1px; transition:border-color .15s;"
-          onfocus="this.style.borderColor='#6366f1'"
-          onblur="this.style.borderColor='#e2e8f0'">
-        <div style="font-size:12px; color:#94a3b8; margin-bottom:22px;">Остаток кассы с предыдущей смены. Если пересчитали факт — поправьте сумму.</div>
+        <label style="font-size:11px; font-weight:700; letter-spacing:.8px; text-transform:uppercase; color:#64748b; display:block; margin-bottom:8px;">Утром в кассе, ₽</label>
+        <div style="font-size:32px; font-weight:800; color:#1e293b; padding:4px 0 8px; margin-bottom:6px; letter-spacing:-1px;">{{ bs.suggested_morning_cash|money|replace('-', '−') }}</div>
+        <div style="font-size:12px; color:#94a3b8; margin-bottom:22px;">Остаток кассы с предыдущей смены.</div>
 
         <button type="submit"
           style="width:100%; padding:14px; background:linear-gradient(135deg,#6366f1,#8b5cf6); color:#fff; border:none; border-radius:12px; font-size:16px; font-weight:700; cursor:pointer; letter-spacing:.3px; transition:opacity .15s;"
@@ -74,27 +70,4 @@
 
 {% endif %}
 
-<script>
-// Форматируем поле(я) ввода факта в кассе как число с пробелами
-document.querySelectorAll('input[name="morning_cash"]').forEach(function(inp) {
-    // Отформатировать подставленное сервером значение при загрузке страницы
-    if (inp.value) {
-        var initRaw = inp.value.replace(/\D/g, '');
-        inp.value = initRaw ? parseInt(initRaw, 10).toLocaleString('ru-RU') : '';
-    }
-    inp.addEventListener('input', function() {
-        var raw = this.value.replace(/\D/g, '');
-        this.value = raw ? parseInt(raw, 10).toLocaleString('ru-RU') : '';
-    });
-    // Перед отправкой — убираем форматирование.
-    // Пустое поле оставляем пустым (не подставляем 0!), чтобы сервер сам
-    // подставил остаток кассы с предыдущей смены.
-    var form = inp.closest('form');
-    if (form) {
-        form.addEventListener('submit', function() {
-            inp.value = inp.value.replace(/\D/g, '');
-        });
-    }
-});
-</script>
 {% endblock %}
