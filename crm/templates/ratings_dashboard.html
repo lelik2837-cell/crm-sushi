@@ -4,36 +4,48 @@
 
 <div class="row g-3 mb-4">
   <div class="col-12">
-    <div style="background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 55%,#e2e8f0 100%); border:1px solid #e5e7eb; border-radius:20px; padding:28px 28px 24px; color:#1e293b;">
+    <div style="background:linear-gradient(135deg,#db2777 0%,#9333ea 55%,#7c3aed 100%); border-radius:20px; padding:28px 28px 24px; color:#fff;">
 
-      <!-- Период + метрика -->
-      <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; justify-content:space-between; margin-bottom:22px;">
-        <div style="display:flex; gap:6px; flex-wrap:wrap;">
-          <button class="rat-period-btn" data-rp="today" onclick="setPeriod('today')"
-            style="font-size:12px; padding:5px 14px; border-radius:20px; border:1.5px solid #e2e8f0; background:#1e293b; color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Сегодня</button>
-          <button class="rat-period-btn" data-rp="month" onclick="setPeriod('month')"
-            style="font-size:12px; padding:5px 14px; border-radius:20px; border:1.5px solid #e2e8f0; background:#f1f5f9; color:#475569; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Месяц</button>
+      <!-- Навигация: день / месяц -->
+      <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:18px;">
+        <div class="rat-nav" data-period="day" style="display:flex; align-items:center; gap:2px; background:rgba(255,255,255,.12); border:1.5px solid rgba(255,255,255,.35); border-radius:20px; padding:3px;">
+          <button onclick="shiftDay(-1)" title="Предыдущий день"
+            style="width:24px; height:24px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:14px; font-weight:700; line-height:1;">‹</button>
+          <button onclick="selectPeriod('day')" id="rat-day-label"
+            style="border:none; background:transparent; color:#fff; cursor:pointer; font-size:12px; font-weight:700; padding:4px 8px; letter-spacing:.2px; white-space:nowrap;">Сегодня</button>
+          <button onclick="shiftDay(1)" id="rat-day-next" title="Следующий день"
+            style="width:24px; height:24px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:14px; font-weight:700; line-height:1;">›</button>
         </div>
-        <div style="display:flex; gap:6px; flex-wrap:wrap;">
-          <button class="rat-metric-btn" data-rm="revenue" onclick="setMetric('revenue')"
-            style="font-size:12px; padding:5px 12px; border-radius:20px; border:1.5px solid #e2e8f0; background:#1e293b; color:#fff; cursor:pointer; font-weight:600; letter-spacing:.2px; transition:all .15s;">Выручка</button>
-          <button class="rat-metric-btn" data-rm="fot_pct" onclick="setMetric('fot_pct')"
-            style="font-size:12px; padding:5px 12px; border-radius:20px; border:1.5px solid #e2e8f0; background:#f1f5f9; color:#475569; cursor:pointer; font-weight:600; letter-spacing:.2px; transition:all .15s;">ФОТ %</button>
-          <button class="rat-metric-btn" data-rm="fot_rub" onclick="setMetric('fot_rub')"
-            style="font-size:12px; padding:5px 12px; border-radius:20px; border:1.5px solid #e2e8f0; background:#f1f5f9; color:#475569; cursor:pointer; font-weight:600; letter-spacing:.2px; transition:all .15s;">ФОТ ₽</button>
-          <button class="rat-metric-btn" data-rm="pickup" onclick="setMetric('pickup')"
-            style="font-size:12px; padding:5px 12px; border-radius:20px; border:1.5px solid #e2e8f0; background:#f1f5f9; color:#475569; cursor:pointer; font-weight:600; letter-spacing:.2px; transition:all .15s;">Самовывоз</button>
-          <button class="rat-metric-btn" data-rm="delivery" onclick="setMetric('delivery')"
-            style="font-size:12px; padding:5px 12px; border-radius:20px; border:1.5px solid #e2e8f0; background:#f1f5f9; color:#475569; cursor:pointer; font-weight:600; letter-spacing:.2px; transition:all .15s;">Доставка</button>
+        <div class="rat-nav" data-period="month" style="display:flex; align-items:center; gap:2px; background:rgba(255,255,255,.12); border:1.5px solid rgba(255,255,255,.35); border-radius:20px; padding:3px;">
+          <button onclick="shiftMonth(-1)" title="Предыдущий месяц"
+            style="width:24px; height:24px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:14px; font-weight:700; line-height:1;">‹</button>
+          <button onclick="selectPeriod('month')" id="rat-month-label"
+            style="border:none; background:transparent; color:#fff; cursor:pointer; font-size:12px; font-weight:700; padding:4px 8px; letter-spacing:.2px; white-space:nowrap;">Месяц</button>
+          <button onclick="shiftMonth(1)" id="rat-month-next" title="Следующий месяц"
+            style="width:24px; height:24px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:14px; font-weight:700; line-height:1;">›</button>
         </div>
       </div>
 
-      <div style="font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:#94a3b8; margin-bottom:16px;" id="ratings-title">
+      <!-- Метрика -->
+      <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:20px;">
+        <button class="rat-metric-btn" data-rm="revenue" onclick="setMetric('revenue')"
+          style="font-size:12px; padding:5px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.9); background:rgba(255,255,255,.25); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.2px; transition:all .15s;">Выручка</button>
+        <button class="rat-metric-btn" data-rm="fot_pct" onclick="setMetric('fot_pct')"
+          style="font-size:12px; padding:5px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.2px; transition:all .15s;">ФОТ %</button>
+        <button class="rat-metric-btn" data-rm="fot_rub" onclick="setMetric('fot_rub')"
+          style="font-size:12px; padding:5px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.2px; transition:all .15s;">ФОТ ₽</button>
+        <button class="rat-metric-btn" data-rm="pickup" onclick="setMetric('pickup')"
+          style="font-size:12px; padding:5px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.2px; transition:all .15s;">Самовывоз</button>
+        <button class="rat-metric-btn" data-rm="delivery" onclick="setMetric('delivery')"
+          style="font-size:12px; padding:5px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.2px; transition:all .15s;">Доставка</button>
+      </div>
+
+      <div style="font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; opacity:.7; margin-bottom:16px;" id="ratings-title">
         Рейтинг филиалов — выручка
       </div>
 
       <div id="ratings-list">
-        <div style="text-align:center; color:#94a3b8; padding:20px 0; font-size:13px;">Загрузка...</div>
+        <div style="text-align:center; opacity:.6; padding:20px 0; font-size:13px;">Загрузка...</div>
       </div>
 
     </div>
@@ -41,8 +53,13 @@
 </div>
 
 <script>
-var currentPeriod = 'today';
+var currentPeriod = 'day';   // 'day' | 'month'
 var currentMetric = 'revenue';
+var dayDate   = new Date();
+var monthDate = new Date();
+
+var MONTHS_GEN = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+var MONTHS_NOM = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
 
 var METRICS = {
   revenue:  { label: 'выручка',    unit: '₽', get: function(b) { return b.revenue; } },
@@ -52,18 +69,85 @@ var METRICS = {
   delivery: { label: 'доставка',   unit: '₽', get: function(b) { return b.delivery_revenue; } }
 };
 
+function pad2(n) { return n < 10 ? '0' + n : String(n); }
+function fmtDate(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
 function fmtNum(n) { return Math.round(n).toLocaleString('ru-RU'); }
+function isSameDay(a, b) { return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate(); }
+function isSameMonth(a, b) { return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth(); }
+
+function updateNavLabels() {
+  var today = new Date();
+
+  var dayLabel = document.getElementById('rat-day-label');
+  dayLabel.textContent = isSameDay(dayDate, today) ? 'Сегодня' : (dayDate.getDate() + ' ' + MONTHS_GEN[dayDate.getMonth()]);
+  document.getElementById('rat-day-next').disabled = isSameDay(dayDate, today);
+  document.getElementById('rat-day-next').style.opacity = isSameDay(dayDate, today) ? '.35' : '1';
+
+  var monthLabel = document.getElementById('rat-month-label');
+  monthLabel.textContent = isSameMonth(monthDate, today) ? ('Месяц (' + MONTHS_NOM[monthDate.getMonth()] + ')') : (MONTHS_NOM[monthDate.getMonth()] + ' ' + monthDate.getFullYear());
+  document.getElementById('rat-month-next').disabled = isSameMonth(monthDate, today);
+  document.getElementById('rat-month-next').style.opacity = isSameMonth(monthDate, today) ? '.35' : '1';
+
+  document.querySelectorAll('.rat-nav').forEach(function(nav) {
+    var active = nav.dataset.period === currentPeriod;
+    nav.style.background = active ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.12)';
+    nav.style.borderColor = active ? 'rgba(255,255,255,.9)' : 'rgba(255,255,255,.35)';
+  });
+}
+
+function selectPeriod(p) {
+  currentPeriod = p;
+  updateNavLabels();
+  loadRatings();
+}
+
+function shiftDay(delta) {
+  var d = new Date(dayDate);
+  d.setDate(d.getDate() + delta);
+  var today = new Date();
+  if (d > today) d = today;
+  dayDate = d;
+  currentPeriod = 'day';
+  updateNavLabels();
+  loadRatings();
+}
+
+function shiftMonth(delta) {
+  var d = new Date(monthDate);
+  d.setMonth(d.getMonth() + delta, 1);
+  var today = new Date();
+  if (d.getFullYear() > today.getFullYear() || (d.getFullYear() === today.getFullYear() && d.getMonth() > today.getMonth())) {
+    d = new Date(today.getFullYear(), today.getMonth(), 1);
+  }
+  monthDate = d;
+  currentPeriod = 'month';
+  updateNavLabels();
+  loadRatings();
+}
 
 function updateTitle() {
   var metric = METRICS[currentMetric];
-  var periodLabel = currentPeriod === 'today' ? 'сегодня' : 'за месяц';
+  var periodLabel;
+  if (currentPeriod === 'day') {
+    periodLabel = isSameDay(dayDate, new Date()) ? 'сегодня' : (dayDate.getDate() + ' ' + MONTHS_GEN[dayDate.getMonth()]);
+  } else {
+    periodLabel = MONTHS_NOM[monthDate.getMonth()].toLowerCase() + ' ' + monthDate.getFullYear();
+  }
   document.getElementById('ratings-title').textContent = 'Рейтинг филиалов — ' + metric.label + ', ' + periodLabel;
 }
+
+// Медальные цвета для топ-3, остальные — обычный серый
+var RANK_STYLES = [
+  { fill: 'linear-gradient(90deg,#fde68a,#f59e0b)', badge: 'linear-gradient(135deg,#fde68a,#f59e0b)', badgeColor: '#78350f' }, // золото
+  { fill: 'linear-gradient(90deg,#e5e7eb,#9ca3af)', badge: 'linear-gradient(135deg,#f1f5f9,#9ca3af)', badgeColor: '#374151' }, // серебро
+  { fill: 'linear-gradient(90deg,#e0a458,#b5651d)', badge: 'linear-gradient(135deg,#e0a458,#b5651d)', badgeColor: '#451a03' }  // бронза
+];
+var RANK_DEFAULT = { fill: 'rgba(255,255,255,.55)', badge: 'rgba(255,255,255,.18)', badgeColor: '#fff' };
 
 function renderRatings(rows, metric) {
   var listEl = document.getElementById('ratings-list');
   if (!rows.length) {
-    listEl.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:20px 0;font-size:13px;">Нет данных</div>';
+    listEl.innerHTML = '<div style="text-align:center;opacity:.6;padding:20px 0;font-size:13px;">Нет данных</div>';
     return;
   }
   var maxVal = Math.max.apply(null, rows.map(function(r) { return Math.abs(r.value); })) || 1;
@@ -72,27 +156,32 @@ function renderRatings(rows, metric) {
     var valStr = metric.unit === '%'
       ? (Math.round(r.value * 10) / 10).toLocaleString('ru-RU') + ' %'
       : fmtNum(r.value) + ' ₽';
+    var rs = RANK_STYLES[i] || RANK_DEFAULT;
     return '<div style="display:flex; align-items:center; gap:12px; padding:7px 0;">' +
-      '<div style="width:24px; flex-shrink:0; text-align:center; font-weight:800; color:#94a3b8; font-size:13px;">' + (i + 1) + '</div>' +
-      '<div style="flex:1; background:#eef1f5; border-radius:8px; height:28px; position:relative; overflow:hidden;">' +
-        '<div style="height:100%; width:' + w + '%; border-radius:8px; background:linear-gradient(90deg,#cbd5e1,#94a3b8); transition:width .4s;"></div>' +
+      '<div style="width:26px; height:26px; flex-shrink:0; border-radius:50%; background:' + rs.badge + '; color:' + rs.badgeColor + '; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:12px;">' + (i + 1) + '</div>' +
+      '<div style="flex:1; background:rgba(255,255,255,.15); border-radius:8px; height:28px; position:relative; overflow:hidden;">' +
+        '<div style="height:100%; width:' + w + '%; border-radius:8px; background:' + rs.fill + '; transition:width .4s;"></div>' +
       '</div>' +
-      '<div style="min-width:140px; font-size:13px; font-weight:700; color:#1e293b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' + r.name + '</div>' +
-      '<div style="min-width:100px; text-align:right; font-size:13px; font-weight:700; color:#475569;">' + valStr + '</div>' +
+      '<div style="min-width:140px; font-size:13px; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' + r.name + '</div>' +
+      '<div style="min-width:100px; text-align:right; font-size:13px; font-weight:700; color:#fff; opacity:.9;">' + valStr + '</div>' +
     '</div>';
   }).join('');
 }
 
 function loadRatings() {
   updateTitle();
-  var today = new Date();
-  var pad = function(n) { return n < 10 ? '0' + n : n; };
-  var fmt = function(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); };
-  var dateTo   = fmt(today);
-  var dateFrom = currentPeriod === 'today' ? dateTo : fmt(today).slice(0, 7) + '-01';
+  var dateFrom, dateTo;
+  if (currentPeriod === 'day') {
+    dateFrom = dateTo = fmtDate(dayDate);
+  } else {
+    var y = monthDate.getFullYear(), m = monthDate.getMonth();
+    var today = new Date();
+    dateFrom = y + '-' + pad2(m + 1) + '-01';
+    dateTo = isSameMonth(monthDate, today) ? fmtDate(today) : (y + '-' + pad2(m + 1) + '-' + pad2(new Date(y, m + 1, 0).getDate()));
+  }
 
   document.getElementById('ratings-list').innerHTML =
-    '<div style="text-align:center;color:#94a3b8;padding:20px 0;font-size:13px;">Загрузка...</div>';
+    '<div style="text-align:center;opacity:.6;padding:20px 0;font-size:13px;">Загрузка...</div>';
 
   fetch('/api/revenue-summary?date_from=' + dateFrom + '&date_to=' + dateTo)
     .then(function(r) { return r.json(); })
@@ -107,26 +196,17 @@ function loadRatings() {
     });
 }
 
-function setPeriod(p) {
-  currentPeriod = p;
-  document.querySelectorAll('.rat-period-btn').forEach(function(b) {
-    var active = b.dataset.rp === p;
-    b.style.background = active ? '#1e293b' : '#f1f5f9';
-    b.style.color       = active ? '#fff' : '#475569';
-  });
-  loadRatings();
-}
-
 function setMetric(m) {
   currentMetric = m;
   document.querySelectorAll('.rat-metric-btn').forEach(function(b) {
     var active = b.dataset.rm === m;
-    b.style.background = active ? '#1e293b' : '#f1f5f9';
-    b.style.color       = active ? '#fff' : '#475569';
+    b.style.background  = active ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.12)';
+    b.style.borderColor = active ? 'rgba(255,255,255,.9)'  : 'rgba(255,255,255,.35)';
   });
   loadRatings();
 }
 
+updateNavLabels();
 loadRatings();
 </script>
 {% endblock %}
