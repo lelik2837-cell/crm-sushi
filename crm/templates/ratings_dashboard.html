@@ -138,11 +138,22 @@ function updateTitle() {
 
 // Медальные цвета для топ-3, остальные — обычный серый
 var RANK_STYLES = [
-  { fill: 'linear-gradient(90deg,#fde68a,#f59e0b)', badge: 'linear-gradient(135deg,#fde68a,#f59e0b)', badgeColor: '#78350f' }, // золото
-  { fill: 'linear-gradient(90deg,#e5e7eb,#9ca3af)', badge: 'linear-gradient(135deg,#f1f5f9,#9ca3af)', badgeColor: '#374151' }, // серебро
-  { fill: 'linear-gradient(90deg,#e0a458,#b5651d)', badge: 'linear-gradient(135deg,#e0a458,#b5651d)', badgeColor: '#451a03' }  // бронза
+  { badge: 'linear-gradient(135deg,#fde68a,#f59e0b)', badgeColor: '#78350f' }, // золото
+  { badge: 'linear-gradient(135deg,#f1f5f9,#9ca3af)', badgeColor: '#374151' }, // серебро
+  { badge: 'linear-gradient(135deg,#e0a458,#b5651d)', badgeColor: '#451a03' }  // бронза
 ];
-var RANK_DEFAULT = { fill: 'rgba(255,255,255,.55)', badge: 'rgba(255,255,255,.18)', badgeColor: '#fff' };
+var RANK_DEFAULT = { badge: 'rgba(255,255,255,.18)', badgeColor: '#fff' };
+
+function fmtMetricValue(value, metric) {
+  return metric.unit === '%'
+    ? (Math.round(value * 10) / 10).toLocaleString('ru-RU') + ' %'
+    : fmtNum(value) + ' ₽';
+}
+
+function fmtDiff(diff, metric) {
+  var n = metric.unit === '%' ? (Math.round(diff * 10) / 10) : Math.round(diff);
+  return '(+' + n.toLocaleString('ru-RU') + ')';
+}
 
 function renderRatings(rows, metric) {
   var listEl = document.getElementById('ratings-list');
@@ -150,20 +161,18 @@ function renderRatings(rows, metric) {
     listEl.innerHTML = '<div style="text-align:center;opacity:.6;padding:20px 0;font-size:13px;">Нет данных</div>';
     return;
   }
-  var maxVal = Math.max.apply(null, rows.map(function(r) { return Math.abs(r.value); })) || 1;
   listEl.innerHTML = rows.map(function(r, i) {
-    var w = Math.max(2, Math.round(Math.abs(r.value) / maxVal * 100));
-    var valStr = metric.unit === '%'
-      ? (Math.round(r.value * 10) / 10).toLocaleString('ru-RU') + ' %'
-      : fmtNum(r.value) + ' ₽';
+    var valStr = fmtMetricValue(r.value, metric);
+    var diffHtml = '';
+    if (i < rows.length - 1) {
+      diffHtml = ' <span style="opacity:.55; font-weight:600;">' + fmtDiff(r.value - rows[i + 1].value, metric) + '</span>';
+    }
     var rs = RANK_STYLES[i] || RANK_DEFAULT;
-    return '<div style="display:flex; align-items:center; gap:12px; padding:7px 0;">' +
+    var borderStyle = i < rows.length - 1 ? 'border-bottom:1px solid rgba(255,255,255,.12);' : '';
+    return '<div style="display:flex; align-items:center; gap:12px; padding:8px 0; ' + borderStyle + '">' +
       '<div style="width:26px; height:26px; flex-shrink:0; border-radius:50%; background:' + rs.badge + '; color:' + rs.badgeColor + '; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:12px;">' + (i + 1) + '</div>' +
-      '<div style="flex:1; background:rgba(255,255,255,.15); border-radius:8px; height:28px; position:relative; overflow:hidden;">' +
-        '<div style="height:100%; width:' + w + '%; border-radius:8px; background:' + rs.fill + '; transition:width .4s;"></div>' +
-      '</div>' +
-      '<div style="min-width:140px; font-size:13px; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' + r.name + '</div>' +
-      '<div style="min-width:100px; text-align:right; font-size:13px; font-weight:700; color:#fff; opacity:.9;">' + valStr + '</div>' +
+      '<div style="flex:1; font-size:13px; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' + r.name + '</div>' +
+      '<div style="text-align:right; font-size:13px; font-weight:700; color:#fff; white-space:nowrap;">' + valStr + diffHtml + '</div>' +
     '</div>';
   }).join('');
 }
