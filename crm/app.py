@@ -7480,6 +7480,18 @@ def money_cents_filter(value):
         return str(value)
 
 
+@app.template_filter('moneyval')
+def moneyval_filter(value):
+    """Для значения в input: целое → '123', с копейками → '123.45'"""
+    try:
+        v = float(value or 0)
+        if v == int(v):
+            return str(int(v))
+        return f'{v:.2f}'
+    except Exception:
+        return str(value)
+
+
 @app.template_filter('datetime_fmt')
 def datetime_fmt(value):
     if not value:

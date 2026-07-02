@@ -394,8 +394,8 @@
             {% endif %}
             {% endfor %}
           </select>
-          <input class="mini-input exp-amount money-field" type="text" inputmode="numeric" placeholder="0"
-            value="{{ ((exp.amount_cash or 0) + (exp.amount_card or 0))|int }}">
+          <input class="mini-input exp-amount decimal-field" type="text" inputmode="decimal" placeholder="0"
+            value="{{ ((exp.amount_cash or 0) + (exp.amount_card or 0))|moneyval }}">
           <select class="pay-type-sel exp-paytype" style="font-size:12px;">
             <option value="cash" {% if (exp.amount_cash or 0) > 0 or (exp.amount_card or 0) == 0 %}selected{% endif %}>Наличные</option>
             <option value="card" {% if (exp.amount_card or 0) > 0 %}selected{% endif %}>Карта</option>
@@ -412,7 +412,7 @@
         {% else %}
         <div class="expense-row-main">
           <span style="font-size:13px;">{% for c, l in expense_categories %}{% if c == exp.category %}{{ l }}{% endif %}{% endfor %}</span>
-          <span style="font-size:13px; text-align:right;">{{ ((exp.amount_cash or 0) + (exp.amount_card or 0))|int }} ₽</span>
+          <span style="font-size:13px; text-align:right;">{{ ((exp.amount_cash or 0) + (exp.amount_card or 0))|money_cents }} ₽</span>
           <span style="font-size:12px; color:#6b7280;">{% if (exp.amount_cash or 0) > 0 %}Нал{% else %}Карта{% endif %}</span>
           <div style="text-align:center;">{% if exp.is_gulash %}✓{% endif %}</div>
           <div></div>
@@ -462,8 +462,8 @@
             {% endif %}
             {% endfor %}
           </select>
-          <input class="mini-input plus-amount money-field" type="text" inputmode="numeric" placeholder="0"
-            value="{{ p.amount|int }}">
+          <input class="mini-input plus-amount decimal-field" type="text" inputmode="decimal" placeholder="0"
+            value="{{ p.amount|moneyval }}">
           <span style="font-size:12px; color:#6b7280; padding-left:4px;">Наличные</span>
           <button class="row-del" onclick="deletePlus(this, {{ p.id }})">✕</button>
         </div>
@@ -474,7 +474,7 @@
         {% else %}
         <div class="expense-row-main plus-grid">
           <span style="font-size:13px;">{% for c, l in income_categories %}{% if c == p.category %}{{ l }}{% endif %}{% endfor %}{% if not p.category %}{{ p.description or '—' }}{% endif %}</span>
-          <span style="font-size:13px; text-align:right; color:#16a34a; font-weight:700;">+{{ p.amount|int }} ₽</span>
+          <span style="font-size:13px; text-align:right; color:#16a34a; font-weight:700;">+{{ p.amount|money_cents }} ₽</span>
           <span style="font-size:12px; color:#6b7280;">Нал</span>
           <div></div>
         </div>
@@ -859,9 +859,21 @@ function readNum(el) {
   if (!el) return 0;
   return parseInt(String(el.value).replace(/\D/g, '')) || 0;
 }
+function readDecimal(el) {
+  if (!el) return 0;
+  const s = String(el.value).replace(/\s/g, '').replace(',', '.');
+  return parseFloat(s) || 0;
+}
 function fmtMoney(val) {
   const n = parseInt(String(val).replace(/\D/g, '')) || 0;
   return n ? n.toLocaleString('ru-RU') : '';
+}
+function fmtDecimal(val) {
+  const v = parseFloat(String(val).replace(',', '.')) || 0;
+  if (!v) return '';
+  if (v === Math.floor(v)) return Math.floor(v).toLocaleString('ru-RU');
+  const [whole, frac] = v.toFixed(2).split('.');
+  return parseInt(whole).toLocaleString('ru-RU') + ',' + frac;
 }
 function initMoneyField(el) {
   // Format initial value
@@ -870,13 +882,10 @@ function initMoneyField(el) {
     if (e.key === '-' || e.key === 'e') e.preventDefault();
   });
   el.addEventListener('input', () => {
-    const pos = el.selectionStart;
     const raw = el.value.replace(/\D/g, '');
-    const formatted = raw ? parseInt(raw).toLocaleString('ru-RU') : '';
-    el.value = formatted;
+    el.value = raw ? parseInt(raw).toLocaleString('ru-RU') : '';
   });
   el.addEventListener('focus', () => {
-    // On focus: strip spaces so it's easier to edit
     const raw = el.value.replace(/\D/g, '');
     el.value = raw || '';
     el.select();
@@ -885,7 +894,30 @@ function initMoneyField(el) {
     el.value = fmtMoney(el.value);
   });
 }
+function initDecimalField(el) {
+  if (el.value && el.value !== '0') el.value = fmtDecimal(el.value);
+  el.addEventListener('keydown', e => {
+    if (e.key === '-' || e.key === 'e') e.preventDefault();
+  });
+  el.addEventListener('input', () => {
+    // Allow digits, one dot/comma
+    let v = el.value.replace(/[^\d.,]/g, '').replace(',', '.');
+    const parts = v.split('.');
+    if (parts.length > 2) v = parts[0] + '.' + parts.slice(1).join('');
+    el.value = v;
+  });
+  el.addEventListener('focus', () => {
+    // show raw numeric value for easy editing
+    const v = readDecimal(el);
+    el.value = v ? String(v).replace('.', ',') : '';
+    el.select();
+  });
+  el.addEventListener('blur', () => {
+    el.value = fmtDecimal(el.value);
+  });
+}
 document.querySelectorAll('.money-field').forEach(initMoneyField);
+document.querySelectorAll('.decimal-field').forEach(initDecimalField);
 
 
 // ── Revenue ───────────────────────────────────────────────────────────────────
@@ -931,7 +963,7 @@ function updateKassa() {
 
   let expCash = 0, expCard = 0;
   document.querySelectorAll('#expenses-body [data-id]').forEach(row => {
-    const amt  = readNum(row.querySelector('.exp-amount'));
+    const amt  = readDecimal(row.querySelector('.exp-amount'));
     const type = row.querySelector('.exp-paytype')?.value;
     if (type === 'cash') expCash += amt; else expCard += amt;
   });
@@ -949,7 +981,7 @@ function updateKassa() {
   let plusCash = 0;
   document.querySelectorAll('#plus-body [data-id]').forEach(row => {
     const inp = row.querySelector('.plus-amount');
-    plusCash += inp ? readNum(inp) : (parseFloat(row.dataset.amount) || 0);
+    plusCash += inp ? readDecimal(inp) : (parseFloat(row.dataset.amount) || 0);
   });
 
   // Такси за наличные
@@ -989,7 +1021,7 @@ function addExpenseRow() {
       <select class="field-select field-input-sm exp-cat" style="font-size:12px; padding:5px 24px 5px 8px;">
         ${buildCatOptions(null)}
       </select>
-      <input class="mini-input exp-amount money-field" type="text" inputmode="numeric" placeholder="0" value="">
+      <input class="mini-input exp-amount decimal-field" type="text" inputmode="decimal" placeholder="0" value="">
       <select class="pay-type-sel exp-paytype" style="font-size:12px;">
         <option value="" disabled selected>— выбрать —</option>
         <option value="cash">Наличные</option><option value="card">Карта</option>
@@ -1004,7 +1036,7 @@ function addExpenseRow() {
       <textarea class="exp-note" rows="1" placeholder="Комментарий..."></textarea>
     </div>`;
   document.getElementById('expenses-body').appendChild(row);
-  initMoneyField(row.querySelector('.exp-amount'));
+  initDecimalField(row.querySelector('.exp-amount'));
   row.querySelector('.exp-amount').addEventListener('change', () => { saveExpRow(row.querySelector('.exp-amount')); updateKassa(); });
   row.querySelector('.exp-cat').addEventListener('change', () => saveExpRow(row.querySelector('.exp-cat')));
   row.querySelector('.exp-paytype').addEventListener('change', () => { saveExpRow(row.querySelector('.exp-paytype')); updateKassa(); });
@@ -1018,7 +1050,7 @@ function saveExpRow(el) {
   const cat = row.querySelector('.exp-cat')?.value;
   const type = row.querySelector('.exp-paytype')?.value;
   if (!cat || !type) return;
-  const amt = readNum(row.querySelector('.exp-amount'));
+  const amt = readDecimal(row.querySelector('.exp-amount'));
   const data = {
     id: id,
     category: cat,
@@ -1064,7 +1096,7 @@ function addPlusRow() {
       <select class="field-select field-input-sm plus-cat" style="font-size:12px; padding:5px 24px 5px 8px;">
         ${buildIncomeCatOptions(null)}
       </select>
-      <input class="mini-input plus-amount money-field" type="text" inputmode="numeric" placeholder="0" value="">
+      <input class="mini-input plus-amount decimal-field" type="text" inputmode="decimal" placeholder="0" value="">
       <span style="font-size:12px; color:#6b7280; padding-left:4px;">Наличные</span>
       <button class="row-del" onclick="deletePlus(this, null)">✕</button>
     </div>
@@ -1073,7 +1105,7 @@ function addPlusRow() {
       <textarea class="exp-note plus-note" rows="1" placeholder="Комментарий..."></textarea>
     </div>`;
   document.getElementById('plus-body').appendChild(row);
-  initMoneyField(row.querySelector('.plus-amount'));
+  initDecimalField(row.querySelector('.plus-amount'));
   row.querySelector('.plus-amount').addEventListener('change', () => { savePlusRow(row.querySelector('.plus-amount')); updateKassa(); });
   row.querySelector('.plus-cat').addEventListener('change', () => savePlusRow(row.querySelector('.plus-cat')));
   row.querySelector('.plus-note').addEventListener('blur', () => savePlusRow(row.querySelector('.plus-note')));
@@ -1085,7 +1117,7 @@ function savePlusRow(el) {
   if (!row) return;
   const id   = row.dataset.id === 'new' ? null : parseInt(row.dataset.id);
   const cat  = row.querySelector('.plus-cat')?.value || '';
-  const amt  = readNum(row.querySelector('.plus-amount'));
+  const amt  = readDecimal(row.querySelector('.plus-amount'));
   const desc = (row.querySelector('.plus-note')?.value || '').trim();
   fetch(`/shift/${SHIFT_ID}/save-plus`, {
     method: 'POST', headers: {'Content-Type': 'application/json'},
