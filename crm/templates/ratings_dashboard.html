@@ -20,7 +20,7 @@
           <button onclick="shiftMonth(-1)" title="Предыдущий месяц"
             style="width:24px; height:24px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:14px; font-weight:700; line-height:1;">‹</button>
           <button onclick="selectPeriod('month')" id="rat-month-label"
-            style="border:none; background:transparent; color:#fff; cursor:pointer; font-size:12px; font-weight:700; padding:4px 8px; letter-spacing:.2px; white-space:nowrap;">Месяц</button>
+            style="border:none; background:transparent; color:#fff; cursor:pointer; font-size:12px; font-weight:700; padding:4px 8px; letter-spacing:.2px; white-space:nowrap;">Июль</button>
           <button onclick="shiftMonth(1)" id="rat-month-next" title="Следующий месяц"
             style="width:24px; height:24px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:14px; font-weight:700; line-height:1;">›</button>
         </div>
@@ -84,7 +84,7 @@ function updateNavLabels() {
   document.getElementById('rat-day-next').style.opacity = isSameDay(dayDate, today) ? '.35' : '1';
 
   var monthLabel = document.getElementById('rat-month-label');
-  monthLabel.textContent = isSameMonth(monthDate, today) ? ('Месяц (' + MONTHS_NOM[monthDate.getMonth()] + ')') : (MONTHS_NOM[monthDate.getMonth()] + ' ' + monthDate.getFullYear());
+  monthLabel.textContent = isSameMonth(monthDate, today) ? MONTHS_NOM[monthDate.getMonth()] : (MONTHS_NOM[monthDate.getMonth()] + ' ' + monthDate.getFullYear());
   document.getElementById('rat-month-next').disabled = isSameMonth(monthDate, today);
   document.getElementById('rat-month-next').style.opacity = isSameMonth(monthDate, today) ? '.35' : '1';
 
