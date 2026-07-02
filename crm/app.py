@@ -1195,6 +1195,18 @@ def init_db():
             );
         ''')
 
+        # Feature: промокод листовки (листовка в заказ) по дням/филиалам
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS flyer_promocodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                branch_id INTEGER NOT NULL REFERENCES branches(id),
+                date TEXT NOT NULL,
+                code TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(branch_id, date)
+            );
+        ''')
+
         # Правила разбора банковских операций
         conn.executescript('''
             CREATE TABLE IF NOT EXISTS bank_parse_rules (
@@ -2391,6 +2403,11 @@ def shift_view(shift_id):
             shift_weekday = 0
         # Утром в кассе: итого нал предыдущего дня по этому филиалу
         prev_actual_cash = _calc_prev_kassa_nal(conn, shift['branch_id'], shift['date'])
+        promokod_row = conn.execute(
+            'SELECT code FROM flyer_promocodes WHERE branch_id=? AND date=?',
+            (shift['branch_id'], shift['date'])
+        ).fetchone()
+        promokod = promokod_row['code'] if promokod_row else ''
         bonus_rules_rows = conn.execute(
             'SELECT role, threshold_pct, bonus_pct FROM bonus_rules '
             'WHERE is_active=1 AND (branch_id IS NULL OR branch_id=?) '
@@ -2417,6 +2434,7 @@ def shift_view(shift_id):
             is_owner=(role == 'owner'),
             shift_weekday=shift_weekday,
             prev_actual_cash=prev_actual_cash,
+            promokod=promokod,
             bonus_rules_list=bonus_rules_list,
             shift_terminals=[{'terminal_number': r['terminal_number'], 'amount': r['amount']}
                              for r in shift_terminals_rows])
@@ -9721,6 +9739,73 @@ def change_schedule_apply():
         conn.commit()
     flash('Расписание применено ко всем подходящим сменам', 'success')
     return redirect(url_for('change_settings') + '#tab-schedule')
+
+
+# ─── ЛИСТОВКА В ЗАКАЗ (промокод) ─────────────────────────────────────────────
+
+@app.route('/settings/flyer-promo')
+@login_required
+@owner_required
+def flyer_promo_settings():
+    date_from = request.args.get('date_from', date.today().isoformat())
+    date_to   = request.args.get('date_to', (date.today() + timedelta(days=13)).isoformat())
+    branch_ids_filter = request.args.getlist('branch_ids')
+
+    WD_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+    dates_list = []
+    try:
+        d_cur = date.fromisoformat(date_from)
+        d_end = date.fromisoformat(date_to)
+        while d_cur <= d_end:
+            wd = d_cur.weekday()
+            dates_list.append({'iso': d_cur.isoformat(), 'weekday': wd, 'wd_label': WD_LABELS[wd]})
+            d_cur += timedelta(days=1)
+    except Exception:
+        pass
+
+    with get_db() as conn:
+        branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        branch_groups = get_branch_groups(conn)
+        q_branch_ids = [int(x) for x in branch_ids_filter] if branch_ids_filter else [b['id'] for b in branches]
+        sel_branches = [b for b in branches if b['id'] in q_branch_ids]
+
+        grid = {}
+        if dates_list and sel_branches:
+            ph_b = ','.join('?' * len(q_branch_ids))
+            rows = conn.execute(f'''
+                SELECT branch_id, date, code FROM flyer_promocodes
+                WHERE date BETWEEN ? AND ? AND branch_id IN ({ph_b})
+            ''', [date_from, date_to] + q_branch_ids).fetchall()
+            for r in rows:
+                grid.setdefault(r['date'], {})[r['branch_id']] = r['code']
+
+    return render_template('flyer_promo.html',
+        branches=branches, branch_groups=branch_groups, branch_ids_filter=branch_ids_filter,
+        sel_branches=sel_branches, dates_list=dates_list, grid=grid,
+        date_from=date_from, date_to=date_to)
+
+
+@app.route('/settings/flyer-promo/save', methods=['POST'])
+@login_required
+@owner_required
+def flyer_promo_save():
+    data = request.json or {}
+    try:
+        branch_id = int(data['branch_id'])
+        date_str  = str(data['date'])
+        code      = str(data.get('code', '')).strip()
+    except (KeyError, ValueError, TypeError):
+        return jsonify({'ok': False}), 400
+    with get_db() as conn:
+        if code:
+            conn.execute('''
+                INSERT INTO flyer_promocodes (branch_id, date, code) VALUES (?, ?, ?)
+                ON CONFLICT(branch_id, date) DO UPDATE SET code=excluded.code
+            ''', (branch_id, date_str, code))
+        else:
+            conn.execute('DELETE FROM flyer_promocodes WHERE branch_id=? AND date=?', (branch_id, date_str))
+        conn.commit()
+    return jsonify({'ok': True})
 
 
 # ──────────────────────────────────────────────────────────────────────────────

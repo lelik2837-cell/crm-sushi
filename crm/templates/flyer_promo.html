@@ -1,0 +1,165 @@
+{% extends 'base.html' %}
+{% block title %}Листовка в заказ{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="fw-bold mb-0"><i class="bi bi-tag me-2"></i>Листовка в заказ — промокод</h4>
+</div>
+
+<!-- Filter bar -->
+<div class="card mb-3">
+  <div class="card-body py-3">
+    <form method="GET" action="{{ url_for('flyer_promo_settings') }}" class="row g-2 align-items-end">
+      <div class="col-sm-auto">
+        <label class="form-label small fw-semibold mb-1">С</label>
+        <input type="date" name="date_from" class="form-control form-control-sm" value="{{ date_from }}">
+      </div>
+      <div class="col-sm-auto">
+        <label class="form-label small fw-semibold mb-1">По</label>
+        <input type="date" name="date_to" class="form-control form-control-sm" value="{{ date_to }}">
+      </div>
+      <!-- Мультивыбор филиалов -->
+      <div class="col-sm-auto">
+        <label class="form-label small fw-semibold mb-1">Филиалы</label>
+        <div class="dropdown">
+          <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle"
+              data-bs-toggle="dropdown" data-bs-auto-close="outside"
+              style="min-width:160px; text-align:left;" id="branch-btn">
+            <span id="branch-btn-label">{% if branch_ids_filter %}Выбрано: {{ branch_ids_filter|length }}{% else %}Все филиалы{% endif %}</span>
+          </button>
+          <ul class="dropdown-menu p-2" style="min-width:220px;">
+            {% if branch_groups %}
+            <li>
+              <div class="text-muted px-1 mb-1" style="font-size:0.75rem">ГРУППЫ</div>
+            </li>
+            {% for g in branch_groups %}
+            <li class="mb-1">
+              <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1"
+                      onclick="selectBranchGroup({{ g.branch_ids | tojson }})">
+                <i class="bi bi-collection me-1"></i>{{ g.name }}
+              </button>
+            </li>
+            {% endfor %}
+            <li><hr class="dropdown-divider my-1"></li>
+            {% endif %}
+            <li class="mb-1">
+              <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                <input type="checkbox" id="branch-all-cb" onchange="toggleAllBranches(this)"
+                    {% if not branch_ids_filter %}checked{% endif %}>
+                <span class="fw-semibold small">Все филиалы</span>
+              </label>
+            </li>
+            <li><hr class="dropdown-divider my-1"></li>
+            {% for b in branches %}
+            <li>
+              <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                <input type="checkbox" class="branch-cb" name="branch_ids" value="{{ b.id }}"
+                    {% if b.id|string in branch_ids_filter %}checked{% endif %}
+                    onchange="onBranchCbChange()">
+                <span class="small">{{ b.name }}</span>
+              </label>
+            </li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+      <div class="col-sm-auto">
+        <button type="submit" class="btn btn-primary btn-sm">
+          <i class="bi bi-funnel me-1"></i>Показать
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Таблица: строки = даты, столбцы = филиалы -->
+<div class="card">
+  <div class="card-header py-2">
+    <span class="fw-semibold small text-uppercase text-muted">Промокод по дням</span>
+  </div>
+  <div class="card-body p-0" style="overflow-x:auto;">
+    {% if dates_list and sel_branches %}
+    <table class="table table-sm table-bordered mb-0" style="min-width:300px;">
+      <thead class="table-light">
+        <tr>
+          <th class="px-3 py-2" style="min-width:130px; white-space:nowrap;">Дата</th>
+          {% for b in sel_branches %}
+          <th class="px-3 py-2 text-center" style="min-width:150px;">{{ b.name }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for day in dates_list %}
+        <tr>
+          <td class="px-3 py-1" style="white-space:nowrap; font-size:13px;">
+            {{ day.iso | datefmt }}
+            <span style="color:#9ca3af; font-size:11px;">({{ day.wd_label }})</span>
+          </td>
+          {% for b in sel_branches %}
+          {% set code = grid.get(day.iso, {}).get(b.id, '') %}
+          <td class="px-2 py-1 text-center">
+            <input type="text" class="form-control form-control-sm promo-input" style="font-size:13px; text-align:center;"
+                   data-branch-id="{{ b.id }}" data-date="{{ day.iso }}"
+                   value="{{ code }}" placeholder="—">
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="text-center text-muted py-5">
+      <i class="bi bi-inbox" style="font-size:2rem;"></i>
+      <div class="mt-2">Нет данных в выбранном периоде</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+function toggleAllBranches(cb) {
+  document.querySelectorAll('.branch-cb').forEach(el => el.checked = false);
+  updateBranchLabel();
+}
+function onBranchCbChange() {
+  const checked = document.querySelectorAll('.branch-cb:checked');
+  document.getElementById('branch-all-cb').checked = checked.length === 0;
+  updateBranchLabel();
+}
+function selectBranchGroup(ids) {
+  document.querySelectorAll('.branch-cb').forEach(el => {
+    el.checked = ids.includes(parseInt(el.value));
+  });
+  document.getElementById('branch-all-cb').checked = false;
+  updateBranchLabel();
+}
+function updateBranchLabel() {
+  const checked = document.querySelectorAll('.branch-cb:checked');
+  const lbl = document.getElementById('branch-btn-label');
+  lbl.textContent = checked.length === 0 ? 'Все филиалы' : ('Выбрано: ' + checked.length);
+}
+
+document.querySelectorAll('.promo-input').forEach(function(inp) {
+  var lastSaved = inp.value;
+  inp.addEventListener('blur', function() {
+    if (inp.value === lastSaved) return;
+    lastSaved = inp.value;
+    fetch('{{ url_for("flyer_promo_save") }}', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        branch_id: inp.dataset.branchId,
+        date: inp.dataset.date,
+        code: inp.value.trim()
+      })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+      inp.style.borderColor = d.ok ? '#22c55e' : '#ef4444';
+      setTimeout(function() { inp.style.borderColor = ''; }, 800);
+    });
+  });
+  inp.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') inp.blur();
+  });
+});
+</script>
+{% endblock %}
