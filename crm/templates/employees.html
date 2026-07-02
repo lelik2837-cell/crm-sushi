@@ -98,7 +98,9 @@
                 <tbody>
                 {% for emp in branch_emps %}
                 <tr class="{% if not emp.is_active %}table-secondary opacity-50{% endif %}">
-                    <td class="fw-semibold">{{ (emp.last_name or '') ~ (' ' ~ emp.first_name if emp.first_name else '') or emp.full_name }}</td>
+                    <td class="fw-semibold">
+                        <a href="{{ url_for('employee_salary_detail', emp_id=emp.id) }}" class="text-decoration-none text-dark">{{ (emp.last_name or '') ~ (' ' ~ emp.first_name if emp.first_name else '') or emp.full_name }}</a>
+                    </td>
                     <td>
                         {% set extra = emp_roles_map.get(emp.id, []) %}
                         {% if extra %}
