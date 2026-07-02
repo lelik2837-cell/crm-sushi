@@ -74,32 +74,47 @@
     </div>
 </div>
 
-{% for branch in branches %}
-{% set branch_emps = employees | selectattr('branch_id', 'equalto', branch.id) | list %}
-{% if branch_emps %}
+{% macro role_color(code) %}{% if code=='admin' %}#6f42c1{% elif code=='sushi' %}#0d6efd{% elif code=='packer' %}#198754{% elif code=='courier' %}#fd7e14{% elif code=='cleaner' %}#6c757d{% else %}#dc3545{% endif %}{% endmacro %}
+
 <div class="card mb-4">
-    <div class="card-header bg-light fw-bold">
-        <i class="bi bi-shop"></i> {{ branch.name }}
-    </div>
     <div class="card-body p-0">
         <div class="table-responsive">
-            <table class="table table-hover mb-0">
-                {% macro role_color(code) %}{% if code=='admin' %}#6f42c1{% elif code=='sushi' %}#0d6efd{% elif code=='packer' %}#198754{% elif code=='courier' %}#fd7e14{% elif code=='cleaner' %}#6c757d{% else %}#dc3545{% endif %}{% endmacro %}
+            <table class="table table-hover mb-0" id="empTable">
                 <thead class="table-light">
                     <tr>
-                        <th>Сотрудник</th>
-                        <th>Должность</th>
+                        <th class="sort-col" data-col="name" style="cursor:pointer;user-select:none;">
+                            Сотрудник <span class="sort-arrow" data-col="name">↕</span>
+                        </th>
+                        <th class="sort-col" data-col="role" style="cursor:pointer;user-select:none;">
+                            Должность <span class="sort-arrow" data-col="role">↕</span>
+                        </th>
                         <th class="text-center" title="Адрес развоза заполнен">Развоз</th>
-                        <th>Филиал / Группа</th>
+                        <th class="sort-col" data-col="branch" style="cursor:pointer;user-select:none;">
+                            Филиал / Группа <span class="sort-arrow" data-col="branch">↕</span>
+                        </th>
                         <th class="text-center">Статус</th>
                         <th></th>
                     </tr>
                 </thead>
                 <tbody>
-                {% for emp in branch_emps %}
-                <tr class="{% if not emp.is_active %}table-secondary opacity-50{% endif %}">
+                {% for emp in employees %}
+                {% set emp_bids = emp_branches_map.get(emp.id, [emp.branch_id] if emp.branch_id else []) %}
+                {% set emp_groups = [] %}
+                {% for bg in branch_groups %}
+                    {% set bg_ids = bg.branches | map(attribute='id') | list %}
+                    {% if emp_bids | select('in', bg_ids) | list | length == bg_ids | length and bg_ids | length == emp_bids | length %}
+                        {% set _ = emp_groups.append(bg.name) %}
+                    {% endif %}
+                {% endfor %}
+                {% set branch_label = emp_groups[0] if emp_groups else (emp.branch_name or '') %}
+                {% set role_label = role_labels.get(emp.role, emp.role) %}
+                {% set full_name = (emp.last_name or '') ~ (' ' ~ emp.first_name if emp.first_name else '') or emp.full_name %}
+                <tr class="{% if not emp.is_active %}table-secondary opacity-50{% endif %}"
+                    data-name="{{ full_name | lower }}"
+                    data-role="{{ role_label | lower }}"
+                    data-branch="{{ branch_label | lower }}">
                     <td class="fw-semibold">
-                        <a href="{{ url_for('employee_salary_detail', emp_id=emp.id) }}" class="text-decoration-none text-dark">{{ (emp.last_name or '') ~ (' ' ~ emp.first_name if emp.first_name else '') or emp.full_name }}</a>
+                        <a href="{{ url_for('employee_salary_detail', emp_id=emp.id) }}" class="text-decoration-none text-dark">{{ full_name }}</a>
                     </td>
                     <td>
                         {% set extra = emp_roles_map.get(emp.id, []) %}
@@ -114,20 +129,10 @@
                         {% if addr_hist and addr_hist[0].address %}✅{% else %}—{% endif %}
                     </td>
                     <td class="small text-muted">
-                        {% set emp_bids = emp_branches_map.get(emp.id, [emp.branch_id] if emp.branch_id else []) %}
-                        {% if emp_bids %}
-                            {% set emp_groups = [] %}
-                            {% for bg in branch_groups %}
-                                {% set bg_ids = bg.branches | map(attribute='id') | list %}
-                                {% if emp_bids | select('in', bg_ids) | list | length == bg_ids | length and bg_ids | length == emp_bids | length %}
-                                    {% set _ = emp_groups.append(bg.name) %}
-                                {% endif %}
-                            {% endfor %}
-                            {% if emp_groups %}
-                                {% for gn in emp_groups %}<span class="badge bg-light text-dark border me-1">{{ gn }}</span>{% endfor %}
-                            {% else %}
-                                {{ emp.branch_name or '—' }}
-                            {% endif %}
+                        {% if emp_groups %}
+                            {% for gn in emp_groups %}<span class="badge bg-light text-dark border me-1">{{ gn }}</span>{% endfor %}
+                        {% elif emp_bids %}
+                            {{ emp.branch_name or '—' }}
                         {% else %}—{% endif %}
                     </td>
                     <td class="text-center">
@@ -158,14 +163,14 @@
                         {% endif %}
                     </td>
                 </tr>
+                {% else %}
+                <tr><td colspan="6" class="text-center text-muted py-4">Сотрудники не найдены</td></tr>
                 {% endfor %}
                 </tbody>
             </table>
         </div>
     </div>
 </div>
-{% endif %}
-{% endfor %}
 
 <!-- Add Employee Modal -->
 <div class="modal fade" id="addEmpModal" tabindex="-1">
@@ -758,5 +763,47 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 });
+
+// --- Сортировка таблицы сотрудников ---
+(function() {
+    var sortState = {col: null, asc: true};
+
+    function sortTable(col) {
+        var tbody = document.querySelector('#empTable tbody');
+        if (!tbody) return;
+        var rows = Array.from(tbody.querySelectorAll('tr[data-name]'));
+        if (!rows.length) return;
+
+        if (sortState.col === col) {
+            sortState.asc = !sortState.asc;
+        } else {
+            sortState.col = col;
+            sortState.asc = true;
+        }
+
+        rows.sort(function(a, b) {
+            var va = a.dataset[col] || '';
+            var vb = b.dataset[col] || '';
+            var cmp = va.localeCompare(vb, 'ru');
+            return sortState.asc ? cmp : -cmp;
+        });
+
+        rows.forEach(function(r) { tbody.appendChild(r); });
+
+        document.querySelectorAll('.sort-arrow').forEach(function(el) {
+            el.textContent = '↕';
+        });
+        var arrow = document.querySelector('.sort-arrow[data-col="' + col + '"]');
+        if (arrow) arrow.textContent = sortState.asc ? '↑' : '↓';
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        document.querySelectorAll('#empTable th.sort-col').forEach(function(th) {
+            th.addEventListener('click', function() {
+                sortTable(th.dataset.col);
+            });
+        });
+    });
+})();
 </script>
 {% endblock %}

@@ -3510,7 +3510,7 @@ def employees():
                 branch_cond = f'e.branch_id IN ({ids_str})'
                 emps = conn.execute(
                     f'SELECT e.*, b.name as branch_name FROM employees e LEFT JOIN branches b ON b.id=e.branch_id '
-                    f'WHERE {branch_cond} AND COALESCE(e.is_fired,0)=0{_emp_where()} ORDER BY b.name, e.role, e.full_name',
+                    f'WHERE {branch_cond} AND COALESCE(e.is_fired,0)=0{_emp_where()} ORDER BY e.last_name, e.first_name, e.full_name',
                     _emp_params([])
                 ).fetchall()
                 fired_emps = conn.execute(
@@ -3522,7 +3522,7 @@ def employees():
             else:
                 emps = conn.execute(
                     f'SELECT e.*, b.name as branch_name FROM employees e LEFT JOIN branches b ON b.id=e.branch_id '
-                    f'WHERE COALESCE(e.is_fired,0)=0{_emp_where()} ORDER BY b.name, e.role, e.full_name',
+                    f'WHERE COALESCE(e.is_fired,0)=0{_emp_where()} ORDER BY e.last_name, e.first_name, e.full_name',
                     _emp_params([])
                 ).fetchall()
                 fired_emps = conn.execute(
