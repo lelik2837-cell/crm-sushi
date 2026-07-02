@@ -1815,8 +1815,122 @@ function openCloseModal() {
       if (ta) ta.required = true;
     }
   }
+  _closeAttempted = false;
   document.getElementById('closeModal').style.display = 'flex';
 }
+
+// ── Проверки перед закрытием смены ───────────────────────────────────────────
+function getCloseErrors() {
+  var errors = [];
+  var hidden = document.getElementById('closedByHidden');
+
+  // 1. Кто закрыл
+  if (!hidden || !hidden.value.trim()) errors.push('Укажите, кто закрыл смену');
+
+  // 2. Выручка: доставка + самовывоз = общая выручка
+  var delivRev = readNum(document.querySelector('.rev-field[data-field="delivery_revenue"]'));
+  var pickRev  = readNum(document.querySelector('.rev-field[data-field="pickup_revenue"]'));
+  var cashAmt  = readNum(document.querySelector('.rev-field[data-field="cash_amount"]'));
+  var cardAmt  = readNum(document.querySelector('.rev-field[data-field="card_amount"]'));
+  var onlAmt   = readNum(document.querySelector('.rev-field[data-field="online_amount"]'));
+  var totalRev = cashAmt + cardAmt + onlAmt;
+  if (Math.round(delivRev + pickRev) !== Math.round(totalRev)) {
+    errors.push('Выручка: доставка (' + Math.round(delivRev).toLocaleString('ru-RU') + ' ₽) + самовывоз (' + Math.round(pickRev).toLocaleString('ru-RU') + ' ₽) = ' + Math.round(delivRev + pickRev).toLocaleString('ru-RU') + ' ₽, а общая выручка = ' + Math.round(totalRev).toLocaleString('ru-RU') + ' ₽');
+  }
+
+  // 3. Заказы: доставка + самовывоз = общее количество
+  var dOrdEl   = document.querySelector('.rev-field[data-field="delivery_orders_real"]');
+  var pOrdEl   = document.querySelector('.rev-field[data-field="pickup_orders"]');
+  var tOrdEl   = document.querySelector('.rev-field[data-field="delivery_orders"]');
+  var delivOrd = dOrdEl ? (parseInt(dOrdEl.value) || 0) : 0;
+  var pickOrd  = pOrdEl ? (parseInt(pOrdEl.value) || 0) : 0;
+  var totalOrd = tOrdEl ? (parseInt(tOrdEl.value) || 0) : 0;
+  if (delivOrd + pickOrd !== totalOrd) {
+    errors.push('Проверьте сумму заказов!');
+  }
+
+  // 4. Факт в кассе должен быть заполнен
+  var factCashEl = document.getElementById('actual-cash-input');
+  if (!factCashEl || factCashEl.value.trim() === '') {
+    errors.push('Не заполнен «Факт в кассе»');
+  }
+
+  // 5. Факт безнал должен быть заполнен (хотя бы одна строка терминала с суммой)
+  var beznalAmts = document.querySelectorAll('.beznal-amt');
+  var beznalFilled = Array.from(beznalAmts).some(function(el) { return el.value.trim() !== ''; });
+  if (!beznalFilled) {
+    errors.push('Не заполнен «Факт безнал» — внесите данные терминала(ов)');
+  }
+
+  // 6. Причина расхождения
+  var diffBlock = document.getElementById('close-diff-block');
+  var diffErr   = document.getElementById('close-diff-err');
+  if (diffBlock && diffBlock.style.display !== 'none') {
+    var ta = diffBlock.querySelector('textarea');
+    if (ta && !ta.value.trim()) {
+      if (diffErr) diffErr.style.display = '';
+      errors.push('Укажите причину расхождения наличных');
+    } else if (diffErr) {
+      diffErr.style.display = 'none';
+    }
+  } else if (diffErr) {
+    diffErr.style.display = 'none';
+  }
+
+  // 7. Такси: если рейс добавлен — выбран хотя бы один сотрудник или заполнена сумма
+  var taxiInvalid = false;
+  document.querySelectorAll('#taxi-body .taxi-trip-block').forEach(function(block) {
+    var amt = readNum(block.querySelector('.taxi-amount-input'));
+    var hasEmp = Array.from(block.querySelectorAll('.taxi-emp-sel')).some(function(sel) { return sel.value; });
+    if (!hasEmp && !(amt > 0)) taxiInvalid = true;
+  });
+  if (taxiInvalid) errors.push('Проверьте заполнение такси!');
+
+  // 8. Плюсы в кассу: сумма > 0 и выбрана категория
+  var plusAmountInvalid = false, plusCatInvalid = false;
+  document.querySelectorAll('#plus-body [data-id]').forEach(function(row) {
+    var amt = readDecimal(row.querySelector('.plus-amount'));
+    var catEl = row.querySelector('.plus-cat');
+    if (!(amt > 0)) plusAmountInvalid = true;
+    if (catEl && !catEl.value) plusCatInvalid = true;
+  });
+  if (plusAmountInvalid) errors.push('Введите сумму расходов!');
+  if (plusCatInvalid) errors.push('Выбери категорию плюсы в кассу!');
+
+  // 9. Расходы: выбрана категория и введена сумма
+  var expCatInvalid = false, expAmountInvalid = false;
+  document.querySelectorAll('#expenses-body [data-id]').forEach(function(row) {
+    var catEl = row.querySelector('.exp-cat');
+    var amt = readDecimal(row.querySelector('.exp-amount'));
+    if (catEl && !catEl.value) expCatInvalid = true;
+    if (!(amt > 0)) expAmountInvalid = true;
+  });
+  if (expCatInvalid) errors.push('Выбери категорию расхода!');
+  if (expAmountInvalid) errors.push('Выбери сумму расхода!');
+
+  return errors;
+}
+
+function showCloseErrors(errors) {
+  var form = document.getElementById('closeShiftForm');
+  if (!form) return null;
+  var errEl = document.getElementById('close-form-error');
+  if (!errEl) {
+    errEl = document.createElement('div');
+    errEl.id = 'close-form-error';
+    errEl.style.cssText = 'color:#dc2626;font-size:13px;font-weight:600;margin-bottom:10px;padding:8px 12px;background:#fef2f2;border-radius:8px;border:1.5px solid #fecaca;display:none;white-space:pre-line;';
+    form.insertBefore(errEl, form.querySelector('[style*="display:flex"]') || form.lastElementChild);
+  }
+  if (errors.length) {
+    errEl.innerHTML = errors.map(function(s) { return '⚠ ' + s; }).join('\n');
+    errEl.style.display = '';
+  } else {
+    errEl.style.display = 'none';
+  }
+  return errEl;
+}
+
+var _closeAttempted = false;
 
 (function () {
   updateKassa();
@@ -1848,72 +1962,12 @@ function openCloseModal() {
 
   form.addEventListener('submit', function (e) {
     syncHidden();
-    var errEl = document.getElementById('close-form-error');
-    if (!errEl) {
-      errEl = document.createElement('div');
-      errEl.id = 'close-form-error';
-      errEl.style.cssText = 'color:#dc2626;font-size:13px;font-weight:600;margin-bottom:10px;padding:8px 12px;background:#fef2f2;border-radius:8px;border:1.5px solid #fecaca;display:none;white-space:pre-line;';
-      form.insertBefore(errEl, form.querySelector('[style*="display:flex"]') || form.lastElementChild);
-    }
-    errEl.style.display = 'none';
-
-    var errors = [];
-
-    // 1. Кто закрыл
-    if (!hidden.value.trim()) errors.push('Укажите, кто закрыл смену');
-
-    // 2. Выручка: доставка + самовывоз = общая выручка
-    var delivRev = readNum(document.querySelector('.rev-field[data-field="delivery_revenue"]'));
-    var pickRev  = readNum(document.querySelector('.rev-field[data-field="pickup_revenue"]'));
-    var cashAmt  = readNum(document.querySelector('.rev-field[data-field="cash_amount"]'));
-    var cardAmt  = readNum(document.querySelector('.rev-field[data-field="card_amount"]'));
-    var onlAmt   = readNum(document.querySelector('.rev-field[data-field="online_amount"]'));
-    var totalRev = cashAmt + cardAmt + onlAmt;
-    if (Math.round(delivRev + pickRev) !== Math.round(totalRev)) {
-      errors.push('Выручка: доставка (' + Math.round(delivRev).toLocaleString('ru-RU') + ' ₽) + самовывоз (' + Math.round(pickRev).toLocaleString('ru-RU') + ' ₽) = ' + Math.round(delivRev + pickRev).toLocaleString('ru-RU') + ' ₽, а общая выручка = ' + Math.round(totalRev).toLocaleString('ru-RU') + ' ₽');
-    }
-
-    // 3. Заказы: доставка + самовывоз = общее количество
-    var dOrdEl   = document.querySelector('.rev-field[data-field="delivery_orders_real"]');
-    var pOrdEl   = document.querySelector('.rev-field[data-field="pickup_orders"]');
-    var tOrdEl   = document.querySelector('.rev-field[data-field="delivery_orders"]');
-    var delivOrd = dOrdEl ? (parseInt(dOrdEl.value) || 0) : 0;
-    var pickOrd  = pOrdEl ? (parseInt(pOrdEl.value) || 0) : 0;
-    var totalOrd = tOrdEl ? (parseInt(tOrdEl.value) || 0) : 0;
-    if (delivOrd + pickOrd !== totalOrd) {
-      errors.push('Заказы: доставка (' + delivOrd + ') + самовывоз (' + pickOrd + ') = ' + (delivOrd + pickOrd) + ', а всего заказов = ' + totalOrd);
-    }
-
-    // 4. Факт в кассе должен быть заполнен
-    var factCashEl = document.getElementById('actual-cash-input');
-    if (!factCashEl || factCashEl.value.trim() === '') {
-      errors.push('Не заполнен «Факт в кассе»');
-    }
-
-    // 5. Факт безнал должен быть заполнен (хотя бы одна строка терминала с суммой)
-    var beznalAmts = document.querySelectorAll('.beznal-amt');
-    var beznalFilled = Array.from(beznalAmts).some(function(el) { return el.value.trim() !== ''; });
-    if (!beznalFilled) {
-      errors.push('Не заполнен «Факт безнал» — внесите данные терминала(ов)');
-    }
-
-    // 6. Причина расхождения
-    var diffBlock = document.getElementById('close-diff-block');
-    var diffErr   = document.getElementById('close-diff-err');
-    if (diffBlock && diffBlock.style.display !== 'none') {
-      var ta = diffBlock.querySelector('textarea');
-      if (ta && !ta.value.trim()) {
-        if (diffErr) diffErr.style.display = '';
-        errors.push('Укажите причину расхождения наличных');
-      } else if (diffErr) {
-        diffErr.style.display = 'none';
-      }
-    }
+    _closeAttempted = true;
+    var errors = getCloseErrors();
+    var errEl = showCloseErrors(errors);
 
     if (errors.length) {
       e.preventDefault();
-      errEl.innerHTML = errors.map(function(s) { return '⚠ ' + s; }).join('\n');
-      errEl.style.display = '';
       errEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       return;
     }
@@ -1948,6 +2002,24 @@ function openCloseModal() {
   });
 
   syncHidden();
+})();
+
+// ── Live-обновление ошибок закрытия смены при изменении данных ──────────────
+(function () {
+  function refreshCloseErrorsIfNeeded() {
+    if (!_closeAttempted) return;
+    var modal = document.getElementById('closeModal');
+    if (!modal || modal.style.display === 'none') return;
+    var selEl    = document.getElementById('closedBySelect');
+    var customEl = document.getElementById('closedByCustom');
+    var hiddenEl = document.getElementById('closedByHidden');
+    if (hiddenEl && selEl) {
+      hiddenEl.value = selEl.value === '__other__' ? (customEl ? customEl.value.trim() : '') : selEl.value;
+    }
+    showCloseErrors(getCloseErrors());
+  }
+  document.addEventListener('input', refreshCloseErrorsIfNeeded);
+  document.addEventListener('change', refreshCloseErrorsIfNeeded);
 })();
 
 // ── Блокировка закрытой смены (task 1+5) ────────────────────────────────────
