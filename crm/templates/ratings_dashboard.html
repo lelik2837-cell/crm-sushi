@@ -164,7 +164,7 @@ function renderRatings(rows, metric) {
   listEl.innerHTML = rows.map(function(r, i) {
     var valStr = fmtMetricValue(r.value, metric);
     var diffHtml = '';
-    if (i < rows.length - 1) {
+    if (currentMetric === 'revenue' && i < rows.length - 1) {
       diffHtml = ' <span style="opacity:.55; font-weight:600;">' + fmtDiff(r.value - rows[i + 1].value, metric) + '</span>';
     }
     var rs = RANK_STYLES[i] || RANK_DEFAULT;
@@ -172,7 +172,7 @@ function renderRatings(rows, metric) {
     return '<div style="display:flex; align-items:center; gap:12px; padding:8px 0; ' + borderStyle + '">' +
       '<div style="width:26px; height:26px; flex-shrink:0; border-radius:50%; background:' + rs.badge + '; color:' + rs.badgeColor + '; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:12px;">' + (i + 1) + '</div>' +
       '<div style="flex:1; font-size:13px; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' + r.name + '</div>' +
-      '<div style="text-align:right; font-size:13px; font-weight:700; color:#fff; white-space:nowrap;">' + valStr + diffHtml + '</div>' +
+      '<div style="min-width:170px; text-align:left; font-size:13px; font-weight:700; color:#fff; white-space:nowrap; font-variant-numeric:tabular-nums;">' + valStr + diffHtml + '</div>' +
     '</div>';
   }).join('');
 }
