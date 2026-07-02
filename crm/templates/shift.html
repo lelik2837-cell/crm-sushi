@@ -1107,6 +1107,7 @@ function addPlusRow() {
   document.getElementById('plus-body').appendChild(row);
   initDecimalField(row.querySelector('.plus-amount'));
   row.querySelector('.plus-amount').addEventListener('change', () => { savePlusRow(row.querySelector('.plus-amount')); updateKassa(); });
+  row.querySelector('.plus-amount').addEventListener('blur', () => { if (readDecimal(row.querySelector('.plus-amount')) > 0) savePlusRow(row.querySelector('.plus-amount')); });
   row.querySelector('.plus-cat').addEventListener('change', () => savePlusRow(row.querySelector('.plus-cat')));
   row.querySelector('.plus-note').addEventListener('blur', () => savePlusRow(row.querySelector('.plus-note')));
   row.querySelector('.plus-cat').focus();
@@ -1140,6 +1141,7 @@ function deletePlus(btn, id) {
 document.querySelectorAll('#plus-body [data-id]').forEach(row => {
   if (!CAN_EDIT) return;
   row.querySelector('.plus-amount')?.addEventListener('change', () => { savePlusRow(row.querySelector('.plus-amount')); updateKassa(); });
+  row.querySelector('.plus-amount')?.addEventListener('blur', () => { const inp = row.querySelector('.plus-amount'); if (readDecimal(inp) > 0) savePlusRow(inp); });
   row.querySelector('.plus-cat')?.addEventListener('change', () => savePlusRow(row.querySelector('.plus-cat')));
   row.querySelector('.plus-note')?.addEventListener('blur', () => savePlusRow(row.querySelector('.plus-note')));
 });

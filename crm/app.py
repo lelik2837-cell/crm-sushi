@@ -2247,6 +2247,7 @@ def open_shift():
                 SELECT COALESCE(r.morning_cash, 0)
                        + COALESCE(r.cash_amount, 0)
                        + COALESCE(r.change_amount, 0)
+                       + COALESCE((SELECT SUM(cp.amount_cash) FROM cash_plus_entries cp WHERE cp.shift_id=s.id), 0)
                        - COALESCE((SELECT SUM(e.amount_cash) FROM expenses e WHERE e.shift_id=s.id), 0)
                        - COALESCE((SELECT SUM(es.total_amount) FROM employee_shifts es
                                     WHERE es.shift_id=s.id AND es.is_paid=1), 0)
@@ -2380,6 +2381,7 @@ def shift_view(shift_id):
             SELECT COALESCE(r.morning_cash, 0)
                    + COALESCE(r.cash_amount, 0)
                    + COALESCE(r.change_amount, 0)
+                   + COALESCE((SELECT SUM(cp.amount_cash) FROM cash_plus_entries cp WHERE cp.shift_id=s.id), 0)
                    - COALESCE((SELECT SUM(e.amount_cash) FROM expenses e WHERE e.shift_id=s.id), 0)
                    - COALESCE((SELECT SUM(es.total_amount) FROM employee_shifts es
                                 WHERE es.shift_id=s.id AND es.is_paid=1), 0)
@@ -7552,6 +7554,7 @@ def shifts_archive():
                      NULLIF(r.morning_cash, 0),
                      (SELECT COALESCE(r2.morning_cash,0)+COALESCE(r2.cash_amount,0)
                              +COALESCE(r2.change_amount,0)
+                             +COALESCE((SELECT SUM(cp2.amount_cash) FROM cash_plus_entries cp2 WHERE cp2.shift_id=s2.id),0)
                              -COALESCE((SELECT SUM(e2.amount_cash) FROM expenses e2 WHERE e2.shift_id=s2.id),0)
                              -COALESCE((SELECT SUM(es2.total_amount) FROM employee_shifts es2
                                         WHERE es2.shift_id=s2.id AND es2.is_paid=1),0)
