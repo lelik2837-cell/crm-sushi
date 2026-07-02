@@ -1894,7 +1894,7 @@ function getCloseErrors() {
     if (!(amt > 0)) plusAmountInvalid = true;
     if (catEl && !catEl.value) plusCatInvalid = true;
   });
-  if (plusAmountInvalid) errors.push('Введите сумму расходов!');
+  if (plusAmountInvalid) errors.push('Не внесена сумма плюса в кассу!');
   if (plusCatInvalid) errors.push('Выбери категорию плюсы в кассу!');
 
   // 9. Расходы: выбрана категория и введена сумма
