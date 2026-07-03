@@ -558,13 +558,16 @@ def build_cats_groups(cats):
 
 
 def _manual_rev_total(conn, date_from, date_to, bids=None):
-    """Сумма revenue_manual за период там, где нет смен (fallback)."""
+    """Сумма revenue_manual за период там, где нет смены с уже внесённой выручкой (fallback)."""
     bf = f"AND m.branch_id IN ({','.join(str(b) for b in bids)})" if bids else ""
     row = conn.execute(f'''
         SELECT COALESCE(SUM(m.amount), 0) AS total
         FROM revenue_manual m
         WHERE m.date BETWEEN ? AND ? {bf}
-        AND NOT EXISTS (SELECT 1 FROM shifts s WHERE s.date=m.date AND s.branch_id=m.branch_id)
+        AND NOT EXISTS (
+            SELECT 1 FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id
+            WHERE s.date=m.date AND s.branch_id=m.branch_id AND (r.total_revenue > 0 OR s.status='closed')
+        )
     ''', [date_from, date_to]).fetchone()
     return float(row['total'] or 0)
 
@@ -578,7 +581,10 @@ def _manual_rev_by_month(conn, date_from, date_to, bids=None):
                COALESCE(SUM(m.amount), 0) AS total
         FROM revenue_manual m
         WHERE m.date BETWEEN ? AND ? {bf}
-        AND NOT EXISTS (SELECT 1 FROM shifts s WHERE s.date=m.date AND s.branch_id=m.branch_id)
+        AND NOT EXISTS (
+            SELECT 1 FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id
+            WHERE s.date=m.date AND s.branch_id=m.branch_id AND (r.total_revenue > 0 OR s.status='closed')
+        )
         GROUP BY year, month
     ''', [date_from, date_to]).fetchall()
     return {(r['year'], r['month']): float(r['total']) for r in rows}
@@ -591,7 +597,10 @@ def _manual_rev_by_day(conn, date_from, date_to, bids=None):
         SELECT m.date, COALESCE(SUM(m.amount), 0) AS total
         FROM revenue_manual m
         WHERE m.date BETWEEN ? AND ? {bf}
-        AND NOT EXISTS (SELECT 1 FROM shifts s WHERE s.date=m.date AND s.branch_id=m.branch_id)
+        AND NOT EXISTS (
+            SELECT 1 FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id
+            WHERE s.date=m.date AND s.branch_id=m.branch_id AND (r.total_revenue > 0 OR s.status='closed')
+        )
         GROUP BY m.date
     ''', [date_from, date_to]).fetchall()
     return {r['date']: float(r['total']) for r in rows}
@@ -1987,7 +1996,10 @@ def api_revenue_summary():
             FROM revenue_manual m
             JOIN branches b ON b.id = m.branch_id
             WHERE m.date BETWEEN ? AND ? {mbf}
-            AND NOT EXISTS (SELECT 1 FROM shifts s WHERE s.date=m.date AND s.branch_id=m.branch_id)
+            AND NOT EXISTS (
+                SELECT 1 FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id
+                WHERE s.date=m.date AND s.branch_id=m.branch_id AND (r.total_revenue > 0 OR s.status='closed')
+            )
             GROUP BY m.branch_id
         ''', [date_from, date_to] + bids).fetchall()
         manual_total = _manual_rev_total(conn, date_from, date_to, bids or None)
