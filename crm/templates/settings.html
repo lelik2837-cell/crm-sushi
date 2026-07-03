@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% set active_tab = request.args.get('tab', 'categories') %}
-{% set tab_titles = {'categories': 'Категории расходов / доходов', 'bonuses': 'Премии', 'rates': 'Ставки сотрудников', 'api': 'Интеграция 1С / накладные'} %}
+{% set tab_titles = {'categories': 'Категории расходов / доходов', 'bonuses': 'Премии', 'rates': 'Ставки сотрудников', 'api': 'Интеграции (1С, выручка)'} %}
 {% block title %}Настройки — {{ tab_titles.get(active_tab, '') }}{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -998,6 +998,148 @@
         <div class="card-body text-center text-muted py-4">
             <i class="bi bi-inbox fs-2 d-block mb-2 opacity-25"></i>
             Запросов пока не было. Настройте программу и сделайте тестовую выгрузку.
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- ══ ВЕБХУК ВЫРУЧКИ (внешние источники в реальном времени) ══ -->
+    <hr class="my-4">
+    <h5 class="fw-bold mb-3"><i class="bi bi-broadcast me-2"></i>Синхронизация выручки (вебхук)</h5>
+    <div class="row g-4">
+
+        <!-- Создать токен -->
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-header bg-light fw-semibold"><i class="bi bi-key me-1"></i>Добавить токен для филиала</div>
+                <div class="card-body">
+                    <form method="POST" action="{{ url_for('api_revenue_token_add') }}">
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Филиал</label>
+                            <select name="branch_id" class="form-select" required>
+                                <option value="">— выберите —</option>
+                                {% for b in branches %}
+                                <option value="{{ b.id }}">{{ b.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Описание</label>
+                            <input type="text" name="description" class="form-control" placeholder="напр. papasushi.goulash.tech">
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">Создать токен</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Активные токены -->
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header bg-light fw-semibold"><i class="bi bi-link-45deg me-1"></i>Активные токены и URL для внешнего скрипта</div>
+                {% if api_revenue_tokens %}
+                <div class="table-responsive">
+                    <table class="table mb-0 align-middle">
+                        <thead class="table-light">
+                            <tr><th>Филиал</th><th>Описание</th><th>URL для вебхука</th><th></th></tr>
+                        </thead>
+                        <tbody>
+                        {% for t in api_revenue_tokens %}
+                        <tr>
+                            <td class="fw-semibold">{{ t.branch_name }}</td>
+                            <td class="text-muted small">{{ t.description or '—' }}</td>
+                            <td>
+                                <div class="input-group input-group-sm">
+                                    <input type="text" class="form-control form-control-sm font-monospace"
+                                           value="{{ base_url }}/api/revenue-webhook/{{ t.token }}" readonly
+                                           id="rev_url_{{ t.id }}">
+                                    <button class="btn btn-outline-secondary" type="button"
+                                            onclick="copyUrl('rev_url_{{ t.id }}')">
+                                        <i class="bi bi-copy"></i>
+                                    </button>
+                                </div>
+                            </td>
+                            <td>
+                                <form method="POST" action="{{ url_for('api_revenue_token_delete', tid=t.id) }}"
+                                      onsubmit="return confirm('Удалить токен?')">
+                                    <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="card-body pt-2 pb-3">
+                    <div class="alert alert-info py-2 mb-0 small">
+                        <i class="bi bi-info-circle me-1"></i>
+                        Внешний скрипт делает <strong>POST</strong> на этот URL с JSON-телом:
+                        <code>{"revenue": 12345, "orders_count": 42, "timestamp": "2026-07-03T10:00:00Z"}</code>.
+                        Данные попадают в «Старую выручку» (ручной ввод) на эту дату/филиал и учитываются
+                        в отчётах, если за этот день ещё не открыта обычная смена.
+                    </div>
+                </div>
+                {% else %}
+                <div class="card-body text-center text-muted py-4">
+                    <i class="bi bi-key fs-2 d-block mb-2 opacity-25"></i>
+                    Создайте токен для филиала, выручку которого нужно получать по вебхуку
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Лог запросов -->
+    <div class="card mt-4">
+        <div class="card-header bg-light fw-semibold d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-terminal me-1"></i>Лог входящих запросов вебхука (последние 50)</span>
+            {% if api_revenue_log %}
+            <form method="POST" action="{{ url_for('api_revenue_log_clear') }}"
+                  onsubmit="return confirm('Очистить лог?')">
+                <button class="btn btn-sm btn-outline-danger">Очистить</button>
+            </form>
+            {% endif %}
+        </div>
+        {% if api_revenue_log %}
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 align-middle" style="font-size:0.82rem">
+                <thead class="table-light">
+                    <tr>
+                        <th>Время</th><th>Филиал</th><th>Статус</th><th>Тело запроса</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for l in api_revenue_log %}
+                <tr class="{{ 'table-success' if l.parsed_ok else '' }}">
+                    <td style="white-space:nowrap">{{ l.created_at[:16] }}</td>
+                    <td>{{ l.branch_name or '?' }}</td>
+                    <td>
+                        {% if l.parsed_ok %}
+                        <span class="badge bg-success">{{ l.status }}</span>
+                        {% else %}
+                        <span class="badge bg-{{ 'danger' if l.status and 'ошибка' in l.status else 'secondary' }}">
+                            {{ l.status or 'получено' }}
+                        </span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if l.body %}
+                        <details>
+                            <summary class="text-muted" style="cursor:pointer">показать ({{ l.body|length }} байт)</summary>
+                            <pre class="mt-1 p-2 bg-light rounded" style="max-height:200px;overflow:auto;font-size:0.75rem;white-space:pre-wrap">{{ l.body[:3000] }}</pre>
+                        </details>
+                        {% else %}
+                        <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="card-body text-center text-muted py-4">
+            <i class="bi bi-inbox fs-2 d-block mb-2 opacity-25"></i>
+            Запросов пока не было.
         </div>
         {% endif %}
     </div>

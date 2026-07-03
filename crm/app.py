@@ -1070,6 +1070,24 @@ def init_db():
                 parsed_ok   INTEGER DEFAULT 0,
                 created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS api_revenue_tokens (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                branch_id   INTEGER NOT NULL REFERENCES branches(id),
+                token       TEXT    NOT NULL UNIQUE,
+                description TEXT,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS api_revenue_log (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                token       TEXT,
+                branch_id   INTEGER,
+                method      TEXT,
+                path        TEXT,
+                body        TEXT,
+                status      TEXT DEFAULT 'received',
+                parsed_ok   INTEGER DEFAULT 0,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
             CREATE TABLE IF NOT EXISTS purchase_suppliers (
                 id   INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE
@@ -1273,6 +1291,9 @@ def init_db():
                 PRIMARY KEY (branch_id, date)
             )
         ''')
+        rm_cols = [r[1] for r in conn.execute("PRAGMA table_info(revenue_manual)").fetchall()]
+        if 'orders_count' not in rm_cols:
+            conn.execute("ALTER TABLE revenue_manual ADD COLUMN orders_count INTEGER DEFAULT 0")
 
         # Fix Russian-coded categories → correct English codes used by import
         _code_fixes = [
@@ -4563,6 +4584,16 @@ def settings():
             'LEFT JOIN branches b ON b.id=l.branch_id '
             'ORDER BY l.created_at DESC LIMIT 50'
         ).fetchall()
+        api_revenue_tokens = conn.execute('''
+            SELECT t.*, b.name AS branch_name
+            FROM api_revenue_tokens t JOIN branches b ON b.id=t.branch_id
+            ORDER BY b.name
+        ''').fetchall()
+        api_revenue_log = conn.execute(
+            'SELECT l.*, b.name AS branch_name FROM api_revenue_log l '
+            'LEFT JOIN branches b ON b.id=l.branch_id '
+            'ORDER BY l.created_at DESC LIMIT 50'
+        ).fetchall()
     return render_template('settings.html',
         exp_cats=exp_cats, exp_cats_parents=exp_cats_parents,
         cat_branches=cat_branches,
@@ -4571,6 +4602,7 @@ def settings():
         rate_templates=rate_templates,
         tmpl_branches=tmpl_branches, tmpl_history=tmpl_history,
         api_tokens=api_tokens, api_log=api_log,
+        api_revenue_tokens=api_revenue_tokens, api_revenue_log=api_revenue_log,
         today=date.today().isoformat(),
         formula_vars=FORMULA_VARS, role_labels=ROLE_LABELS,
         positions=positions, branch_groups_for_rates=branch_groups_for_rates)
@@ -5861,6 +5893,94 @@ def _parse_1c_body(conn, branch_id, body, content_type):
         return created
 
     return 0
+
+
+# ─── API ВЕБХУК ВЫРУЧКИ (внешние источники в реальном времени) ───────────────
+
+@app.route('/api/revenue-webhook/<token>', methods=['POST'])
+def api_revenue_webhook(token):
+    body = request.get_data(as_text=True)
+    with get_db() as conn:
+        rec = conn.execute(
+            'SELECT * FROM api_revenue_tokens WHERE token=?', (token,)
+        ).fetchone()
+
+        conn.execute(
+            'INSERT INTO api_revenue_log (token, branch_id, method, path, body) VALUES (?,?,?,?,?)',
+            (token, rec['branch_id'] if rec else None,
+             request.method, request.full_path, body[:20000])
+        )
+        log_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+
+        if not rec:
+            conn.commit()
+            return jsonify({'ok': False, 'error': 'invalid token'}), 401
+
+        branch_id = rec['branch_id']
+        try:
+            data = _json_lib.loads(body) if body.strip() else {}
+            revenue = float(data.get('revenue') or 0)
+            orders_count = int(data.get('orders_count') or 0)
+            ts = data.get('timestamp')
+            try:
+                d = datetime.fromisoformat(str(ts).replace('Z', '+00:00')).astimezone().date().isoformat() if ts else date.today().isoformat()
+            except Exception:
+                d = date.today().isoformat()
+            conn.execute('''
+                INSERT OR REPLACE INTO revenue_manual (branch_id, date, amount, orders_count)
+                VALUES (?, ?, ?, ?)
+            ''', (branch_id, d, revenue, orders_count))
+            conn.execute('UPDATE api_revenue_log SET parsed_ok=1, status=? WHERE id=?',
+                         (f'выручка {revenue} за {d}', log_id))
+            conn.commit()
+            return jsonify({'ok': True})
+        except Exception as e:
+            conn.execute('UPDATE api_revenue_log SET status=? WHERE id=?',
+                         (f'ошибка: {str(e)[:200]}', log_id))
+            conn.commit()
+            return jsonify({'ok': False, 'error': str(e)}), 400
+
+
+@app.route('/settings/api/revenue-tokens/add', methods=['POST'])
+@login_required
+@owner_required
+def api_revenue_token_add():
+    branch_id   = request.form.get('branch_id', type=int)
+    description = request.form.get('description', '').strip()
+    if not branch_id:
+        flash('Выберите филиал', 'danger')
+        return redirect(url_for('settings') + '?tab=api')
+    token = secrets.token_urlsafe(24)
+    with get_db() as conn:
+        conn.execute(
+            'INSERT INTO api_revenue_tokens (branch_id, token, description) VALUES (?,?,?)',
+            (branch_id, token, description or None)
+        )
+        conn.commit()
+    flash('Токен создан', 'success')
+    return redirect(url_for('settings') + '?tab=api')
+
+
+@app.route('/settings/api/revenue-tokens/<int:tid>/delete', methods=['POST'])
+@login_required
+@owner_required
+def api_revenue_token_delete(tid):
+    with get_db() as conn:
+        conn.execute('DELETE FROM api_revenue_tokens WHERE id=?', (tid,))
+        conn.commit()
+    flash('Токен удалён', 'success')
+    return redirect(url_for('settings') + '?tab=api')
+
+
+@app.route('/settings/api/revenue-log/clear', methods=['POST'])
+@login_required
+@owner_required
+def api_revenue_log_clear():
+    with get_db() as conn:
+        conn.execute('DELETE FROM api_revenue_log')
+        conn.commit()
+    flash('Лог очищен', 'success')
+    return redirect(url_for('settings') + '?tab=api')
 
 
 @app.route('/settings/api/tokens/add', methods=['POST'])
