@@ -2,12 +2,13 @@
 
 Что делает скрипт `revenue_sync.py`:
 
-1. Логинится в личный кабинет `papasushi.goulash.tech` (та же форма, что и обычный вход в браузере).
-2. Дёргает внутренний JSON-эндпоинт `GET /dashboad/api/header?departmentId=...` — это тот же запрос,
-   который сама страница дашборда выполняет каждую минуту для обновления шапки (найден через вкладку
-   Network в DevTools).
+1. Логинится в личный кабинет `papasushi.goulash.tech` (та же форма, что и обычный вход в браузере) —
+   один раз за запуск, даже если филиалов несколько.
+2. Для каждого настроенного филиала дёргает внутренний JSON-эндпоинт
+   `GET /dashboad/api/header?departmentId=...` — это тот же запрос, который сама страница дашборда
+   выполняет каждую минуту для обновления шапки (найден через вкладку Network в DevTools).
 3. Берёт из ответа поле `total_summ_clear` — это и есть выручка — плюс `count_orders` (число заказов).
-4. Отправляет их JSON-POST-запросом на `CRMPAPA_WEBHOOK_URL`.
+4. Отправляет их JSON-POST-запросом на webhook-URL этого филиала на crmpapa.ru.
 
 ## 1. Открыть в VS Code
 
@@ -17,6 +18,7 @@
 - `revenue_sync.py` — сам скрипт
 - `requirements.txt` — зависимости
 - `.env.example` — шаблон переменных окружения
+- `Dockerfile` — для запуска на Railway (см. раздел 5)
 
 ## 2. Установка
 
@@ -28,7 +30,7 @@ source venv/bin/activate        # на Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## 3. Настройка
+## 3. Настройка (несколько филиалов)
 
 ```bash
 cp .env.example .env
@@ -36,11 +38,22 @@ cp .env.example .env
 
 Откройте `.env` и заполните:
 
-- `GOULASH_USERNAME` / `GOULASH_PASSWORD` — ваш логин и пароль от papasushi.goulash.tech
-- `GOULASH_DEPARTMENT_ID` — id подразделения (162 — уже подставлен, видно в скриншотах Network)
-- `CRMPAPA_WEBHOOK_URL` — **пока пусто**. Когда на crmpapa.ru появится эндпоинт, принимающий выручку,
-  впишите сюда его URL. Пока URL не задан, скрипт просто печатает данные в консоль вместо отправки —
-  можно проверить, что всё работает, ещё до готовности приёмной стороны.
+- `GOULASH_USERNAME` / `GOULASH_PASSWORD` — логин и пароль от papasushi.goulash.tech.
+  Один аккаунт видит все филиалы, отдельный логин на каждый филиал не нужен.
+- `GOULASH_SYNC_MAP` — по одной паре `department_id=webhook_url` на каждый филиал, через `;`.
+
+**Как узнать `department_id` каждого филиала:** зайдите в личный кабинет goulash в браузере,
+откройте вкладку **Network** в DevTools, переключите филиал в интерфейсе — увидите запрос
+`GET /dashboad/api/header?departmentId=XXX`, вот это число и есть нужный id.
+
+**Как узнать `webhook_url` каждого филиала:** на crmpapa.ru — Настройки → Интеграции →
+«Синхронизация выручки (вебхук)» → создать токен для этого филиала → скопировать готовый URL.
+
+Пример для 8 филиалов (просто добавьте по паре на каждый через `;`, без пробелов вокруг `;`):
+
+```
+GOULASH_SYNC_MAP=162=https://crmpapa.ru/api/revenue-webhook/tok1;165=https://crmpapa.ru/api/revenue-webhook/tok2;170=https://crmpapa.ru/api/revenue-webhook/tok3;...
+```
 
 Скрипт сейчас читает `.env` не автоматически — либо экспортируйте переменные в шелл, либо добавьте
 в начало `revenue_sync.py` пакет `python-dotenv` (`pip install python-dotenv` и
@@ -51,9 +64,12 @@ cp .env.example .env
 ```bash
 export GOULASH_USERNAME=ваш_логин
 export GOULASH_PASSWORD=ваш_пароль
-export GOULASH_DEPARTMENT_ID=162
-export CRMPAPA_WEBHOOK_URL=https://crmpapa.ru/ваш-эндпоинт
+export GOULASH_SYNC_MAP="162=https://crmpapa.ru/api/revenue-webhook/tok1;165=https://crmpapa.ru/api/revenue-webhook/tok2"
 ```
+
+Если филиал всего один — можно вместо `GOULASH_SYNC_MAP` задать просто
+`GOULASH_DEPARTMENT_ID` и `CRMPAPA_WEBHOOK_URL` (старый однофилиальный режим, оставлен для
+совместимости).
 
 ## 4. Запуск
 
@@ -76,12 +92,12 @@ python revenue_sync.py
 */10 * * * * cd /path/to/project && venv/bin/python revenue_sync.py --once >> sync.log 2>&1
 ```
 
-## 6. Постоянная работа 24/7 на Railway (рекомендуется)
+## 5. Постоянная работа 24/7 на Railway (рекомендуется)
 
 Чтобы синхронизация не зависела от того, включён ли ваш компьютер, скрипт можно запустить
-как отдельный сервис на Railway — рядом с самой CRM, в том же проекте. Файл `Dockerfile`
-в этой папке уже готов для этого (ставит нужный часовой пояс и запускает
-`python3 revenue_sync.py` в режиме постоянного опроса).
+как отдельный сервис на Railway — рядом с самой CRM, в том же проекте. Один сервис обслуживает
+сразу все филиалы (один логин, цикл по `GOULASH_SYNC_MAP`). Файл `Dockerfile` в этой папке уже
+готов для этого.
 
 Шаги в панели Railway (railway.app):
 
@@ -90,42 +106,22 @@ python revenue_sync.py
    независимый сервис в этом же проекте).
 3. У нового сервиса откройте **Settings**:
    - **Root Directory** — укажите `Синх` (Railway будет собирать и запускать только эту папку).
-   - Уберите/не трогайте настройки домена — этому сервису публичный URL не нужен, он
-     ничего не принимает, только сам ходит на goulash и на crmpapa.ru.
+   - Домен/публичный URL этому сервису не нужен — он ничего не принимает, только сам ходит
+     на goulash и на crmpapa.ru.
 4. Там же, в **Variables**, добавьте переменные окружения (те же, что в `.env`):
    - `GOULASH_USERNAME`
    - `GOULASH_PASSWORD`
-   - `GOULASH_DEPARTMENT_ID` = `162`
-   - `CRMPAPA_WEBHOOK_URL` — URL с токеном из Настройки → Интеграции на crmpapa.ru
+   - `GOULASH_SYNC_MAP` — все филиалы одной строкой, см. раздел 3
    - `POLL_INTERVAL_SECONDS` = `600` (или чаще, например `120` — раз в 2 минуты)
 5. Нажмите **Deploy**. Railway соберёт образ по `Dockerfile` и запустит скрипт — он будет
    работать постоянно и сам перезапускаться, если упадёт (по умолчанию у Railway включён
    restart-on-failure).
 6. Проверить, что данные доходят — смотрите логи этого сервиса в Railway (там будут строки
-   "Успешно авторизовались" и "Отправлено на crmpapa.ru"), либо раздел «Лог входящих
-   запросов» в Настройки → Интеграции на самом crmpapa.ru.
+   "Успешно авторизовались" и "Отправлено на crmpapa.ru (филиал ...)" на каждый филиал),
+   либо раздел «Лог входящих запросов» в Настройки → Интеграции на самом crmpapa.ru.
 
-Секреты (логин/пароль от goulash, URL вебхука) хранятся только в переменных окружения
+Секреты (логин/пароль от goulash, URL вебхуков) хранятся только в переменных окружения
 Railway — они не попадают в git и не видны в коде.
-
-## 5. Когда появится реальный формат для crmpapa.ru
-
-В `revenue_sync.py`, функция `send_to_crmpapa()`, тело запроса сейчас выглядит так:
-
-```python
-body = {
-    "revenue": payload["revenue"],
-    "orders_count": payload["orders_count"],
-    "department_id": payload["department_id"],
-    "department_title": payload["department_title"],
-    "source": "papasushi.goulash.tech",
-    "timestamp": datetime.now(timezone.utc).isoformat(),
-}
-resp = requests.post(CRMPAPA_WEBHOOK_URL, json=body, timeout=15)
-```
-
-Поправьте имена полей / способ авторизации (например добавить заголовок с API-ключом) под то,
-что реально ожидает эндпоинт на crmpapa.ru.
 
 ## Возможные проблемы
 
@@ -134,6 +130,9 @@ resp = requests.post(CRMPAPA_WEBHOOK_URL, json=body, timeout=15)
   `get_csrf_token()`.
 - **Ответ не JSON / сессия истекла** — `fetch_revenue()` кидает понятную ошибку в этом случае;
   скрипт в режиме постоянного опроса просто залогинится заново на следующей итерации.
+- **Один филиал упал, остальные должны продолжать** — `run_once()` ловит ошибку на каждом
+  филиале отдельно (пишет в лог и идёт дальше), сбой одного department_id не останавливает
+  синхронизацию остальных.
 - **Двухфакторная авторизация или вход по отпечатку/штрихкоду** — на странице логина видна
   фраза "Можно авторизоваться по отпечатку пальца или по штрих коду". Если на вашем аккаунте
   включена такая защита, обычный логин/пароль через форму может не сработать — тогда нужен

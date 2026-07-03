@@ -6,11 +6,13 @@ revenue_sync.py
 (тот же запрос, который дёргает сама страница дашборда каждые ~10 сек / раз в минуту),
 достаёт из него выручку (поле total_summ_clear) и отправляет её на crmpapa.ru.
 
+Поддерживает несколько филиалов за один запуск: один логин на аккаунт goulash,
+затем по кругу — каждый department_id со своим webhook-URL на crmpapa.ru
+(см. GOULASH_SYNC_MAP).
+
 ВАЖНО:
-- Логин/пароль и URL вебхука не хранятся в коде — задаются через переменные окружения.
-- URL вебхука на crmpapa.ru — ЗАГЛУШКА (см. CRMPAPA_WEBHOOK_URL). Формат тела запроса
-  в функции send_to_crmpapa() тоже нужно будет подогнать под реальный API crmpapa.ru,
-  когда он будет известен.
+- Логин/пароль и URL вебхуков не хранятся в коде — задаются через переменные окружения.
+  Формат тела запроса на crmpapa.ru уже согласован (см. send_to_crmpapa()).
 - Если сайт обновит вёрстку логина или поменяет механизм CSRF, функции get_csrf_token()
   и login() может понадобиться поправить — см. комментарии внутри.
 """
@@ -35,10 +37,15 @@ from bs4 import BeautifulSoup
 BASE_URL = os.environ.get("GOULASH_BASE_URL", "https://papasushi.goulash.tech")
 USERNAME = os.environ.get("GOULASH_USERNAME")
 PASSWORD = os.environ.get("GOULASH_PASSWORD")
-DEPARTMENT_ID = os.environ.get("GOULASH_DEPARTMENT_ID", "162")
 
-# TODO: подставить реальный URL эндпоинта на crmpapa.ru, когда он будет готов
-CRMPAPA_WEBHOOK_URL = os.environ.get("CRMPAPA_WEBHOOK_URL")
+# Несколько филиалов за один запуск: одна пара "department_id=webhook_url" на филиал,
+# разделённые ";". Пример для 8 филиалов:
+#   GOULASH_SYNC_MAP=162=https://crmpapa.ru/api/revenue-webhook/tok1;165=https://crmpapa.ru/api/revenue-webhook/tok2
+SYNC_MAP_RAW = os.environ.get("GOULASH_SYNC_MAP", "")
+
+# Обратная совместимость: одиночный режим (один филиал), если GOULASH_SYNC_MAP не задан
+DEPARTMENT_ID = os.environ.get("GOULASH_DEPARTMENT_ID", "")
+CRMPAPA_WEBHOOK_URL = os.environ.get("CRMPAPA_WEBHOOK_URL", "")
 
 POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "600"))  # по умолчанию 10 минут
 
@@ -144,7 +151,7 @@ def fetch_revenue(session: requests.Session, department_id: str) -> dict:
 # Отправка на crmpapa.ru
 # ---------------------------------------------------------------------------
 
-def send_to_crmpapa(payload: dict) -> None:
+def send_to_crmpapa(payload: dict, webhook_url: str) -> None:
     body = {
         "revenue": payload["revenue"],
         "orders_count": payload["orders_count"],
@@ -154,19 +161,51 @@ def send_to_crmpapa(payload: dict) -> None:
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
-    if not CRMPAPA_WEBHOOK_URL:
+    if not webhook_url:
         log.warning(
-            "CRMPAPA_WEBHOOK_URL не задан — данные не отправлены, просто печатаю:\n%s",
+            "Webhook URL не задан для филиала %s — данные не отправлены, просто печатаю:\n%s",
+            payload.get("department_id"),
             json.dumps(body, ensure_ascii=False, indent=2),
         )
         return
 
-    # TODO: если crmpapa.ru ожидает другой формат (не JSON, другие имена полей,
-    # заголовок с API-ключом и т.п.) — поправить этот запрос под реальный контракт.
-    resp = requests.post(CRMPAPA_WEBHOOK_URL, json=body, timeout=15)
+    resp = requests.post(webhook_url, json=body, timeout=15)
     resp.raise_for_status()
 
-    log.info("Отправлено на crmpapa.ru: %s", body)
+    log.info("Отправлено на crmpapa.ru (филиал %s): %s", payload.get("department_id"), body)
+
+
+# ---------------------------------------------------------------------------
+# Карта "department_id -> webhook_url" для нескольких филиалов
+# ---------------------------------------------------------------------------
+
+def parse_sync_map(raw: str) -> dict:
+    """Разбирает GOULASH_SYNC_MAP вида 'dep1=url1;dep2=url2' в {dep_id: url}."""
+    mapping: dict = {}
+    for pair in raw.split(";"):
+        pair = pair.strip()
+        if not pair:
+            continue
+        if "=" not in pair:
+            log.warning("Пропускаю некорректную пару в GOULASH_SYNC_MAP: %r", pair)
+            continue
+        dept_id, url = pair.split("=", 1)
+        dept_id = dept_id.strip()
+        url = url.strip()
+        if dept_id and url:
+            mapping[dept_id] = url
+    return mapping
+
+
+def get_sync_targets() -> dict:
+    """Возвращает {department_id: webhook_url} для всех филиалов, которые нужно синхронизировать."""
+    mapping = parse_sync_map(SYNC_MAP_RAW)
+    if mapping:
+        return mapping
+    # Обратная совместимость: старый режим с одним филиалом
+    if DEPARTMENT_ID and CRMPAPA_WEBHOOK_URL:
+        return {DEPARTMENT_ID: CRMPAPA_WEBHOOK_URL}
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -174,12 +213,25 @@ def send_to_crmpapa(payload: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def run_once() -> None:
+    targets = get_sync_targets()
+    if not targets:
+        log.error(
+            "Не заданы филиалы для синхронизации. Укажите GOULASH_SYNC_MAP "
+            "(department_id=webhook_url;...) либо GOULASH_DEPARTMENT_ID + CRMPAPA_WEBHOOK_URL "
+            "для одного филиала."
+        )
+        return
+
     session = requests.Session()
     session.headers.update({"User-Agent": "Mozilla/5.0 (revenue-sync-script)"})
-
     login(session)
-    payload = fetch_revenue(session, DEPARTMENT_ID)
-    send_to_crmpapa(payload)
+
+    for department_id, webhook_url in targets.items():
+        try:
+            payload = fetch_revenue(session, department_id)
+            send_to_crmpapa(payload, webhook_url)
+        except Exception as exc:
+            log.error("Ошибка синхронизации филиала %s: %s", department_id, exc)
 
 
 def main() -> None:
