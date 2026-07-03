@@ -2403,8 +2403,16 @@ def shift_view(shift_id):
             shift_weekday = date.fromisoformat(shift['date']).weekday()  # 0=Mon, 4=Fri, 5=Sat
         except Exception:
             shift_weekday = 0
-        # Утром в кассе: итого нал предыдущего дня по этому филиалу
+        # Утром в кассе: должно всегда совпадать с "Итого нал" предыдущего дня.
+        # Для ещё открытых смен подправляем сохранённое значение, если оно разошлось
+        # (например, из-за правок расходов/такси предыдущего дня уже после открытия текущей смены).
         prev_actual_cash = _calc_prev_kassa_nal(conn, shift['branch_id'], shift['date'])
+        if shift['status'] == 'open' and revenue is not None:
+            stored_morning = revenue['morning_cash'] or 0
+            if abs(stored_morning - prev_actual_cash) > 0.01:
+                conn.execute('UPDATE shift_revenue SET morning_cash=? WHERE shift_id=?', (prev_actual_cash, shift_id))
+                conn.commit()
+                revenue = conn.execute('SELECT * FROM shift_revenue WHERE shift_id=?', (shift_id,)).fetchone()
         promokod_row = conn.execute(
             'SELECT code FROM flyer_promocodes WHERE branch_id=? AND date=?',
             (shift['branch_id'], shift['date'])
