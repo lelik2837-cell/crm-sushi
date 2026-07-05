@@ -7334,7 +7334,9 @@ def history():
     action_filter = request.args.get('action', '')
 
     with get_db() as conn:
-        conds = ['cl.created_at >= ? AND cl.created_at <= ?']
+        # created_at хранится в UTC (SQLite CURRENT_TIMESTAMP) — сравниваем границы
+        # диапазона (локальные даты НСК) с created_at, переведённым в Asia/Novosibirsk (+7ч)
+        conds = ["datetime(cl.created_at, '+7 hours') >= ? AND datetime(cl.created_at, '+7 hours') <= ?"]
         params = [date_from + ' 00:00:00', date_to + ' 23:59:59']
 
         if role != 'owner':
@@ -7659,7 +7661,9 @@ def datetime_fmt(value):
     if not value:
         return ''
     try:
-        dt = datetime.strptime(str(value)[:19], '%Y-%m-%d %H:%M:%S')
+        # created_at хранится через SQLite CURRENT_TIMESTAMP (всегда UTC) —
+        # переводим в Asia/Novosibirsk (UTC+7, без перехода на летнее время)
+        dt = datetime.strptime(str(value)[:19], '%Y-%m-%d %H:%M:%S') + timedelta(hours=7)
         return dt.strftime('%d.%m %H:%M')
     except Exception:
         return value
