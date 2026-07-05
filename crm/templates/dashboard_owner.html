@@ -581,15 +581,6 @@ function updateRightMetrics(d) {
     // --- ФОТ ---
     el = document.getElementById('rm-fot-pct'); if(el) el.textContent = total > 0 ? Math.round((d.fot||0)/total*100) : '—';
     el = document.getElementById('rm-fot-sum'); if(el) el.textContent = fmtNum(d.fot||0) + ' ₽';
-    // --- Кемерово / Новокузнецк ---
-    var nkGrp  = DASH_BRANCH_GROUPS.find(function(g){ return g.abbr === 'НК'  || g.name.indexOf('Новокузнецк') !== -1; });
-    var kemGrp = DASH_BRANCH_GROUPS.find(function(g){ return g.abbr === 'КЕМ' || g.name.indexOf('Кемерово') !== -1; });
-    var nkRev  = sumGroupRevenue(d.branches, nkGrp);
-    var kemRev = sumGroupRevenue(d.branches, kemGrp);
-    el = document.getElementById('rm-nvkz-pct'); if(el) el.textContent = total > 0 ? Math.round(nkRev/total*100) : '—';
-    el = document.getElementById('rm-nvkz-sum'); if(el) el.textContent = 'Выручка нвкз: ' + fmtNum(nkRev) + ' ₽';
-    el = document.getElementById('rm-kem-pct');  if(el) el.textContent = total > 0 ? Math.round(kemRev/total*100) : '—';
-    el = document.getElementById('rm-kem-sum');  if(el) el.textContent = 'Выручка кем: ' + fmtNum(kemRev) + ' ₽';
     // --- Самовывоз ---
     el = document.getElementById('rm-pickup-pct'); if(el) el.textContent = total > 0 ? Math.round((d.pickup||0)/total*100) : '—';
     el = document.getElementById('rm-pickup-sum'); if(el) el.textContent = fmtNum(d.pickup||0) + ' ₽';
@@ -615,6 +606,31 @@ function updateRightMetrics(d) {
 
 function clearMetrics() {
     updateRightMetrics({total:0,cash:0,card:0,online:0,fot:0,pickup:0,delivery:0,courier_fot:0,delivery_orders:0,branches:[]});
+    var el;
+    el = document.getElementById('rm-nvkz-pct'); if(el) el.textContent = '—';
+    el = document.getElementById('rm-nvkz-sum'); if(el) el.textContent = 'Выручка нвкз: — ₽';
+    el = document.getElementById('rm-kem-pct');  if(el) el.textContent = '—';
+    el = document.getElementById('rm-kem-sum');  if(el) el.textContent = 'Выручка кем: — ₽';
+}
+
+// Блок "Кемерово / Новокузнецк" всегда считается по всем филиалам,
+// независимо от выбранного в дашборде фильтра филиалов/групп.
+function loadRegionSplit(dateFrom, dateTo) {
+    fetch('/api/revenue-summary?date_from=' + dateFrom + '&date_to=' + dateTo)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.ok) return;
+            var total  = d.total || 0;
+            var nkGrp  = DASH_BRANCH_GROUPS.find(function(g){ return g.abbr === 'НК'  || g.name.indexOf('Новокузнецк') !== -1; });
+            var kemGrp = DASH_BRANCH_GROUPS.find(function(g){ return g.abbr === 'КЕМ' || g.name.indexOf('Кемерово') !== -1; });
+            var nkRev  = sumGroupRevenue(d.branches, nkGrp);
+            var kemRev = sumGroupRevenue(d.branches, kemGrp);
+            var el;
+            el = document.getElementById('rm-nvkz-pct'); if(el) el.textContent = total > 0 ? Math.round(nkRev/total*100) : '—';
+            el = document.getElementById('rm-nvkz-sum'); if(el) el.textContent = 'Выручка нвкз: ' + fmtNum(nkRev) + ' ₽';
+            el = document.getElementById('rm-kem-pct');  if(el) el.textContent = total > 0 ? Math.round(kemRev/total*100) : '—';
+            el = document.getElementById('rm-kem-sum');  if(el) el.textContent = 'Выручка кем: ' + fmtNum(kemRev) + ' ₽';
+        });
 }
 
 function showPlanDiff(actual, plan) {
@@ -973,6 +989,8 @@ function loadRevCard(period) {
         dateTo   = fmt(today);
         dateFrom = revPeriod === 'today' ? dateTo : fmt(today).slice(0,7) + '-01';
     }
+
+    loadRegionSplit(dateFrom, dateTo);
 
     fetch('/api/revenue-summary?date_from=' + dateFrom + '&date_to=' + dateTo + _revBranchSuffix())
         .then(function(r) { return r.json(); })
