@@ -627,22 +627,38 @@
             </div>
             <div class="col-md-7">
                 <div class="card">
-                    <div class="card-header bg-light fw-bold">
-                        <i class="bi bi-list-ul"></i> Ставки ({{ rate_templates|length }})
+                    <div class="card-header bg-light fw-bold d-flex justify-content-between align-items-center flex-wrap gap-2">
+                        <span><i class="bi bi-list-ul"></i> Ставки ({{ rate_templates|length }})</span>
+                        <select id="rate-filter-select" class="form-select form-select-sm" style="width:auto;" onchange="filterRates(this)">
+                            <option value="">Все филиалы</option>
+                            {% if branch_groups_for_rates %}
+                            <optgroup label="Группы">
+                                {% for g in branch_groups_for_rates %}
+                                <option value="{{ g.branches | map(attribute='id') | list | join(',') }}">{{ g.name }}</option>
+                                {% endfor %}
+                            </optgroup>
+                            {% endif %}
+                            <optgroup label="Филиалы">
+                                {% for b in branches %}
+                                <option value="{{ b.id }}">{{ b.name }}</option>
+                                {% endfor %}
+                            </optgroup>
+                        </select>
                     </div>
-                    <div class="card-body p-0">
+                    <div class="card-body p-0" id="rates-list">
                         {% set ns = namespace(current_role='') %}
                         {% for tmpl in rate_templates %}
                         {% if tmpl.role != ns.current_role %}
                         {% set ns.current_role = tmpl.role %}
-                        <div class="px-3 py-2 bg-light border-bottom fw-semibold small text-muted"
+                        <div class="px-3 py-2 bg-light border-bottom fw-semibold small text-muted rate-role-header"
                              style="text-transform:uppercase;letter-spacing:.5px;">
                             {{ role_labels.get(tmpl.role, tmpl.role) }}
                         </div>
                         {% endif %}
                         {% set hist = tmpl_history.get(tmpl.id, []) %}
                         {% set cur_branch_ids = tmpl_branches.get(tmpl.id, []) %}
-                        <div class="d-flex align-items-start gap-2 px-3 py-2 border-bottom">
+                        <div class="d-flex align-items-start gap-2 px-3 py-2 border-bottom rate-item"
+                             data-branch-ids="{{ cur_branch_ids | tojson | e }}">
                             <div class="flex-grow-1">
                                 <div class="fw-semibold">{{ tmpl.name }}</div>
                                 <div class="text-muted small">
@@ -1272,6 +1288,27 @@ function copyUrl(inputId) {
         var btn = el.nextElementSibling;
         if (btn) { btn.innerHTML = '<i class="bi bi-check"></i>'; setTimeout(function(){ btn.innerHTML = '<i class="bi bi-copy"></i>'; }, 1500); }
     });
+}
+
+// Фильтр списка ставок по филиалу/группе филиалов
+function filterRates(selectEl) {
+    var raw = selectEl.value;
+    var allowedIds = raw ? raw.split(',').map(Number) : null;
+    var items = document.querySelectorAll('#rates-list .rate-item, #rates-list .rate-role-header');
+    var lastHeader = null, headerHasVisibleRow = false;
+    items.forEach(function(el) {
+        if (el.classList.contains('rate-role-header')) {
+            if (lastHeader) lastHeader.style.display = headerHasVisibleRow ? '' : 'none';
+            lastHeader = el;
+            headerHasVisibleRow = false;
+            return;
+        }
+        var ids = JSON.parse(el.dataset.branchIds || '[]');
+        var visible = !allowedIds || ids.length === 0 || ids.some(function(id) { return allowedIds.indexOf(id) !== -1; });
+        el.style.display = visible ? '' : 'none';
+        if (visible) headerHasVisibleRow = true;
+    });
+    if (lastHeader) lastHeader.style.display = headerHasVisibleRow ? '' : 'none';
 }
 
 function openEditCat(catId, label, branchIds) {
