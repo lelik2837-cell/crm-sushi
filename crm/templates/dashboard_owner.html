@@ -1035,21 +1035,41 @@ function loadRevCard(period) {
 
     loadRegionSplit(dateFrom, dateTo);
 
+    // Для текущего (незавершённого) месяца план для сравнения берём только
+    // за прошедшие дни (1-е число — сегодня), а не за весь месяц целиком —
+    // иначе % отклонения будет всегда сильно "в минусе" в начале месяца.
+    var nowForPlan = new Date();
+    var isCurrentMonthInProgress = revPeriod === 'month' &&
+        revMonthDate.getFullYear() === nowForPlan.getFullYear() &&
+        revMonthDate.getMonth() === nowForPlan.getMonth();
+    var planDateTo = isCurrentMonthInProgress ? fmt(nowForPlan) : dateTo;
+
     fetch('/api/revenue-summary?date_from=' + dateFrom + '&date_to=' + dateTo + _revBranchSuffix())
         .then(function(r) { return r.json(); })
         .then(function(d) {
             if (!d.ok) return;
-            if (d.total > 0 || !d.plan_total) {
-                document.getElementById('rev-total').textContent = fmtNum(d.total);
-                showPlanDiff(d.total, d.plan_total || 0);
+
+            var renderTotals = function(planTotal) {
+                if (d.total > 0 || !planTotal) {
+                    document.getElementById('rev-total').textContent = fmtNum(d.total);
+                    showPlanDiff(d.total, planTotal || 0);
+                } else {
+                    document.getElementById('rev-total').textContent = fmtNum(planTotal);
+                    var pd = document.getElementById('rev-plan-diff');
+                    pd.style.color = 'rgba(255,255,255,.65)';
+                    pd.textContent = '(план)';
+                }
+                branchesWrap.innerHTML = branchListHtml(d.branches, d.total);
+                updateRightMetrics(d);
+            };
+
+            if (planDateTo !== dateTo) {
+                fetch('/api/revenue-summary?date_from=' + dateFrom + '&date_to=' + planDateTo + _revBranchSuffix())
+                    .then(function(r2) { return r2.json(); })
+                    .then(function(d2) { renderTotals(d2.ok ? d2.plan_total : d.plan_total); });
             } else {
-                document.getElementById('rev-total').textContent = fmtNum(d.plan_total);
-                var pd = document.getElementById('rev-plan-diff');
-                pd.style.color = 'rgba(255,255,255,.65)';
-                pd.textContent = '(план)';
+                renderTotals(d.plan_total);
             }
-            branchesWrap.innerHTML = branchListHtml(d.branches, d.total);
-            updateRightMetrics(d);
         });
 
     if (revPeriod === 'month') {
