@@ -1292,23 +1292,33 @@ function copyUrl(inputId) {
 
 // Фильтр списка ставок по филиалу/группе филиалов
 function filterRates(selectEl) {
-    var raw = selectEl.value;
-    var allowedIds = raw ? raw.split(',').map(Number) : null;
-    var items = document.querySelectorAll('#rates-list .rate-item, #rates-list .rate-role-header');
-    var lastHeader = null, headerHasVisibleRow = false;
-    items.forEach(function(el) {
-        if (el.classList.contains('rate-role-header')) {
-            if (lastHeader) lastHeader.style.display = headerHasVisibleRow ? '' : 'none';
-            lastHeader = el;
-            headerHasVisibleRow = false;
-            return;
-        }
-        var ids = JSON.parse(el.dataset.branchIds || '[]');
-        var visible = !allowedIds || ids.length === 0 || ids.some(function(id) { return allowedIds.indexOf(id) !== -1; });
-        el.style.display = visible ? '' : 'none';
-        if (visible) headerHasVisibleRow = true;
-    });
-    if (lastHeader) lastHeader.style.display = headerHasVisibleRow ? '' : 'none';
+    try {
+        var raw = (selectEl.value || '').trim();
+        var allowedIds = raw ? raw.split(',').map(function(s) { return parseInt(s, 10); }).filter(function(n) { return !isNaN(n); }) : null;
+        if (allowedIds && !allowedIds.length) allowedIds = null;
+        var items = document.querySelectorAll('#rates-list .rate-item, #rates-list .rate-role-header');
+        var lastHeader = null, headerHasVisibleRow = false;
+        items.forEach(function(el) {
+            try {
+                if (el.classList.contains('rate-role-header')) {
+                    if (lastHeader) lastHeader.style.display = headerHasVisibleRow ? '' : 'none';
+                    lastHeader = el;
+                    headerHasVisibleRow = false;
+                    return;
+                }
+                var ids = [];
+                try { ids = JSON.parse(el.dataset.branchIds || '[]'); } catch (parseErr) { ids = []; }
+                var visible = !allowedIds || !ids.length || ids.some(function(id) { return allowedIds.indexOf(id) !== -1; });
+                el.style.display = visible ? '' : 'none';
+                if (visible) headerHasVisibleRow = true;
+            } catch (rowErr) {
+                console.error('filterRates: ошибка на строке', el, rowErr);
+            }
+        });
+        if (lastHeader) lastHeader.style.display = headerHasVisibleRow ? '' : 'none';
+    } catch (e) {
+        console.error('filterRates: ошибка фильтрации', e);
+    }
 }
 
 function openEditCat(catId, label, branchIds) {
