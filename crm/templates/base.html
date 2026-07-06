@@ -196,7 +196,7 @@
                 </li>
             </ul>
         </div>
-        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav" {% if session.get('role') != 'owner' %}style="display:none"{% endif %}>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav" {% if session.get('role') not in ('owner', 'director') %}style="display:none"{% endif %}>
             <span class="navbar-toggler-icon"></span>
         </button>
         <div class="collapse navbar-collapse" id="nav">
@@ -365,6 +365,12 @@
                         </li>
                         {% endif %}
                     </ul>
+                </li>
+            {% elif session.get('role') == 'director' %}
+                <li class="nav-item">
+                    <a class="nav-link {% if request.endpoint=='employees' %}active{% endif %}" href="{{ url_for('employees') }}">
+                        <i class="bi bi-person-badge"></i> Сотрудники
+                    </a>
                 </li>
             {% endif %}{# owner nav #}
             </ul>
