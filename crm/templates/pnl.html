@@ -66,53 +66,40 @@
                 {% endif %}
             </div>
 
-            {# ── Наличные расходы ── #}
+            {# ── Расходы по категориям (наличные + банк — расходы теперь в одном месте) ── #}
             <div class="col-md-4">
                 <div class="fw-semibold mb-2" style="color:#dc3545;border-bottom:2px solid #dc3545;padding-bottom:3px">
-                    <i class="bi bi-wallet2 me-1"></i>Наличные расходы (категории из смен)
+                    <i class="bi bi-tags me-1"></i>Расходы по категориям
                 </div>
-                {% for cat in all_cats if not cat.parent_id %}
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox"
-                           name="cash_expense_cats" value="{{ cat.code }}"
-                           id="ce_{{ cat.code }}"
-                           {% if cat.code in cfg.cash_expense_cats %}checked{% endif %}>
-                    <label class="form-check-label small" for="ce_{{ cat.code }}">{{ cat.label }}</label>
-                </div>
-                {% endfor %}
-            </div>
-
-            {# ── Расходы из банка + ФОТ ── #}
-            <div class="col-md-4">
-                <div class="fw-semibold mb-2" style="color:#dc3545;border-bottom:2px solid #dc3545;padding-bottom:3px">
-                    <i class="bi bi-bank me-1"></i>Расходы из банка (категории контрагентов)
-                </div>
-                {% if ctr_cats_expense %}
+                <div class="text-muted small mb-2">Сумма кассы/карты из смен и банка по одной и той же категории</div>
+                {% if expense_cats_all %}
                 <div class="form-check mb-2">
-                    <input class="form-check-input" type="checkbox" name="bank_expense_all"
-                           value="1" id="be_all"
-                           {% if cfg.bank_expense_ctr_cats is none %}checked{% endif %}
-                           onchange="toggleCatGroup('be_all', 'bank-exp-cb')">
-                    <label class="form-check-label fw-semibold small" for="be_all">Все категории</label>
+                    <input class="form-check-input" type="checkbox" name="expense_all"
+                           value="1" id="exp_all"
+                           {% if expense_cats_all|selectattr('code','in',cfg.expense_cats)|list|length == expense_cats_all|length %}checked{% endif %}
+                           onchange="toggleCatGroup('exp_all', 'exp-cb')">
+                    <label class="form-check-label fw-semibold small" for="exp_all">Все категории</label>
                 </div>
-                <div class="ps-3 mb-3">
-                {% for cc in ctr_cats_expense %}
+                <div class="ps-3">
+                {% for cat in expense_cats_all %}
                 <div class="form-check">
-                    <input class="form-check-input bank-exp-cb" type="checkbox"
-                           name="bank_expense_ctr_cats" value="{{ cc.code }}"
-                           id="be_{{ cc.id }}"
-                           {% if cfg.bank_expense_ctr_cats is none or cc.code in cfg.bank_expense_ctr_cats %}checked{% endif %}
-                           onchange="uncheckAll('be_all', 'bank-exp-cb')">
-                    <label class="form-check-label small" for="be_{{ cc.id }}">{{ cc.label }}</label>
+                    <input class="form-check-input exp-cb" type="checkbox"
+                           name="expense_cats" value="{{ cat.code }}"
+                           id="ce_{{ cat.code }}"
+                           {% if cat.code in cfg.expense_cats %}checked{% endif %}
+                           onchange="uncheckAll('exp_all', 'exp-cb')">
+                    <label class="form-check-label small" for="ce_{{ cat.code }}">{{ cat.label }}</label>
                 </div>
                 {% endfor %}
                 </div>
                 {% else %}
-                <div class="text-muted small mb-3">Нет категорий расходов для контрагентов.</div>
-                <input type="hidden" name="bank_expense_all" value="1">
+                <div class="text-muted small">Нет категорий расходов. Добавьте в <a href="{{ url_for('settings') }}">Настройках</a>.</div>
                 {% endif %}
+            </div>
 
-                <div class="fw-semibold mb-2 mt-1" style="color:#6c757d;border-bottom:1px solid #dee2e6;padding-bottom:3px">
+            {# ── ФОТ ── #}
+            <div class="col-md-4">
+                <div class="fw-semibold mb-2" style="color:#6c757d;border-bottom:1px solid #dee2e6;padding-bottom:3px">
                     <i class="bi bi-people me-1"></i>ФОТ
                 </div>
                 <div class="form-check mb-1">
@@ -303,7 +290,7 @@
         <tr>
             <td class="fw-semibold">
                 {{ row.label }}
-                {% if row.badge == 'bank' %}
+                {% if 'bank' in row.badges %}
                 <span class="badge bg-primary ms-1" style="font-size:.6rem">банк</span>
                 {% else %}
                 <span class="badge bg-success ms-1" style="font-size:.6rem">нал</span>
@@ -366,11 +353,13 @@
         <tr>
             <td class="fw-semibold">
                 {{ row.label }}
-                {% if row.badge == 'bank' %}
-                <span class="badge bg-primary ms-1" style="font-size:.6rem">банк</span>
-                {% elif row.badge == 'cash' %}
+                {% if 'cash' in row.badges %}
                 <span class="badge bg-success ms-1" style="font-size:.6rem">нал</span>
-                {% elif row.badge == 'salary' %}
+                {% endif %}
+                {% if 'bank' in row.badges %}
+                <span class="badge bg-primary ms-1" style="font-size:.6rem">банк</span>
+                {% endif %}
+                {% if 'salary' in row.badges %}
                 <span class="badge bg-secondary ms-1" style="font-size:.6rem">фот</span>
                 {% endif %}
             </td>

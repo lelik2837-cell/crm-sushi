@@ -1318,8 +1318,18 @@ def init_db():
                 for _r in _rows:
                     if (_r['category'] or '').lower() in old_names:
                         conn.execute(f"UPDATE {_table} SET category='' WHERE category=?", (_r['category'],))
+
+        # PnL report settings storage
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS pnl_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
+        ''')
+
+        if old_names:
             for _setting_key in ('bank_income_ctr_cats', 'bank_expense_ctr_cats'):
-                _row = conn.execute("SELECT value FROM api_settings WHERE key=?", (_setting_key,)).fetchone()
+                _row = conn.execute("SELECT value FROM pnl_settings WHERE key=?", (_setting_key,)).fetchone()
                 if _row and _row['value']:
                     try:
                         _vals = _json_lib.loads(_row['value'])
@@ -1329,17 +1339,31 @@ def init_db():
                         _cleaned = [v for v in _vals if (v or '').lower() not in old_names]
                         if _cleaned != _vals:
                             conn.execute(
-                                "UPDATE api_settings SET value=? WHERE key=?",
+                                "UPDATE pnl_settings SET value=? WHERE key=?",
                                 (_json_lib.dumps(_cleaned), _setting_key)
                             )
 
-        # PnL report settings storage
-        conn.executescript('''
-            CREATE TABLE IF NOT EXISTS pnl_settings (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            );
-        ''')
+        # One-time merge: P&L "наличные расходы" + "банковские расходы контрагентов"
+        # -> единый список категорий расходов (expense_cats), т.к. расходы теперь
+        # в одном месте (одна категория может встречаться и в кассе, и в банке).
+        if not conn.execute("SELECT 1 FROM pnl_settings WHERE key='expense_cats'").fetchone():
+            _merged_exp_cats = []
+            for _old_key in ('cash_expense_cats', 'bank_expense_ctr_cats'):
+                _row = conn.execute("SELECT value FROM pnl_settings WHERE key=?", (_old_key,)).fetchone()
+                if _row and _row['value']:
+                    try:
+                        _vals = _json_lib.loads(_row['value'])
+                    except Exception:
+                        _vals = None
+                    if isinstance(_vals, list):
+                        for _v in _vals:
+                            if _v and _v not in _merged_exp_cats:
+                                _merged_exp_cats.append(_v)
+            if _merged_exp_cats:
+                conn.execute(
+                    "INSERT OR REPLACE INTO pnl_settings (key, value) VALUES ('expense_cats', ?)",
+                    (_json_lib.dumps(_merged_exp_cats),)
+                )
 
         # Google Sheets export settings
         conn.executescript('''
@@ -6857,16 +6881,16 @@ def _pnl_load_settings(conn):
         except Exception:
             return default
 
-    default_cash_exp = [c['code'] for c in conn.execute(
-        "SELECT code FROM expense_categories WHERE is_active=1 AND parent_id IS NULL ORDER BY sort_order, label"
+    default_expense_cats = [c['code'] for c in conn.execute(
+        "SELECT code FROM expense_categories WHERE is_active=1 AND type='expense' ORDER BY sort_order, label"
     ).fetchall()]
 
     bi = _lst('bank_income_ctr_cats',  None)
-    be = _lst('bank_expense_ctr_cats', None)
     return {
-        'cash_expense_cats':     _lst('cash_expense_cats', default_cash_exp),
+        # Расход теперь один список категорий: сумма и наличных (из смен),
+        # и банковских расходов по этой же категории — расходы в одном месте.
+        'expense_cats':          _lst('expense_cats', default_expense_cats),
         'bank_income_ctr_cats':  bi or None,   # пустой список [] → None (все)
-        'bank_expense_ctr_cats': be or None,   # пустой список [] → None (все)
         'include_salary':           int(cfg.get('include_salary', '1')),
         'include_salary_breakdown': int(cfg.get('include_salary_breakdown', '1')),
     }
@@ -6892,7 +6916,7 @@ def pnl_report():
         all_cats      = get_expense_categories(conn)
         ctr_all_cats  = [c for c in all_cats if c['show_contractors']]
         ctr_cats_income  = [c for c in ctr_all_cats if c['type'] == 'income']
-        ctr_cats_expense = [c for c in ctr_all_cats if c['type'] != 'income']
+        expense_cats_all = [c for c in all_cats if c['type'] == 'expense']
         cfg           = _pnl_load_settings(conn)
 
         if branch_ids:
@@ -6950,48 +6974,37 @@ def pnl_report():
               AND bt.category IS NOT NULL AND bt.category != ''
               {_bi_filter} {bf_bt}
             GROUP BY period, bt.category
-            HAVING amount > 0
+            HAVING SUM(bt.amount) > 0
         """, [date_from, date_to] + _bi_args + b_args).fetchall():
             bank_inc_by[r['cat_name']][r['period']] += r['amount']
 
-        # Наличные расходы по категориям
+        # Расходы по категориям — расходы теперь в одном месте: для каждой
+        # выбранной категории суммируем и наличные/карту из смен, и банк.
         cash_exp_by = defaultdict(lambda: defaultdict(float))
-        if cfg['cash_expense_cats']:
-            ph_c = ','.join('?' * len(cfg['cash_expense_cats']))
+        bank_exp_by = defaultdict(lambda: defaultdict(float))
+        if cfg['expense_cats']:
+            ph_c = ','.join('?' * len(cfg['expense_cats']))
             for r in conn.execute(f"""
                 SELECT {pe} AS period, e.category AS cat,
-                       COALESCE(SUM(e.amount_cash), 0) AS amount
+                       COALESCE(SUM(e.amount_cash + e.amount_card), 0) AS amount
                 FROM expenses e JOIN shifts s ON s.id=e.shift_id
                 WHERE s.date BETWEEN ? AND ?
                   AND e.category IN ({ph_c}) {bf}
                 GROUP BY period, e.category
-            """, [date_from, date_to] + cfg['cash_expense_cats'] + b_args).fetchall():
+            """, [date_from, date_to] + cfg['expense_cats'] + b_args).fetchall():
                 cash_exp_by[r['cat']][r['period']] += r['amount']
-
-        # Расходы из банка по категориям контрагентов
-        bank_exp_by = defaultdict(lambda: defaultdict(float))
-        _be_filter = ''
-        _be_args   = []
-        if cfg['bank_expense_ctr_cats'] is not None:
-            if cfg['bank_expense_ctr_cats']:
-                ph_c = ','.join('?' * len(cfg['bank_expense_ctr_cats']))
-                _be_filter = f"AND bt.category IN ({ph_c})"
-                _be_args   = cfg['bank_expense_ctr_cats']
-            else:
-                _be_filter = 'AND 0=1'
-        for r in conn.execute(f"""
-            SELECT {pe_bt} AS period,
-                   bt.category AS cat_name,
-                   SUM(-bt.amount) AS amount
-            FROM bank_transactions bt
-            WHERE bt.txn_date BETWEEN ? AND ?
-              AND bt.amount < 0 AND bt.is_ignored=0
-              AND bt.category IS NOT NULL AND bt.category != ''
-              {_be_filter} {bf_bt}
-            GROUP BY period, bt.category
-            HAVING amount > 0
-        """, [date_from, date_to] + _be_args + b_args).fetchall():
-            bank_exp_by[r['cat_name']][r['period']] += r['amount']
+            for r in conn.execute(f"""
+                SELECT {pe_bt} AS period,
+                       bt.category AS cat_name,
+                       SUM(-bt.amount) AS amount
+                FROM bank_transactions bt
+                WHERE bt.txn_date BETWEEN ? AND ?
+                  AND bt.amount < 0 AND bt.is_ignored=0
+                  AND bt.category IN ({ph_c}) {bf_bt}
+                GROUP BY period, bt.category
+                HAVING SUM(-bt.amount) > 0
+            """, [date_from, date_to] + cfg['expense_cats'] + b_args).fetchall():
+                bank_exp_by[r['cat_name']][r['period']] += r['amount']
 
         # Диагностика банковских данных
         _bt_debug = conn.execute("""
@@ -7043,8 +7056,10 @@ def pnl_report():
 
     cat_map = {c['code']: c['label'] for c in all_cats}
 
-    def _row(label, by_p, badge=None, sub=False):
-        r = {'label': label, 'amounts': {}, 'total': 0.0, 'badge': badge, 'sub': sub}
+    def _row(label, by_p, badges=None, sub=False):
+        if isinstance(badges, str):
+            badges = [badges]
+        r = {'label': label, 'amounts': {}, 'total': 0.0, 'badges': badges or [], 'sub': sub}
         for p in periods:
             v = by_p.get(p, 0.0)
             r['amounts'][p] = v
@@ -7087,15 +7102,25 @@ def pnl_report():
                 if role not in role_order:
                     exp_rows.append(_row(ROLE_LABELS.get(role, role), dict(by_p), 'salary', sub=True))
 
-    # Наличные расходы по категориям
-    for cat_code in cfg['cash_expense_cats']:
-        by_p = cash_exp_by.get(cat_code, {})
-        if any(v > 0 for v in by_p.values()):
-            exp_rows.append(_row(cat_map.get(cat_code, cat_code), dict(by_p), 'cash'))
-
-    # Банковские расходы по категориям контрагентов
-    for cat_name, by_p in sorted(bank_exp_by.items()):
-        exp_rows.append(_row(cat_name, dict(by_p), 'bank'))
+    # Расходы по категориям — наличные/карта из смен и банк объединены в одну строку
+    for cat_code in cfg['expense_cats']:
+        cash_by_p = cash_exp_by.get(cat_code, {})
+        bank_by_p = bank_exp_by.get(cat_code, {})
+        if not cash_by_p and not bank_by_p:
+            continue
+        merged_by_p = defaultdict(float)
+        for p, v in cash_by_p.items():
+            merged_by_p[p] += v
+        for p, v in bank_by_p.items():
+            merged_by_p[p] += v
+        if not any(v > 0 for v in merged_by_p.values()):
+            continue
+        badges = []
+        if any(v > 0 for v in cash_by_p.values()):
+            badges.append('cash')
+        if any(v > 0 for v in bank_by_p.values()):
+            badges.append('bank')
+        exp_rows.append(_row(cat_map.get(cat_code, cat_code), dict(merged_by_p), badges))
 
     for row in exp_rows:
         if not row['sub']:
@@ -7118,7 +7143,7 @@ def pnl_report():
         cfg=cfg,
         branches=branches, branch_groups=branch_groups,
         all_cats=all_cats, cat_map=cat_map,
-        ctr_cats_income=ctr_cats_income, ctr_cats_expense=ctr_cats_expense,
+        ctr_cats_income=ctr_cats_income, expense_cats_all=expense_cats_all,
         role_labels=ROLE_LABELS,
         date_from=date_from, date_to=date_to,
         branch_ids=branch_ids, group_by=group_by,
@@ -7131,15 +7156,12 @@ def pnl_report():
 @owner_required
 def pnl_settings_save():
     bank_inc_all = request.form.get('bank_income_all')
-    bank_exp_all = request.form.get('bank_expense_all')
-    bank_income_val  = None if bank_inc_all else request.form.getlist('bank_income_ctr_cats')
-    bank_expense_val = None if bank_exp_all else request.form.getlist('bank_expense_ctr_cats')
+    bank_income_val = None if bank_inc_all else request.form.getlist('bank_income_ctr_cats')
 
     with get_db() as conn:
         for key, val in [
-            ('cash_expense_cats',       _json.dumps(request.form.getlist('cash_expense_cats'))),
+            ('expense_cats',            _json.dumps(request.form.getlist('expense_cats'))),
             ('bank_income_ctr_cats',    _json.dumps(bank_income_val)),
-            ('bank_expense_ctr_cats',   _json.dumps(bank_expense_val)),
             ('include_salary',          '1' if request.form.get('include_salary') else '0'),
             ('include_salary_breakdown','1' if request.form.get('include_salary_breakdown') else '0'),
         ]:
