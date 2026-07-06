@@ -18,21 +18,21 @@
     <div id="rev-card" style="background:linear-gradient(135deg,#4f46e5 0%,#7c3aed 60%,#9333ea 100%); border-radius:20px; padding:28px 28px 24px; color:#fff; position:relative;">
       <!-- Period buttons -->
       <div style="display:flex; gap:6px; margin-bottom:20px; align-items:center;">
-        <div class="rev-nav" data-period="today" style="display:flex; align-items:center; gap:2px; background:rgba(255,255,255,.12); border:1.5px solid rgba(255,255,255,.35); border-radius:20px; padding:3px;">
+        <div class="rev-nav" data-period="today" style="display:flex; align-items:center; gap:1px; background:rgba(255,255,255,.12); border:1.5px solid rgba(255,255,255,.35); border-radius:16px; padding:2px;">
           <button onclick="navRevToday(-1)" title="Предыдущий день"
-            style="width:24px; height:24px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:14px; font-weight:700; line-height:1;">‹</button>
+            style="width:19px; height:19px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; line-height:1;">‹</button>
           <button onclick="selectRevToday()" id="rev-today-btn"
-            style="border:none; background:transparent; color:#fff; cursor:pointer; font-size:12px; font-weight:700; padding:4px 8px; letter-spacing:.2px; white-space:nowrap;">Сегодня</button>
+            style="border:none; background:transparent; color:#fff; cursor:pointer; font-size:10px; font-weight:700; padding:2px 5px; letter-spacing:.2px; white-space:nowrap;">Сегодня</button>
           <button onclick="navRevToday(1)" id="rev-today-next" title="Следующий день"
-            style="width:24px; height:24px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:14px; font-weight:700; line-height:1;">›</button>
+            style="width:19px; height:19px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; line-height:1;">›</button>
         </div>
-        <div class="rev-nav" data-period="month" style="display:flex; align-items:center; gap:2px; background:rgba(255,255,255,.25); border:1.5px solid rgba(255,255,255,.9); border-radius:20px; padding:3px;">
+        <div class="rev-nav" data-period="month" style="display:flex; align-items:center; gap:1px; background:rgba(255,255,255,.25); border:1.5px solid rgba(255,255,255,.9); border-radius:16px; padding:2px;">
           <button onclick="navRevMonth(-1)" title="Предыдущий месяц"
-            style="width:24px; height:24px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:14px; font-weight:700; line-height:1;">‹</button>
+            style="width:19px; height:19px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; line-height:1;">‹</button>
           <button onclick="selectRevMonth()" id="rev-month-btn"
-            style="border:none; background:transparent; color:#fff; cursor:pointer; font-size:12px; font-weight:700; padding:4px 8px; letter-spacing:.2px; white-space:nowrap;">Месяц</button>
+            style="border:none; background:transparent; color:#fff; cursor:pointer; font-size:10px; font-weight:700; padding:2px 5px; letter-spacing:.2px; white-space:nowrap;">Месяц</button>
           <button onclick="navRevMonth(1)" id="rev-month-next" title="Следующий месяц"
-            style="width:24px; height:24px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:14px; font-weight:700; line-height:1;">›</button>
+            style="width:19px; height:19px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; line-height:1;">›</button>
         </div>
         <button onclick="loadRevCard('year')"  data-rp="year"  class="rev-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Год</button>
         <button onclick="loadRevCard('all')"   data-rp="all"   class="rev-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Всё</button>
