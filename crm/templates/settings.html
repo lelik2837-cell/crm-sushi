@@ -34,21 +34,31 @@
                                 </div>
                             </div>
                             <div class="mb-3" id="parentCatWrap">
-                                <label class="form-label fw-semibold">Родительская категория <span class="text-muted fw-normal">(необязательно)</span></label>
+                                <label class="form-label fw-semibold">Группа <span class="text-muted fw-normal">(необязательно)</span></label>
                                 <select name="parent_id" id="parentCatSel" class="form-select form-select-sm">
-                                    <option value="">— Без родителя (новая категория) —</option>
+                                    <option value="">— Без группы (новая категория) —</option>
                                     {% for cat in exp_cats_parents %}
                                     {% if cat.type == 'expense' %}
                                     <option value="{{ cat.id }}" data-type="expense">{{ cat.label }}</option>
                                     {% endif %}
                                     {% endfor %}
                                 </select>
-                                <div class="form-text">Выберите, если это подкатегория</div>
+                                <div class="form-text">Выберите, если это категория внутри группы</div>
                             </div>
                             <div class="mb-3">
                                 <label class="form-label fw-semibold">Название</label>
                                 <input type="text" name="label" class="form-control"
                                     placeholder="Например: Ремонт кондиционеров" required>
+                            </div>
+                            <div class="mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="show_contractors" value="1" id="addShowContractors" checked>
+                                    <label class="form-check-label small" for="addShowContractors">Показывать в списке для контрагентов/банка</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="show_shift" value="1" id="addShowShift" checked>
+                                    <label class="form-check-label small" for="addShowShift">Показывать в таблице расходов смены</label>
+                                </div>
                             </div>
                             <button type="submit" class="btn btn-primary w-100">
                                 <i class="bi bi-plus"></i> Добавить
@@ -78,8 +88,10 @@
                                     <i class="bi bi-building"></i> {{ cat_branches[cat.id]|length }}
                                 </span>
                                 {% endif %}
+                                {% if not cat.show_contractors %}<i class="bi bi-bank text-muted" style="font-size:11px;opacity:.4;" title="Скрыто у контрагентов/банка"></i>{% endif %}
+                                {% if not cat.show_shift %}<i class="bi bi-shop text-muted" style="font-size:11px;opacity:.4;" title="Скрыто в смене"></i>{% endif %}
                                 <button type="button" class="btn btn-sm btn-outline-primary" title="Редактировать"
-                                    onclick='openEditCat({{ cat.id }}, {{ cat.label|tojson }}, {{ (cat_branches.get(cat.id) or [])|tojson }})'>
+                                    onclick='openEditCat({{ cat.id }}, {{ cat.label|tojson }}, {{ (cat_branches.get(cat.id) or [])|tojson }}, {{ cat.type|tojson }}, 0, {{ cat.show_contractors }}, {{ cat.show_shift }})'>
                                     <i class="bi bi-pencil"></i>
                                 </button>
                                 <form method="POST" action="{{ url_for('toggle_expense_cat', cat_id=cat.id) }}" class="d-inline">
@@ -100,8 +112,10 @@
                                 {% if cat_branches.get(sub.id) %}
                                 <span class="badge bg-primary" style="font-size:10px;"><i class="bi bi-building"></i> {{ cat_branches[sub.id]|length }}</span>
                                 {% endif %}
+                                {% if not sub.show_contractors %}<i class="bi bi-bank text-muted" style="font-size:11px;opacity:.4;" title="Скрыто у контрагентов/банка"></i>{% endif %}
+                                {% if not sub.show_shift %}<i class="bi bi-shop text-muted" style="font-size:11px;opacity:.4;" title="Скрыто в смене"></i>{% endif %}
                                 <button type="button" class="btn btn-sm btn-outline-primary" title="Редактировать"
-                                    onclick='openEditCat({{ sub.id }}, {{ sub.label|tojson }}, {{ (cat_branches.get(sub.id) or [])|tojson }})'>
+                                    onclick='openEditCat({{ sub.id }}, {{ sub.label|tojson }}, {{ (cat_branches.get(sub.id) or [])|tojson }}, {{ sub.type|tojson }}, {{ cat.id }}, {{ sub.show_contractors }}, {{ sub.show_shift }})'>
                                     <i class="bi bi-pencil"></i>
                                 </button>
                                 <form method="POST" action="{{ url_for('toggle_expense_cat', cat_id=sub.id) }}" class="d-inline">
@@ -139,8 +153,10 @@
                                 {% if cat_branches.get(cat.id) %}
                                 <span class="badge bg-primary" style="font-size:10px;"><i class="bi bi-building"></i> {{ cat_branches[cat.id]|length }}</span>
                                 {% endif %}
+                                {% if not cat.show_contractors %}<i class="bi bi-bank text-muted" style="font-size:11px;opacity:.4;" title="Скрыто у контрагентов/банка"></i>{% endif %}
+                                {% if not cat.show_shift %}<i class="bi bi-shop text-muted" style="font-size:11px;opacity:.4;" title="Скрыто в смене"></i>{% endif %}
                                 <button type="button" class="btn btn-sm btn-outline-primary" title="Редактировать"
-                                    onclick='openEditCat({{ cat.id }}, {{ cat.label|tojson }}, {{ (cat_branches.get(cat.id) or [])|tojson }})'>
+                                    onclick='openEditCat({{ cat.id }}, {{ cat.label|tojson }}, {{ (cat_branches.get(cat.id) or [])|tojson }}, {{ cat.type|tojson }}, 0, {{ cat.show_contractors }}, {{ cat.show_shift }})'>
                                     <i class="bi bi-pencil"></i>
                                 </button>
                                 <form method="POST" action="{{ url_for('toggle_expense_cat', cat_id=cat.id) }}" class="d-inline">
@@ -161,8 +177,10 @@
                                 {% if cat_branches.get(sub.id) %}
                                 <span class="badge bg-primary" style="font-size:10px;"><i class="bi bi-building"></i> {{ cat_branches[sub.id]|length }}</span>
                                 {% endif %}
+                                {% if not sub.show_contractors %}<i class="bi bi-bank text-muted" style="font-size:11px;opacity:.4;" title="Скрыто у контрагентов/банка"></i>{% endif %}
+                                {% if not sub.show_shift %}<i class="bi bi-shop text-muted" style="font-size:11px;opacity:.4;" title="Скрыто в смене"></i>{% endif %}
                                 <button type="button" class="btn btn-sm btn-outline-primary" title="Редактировать"
-                                    onclick='openEditCat({{ sub.id }}, {{ sub.label|tojson }}, {{ (cat_branches.get(sub.id) or [])|tojson }})'>
+                                    onclick='openEditCat({{ sub.id }}, {{ sub.label|tojson }}, {{ (cat_branches.get(sub.id) or [])|tojson }}, {{ sub.type|tojson }}, {{ cat.id }}, {{ sub.show_contractors }}, {{ sub.show_shift }})'>
                                     <i class="bi bi-pencil"></i>
                                 </button>
                                 <form method="POST" action="{{ url_for('toggle_expense_cat', cat_id=sub.id) }}" class="d-inline">
@@ -199,11 +217,26 @@
                         <form id="editCatNameForm" method="POST">
                             <div class="mb-3">
                                 <label class="form-label fw-semibold">Название</label>
-                                <div class="input-group">
-                                    <input type="text" name="label" id="editCatLabel" class="form-control" required>
-                                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                                <input type="text" name="label" id="editCatLabel" class="form-control" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Группа <span class="text-muted fw-normal">(необязательно)</span></label>
+                                <select name="parent_id" id="editCatParentSel" class="form-select form-select-sm">
+                                    <option value="">— Без группы —</option>
+                                </select>
+                                <div class="form-text">Перенесите категорию в другую группу или уберите из группы</div>
+                            </div>
+                            <div class="mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="show_contractors" value="1" id="editShowContractors">
+                                    <label class="form-check-label small" for="editShowContractors">Показывать в списке для контрагентов/банка</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="show_shift" value="1" id="editShowShift">
+                                    <label class="form-check-label small" for="editShowShift">Показывать в таблице расходов смены</label>
                                 </div>
                             </div>
+                            <button type="submit" class="btn btn-primary w-100">Сохранить</button>
                         </form>
                         <hr>
                         <!-- Филиалы -->
@@ -1321,13 +1354,26 @@ function filterRates(selectEl) {
     }
 }
 
-function openEditCat(catId, label, branchIds) {
+function openEditCat(catId, label, branchIds, type, parentId, showContractors, showShift) {
     document.getElementById('editCatLabel').value = label;
     document.getElementById('editCatNameForm').action = '/settings/expense-cat/' + catId + '/edit';
     document.getElementById('editCatBranchForm').action = '/settings/expense-cat/' + catId + '/branches';
     document.querySelectorAll('.edit-cat-branch-cb').forEach(function(cb) {
         cb.checked = branchIds.indexOf(parseInt(cb.value)) !== -1;
     });
+    var parentSel = document.getElementById('editCatParentSel');
+    parentSel.innerHTML = '<option value="">— Без группы —</option>';
+    CAT_PARENTS.forEach(function(c) {
+        if (c.type === type && c.id !== catId) {
+            var opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = c.label;
+            if (c.id === parentId) opt.selected = true;
+            parentSel.appendChild(opt);
+        }
+    });
+    document.getElementById('editShowContractors').checked = !!showContractors;
+    document.getElementById('editShowShift').checked = !!showShift;
     bootstrap.Modal.getOrCreateInstance(document.getElementById('editCatModal')).show();
 }
 </script>

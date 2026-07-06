@@ -187,7 +187,8 @@ def get_branch_groups(conn):
 
 def get_expense_categories(conn, branch_id=None):
     all_cats = conn.execute(
-        'SELECT id, code, label, type, parent_id FROM expense_categories WHERE is_active=1 ORDER BY sort_order, label'
+        'SELECT id, code, label, type, parent_id, show_contractors, show_shift '
+        'FROM expense_categories WHERE is_active=1 ORDER BY sort_order, label'
     ).fetchall()
     if not branch_id:
         return all_cats
@@ -850,6 +851,10 @@ def init_db():
             conn.execute("ALTER TABLE expense_categories ADD COLUMN type TEXT DEFAULT 'expense'")
         if 'parent_id' not in ec_cols:
             conn.execute("ALTER TABLE expense_categories ADD COLUMN parent_id INTEGER REFERENCES expense_categories(id)")
+        if 'show_contractors' not in ec_cols:
+            conn.execute("ALTER TABLE expense_categories ADD COLUMN show_contractors INTEGER DEFAULT 1")
+        if 'show_shift' not in ec_cols:
+            conn.execute("ALTER TABLE expense_categories ADD COLUMN show_shift INTEGER DEFAULT 1")
 
         # Create branch groups tables
         conn.executescript('''
@@ -1257,6 +1262,54 @@ def init_db():
             conn.execute("ALTER TABLE contractor_categories ADD COLUMN direction TEXT DEFAULT 'any'")
         except Exception:
             pass
+
+        # One-time merge: contractor_categories -> expense_categories
+        # Note: SQLite's LOWER() only handles ASCII, so case-insensitive matching
+        # against Cyrillic names is done in Python, not in SQL.
+        ctr_cats_rows = conn.execute("SELECT id, name, direction FROM contractor_categories").fetchall()
+        existing_ec_rows = conn.execute("SELECT id, label, type FROM expense_categories").fetchall()
+        old_names = []
+        for ctr_cat in ctr_cats_rows:
+            label = (ctr_cat['name'] or '').strip()
+            if not label:
+                continue
+            old_names.append(label.lower())
+            cat_type = 'income' if ctr_cat['direction'] == 'income' else 'expense'
+            existing_ec = next(
+                (r for r in existing_ec_rows if r['label'].lower() == label.lower() and r['type'] == cat_type),
+                None
+            )
+            if existing_ec:
+                continue
+            code = _slugify(label) or ('cat_' + str(ctr_cat['id']))
+            if conn.execute("SELECT id FROM expense_categories WHERE code=?", (code,)).fetchone():
+                code = code + '_' + str(ctr_cat['id'])
+            max_sort = conn.execute("SELECT COALESCE(MAX(sort_order),0) FROM expense_categories").fetchone()[0]
+            conn.execute(
+                "INSERT INTO expense_categories (code, label, type, parent_id, sort_order, show_contractors, show_shift) "
+                "VALUES (?,?,?,NULL,?,1,0)",
+                (code, label, cat_type, max_sort + 1)
+            )
+        if old_names:
+            for _table in ('contractors', 'bank_transactions', 'bank_parse_rules'):
+                _rows = conn.execute(f"SELECT DISTINCT category FROM {_table} WHERE category != ''").fetchall()
+                for _r in _rows:
+                    if (_r['category'] or '').lower() in old_names:
+                        conn.execute(f"UPDATE {_table} SET category='' WHERE category=?", (_r['category'],))
+            for _setting_key in ('bank_income_ctr_cats', 'bank_expense_ctr_cats'):
+                _row = conn.execute("SELECT value FROM api_settings WHERE key=?", (_setting_key,)).fetchone()
+                if _row and _row['value']:
+                    try:
+                        _vals = _json_lib.loads(_row['value'])
+                    except Exception:
+                        _vals = None
+                    if isinstance(_vals, list):
+                        _cleaned = [v for v in _vals if (v or '').lower() not in old_names]
+                        if _cleaned != _vals:
+                            conn.execute(
+                                "UPDATE api_settings SET value=? WHERE key=?",
+                                (_json_lib.dumps(_cleaned), _setting_key)
+                            )
 
         # PnL report settings storage
         conn.executescript('''
@@ -2419,6 +2472,7 @@ def shift_view(shift_id):
             (shift_id,)
         ).fetchall()
         all_cats = get_expense_categories(conn, branch_id=shift['branch_id'])
+        all_cats = [c for c in all_cats if c['show_shift']]
         expense_cats = [c for c in all_cats if c['type'] != 'income']
         income_cats  = [c for c in all_cats if c['type'] == 'income']
         expense_cats_groups = build_cats_groups(expense_cats)
@@ -4627,6 +4681,8 @@ def add_expense_cat():
     label = request.form.get('label', '').strip()
     cat_type = request.form.get('type', 'expense')
     parent_id = request.form.get('parent_id') or None
+    show_contractors = 1 if request.form.get('show_contractors') else 0
+    show_shift = 1 if request.form.get('show_shift') else 0
     if cat_type not in ('expense', 'income'):
         cat_type = 'expense'
     if not label:
@@ -4637,7 +4693,7 @@ def add_expense_cat():
         if parent_id:
             parent_row = conn.execute('SELECT id, type FROM expense_categories WHERE id=?', (parent_id,)).fetchone()
             if not parent_row:
-                flash('Родительская категория не найдена', 'danger')
+                flash('Группа не найдена', 'danger')
                 return redirect(url_for('settings'))
             cat_type = parent_row['type']
             parent_id = parent_row['id']
@@ -4646,8 +4702,9 @@ def add_expense_cat():
             code = code + '_' + str(int(datetime.now().timestamp()))[-4:]
         max_sort = conn.execute('SELECT COALESCE(MAX(sort_order),0) FROM expense_categories').fetchone()[0]
         conn.execute(
-            'INSERT INTO expense_categories (code, label, type, parent_id, sort_order) VALUES (?,?,?,?,?)',
-            (code, label, cat_type, parent_id, max_sort + 1)
+            'INSERT INTO expense_categories (code, label, type, parent_id, sort_order, show_contractors, show_shift) '
+            'VALUES (?,?,?,?,?,?,?)',
+            (code, label, cat_type, parent_id, max_sort + 1, show_contractors, show_shift)
         )
         conn.commit()
     kind = 'Подкатегория' if parent_id else 'Категория'
@@ -4688,11 +4745,39 @@ def delete_expense_cat(cat_id):
 @owner_required
 def edit_expense_cat(cat_id):
     label = request.form.get('label', '').strip()
+    parent_id = request.form.get('parent_id') or None
+    show_contractors = 1 if request.form.get('show_contractors') else 0
+    show_shift = 1 if request.form.get('show_shift') else 0
     if not label:
         flash('Введите название', 'danger')
         return redirect(url_for('settings'))
     with get_db() as conn:
-        conn.execute('UPDATE expense_categories SET label=? WHERE id=?', (label, cat_id))
+        cat = conn.execute('SELECT id, type FROM expense_categories WHERE id=?', (cat_id,)).fetchone()
+        if not cat:
+            flash('Категория не найдена', 'danger')
+            return redirect(url_for('settings'))
+        if parent_id:
+            if int(parent_id) == cat_id:
+                flash('Категория не может быть группой сама для себя', 'danger')
+                return redirect(url_for('settings'))
+            parent_row = conn.execute(
+                'SELECT id FROM expense_categories WHERE id=? AND type=? AND parent_id IS NULL',
+                (parent_id, cat['type'])
+            ).fetchone()
+            if not parent_row:
+                flash('Группа не найдена', 'danger')
+                return redirect(url_for('settings'))
+            has_children = conn.execute(
+                'SELECT COUNT(*) FROM expense_categories WHERE parent_id=?', (cat_id,)
+            ).fetchone()[0]
+            if has_children:
+                flash('У этой категории есть свои подкатегории — сначала перенесите их, группу нельзя вложить в другую группу', 'danger')
+                return redirect(url_for('settings'))
+            parent_id = parent_row['id']
+        conn.execute(
+            'UPDATE expense_categories SET label=?, parent_id=?, show_contractors=?, show_shift=? WHERE id=?',
+            (label, parent_id, show_contractors, show_shift, cat_id)
+        )
         conn.commit()
     flash('Категория обновлена', 'success')
     return redirect(url_for('settings'))
@@ -6784,7 +6869,9 @@ def pnl_report():
         branches      = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
         branch_groups = get_branch_groups(conn)
         all_cats      = get_expense_categories(conn)
-        all_ctr_cats  = conn.execute('SELECT * FROM contractor_categories ORDER BY sort_order, name').fetchall()
+        ctr_all_cats  = [c for c in all_cats if c['show_contractors']]
+        ctr_cats_income  = [c for c in ctr_all_cats if c['type'] == 'income']
+        ctr_cats_expense = [c for c in ctr_all_cats if c['type'] != 'income']
         cfg           = _pnl_load_settings(conn)
 
         if branch_ids:
@@ -6910,8 +6997,7 @@ def pnl_report():
             WHERE category IS NOT NULL AND category != '' LIMIT 10
         """).fetchall()
         bt_debug['sample_cats'] = [r['category'] for r in _bt_cats]
-        _ctr_cats = conn.execute("SELECT name FROM contractor_categories ORDER BY sort_order, name").fetchall()
-        bt_debug['ctr_cats'] = [r['name'] for r in _ctr_cats]
+        bt_debug['ctr_cats'] = [c['code'] for c in ctr_all_cats]
 
         # ФОТ по ролям
         sal_by_role = defaultdict(lambda: defaultdict(float))
@@ -7011,7 +7097,7 @@ def pnl_report():
         cfg=cfg,
         branches=branches, branch_groups=branch_groups,
         all_cats=all_cats, cat_map=cat_map,
-        all_ctr_cats=all_ctr_cats,
+        ctr_cats_income=ctr_cats_income, ctr_cats_expense=ctr_cats_expense,
         role_labels=ROLE_LABELS,
         date_from=date_from, date_to=date_to,
         branch_ids=branch_ids, group_by=group_by,
@@ -7807,8 +7893,7 @@ def bank():
             'SELECT t.*, b.name as branch_name FROM bank_terminals t LEFT JOIN branches b ON b.id=t.branch_id ORDER BY t.terminal_number'
         ).fetchall()
         branches    = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
-        exp_cats    = get_expense_categories(conn)
-        ctr_cats    = conn.execute('SELECT * FROM contractor_categories ORDER BY sort_order, name').fetchall()
+        exp_cats    = [c for c in get_expense_categories(conn) if c['show_contractors']]
 
         beznal_rows = []
         beznal_branches = []
@@ -7903,7 +7988,7 @@ def bank():
         tab=tab, date_from=date_from, date_to=date_to,
         accounts=accounts, acc_branches=acc_branches, statements=statements,
         contractors=contractors, terminals=terminals,
-        branches=branches, exp_cats=exp_cats, ctr_cats=ctr_cats,
+        branches=branches, exp_cats=exp_cats,
         beznal_rows=beznal_rows, beznal_branches=beznal_branches,
         expense_rows=expense_rows, expense_total=expense_total,
         compare_rows=compare_rows, compare_bank=compare_bank, compare_crm=compare_crm,
@@ -8112,7 +8197,7 @@ def bank_classify(stmt_id):
             'SELECT COUNT(*) FROM bank_transactions WHERE statement_id=?', (stmt_id,)
         ).fetchone()[0]
         branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
-        exp_cats = get_expense_categories(conn)
+        exp_cats = [c for c in get_expense_categories(conn) if c['show_contractors']]
 
     return render_template('bank_classify.html',
         stmt=stmt, counterparties=counterparties, tid_list=tid_list,
@@ -8234,40 +8319,6 @@ def bank_account_delete(acc_id):
         conn.commit()
     flash('Счёт удалён', 'success')
     return redirect(url_for('bank', tab='accounts'))
-
-
-@app.route('/bank/contractor-categories/add', methods=['POST'])
-@login_required
-@owner_required
-def bank_ctr_cat_add():
-    name      = request.form.get('name', '').strip()
-    direction = request.form.get('direction', 'any')
-    if name:
-        with get_db() as conn:
-            conn.execute('INSERT OR IGNORE INTO contractor_categories (name, direction) VALUES (?,?)', (name, direction))
-            conn.commit()
-    return redirect(url_for('bank', tab='contractors'))
-
-
-@app.route('/bank/contractor-categories/<int:cat_id>/direction', methods=['POST'])
-@login_required
-@owner_required
-def bank_ctr_cat_direction(cat_id):
-    direction = request.form.get('direction', 'any')
-    with get_db() as conn:
-        conn.execute('UPDATE contractor_categories SET direction=? WHERE id=?', (direction, cat_id))
-        conn.commit()
-    return redirect(url_for('bank', tab='contractors'))
-
-
-@app.route('/bank/contractor-categories/<int:cat_id>/delete', methods=['POST'])
-@login_required
-@owner_required
-def bank_ctr_cat_delete(cat_id):
-    with get_db() as conn:
-        conn.execute('DELETE FROM contractor_categories WHERE id=?', (cat_id,))
-        conn.commit()
-    return redirect(url_for('bank', tab='contractors'))
 
 
 @app.route('/bank/contractors/add', methods=['POST'])
@@ -8539,13 +8590,13 @@ def bank_statement_view(stmt_id):
         contractors = conn.execute(
             'SELECT * FROM contractors WHERE is_active=1 AND COALESCE(is_card_merchant,0)=0 ORDER BY name'
         ).fetchall()
-        all_ctr_cats = conn.execute('SELECT * FROM contractor_categories ORDER BY sort_order, name').fetchall()
-        ctr_cats_income  = [c for c in all_ctr_cats if c['direction'] in ('income', 'any')]
-        ctr_cats_expense = [c for c in all_ctr_cats if c['direction'] in ('expense', 'any')]
+        all_exp_cats     = [c for c in get_expense_categories(conn) if c['show_contractors']]
+        exp_cats_income  = [c for c in all_exp_cats if c['type'] == 'income']
+        exp_cats_expense = [c for c in all_exp_cats if c['type'] != 'income']
     unique_cats = sorted(set(d['category'] for d in txns if d.get('category')))
     return render_template('bank_statement.html',
         stmt=stmt, txns=txns, contractors=contractors,
-        ctr_cats_income=ctr_cats_income, ctr_cats_expense=ctr_cats_expense,
+        exp_cats_income=exp_cats_income, exp_cats_expense=exp_cats_expense,
         unique_cats=unique_cats)
 
 
