@@ -9,6 +9,13 @@
   #dash-branch-btn { width:auto; height:26px; border-radius:20px; padding:0 10px; gap:5px; }
   #dash-branch-abbr { display:inline; }
 }
+.rev-nav-arrow {
+  width:22px; height:22px; flex-shrink:0; border-radius:50%; border:1.5px solid rgba(255,255,255,.35);
+  background:rgba(255,255,255,.12); color:#fff; cursor:pointer; padding:0; display:none;
+  align-items:center; justify-content:center; font-size:13px; font-weight:700; line-height:1;
+  transition:all .15s;
+}
+.rev-nav-arrow:hover { background:rgba(255,255,255,.25); }
 </style>
 
 <!-- ══ REVENUE CARD ══ -->
@@ -18,8 +25,12 @@
     <div id="rev-card" style="background:linear-gradient(135deg,#4f46e5 0%,#7c3aed 60%,#9333ea 100%); border-radius:20px; padding:28px 28px 24px; color:#fff; position:relative;">
       <!-- Period buttons -->
       <div style="display:flex; gap:6px; margin-bottom:20px; align-items:center;">
-        <button onclick="loadRevCard('today')" data-rp="today" class="rev-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Сегодня</button>
-        <button onclick="loadRevCard('month')" data-rp="month" class="rev-period-btn rev-period-active" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.9); background:rgba(255,255,255,.25); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Месяц</button>
+        <button id="rev-today-prev" class="rev-nav-arrow" onclick="navRevToday(-1)" title="Предыдущий день">‹</button>
+        <button onclick="selectRevToday()" data-rp="today" id="rev-today-btn" class="rev-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Сегодня</button>
+        <button id="rev-today-next" class="rev-nav-arrow" onclick="navRevToday(1)" title="Следующий день">›</button>
+        <button id="rev-month-prev" class="rev-nav-arrow" onclick="navRevMonth(-1)" title="Предыдущий месяц">‹</button>
+        <button onclick="selectRevMonth()" data-rp="month" id="rev-month-btn" class="rev-period-btn rev-period-active" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.9); background:rgba(255,255,255,.25); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Месяц</button>
+        <button id="rev-month-next" class="rev-nav-arrow" onclick="navRevMonth(1)" title="Следующий месяц">›</button>
         <button onclick="loadRevCard('year')"  data-rp="year"  class="rev-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Год</button>
         <button onclick="loadRevCard('all')"   data-rp="all"   class="rev-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Всё</button>
         <button id="rev-cal-btn" onclick="openRevCal()" title="Выбрать период" style="width:26px; height:26px; flex-shrink:0; border-radius:50%; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); cursor:pointer; padding:0; display:inline-flex; align-items:center; justify-content:center; transition:all .15s;">
@@ -61,12 +72,6 @@
             {% endfor %}
           </div>
         </div>
-        <button id="rev-day-toggle" onclick="toggleDayChart()" title="График по дням" style="display:none; width:28px; height:28px; flex-shrink:0; border-radius:50%; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); cursor:pointer; padding:0; align-items:center; justify-content:center; transition:all .15s;">
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor"><rect x="1" y="8" width="2.5" height="6" rx="0.5"/><rect x="5" y="5" width="2.5" height="9" rx="0.5"/><rect x="9" y="2" width="2.5" height="12" rx="0.5"/><rect x="13" y="6" width="2.5" height="8" rx="0.5"/></svg>
-        </button>
-        <button id="rev-year-day-toggle" onclick="toggleYearDayChart()" title="График по дням" style="display:none; width:28px; height:28px; flex-shrink:0; border-radius:50%; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); cursor:pointer; padding:0; align-items:center; justify-content:center; transition:all .15s;">
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor"><rect x="1" y="8" width="2.5" height="6" rx="0.5"/><rect x="5" y="5" width="2.5" height="9" rx="0.5"/><rect x="9" y="2" width="2.5" height="12" rx="0.5"/><rect x="13" y="6" width="2.5" height="8" rx="0.5"/></svg>
-        </button>
       </div>
       <!-- Label -->
       <div style="font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; opacity:.7; margin-bottom:6px;">Общая выручка</div>
@@ -414,14 +419,30 @@ loadKpi();
 var revPeriod           = 'today';
 var revChart            = null;
 var revDayChart         = null;
-var revDayVisible       = false;
 var revYearDayChart     = null;
-var revYearDayVisible   = false;
-var revYearDayFrom      = null;
-var revYearDayTo        = null;
 var revYear             = new Date().getFullYear();
 var revCustomFrom       = null;
 var revCustomTo         = null;
+var revTodayDate        = new Date();
+var revMonthDate        = (function() { var d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); })();
+
+function selectRevToday() {
+    revTodayDate = new Date();
+    loadRevCard('today');
+}
+function selectRevMonth() {
+    var d = new Date();
+    revMonthDate = new Date(d.getFullYear(), d.getMonth(), 1);
+    loadRevCard('month');
+}
+function navRevToday(delta) {
+    revTodayDate.setDate(revTodayDate.getDate() + delta);
+    loadRevCard('today');
+}
+function navRevMonth(delta) {
+    revMonthDate = new Date(revMonthDate.getFullYear(), revMonthDate.getMonth() + delta, 1);
+    loadRevCard('month');
+}
 
 // ── Branch selector ───────────────────────────────────────────────────────────
 var DASH_BRANCH_GROUPS = {{ branch_groups | tojson }};
@@ -496,14 +517,6 @@ function onDashBranchChange() {
 
 function refreshDashRevData() {
     loadRevCard(revPeriod);
-    if (revDayVisible) {
-        revDayVisible = false;
-        toggleDayChart();
-    }
-    if (revYearDayVisible) {
-        revYearDayVisible = false;
-        toggleYearDayChart();
-    }
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -654,7 +667,9 @@ function branchListHtml(branches, total) {
     return branches.map(function(b) {
         var barW = Math.min(100, total > 0 ? Math.round(b.revenue / total * 100) : 0);
         var rightHtml;
-        if (b.plan > 0) {
+        if (b.revenue === 0 && b.plan > 0) {
+            rightHtml = fmtNum(b.plan) + ' ₽ <span style="opacity:.6;font-size:11px;">(план)</span>';
+        } else if (b.plan > 0) {
             var diff = b.revenue - b.plan;
             var pct  = Math.round(Math.abs(diff) / b.plan * 100);
             var sign = diff >= 0 ? '+' : '−';
@@ -685,16 +700,9 @@ function showMonthDetail(monthIdx, monthYear, monthLabel) {
     var dateFrom = y + '-' + m + '-01';
     var dateTo   = y + '-' + m + '-' + String(lastDay).padStart(2, '0');
 
-    // сохраняем диапазон для дневного графика года
-    revYearDayFrom = dateFrom;
-    revYearDayTo   = dateTo;
-    // сбрасываем дневной график при смене месяца
-    revYearDayVisible = false;
-    var yDayBtn  = document.getElementById('rev-year-day-toggle');
     var yDayWrap = document.getElementById('rev-year-day-wrap');
-    if (yDayBtn)  { yDayBtn.style.border = '1.5px solid rgba(255,255,255,.35)'; yDayBtn.style.background = 'rgba(255,255,255,.12)'; yDayBtn.style.display = 'inline-flex'; yDayBtn.style.marginLeft = 'auto'; }
-    if (yDayWrap) { yDayWrap.style.display = 'none'; }
     if (revYearDayChart) { revYearDayChart.destroy(); revYearDayChart = null; }
+    if (yDayWrap) { yDayWrap.style.display = ''; }
 
     var detail    = document.getElementById('rev-month-detail');
     var titleEl   = document.getElementById('rev-month-title');
@@ -709,6 +717,13 @@ function showMonthDetail(monthIdx, monthYear, monthLabel) {
             if (!d.ok) return;
             branchEl.innerHTML = branchListHtml(d.branches, d.total);
             updateRightMetrics(d);
+        });
+
+    fetch('/api/revenue-days?date_from=' + dateFrom + '&date_to=' + dateTo + _revBranchSuffix())
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.ok) return;
+            revYearDayChart = makeDayChart('rev-year-day-canvas', d.days);
         });
 }
 
@@ -767,55 +782,6 @@ function makeDayChart(canvasId, days) {
             }
         }
     });
-}
-
-function toggleDayChart() {
-    revDayVisible = !revDayVisible;
-    var btn  = document.getElementById('rev-day-toggle');
-    var wrap = document.getElementById('rev-day-wrap');
-    if (revDayVisible) {
-        btn.style.border     = '1.5px solid rgba(255,255,255,.9)';
-        btn.style.background = 'rgba(255,255,255,.25)';
-        wrap.style.display   = '';
-        var today    = new Date();
-        var dateFrom = today.toISOString().split('T')[0].slice(0,7) + '-01';
-        var dateTo   = today.toISOString().split('T')[0];
-        fetch('/api/revenue-days?date_from=' + dateFrom + '&date_to=' + dateTo + _revBranchSuffix())
-            .then(function(r) { return r.json(); })
-            .then(function(d) {
-                if (!d.ok) return;
-                if (revDayChart) { revDayChart.destroy(); }
-                revDayChart = makeDayChart('rev-day-canvas', d.days);
-            });
-    } else {
-        btn.style.border     = '1.5px solid rgba(255,255,255,.35)';
-        btn.style.background = 'rgba(255,255,255,.12)';
-        wrap.style.display   = 'none';
-        if (revDayChart) { revDayChart.destroy(); revDayChart = null; }
-    }
-}
-
-function toggleYearDayChart() {
-    revYearDayVisible = !revYearDayVisible;
-    var btn  = document.getElementById('rev-year-day-toggle');
-    var wrap = document.getElementById('rev-year-day-wrap');
-    if (revYearDayVisible) {
-        btn.style.border     = '1.5px solid rgba(255,255,255,.9)';
-        btn.style.background = 'rgba(255,255,255,.25)';
-        wrap.style.display   = '';
-        fetch('/api/revenue-days?date_from=' + revYearDayFrom + '&date_to=' + revYearDayTo + _revBranchSuffix())
-            .then(function(r) { return r.json(); })
-            .then(function(d) {
-                if (!d.ok) return;
-                if (revYearDayChart) { revYearDayChart.destroy(); }
-                revYearDayChart = makeDayChart('rev-year-day-canvas', d.days);
-            });
-    } else {
-        btn.style.border     = '1.5px solid rgba(255,255,255,.35)';
-        btn.style.background = 'rgba(255,255,255,.12)';
-        wrap.style.display   = 'none';
-        if (revYearDayChart) { revYearDayChart.destroy(); revYearDayChart = null; }
-    }
 }
 
 function buildYearChart(months) {
@@ -906,29 +872,34 @@ function loadRevCard(period) {
     var yearWrap     = document.getElementById('rev-year-wrap');
     var dayWrap      = document.getElementById('rev-day-wrap');
     var monthDetail  = document.getElementById('rev-month-detail');
-    var dayToggleBtn = document.getElementById('rev-day-toggle');
 
-    var yearDayToggleBtn = document.getElementById('rev-year-day-toggle');
-    // show chart-toggle btn only for month
-    dayToggleBtn.style.display = (revPeriod === 'month') ? 'inline-flex' : 'none';
+    // day/month nav arrows visible only for their own period
+    var todayPrev = document.getElementById('rev-today-prev');
+    var todayNext = document.getElementById('rev-today-next');
+    var monthPrev = document.getElementById('rev-month-prev');
+    var monthNext = document.getElementById('rev-month-next');
+    if (todayPrev) todayPrev.style.display = (revPeriod === 'today') ? 'inline-flex' : 'none';
+    if (todayNext) todayNext.style.display = (revPeriod === 'today') ? 'inline-flex' : 'none';
+    if (monthPrev) monthPrev.style.display = (revPeriod === 'month') ? 'inline-flex' : 'none';
+    if (monthNext) monthNext.style.display = (revPeriod === 'month') ? 'inline-flex' : 'none';
+
+    // month button always shows the currently selected month name
+    var monthBtn = document.getElementById('rev-month-btn');
+    if (monthBtn) {
+        var curYear = new Date().getFullYear();
+        monthBtn.textContent = MONTHS_RU_FULL[revMonthDate.getMonth() + 1] +
+            (revMonthDate.getFullYear() !== curYear ? ' ' + revMonthDate.getFullYear() : '');
+    }
+
     // reset day chart when leaving month
-    if (revPeriod !== 'month' && revDayVisible) {
-        revDayVisible = false;
+    if (revPeriod !== 'month') {
         dayWrap.style.display = 'none';
-        dayToggleBtn.style.border     = '1.5px solid rgba(255,255,255,.35)';
-        dayToggleBtn.style.background = 'rgba(255,255,255,.12)';
         if (revDayChart) { revDayChart.destroy(); revDayChart = null; }
     }
-    // hide year-day toggle when leaving year/all mode
+    // reset year-day chart when leaving year/all mode
     if (revPeriod !== 'year' && revPeriod !== 'all') {
-        yearDayToggleBtn.style.display = 'none';
-        if (revYearDayVisible) {
-            revYearDayVisible = false;
-            document.getElementById('rev-year-day-wrap').style.display = 'none';
-            yearDayToggleBtn.style.border     = '1.5px solid rgba(255,255,255,.35)';
-            yearDayToggleBtn.style.background = 'rgba(255,255,255,.12)';
-            if (revYearDayChart) { revYearDayChart.destroy(); revYearDayChart = null; }
-        }
+        document.getElementById('rev-year-day-wrap').style.display = 'none';
+        if (revYearDayChart) { revYearDayChart.destroy(); revYearDayChart = null; }
     }
 
     var isCustomMonthly = revPeriod === 'custom' && revCustomFrom && revCustomTo &&
@@ -980,17 +951,23 @@ function loadRevCard(period) {
     if (revChart) { revChart.destroy(); revChart = null; }
     branchesWrap.innerHTML = '<div style="opacity:.5;font-size:13px;">Загрузка…</div>';
 
-    var today = new Date();
-    var fmt   = function(d) { return d.toISOString().split('T')[0]; };
+    var fmt = function(d) { return d.toISOString().split('T')[0]; };
+    var fmtLabel = function(s) { return s.split('-').reverse().join('.'); };
     var dateTo, dateFrom;
     if (revPeriod === 'custom' && revCustomFrom && revCustomTo) {
         dateFrom = revCustomFrom;
         dateTo   = revCustomTo;
-        var fmtLabel = function(s) { return s.split('-').reverse().join('.'); };
         document.getElementById('rev-period-label').textContent = fmtLabel(dateFrom) + ' — ' + fmtLabel(dateTo);
+    } else if (revPeriod === 'today') {
+        dateFrom = dateTo = fmt(revTodayDate);
+        document.getElementById('rev-period-label').textContent = fmtLabel(dateTo);
     } else {
-        dateTo   = fmt(today);
-        dateFrom = revPeriod === 'today' ? dateTo : fmt(today).slice(0,7) + '-01';
+        var y = revMonthDate.getFullYear();
+        var m = revMonthDate.getMonth();
+        var lastDay = new Date(y, m + 1, 0).getDate();
+        dateFrom = y + '-' + String(m + 1).padStart(2, '0') + '-01';
+        dateTo   = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
+        document.getElementById('rev-period-label').textContent = 'рублей';
     }
 
     loadRegionSplit(dateFrom, dateTo);
@@ -999,17 +976,32 @@ function loadRevCard(period) {
         .then(function(r) { return r.json(); })
         .then(function(d) {
             if (!d.ok) return;
-            document.getElementById('rev-total').textContent = fmtNum(d.total);
-            showPlanDiff(d.total, d.plan_total || 0);
+            if (d.total > 0 || !d.plan_total) {
+                document.getElementById('rev-total').textContent = fmtNum(d.total);
+                showPlanDiff(d.total, d.plan_total || 0);
+            } else {
+                document.getElementById('rev-total').textContent = fmtNum(d.plan_total);
+                var pd = document.getElementById('rev-plan-diff');
+                pd.style.color = 'rgba(255,255,255,.65)';
+                pd.textContent = '(план)';
+            }
             branchesWrap.innerHTML = branchListHtml(d.branches, d.total);
             updateRightMetrics(d);
         });
+
+    if (revPeriod === 'month') {
+        dayWrap.style.display = '';
+        fetch('/api/revenue-days?date_from=' + dateFrom + '&date_to=' + dateTo + _revBranchSuffix())
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (!d.ok) return;
+                if (revDayChart) { revDayChart.destroy(); }
+                revDayChart = makeDayChart('rev-day-canvas', d.days);
+            });
+    }
 }
 
 loadRevCard('month');
-if (window.matchMedia('(min-width: 992px)').matches) {
-    toggleDayChart();
-}
 </script>
 {% endblock %}
 
