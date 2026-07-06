@@ -560,15 +560,24 @@ def build_cats_groups(cats):
 
 def filter_cats_by_flag(cats, flag):
     """Keep categories visible for a given place of use (e.g. 'show_shift').
-    A group (parent) with no children of its own is kept only if its own flag
-    is set; a group with at least one visible child is always kept (as an
-    <optgroup> label), regardless of the group's own flag, since a group with
-    children is never itself directly selectable."""
-    visible_child_parent_ids = {c['parent_id'] for c in cats if c['parent_id'] and c[flag]}
-    return [
-        c for c in cats
-        if c[flag] or (not c['parent_id'] and c['id'] in visible_child_parent_ids)
-    ]
+    A top-level category that has children is a pure group label — it is never
+    directly selectable itself, and is only kept (as an <optgroup>) if it has at
+    least one visible child; its own flag is irrelevant. A top-level category
+    with no children at all is a plain, directly selectable item, kept only if
+    its own flag is set. Child categories are kept only if their own flag is set."""
+    parent_ids_with_any_child = {c['parent_id'] for c in cats if c['parent_id']}
+    parent_ids_with_visible_child = {c['parent_id'] for c in cats if c['parent_id'] and c[flag]}
+    result = []
+    for c in cats:
+        if c['parent_id']:
+            if c[flag]:
+                result.append(c)
+        elif c['id'] in parent_ids_with_any_child:
+            if c['id'] in parent_ids_with_visible_child:
+                result.append(c)
+        elif c[flag]:
+            result.append(c)
+    return result
 
 
 def _manual_rev_total(conn, date_from, date_to, bids=None):
