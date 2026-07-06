@@ -558,6 +558,19 @@ def build_cats_groups(cats):
     return groups
 
 
+def filter_cats_by_flag(cats, flag):
+    """Keep categories visible for a given place of use (e.g. 'show_shift').
+    A group (parent) with no children of its own is kept only if its own flag
+    is set; a group with at least one visible child is always kept (as an
+    <optgroup> label), regardless of the group's own flag, since a group with
+    children is never itself directly selectable."""
+    visible_child_parent_ids = {c['parent_id'] for c in cats if c['parent_id'] and c[flag]}
+    return [
+        c for c in cats
+        if c[flag] or (not c['parent_id'] and c['id'] in visible_child_parent_ids)
+    ]
+
+
 def _manual_rev_total(conn, date_from, date_to, bids=None):
     """Сумма revenue_manual за период там, где нет смены с уже внесённой выручкой (fallback)."""
     bf = f"AND m.branch_id IN ({','.join(str(b) for b in bids)})" if bids else ""
@@ -2472,12 +2485,11 @@ def shift_view(shift_id):
             (shift_id,)
         ).fetchall()
         all_cats = get_expense_categories(conn, branch_id=shift['branch_id'])
-        all_cats = [c for c in all_cats if c['show_shift']]
         expense_cats = [c for c in all_cats if c['type'] != 'income']
         income_cats  = [c for c in all_cats if c['type'] == 'income']
-        expense_cats_groups = build_cats_groups(expense_cats)
+        expense_cats_groups = build_cats_groups(filter_cats_by_flag(expense_cats, 'show_shift'))
         expense_cats_flat   = [(c['code'], c['label']) for c in expense_cats]
-        income_cats_groups  = build_cats_groups(income_cats)
+        income_cats_groups  = build_cats_groups(filter_cats_by_flag(income_cats, 'show_shift'))
         income_cats_flat    = [(c['code'], c['label']) for c in income_cats]
         seen_taxi_ids = set()
         taxi_staff = []
