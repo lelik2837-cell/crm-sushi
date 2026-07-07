@@ -45,6 +45,7 @@
                     <input type="text" id="revRangePicker" class="form-control form-control-sm" style="width:110px;cursor:pointer;" readonly placeholder="дд.мм — дд.мм">
                 </div>
             </div>
+            {% if session.get('role') == 'owner' or can_pick_other_branches('reports_shifts') %}
             <div class="col-md-4">
                 <label class="form-label small fw-semibold">Филиалы</label>
                 <div class="dropdown">
@@ -88,6 +89,7 @@
                     </ul>
                 </div>
             </div>
+            {% endif %}
             <div class="col-md-2">
                 <label class="form-label small fw-semibold d-none d-md-block">&nbsp;</label>
                 <button type="submit" class="btn btn-primary w-100">Применить</button>
@@ -316,6 +318,7 @@
                 <label class="form-label small fw-semibold">По</label>
                 <input type="date" name="s_date_to" value="{{ s_date_to }}" class="form-control">
             </div>
+            {% if session.get('role') == 'owner' or can_pick_other_branches('reports_salary') %}
             <div class="col-6 col-md-2">
                 <label class="form-label small fw-semibold">Филиал</label>
                 <select name="s_branch_id" class="form-select">
@@ -325,6 +328,7 @@
                     {% endfor %}
                 </select>
             </div>
+            {% endif %}
             <div class="col-6 col-md-2">
                 <label class="form-label small fw-semibold">Должность</label>
                 <select name="s_role" class="form-select">

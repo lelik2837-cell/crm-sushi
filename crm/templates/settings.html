@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% set active_tab = request.args.get('tab', 'categories') %}
-{% set tab_titles = {'categories': 'Категории расходов / доходов', 'bonuses': 'Премии', 'rates': 'Ставки сотрудников', 'api': 'Интеграции (1С, выручка)'} %}
+{% set tab_titles = {'categories': 'Категории расходов / доходов', 'bonuses': 'Премии', 'rates': 'Ставки сотрудников', 'api': 'Интеграции (1С, выручка)', 'roles': 'Роли и доступ'} %}
 {% block title %}Настройки — {{ tab_titles.get(active_tab, '') }}{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -1195,6 +1195,65 @@
 
     </div>{% endif %}
 
+    {% if active_tab == 'roles' %}<div>
+    <form method="POST" action="{{ url_for('role_permissions_save') }}">
+        <div class="alert alert-info small">
+            Владелец всегда видит и может всё. Здесь настраивается, что видят остальные роли,
+            и — для страниц с данными по филиалам — видят ли они только свои филиалы,
+            или свои по умолчанию с возможностью посмотреть чужие.
+        </div>
+        {% for grp, grp_label in menu_group_labels.items() %}
+        <div class="card mb-3">
+            <div class="card-header bg-light fw-bold">{{ grp_label }}</div>
+            <div class="table-responsive">
+                <table class="table table-sm mb-0 align-middle roles-perm-table">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="min-width:180px">Пункт</th>
+                            {% for role in role_configurable %}
+                            <th class="text-center" colspan="2">{{ login_role_labels[role] }}</th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for code, label, item_grp, branch_scoped in menu_items if item_grp == grp %}
+                        <tr>
+                            <td class="small">{{ label }}</td>
+                            {% for role in role_configurable %}
+                            {% set perm = role_perms[role].get(code, {'visible': False, 'branch_scope': 'own_only'}) %}
+                            <td class="text-center" style="width:1%">
+                                <input type="checkbox" class="form-check-input rp-visible"
+                                       name="visible_{{ role }}_{{ code }}" value="1"
+                                       data-target="scope_{{ role }}_{{ code }}"
+                                       {% if perm.visible %}checked{% endif %}
+                                       onchange="rpToggleScope(this)">
+                            </td>
+                            <td style="min-width:170px">
+                                {% if branch_scoped %}
+                                <select name="scope_{{ role }}_{{ code }}" id="scope_{{ role }}_{{ code }}"
+                                        class="form-select form-select-sm"
+                                        {% if not perm.visible %}disabled{% endif %}>
+                                    <option value="own_only" {% if perm.branch_scope != 'own_default' %}selected{% endif %}>Только свои филиалы</option>
+                                    <option value="own_default" {% if perm.branch_scope == 'own_default' %}selected{% endif %}>Свои по умолчанию, можно выбрать другие</option>
+                                </select>
+                                {% else %}
+                                <span class="text-muted small">—</span>
+                                {% endif %}
+                            </td>
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endfor %}
+        <button type="submit" class="btn btn-primary">
+            <i class="bi bi-floppy me-1"></i>Сохранить права доступа
+        </button>
+    </form>
+    </div>{% endif %}
+
 </div>
 
 <!-- Modal: редактировать правило премирования -->
@@ -1375,6 +1434,11 @@ function openEditCat(catId, label, branchIds, type, parentId, showContractors, s
     document.getElementById('editShowContractors').checked = !!showContractors;
     document.getElementById('editShowShift').checked = !!showShift;
     bootstrap.Modal.getOrCreateInstance(document.getElementById('editCatModal')).show();
+}
+
+function rpToggleScope(cb) {
+    var sel = document.getElementById(cb.dataset.target);
+    if (sel) sel.disabled = !cb.checked;
 }
 </script>
 {% endblock %}

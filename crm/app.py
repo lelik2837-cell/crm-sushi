@@ -16,7 +16,7 @@ from functools import wraps
 # Гарантируем что папка crm/ в пути — нужно для sber_api.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from datetime import date, datetime, timedelta
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, g
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 import sqlite3
@@ -98,6 +98,49 @@ ACTION_LABELS = {
     'shift_close':    ('Закрытие',     'secondary'),
     'shift_reopen':   ('Переоткрытие', 'warning'),
     'salary_paid':    ('Выплата ЗП',   'primary'),
+}
+
+# Реестр пунктов меню для настраиваемых прав доступа по ролям (см. role_menu_permissions).
+# (code, label, group ('dash'|'reports'|'settings'), branch_scoped)
+MENU_ITEMS = [
+    ('dashboard',             'Дашборд',                 'dash',     True),
+    ('fot_dashboard',         'ФОТ',                      'dash',     True),
+    ('lfl_dashboard',         'LFL',                      'dash',     True),
+    ('ratings_dashboard',     'Рейтинги',                 'dash',     True),
+    ('shifts_archive',        'Смены',                    'reports',  True),
+    ('reports_shifts',        'Выручка',                  'reports',  True),
+    ('reports_salary',        'Зарплаты',                 'reports',  True),
+    ('expenses_report',       'Другие расходы',           'reports',  True),
+    ('cash_flow_report',      'Движение наличных',        'reports',  True),
+    ('report_reconciliation', 'Сверка итогов',            'reports',  True),
+    ('pnl_report',            'P&L отчёт',                'reports',  True),
+    ('change_settings',       'Размен',                   'reports',  True),
+    ('purchases',             'Накладные',                'reports',  True),
+    ('bank',                  'Банк',                     'reports',  True),
+    ('employees',             'Сотрудники',               'settings', True),
+    ('history',               'История изменений',        'settings', True),
+    ('import_shifts',         'Импорт смен',              'settings', False),
+    ('branches',              'Филиалы',                  'settings', False),
+    ('users',                 'Пользователи',             'settings', False),
+    ('settings_rates',        'Ставки сотрудников',       'settings', False),
+    ('settings_api',          'Интеграция 1С',            'settings', False),
+    ('settings_categories',   'Категории расходов',       'settings', False),
+    ('settings_bonuses',      'Премии',                   'settings', False),
+    ('flyer_promo_settings',  'Листовка (промокод)',      'settings', False),
+    ('revenue_manual',        'Старая выручка',           'settings', False),
+    ('gsheet_settings',       'Экспорт в Google Sheets',  'settings', False),
+]
+MENU_ITEMS_BY_CODE = {m[0]: {'label': m[1], 'group': m[2], 'branch_scoped': m[3]} for m in MENU_ITEMS}
+MENU_GROUP_LABELS = {'dash': 'Дашборд', 'reports': 'Отчёты', 'settings': 'Настройки'}
+ROLE_CONFIGURABLE = ('admin', 'director', 'employee')
+LOGIN_ROLE_LABELS = {'admin': 'Администратор', 'director': 'Управляющий', 'employee': 'Сотрудник'}
+
+# Дефолтная матрица прав — воспроизводит СЕГОДНЯШНЕЕ поведение 1-в-1,
+# чтобы включение фичи ничего не сломало на существующих базах.
+_DEFAULT_ROLE_VISIBLE = {
+    'director': {'employees'},
+    'admin': set(),
+    'employee': set(),
 }
 
 FORMULA_VARS = {
@@ -1382,6 +1425,29 @@ def init_db():
             );
         ''')
 
+        # Настраиваемые права ролей: видимость пунктов меню + область филиалов
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS role_menu_permissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                role TEXT NOT NULL,
+                item_code TEXT NOT NULL,
+                visible INTEGER DEFAULT 0,
+                branch_scope TEXT DEFAULT 'own_only',
+                UNIQUE(role, item_code)
+            );
+        ''')
+        for _role in ROLE_CONFIGURABLE:
+            for _code, _meta in MENU_ITEMS_BY_CODE.items():
+                if conn.execute(
+                    'SELECT 1 FROM role_menu_permissions WHERE role=? AND item_code=?', (_role, _code)
+                ).fetchone():
+                    continue
+                _visible = 1 if _code in _DEFAULT_ROLE_VISIBLE.get(_role, set()) else 0
+                conn.execute(
+                    'INSERT INTO role_menu_permissions (role, item_code, visible, branch_scope) VALUES (?,?,?,?)',
+                    (_role, _code, _visible, 'own_only')
+                )
+
         conn.execute('''
             CREATE TABLE IF NOT EXISTS revenue_plan (
                 branch_id INTEGER NOT NULL,
@@ -1442,6 +1508,97 @@ def owner_required(f):
             return redirect(url_for('dashboard'))
         return f(*args, **kwargs)
     return decorated
+
+
+def _load_role_perms():
+    """Права меню текущей сессии, закэшированные на flask.g на время запроса."""
+    if hasattr(g, '_role_perms'):
+        return g._role_perms
+    role = session.get('role')
+    perms = {}
+    if role in ROLE_CONFIGURABLE:
+        with get_db() as conn:
+            rows = conn.execute(
+                'SELECT item_code, visible, branch_scope FROM role_menu_permissions WHERE role=?', (role,)
+            ).fetchall()
+        perms = {r['item_code']: {'visible': bool(r['visible']), 'branch_scope': r['branch_scope']} for r in rows}
+    g._role_perms = perms
+    return perms
+
+
+def item_visible(item_code):
+    """Виден ли пункт меню/страница текущей роли сессии. Owner — всегда True."""
+    role = session.get('role')
+    if role == 'owner':
+        return True
+    if role not in ROLE_CONFIGURABLE:
+        return False
+    return bool(_load_role_perms().get(item_code, {}).get('visible'))
+
+
+def group_has_visible_item(group):
+    return any(item_visible(code) for code, label, grp, scoped in MENU_ITEMS if grp == group)
+
+
+def any_menu_visible():
+    return any(group_has_visible_item(grp) for grp in ('dash', 'reports', 'settings'))
+
+
+app.jinja_env.globals['item_visible'] = item_visible
+app.jinja_env.globals['group_has_visible_item'] = group_has_visible_item
+app.jinja_env.globals['any_menu_visible'] = any_menu_visible
+
+
+def get_role_permissions(conn, role):
+    """{item_code: {'visible': bool, 'branch_scope': str}} для указанной роли (для UI настроек)."""
+    rows = conn.execute(
+        'SELECT item_code, visible, branch_scope FROM role_menu_permissions WHERE role=?', (role,)
+    ).fetchall()
+    return {r['item_code']: {'visible': bool(r['visible']), 'branch_scope': r['branch_scope']} for r in rows}
+
+
+def menu_permission_required(item_code):
+    """Замена @owner_required для страниц с настраиваемым доступом по ролям."""
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            if not item_visible(item_code):
+                flash('Доступ запрещён', 'danger')
+                return redirect(url_for('dashboard'))
+            return f(*args, **kwargs)
+        return decorated
+    return decorator
+
+
+def get_effective_branch_ids(item_code, requested_ids=None):
+    """Итоговый список филиалов для страницы item_code с учётом роли и её branch_scope.
+    requested_ids — то, что пользователь выбрал в селекторе (может быть пустым/None).
+    owner: requested_ids как есть (None/[] означает «все», как и раньше).
+    не-owner с own_only: всегда свои филиалы, requested_ids игнорируется.
+    не-owner с own_default: requested_ids, если переданы, иначе свои филиалы."""
+    role = session.get('role')
+    if role == 'owner':
+        return requested_ids
+    own_ids = [str(b) for b in _session_branch_ids()]
+    if role not in ROLE_CONFIGURABLE:
+        return own_ids
+    scope = _load_role_perms().get(item_code, {}).get('branch_scope', 'own_only')
+    if scope == 'own_default' and requested_ids:
+        return requested_ids
+    return own_ids
+
+
+def can_pick_other_branches(item_code):
+    """Может ли текущая роль вообще выбирать/видеть филиалы, отличные от своих, для item_code."""
+    role = session.get('role')
+    if role == 'owner':
+        return True
+    if role not in ROLE_CONFIGURABLE:
+        return False
+    return _load_role_perms().get(item_code, {}).get('branch_scope') == 'own_default'
+
+
+app.jinja_env.globals['can_pick_other_branches'] = can_pick_other_branches
 
 
 def get_current_user():
@@ -1650,8 +1807,14 @@ def dashboard():
                 month_rev=month_rev, month_fot=month_fot['fot'] or 0,
                 branch_groups=branch_groups)
         else:
+            if not item_visible('dashboard'):
+                # "dashboard" — единственная всегда-достижимая страница после логина,
+                # поэтому при скрытом пункте не редиректим (это дало бы цикл),
+                # а показываем пустую страницу без данных филиалов.
+                return render_template('dashboard_admin.html', branches_shifts=[], today=date.today().isoformat(), recent=[], no_access=True)
             today = date.today().isoformat()
-            bids = _session_branch_ids()
+            _req_bids = [b for b in request.args.getlist('branch_ids') if b.isdigit()]
+            bids = [int(b) for b in get_effective_branch_ids('dashboard', _req_bids) or []]
             if not bids:
                 flash('У вас не назначен филиал', 'warning')
                 return render_template('dashboard_admin.html', branches_shifts=[], today=today, recent=[])
@@ -1678,15 +1841,19 @@ def dashboard():
                 ''').fetchall()
             else:
                 recent = []
+            all_branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+            branch_groups = get_branch_groups(conn)
             return render_template('dashboard_admin.html',
-                branches_shifts=branches_shifts, today=today, recent=recent)
+                branches_shifts=branches_shifts, today=today, recent=recent,
+                all_branches=all_branches, branch_groups=branch_groups,
+                selected_branch_ids=_req_bids)
 
 
 # ─── KPI API ──────────────────────────────────────────────────────────────────
 
 @app.route('/api/kpi-values')
 @login_required
-@owner_required
+@menu_permission_required('dashboard')
 def api_kpi_values():
     branch_id = request.args.get('branch_id', '')
     date_from = request.args.get('date_from', date.today().isoformat())
@@ -1711,7 +1878,7 @@ def api_kpi_values():
 
 @app.route('/api/revenue-year')
 @login_required
-@owner_required
+@menu_permission_required('dashboard')
 def api_revenue_year():
     today = date.today()
     raw_bids = request.args.get('branch_ids', '')
@@ -1752,7 +1919,7 @@ def api_revenue_year():
 
 @app.route('/api/revenue-all')
 @login_required
-@owner_required
+@menu_permission_required('dashboard')
 def api_revenue_all():
     """Месячная выручка за весь период где есть данные (по выбранным филиалам)."""
     raw_bids = request.args.get('branch_ids', '')
@@ -1802,7 +1969,7 @@ def api_revenue_all():
 
 @app.route('/api/revenue-months')
 @login_required
-@owner_required
+@menu_permission_required('dashboard')
 def api_revenue_months():
     date_from = request.args.get('date_from')
     date_to   = request.args.get('date_to', date.today().isoformat())
@@ -1841,13 +2008,14 @@ def api_revenue_months():
 
 @app.route('/api/lfl')
 @login_required
-@owner_required
+@menu_permission_required('lfl_dashboard')
 def api_lfl():
     from calendar import monthrange
     today  = date.today()
     metric = request.args.get('metric', 'revenue')  # 'revenue' or 'orders'
     raw_bids = request.args.get('branch_ids', '')
     bids = [int(x) for x in raw_bids.split(',') if x.strip().isdigit()]
+    bids = [int(b) for b in get_effective_branch_ids('lfl_dashboard', [str(b) for b in bids]) or []]
     bf   = f"AND s.branch_id IN ({','.join('?'*len(bids))})" if bids else ''
     if metric == 'orders':
         agg = 'COALESCE(SUM(r.delivery_orders),0) + COALESCE(SUM(r.pickup_orders),0)'
@@ -1933,7 +2101,7 @@ def api_lfl():
 
 @app.route('/api/lfl-branches')
 @login_required
-@owner_required
+@menu_permission_required('lfl_dashboard')
 def api_lfl_branches():
     """LFL за последний месяц с данными — разбивка по каждому филиалу."""
     from calendar import monthrange as _mrange
@@ -1948,6 +2116,11 @@ def api_lfl_branches():
         branches = conn.execute(
             'SELECT id, name, abbr FROM branches WHERE is_active=1 ORDER BY id'
         ).fetchall()
+        _requested = [b for b in request.args.getlist('branch_ids') if b.isdigit()]
+        _allowed = get_effective_branch_ids('lfl_dashboard', _requested)
+        if _allowed:
+            _allowed_set = {int(x) for x in _allowed}
+            branches = [b for b in branches if b['id'] in _allowed_set]
         all_bids = [b['id'] for b in branches]
         if not all_bids:
             return jsonify({'ok': True, 'branches': [], 'month_label': ''})
@@ -2036,12 +2209,15 @@ def api_lfl_branches():
 
 @app.route('/api/revenue-summary')
 @login_required
-@owner_required
 def api_revenue_summary():
+    if not (item_visible('dashboard') or item_visible('ratings_dashboard')):
+        return jsonify({'ok': False, 'error': 'forbidden'}), 403
     date_from = request.args.get('date_from', date.today().isoformat())
     date_to   = request.args.get('date_to',   date.today().isoformat())
     raw_bids  = request.args.get('branch_ids', '')
     bids      = [int(x) for x in raw_bids.split(',') if x.strip().isdigit()]
+    _code = 'dashboard' if item_visible('dashboard') else 'ratings_dashboard'
+    bids      = [int(b) for b in get_effective_branch_ids(_code, [str(b) for b in bids]) or []]
     bf        = f"AND s.branch_id IN ({','.join('?'*len(bids))})" if bids else ''
     with get_db() as conn:
         total_row = conn.execute(f'''
@@ -2171,7 +2347,7 @@ def api_revenue_summary():
 
 @app.route('/api/revenue-days')
 @login_required
-@owner_required
+@menu_permission_required('dashboard')
 def api_revenue_days():
     date_from = request.args.get('date_from', date.today().isoformat())
     date_to   = request.args.get('date_to',   date.today().isoformat())
@@ -2197,12 +2373,13 @@ def api_revenue_days():
 
 @app.route('/api/fot-summary')
 @login_required
-@owner_required
+@menu_permission_required('fot_dashboard')
 def api_fot_summary():
     date_from = request.args.get('date_from', date.today().isoformat())
     date_to   = request.args.get('date_to',   date.today().isoformat())
     raw_bids  = request.args.get('branch_ids', '')
     bids      = [int(x) for x in raw_bids.split(',') if x.strip().isdigit()]
+    bids      = [int(b) for b in get_effective_branch_ids('fot_dashboard', [str(b) for b in bids]) or []]
     bf        = f"AND s.branch_id IN ({','.join('?'*len(bids))})" if bids else ''
     with get_db() as conn:
         rev_row = conn.execute(f'''
@@ -2246,7 +2423,7 @@ def api_fot_summary():
 
 @app.route('/api/fot-year')
 @login_required
-@owner_required
+@menu_permission_required('fot_dashboard')
 def api_fot_year():
     today   = date.today()
     start_m = today.month - 11
@@ -2258,6 +2435,7 @@ def api_fot_year():
     date_to   = today.isoformat()
     raw_bids  = request.args.get('branch_ids', '')
     bids      = [int(x) for x in raw_bids.split(',') if x.strip().isdigit()]
+    bids      = [int(b) for b in get_effective_branch_ids('fot_dashboard', [str(b) for b in bids]) or []]
     bf        = f"AND s.branch_id IN ({','.join('?'*len(bids))})" if bids else ''
     with get_db() as conn:
         fot_rows = conn.execute(f'''
@@ -2297,13 +2475,14 @@ def api_fot_year():
 
 @app.route('/api/fot-days')
 @login_required
-@owner_required
+@menu_permission_required('fot_dashboard')
 def api_fot_days():
     date_from = request.args.get('date_from', date.today().isoformat())
     date_to   = request.args.get('date_to',   date.today().isoformat())
     role      = request.args.get('role', '')
     raw_bids  = request.args.get('branch_ids', '')
     bids      = [int(x) for x in raw_bids.split(',') if x.strip().isdigit()]
+    bids      = [int(b) for b in get_effective_branch_ids('fot_dashboard', [str(b) for b in bids]) or []]
     bf        = f"AND s.branch_id IN ({','.join('?'*len(bids))})" if bids else ''
     with get_db() as conn:
         rev_rows = conn.execute(f'''
@@ -2342,29 +2521,41 @@ def api_fot_days():
 
 @app.route('/fot-dashboard')
 @login_required
-@owner_required
+@menu_permission_required('fot_dashboard')
 def fot_dashboard():
     with get_db() as conn:
         branches = [dict(b) for b in conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()]
+        if not can_pick_other_branches('fot_dashboard'):
+            own = {int(b) for b in get_effective_branch_ids('fot_dashboard', []) or []}
+            branches = [b for b in branches if b['id'] in own]
         branch_groups = get_branch_groups(conn)
     return render_template('fot_dashboard.html', branches=branches, branch_groups=branch_groups)
 
 
 @app.route('/lfl')
 @login_required
-@owner_required
+@menu_permission_required('lfl_dashboard')
 def lfl_dashboard():
     with get_db() as conn:
         branches = [dict(b) for b in conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()]
+        if not can_pick_other_branches('lfl_dashboard'):
+            own = {int(b) for b in get_effective_branch_ids('lfl_dashboard', []) or []}
+            branches = [b for b in branches if b['id'] in own]
         branch_groups = get_branch_groups(conn)
     return render_template('lfl_dashboard.html', branches=branches, branch_groups=branch_groups)
 
 
 @app.route('/ratings')
 @login_required
-@owner_required
+@menu_permission_required('ratings_dashboard')
 def ratings_dashboard():
-    return render_template('ratings_dashboard.html')
+    with get_db() as conn:
+        branches = [dict(b) for b in conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()]
+        if not can_pick_other_branches('ratings_dashboard'):
+            own = {int(b) for b in get_effective_branch_ids('ratings_dashboard', []) or []}
+            branches = [b for b in branches if b['id'] in own]
+        branch_groups = get_branch_groups(conn)
+    return render_template('ratings_dashboard.html', branches=branches, branch_groups=branch_groups)
 
 
 # ─── SHIFTS ───────────────────────────────────────────────────────────────────
@@ -3590,7 +3781,7 @@ def close_shift(shift_id):
 
 @app.route('/shift/<int:shift_id>/reopen', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('shifts_archive')
 def reopen_shift(shift_id):
     with get_db() as conn:
         conn.execute(
@@ -3605,7 +3796,7 @@ def reopen_shift(shift_id):
 
 @app.route('/shift/<int:shift_id>/delete', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('shifts_archive')
 def delete_shift(shift_id):
     with get_db() as conn:
         shift = conn.execute('SELECT * FROM shifts WHERE id=?', (shift_id,)).fetchone()
@@ -3638,7 +3829,11 @@ def delete_shift(shift_id):
 @login_required
 def employees():
     role = session.get('role')
-    selected_branches = [bid for bid in request.args.getlist('branch_ids') if bid.isdigit()] if role == 'owner' else []
+    if not item_visible('employees'):
+        flash('Доступ запрещён', 'danger')
+        return redirect(url_for('dashboard'))
+    _req_branches = [bid for bid in request.args.getlist('branch_ids') if bid.isdigit()]
+    selected_branches = _req_branches if (role == 'owner' or can_pick_other_branches('employees')) else []
     search = request.args.get('search', '').strip()
     role_filter = request.args.get('role_filter', '').strip()
     with get_db() as conn:
@@ -3693,9 +3888,10 @@ def employees():
                 ).fetchall()
                 branches = all_branches
         else:
-            all_branches = []
             fired_emps = []
-            bids = _session_branch_ids()
+            all_branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall() \
+                if can_pick_other_branches('employees') else []
+            bids = [int(b) for b in get_effective_branch_ids('employees', _req_branches) or []]
             if bids:
                 ids_str = ','.join(str(int(b)) for b in bids)
                 emps = conn.execute(f'''
@@ -3895,7 +4091,7 @@ def toggle_employee(emp_id):
 
 @app.route('/employees/<int:emp_id>/fire', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('employees')
 def fire_employee(emp_id):
     comment = request.form.get('comment', '').strip()
     with get_db() as conn:
@@ -3910,7 +4106,7 @@ def fire_employee(emp_id):
 
 @app.route('/employees/<int:emp_id>/restore', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('employees')
 def restore_employee(emp_id):
     with get_db() as conn:
         conn.execute(
@@ -4223,7 +4419,7 @@ def update_taxi_employee(tte_id):
 
 @app.route('/branches')
 @login_required
-@owner_required
+@menu_permission_required('branches')
 def branches():
     with get_db() as conn:
         blist = conn.execute('SELECT * FROM branches ORDER BY name').fetchall()
@@ -4238,7 +4434,7 @@ def branches():
 
 @app.route('/branches/groups/add', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('branches')
 def add_branch_group():
     name = request.form.get('name', '').strip()
     abbr = request.form.get('abbr', '').strip().upper()[:3]
@@ -4262,7 +4458,7 @@ def add_branch_group():
 
 @app.route('/branches/groups/<int:group_id>/edit', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('branches')
 def edit_branch_group(group_id):
     name = request.form.get('name', '').strip()
     abbr = request.form.get('abbr', '').strip().upper()[:3]
@@ -4285,7 +4481,7 @@ def edit_branch_group(group_id):
 
 @app.route('/branches/groups/<int:group_id>/delete', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('branches')
 def delete_branch_group(group_id):
     with get_db() as conn:
         g = conn.execute('SELECT name FROM branch_groups WHERE id=?', (group_id,)).fetchone()
@@ -4298,7 +4494,7 @@ def delete_branch_group(group_id):
 
 @app.route('/branches/add', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('branches')
 def add_branch():
     name = request.form.get('name', '').strip().upper()
     if not name:
@@ -4315,7 +4511,7 @@ def add_branch():
 
 @app.route('/branches/<int:branch_id>/edit', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('branches')
 def edit_branch(branch_id):
     allowed_ip = request.form.get('allowed_ip', '').strip() or None
     merchant_numbers = request.form.get('merchant_numbers', '').strip()
@@ -4332,7 +4528,7 @@ def edit_branch(branch_id):
 
 @app.route('/branches/<int:branch_id>/cards/add', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('branches')
 def add_branch_card(branch_id):
     card_number = request.form.get('card_number', '').strip().replace(' ', '')
     card_name   = request.form.get('card_name', '').strip()
@@ -4351,7 +4547,7 @@ def add_branch_card(branch_id):
 
 @app.route('/branches/cards/<int:card_id>/delete', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('branches')
 def delete_branch_card(card_id):
     with get_db() as conn:
         conn.execute('DELETE FROM branch_cards WHERE id=?', (card_id,))
@@ -4364,7 +4560,7 @@ def delete_branch_card(card_id):
 
 @app.route('/users')
 @login_required
-@owner_required
+@menu_permission_required('users')
 def users():
     with get_db() as conn:
         ulist = conn.execute('''
@@ -4397,7 +4593,7 @@ def users():
 
 @app.route('/users/<int:user_id>/branches', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('users')
 def edit_user_branches(user_id):
     branch_ids = [int(bid) for bid in request.form.getlist('branch_ids') if bid.isdigit()]
     with get_db() as conn:
@@ -4417,7 +4613,7 @@ def edit_user_branches(user_id):
 
 @app.route('/users/add', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('users')
 def add_user():
     username = request.form.get('username', '').strip()
     password = request.form.get('password', '')
@@ -4448,7 +4644,7 @@ def add_user():
 
 @app.route('/users/<int:user_id>/reset-password', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('users')
 def reset_password(user_id):
     new_password = request.form.get('password', '')
     if not new_password:
@@ -4551,7 +4747,7 @@ def reset_password_token(token):
 
 @app.route('/users/<int:user_id>/edit', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('users')
 def edit_user(user_id):
     full_name = request.form.get('full_name', '').strip()
     username = request.form.get('username', '').strip()
@@ -4590,7 +4786,7 @@ def edit_user(user_id):
 
 @app.route('/users/invite/create', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('users')
 def create_invite():
     role = request.form.get('role', 'admin')
     branch_ids = [int(b) for b in request.form.getlist('branch_ids') if b.isdigit()]
@@ -4649,10 +4845,23 @@ def accept_invite(token):
 
 # ─── SETTINGS ─────────────────────────────────────────────────────────────────
 
+_SETTINGS_TAB_PERM = {
+    'categories': 'settings_categories',
+    'rates': 'settings_rates',
+    'api': 'settings_api',
+    'bonuses': 'settings_bonuses',
+}
+
+
 @app.route('/settings')
 @login_required
-@owner_required
 def settings():
+    tab = request.args.get('tab', 'categories')
+    code = _SETTINGS_TAB_PERM.get(tab)
+    allowed = item_visible(code) if code else (session.get('role') == 'owner')
+    if not allowed:
+        flash('Доступ запрещён', 'danger')
+        return redirect(url_for('dashboard'))
     with get_db() as conn:
         exp_cats = conn.execute(
             'SELECT * FROM expense_categories ORDER BY COALESCE(parent_id,id), sort_order, label'
@@ -4705,6 +4914,7 @@ def settings():
             'LEFT JOIN branches b ON b.id=l.branch_id '
             'ORDER BY l.created_at DESC LIMIT 50'
         ).fetchall()
+        role_perms = {r: get_role_permissions(conn, r) for r in ROLE_CONFIGURABLE}
     return render_template('settings.html',
         exp_cats=exp_cats, exp_cats_parents=exp_cats_parents,
         cat_branches=cat_branches,
@@ -4716,12 +4926,35 @@ def settings():
         api_revenue_tokens=api_revenue_tokens, api_revenue_log=api_revenue_log,
         today=date.today().isoformat(),
         formula_vars=FORMULA_VARS, role_labels=ROLE_LABELS,
-        positions=positions, branch_groups_for_rates=branch_groups_for_rates)
+        positions=positions, branch_groups_for_rates=branch_groups_for_rates,
+        role_perms=role_perms, menu_items=MENU_ITEMS, menu_group_labels=MENU_GROUP_LABELS,
+        role_configurable=ROLE_CONFIGURABLE, login_role_labels=LOGIN_ROLE_LABELS)
+
+
+@app.route('/settings/role-permissions/save', methods=['POST'])
+@login_required
+@owner_required
+def role_permissions_save():
+    with get_db() as conn:
+        for role in ROLE_CONFIGURABLE:
+            for code, _label, _group, _branch_scoped in MENU_ITEMS:
+                visible = 1 if request.form.get(f'visible_{role}_{code}') else 0
+                scope = request.form.get(f'scope_{role}_{code}', 'own_only')
+                if scope not in ('own_only', 'own_default'):
+                    scope = 'own_only'
+                conn.execute(
+                    'INSERT OR REPLACE INTO role_menu_permissions (role, item_code, visible, branch_scope) '
+                    'VALUES (?,?,?,?)',
+                    (role, code, visible, scope)
+                )
+        conn.commit()
+    flash('Права доступа сохранены', 'success')
+    return redirect(url_for('settings') + '?tab=roles')
 
 
 @app.route('/settings/expense-cat/add', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('settings_categories')
 def add_expense_cat():
     label = request.form.get('label', '').strip()
     cat_type = request.form.get('type', 'expense')
@@ -4759,7 +4992,7 @@ def add_expense_cat():
 
 @app.route('/settings/expense-cat/<int:cat_id>/toggle', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('settings_categories')
 def toggle_expense_cat(cat_id):
     with get_db() as conn:
         conn.execute('UPDATE expense_categories SET is_active=1-is_active WHERE id=?', (cat_id,))
@@ -4774,7 +5007,7 @@ def toggle_expense_cat(cat_id):
 
 @app.route('/settings/expense-cat/<int:cat_id>/delete', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('settings_categories')
 def delete_expense_cat(cat_id):
     with get_db() as conn:
         # Move subcategories to top-level before deleting parent
@@ -4787,7 +5020,7 @@ def delete_expense_cat(cat_id):
 
 @app.route('/settings/expense-cat/<int:cat_id>/edit', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('settings_categories')
 def edit_expense_cat(cat_id):
     label = request.form.get('label', '').strip()
     parent_id = request.form.get('parent_id') or None
@@ -4830,7 +5063,7 @@ def edit_expense_cat(cat_id):
 
 @app.route('/settings/expense-cat/<int:cat_id>/branches', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('settings_categories')
 def set_expense_cat_branches(cat_id):
     branch_ids = request.form.getlist('branch_ids')
     with get_db() as conn:
@@ -4898,7 +5131,7 @@ def toggle_kpi_block(block_id):
 
 @app.route('/settings/bonus-rules/add', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('settings_bonuses')
 def add_bonus_rule():
     role = request.form.get('role', '')
     threshold = request.form.get('threshold_pct', '')
@@ -4928,7 +5161,7 @@ def add_bonus_rule():
 
 @app.route('/settings/bonus-rules/<int:rule_id>/delete', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('settings_bonuses')
 def delete_bonus_rule(rule_id):
     with get_db() as conn:
         conn.execute('DELETE FROM bonus_rules WHERE id=?', (rule_id,))
@@ -4939,7 +5172,7 @@ def delete_bonus_rule(rule_id):
 
 @app.route('/settings/bonus-rules/<int:rule_id>/toggle', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('settings_bonuses')
 def toggle_bonus_rule(rule_id):
     with get_db() as conn:
         conn.execute('UPDATE bonus_rules SET is_active=1-is_active WHERE id=?', (rule_id,))
@@ -4949,7 +5182,7 @@ def toggle_bonus_rule(rule_id):
 
 @app.route('/bonus_rules/<int:rule_id>/edit', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('settings_bonuses')
 def edit_bonus_rule(rule_id):
     role = request.form.get('role')
     branch_id = request.form.get('branch_id') or None
@@ -4978,7 +5211,7 @@ def edit_bonus_rule(rule_id):
 
 @app.route('/settings/positions/add', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('settings_rates')
 def add_position():
     name = request.form.get('name', '').strip()
     if not name:
@@ -5002,7 +5235,7 @@ def add_position():
 
 @app.route('/settings/positions/<int:pos_id>/edit', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('settings_rates')
 def edit_position(pos_id):
     name = request.form.get('name', '').strip()
     abbr = request.form.get('abbr', '').strip()[:4].upper()
@@ -5019,7 +5252,7 @@ def edit_position(pos_id):
 
 @app.route('/settings/positions/<int:pos_id>/delete', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('settings_rates')
 def delete_position(pos_id):
     with get_db() as conn:
         pos = conn.execute('SELECT code, name FROM positions WHERE id=?', (pos_id,)).fetchone()
@@ -5043,7 +5276,7 @@ def delete_position(pos_id):
 
 @app.route('/settings/rate-templates/add', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('settings_rates')
 def add_rate_template():
     role       = request.form.get('role', '').strip()
     name       = request.form.get('name', '').strip()
@@ -5078,7 +5311,7 @@ def add_rate_template():
 
 @app.route('/settings/rate-templates/<int:tmpl_id>/delete', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('settings_rates')
 def delete_rate_template(tmpl_id):
     with get_db() as conn:
         conn.execute('DELETE FROM rate_templates WHERE id=?', (tmpl_id,))
@@ -5089,7 +5322,7 @@ def delete_rate_template(tmpl_id):
 
 @app.route('/settings/rate-templates/<int:tmpl_id>/edit', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('settings_rates')
 def edit_rate_template(tmpl_id):
     name       = request.form.get('name', '').strip()
     rate       = float(request.form.get('rate', 0) or 0)
@@ -5128,10 +5361,13 @@ def edit_rate_template(tmpl_id):
 
 @app.route('/reports')
 @login_required
-@owner_required
 def reports():
-    branch_ids = [bid for bid in request.args.getlist('branch_ids') if bid.isdigit()]
     active_tab = request.args.get('tab', 'shifts')
+    if not item_visible('reports_salary' if active_tab == 'salary' else 'reports_shifts'):
+        flash('Доступ запрещён', 'danger')
+        return redirect(url_for('dashboard'))
+    branch_ids = [bid for bid in request.args.getlist('branch_ids') if bid.isdigit()]
+    branch_ids = get_effective_branch_ids('reports_shifts', branch_ids) or []
 
     _today = date.today()
     _month_start = _today.replace(day=1).isoformat()
@@ -5285,9 +5521,11 @@ def reports():
 
         sal_conds  = ['s.date BETWEEN ? AND ?']
         sal_params = [s_date_from, s_date_to]
-        if s_branch_id.isdigit():
-            sal_conds.append('s.branch_id = ?')
-            sal_params.append(int(s_branch_id))
+        sal_branch_ids = get_effective_branch_ids('reports_salary', [s_branch_id] if s_branch_id.isdigit() else [])
+        if sal_branch_ids:
+            sal_ph = ','.join('?' * len(sal_branch_ids))
+            sal_conds.append(f's.branch_id IN ({sal_ph})')
+            sal_params.extend(int(x) for x in sal_branch_ids)
         if s_role:
             sal_conds.append('es.role_snapshot = ?')
             sal_params.append(s_role)
@@ -5457,7 +5695,7 @@ def reports():
 
 @app.route('/reports/revenue-plan/save', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('reports_shifts')
 def save_revenue_plan():
     data = request.get_json(force=True)
     branch_id = int(data.get('branch_id', 0))
@@ -5476,7 +5714,7 @@ def save_revenue_plan():
 
 @app.route('/reports/revenue-plan/auto', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('reports_shifts')
 def auto_revenue_plan():
     data = request.get_json(force=True)
     total_plan  = float(data.get('total', 0) or 0)
@@ -5628,7 +5866,7 @@ def auto_revenue_plan():
 
 @app.route('/settings/revenue-manual')
 @login_required
-@owner_required
+@menu_permission_required('revenue_manual')
 def revenue_manual():
     _today = date.today()
     _prev_month = (_today.replace(day=1) - timedelta(days=1))
@@ -5694,7 +5932,7 @@ def revenue_manual():
 
 @app.route('/settings/revenue-manual/save', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('revenue_manual')
 def revenue_manual_save():
     items = request.get_json(force=True)
     if not isinstance(items, list):
@@ -5722,7 +5960,7 @@ def revenue_manual_save():
 
 @app.route('/reports/employee/<int:emp_id>')
 @login_required
-@owner_required
+@menu_permission_required('reports_salary')
 def employee_salary_detail(emp_id):
     month_start = date.today().replace(day=1).isoformat()
     today = date.today().isoformat()
@@ -5779,7 +6017,7 @@ def employee_salary_detail(emp_id):
 
 @app.route('/report/cash-flow')
 @login_required
-@owner_required
+@menu_permission_required('cash_flow_report')
 def cash_flow_report():
     from collections import defaultdict
     today      = date.today().isoformat()
@@ -5787,6 +6025,7 @@ def cash_flow_report():
     date_from  = request.args.get('date_from', month_start)
     date_to    = request.args.get('date_to',   today)
     branch_ids = [b for b in request.args.getlist('branch_ids') if b.isdigit()]
+    branch_ids = get_effective_branch_ids('cash_flow_report', branch_ids) or []
 
     with get_db() as conn:
         branches      = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
@@ -6085,7 +6324,7 @@ def api_revenue_webhook(token):
 
 @app.route('/settings/api/revenue-tokens/add', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('settings_api')
 def api_revenue_token_add():
     branch_id   = request.form.get('branch_id', type=int)
     description = request.form.get('description', '').strip()
@@ -6105,7 +6344,7 @@ def api_revenue_token_add():
 
 @app.route('/settings/api/revenue-tokens/<int:tid>/delete', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('settings_api')
 def api_revenue_token_delete(tid):
     with get_db() as conn:
         conn.execute('DELETE FROM api_revenue_tokens WHERE id=?', (tid,))
@@ -6116,7 +6355,7 @@ def api_revenue_token_delete(tid):
 
 @app.route('/settings/api/revenue-log/clear', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('settings_api')
 def api_revenue_log_clear():
     with get_db() as conn:
         conn.execute('DELETE FROM api_revenue_log')
@@ -6127,7 +6366,7 @@ def api_revenue_log_clear():
 
 @app.route('/settings/api/tokens/add', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('settings_api')
 def api_token_add():
     branch_id   = request.form.get('branch_id', type=int)
     description = request.form.get('description', '').strip()
@@ -6147,7 +6386,7 @@ def api_token_add():
 
 @app.route('/settings/api/tokens/<int:tid>/delete', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('settings_api')
 def api_token_delete(tid):
     with get_db() as conn:
         conn.execute('DELETE FROM api_1c_tokens WHERE id=?', (tid,))
@@ -6158,7 +6397,7 @@ def api_token_delete(tid):
 
 @app.route('/settings/api/log/clear', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('settings_api')
 def api_log_clear():
     with get_db() as conn:
         conn.execute('DELETE FROM api_1c_log')
@@ -6173,8 +6412,11 @@ def api_log_clear():
 @login_required
 def purchases():
     role = session.get('role')
+    if not item_visible('purchases'):
+        flash('Доступ запрещён', 'danger')
+        return redirect(url_for('dashboard'))
     with get_db() as conn:
-        if role == 'owner':
+        if role == 'owner' or can_pick_other_branches('purchases'):
             all_branches  = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
             branch_groups = get_branch_groups(conn)
         else:
@@ -6192,9 +6434,9 @@ def purchases():
         params = [date_from, date_to]
 
         if role != 'owner':
-            bids = _session_branch_ids()
+            bids = get_effective_branch_ids('purchases', branch_flt_ids)
             if bids:
-                where.append(f"p.branch_id IN ({','.join(str(b) for b in bids)})")
+                where.append(f"p.branch_id IN ({','.join(str(int(b)) for b in bids)})")
         elif branch_flt_ids:
             ph = ','.join('?' * len(branch_flt_ids))
             where.append(f'p.branch_id IN ({ph})')
@@ -6488,7 +6730,7 @@ def _xlsx_parse_invoices(file_bytes):
 
 @app.route('/purchases/import-excel', methods=['GET', 'POST'])
 @login_required
-@owner_required
+@menu_permission_required('purchases')
 def purchases_import_excel():
     import json, uuid, os
 
@@ -6570,7 +6812,7 @@ def purchases_import_excel():
 
 @app.route('/purchases/import-excel/confirm', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('purchases')
 def purchases_import_excel_confirm():
     import json, os, hashlib
 
@@ -6662,7 +6904,7 @@ def purchases_import_excel_confirm():
 
 @app.route('/report/reconciliation')
 @login_required
-@owner_required
+@menu_permission_required('report_reconciliation')
 def report_reconciliation():
     today      = date.today().isoformat()
     month_start = date.today().replace(day=1).isoformat()
@@ -6770,13 +7012,14 @@ def report_reconciliation():
 
 @app.route('/report/expenses')
 @login_required
-@owner_required
+@menu_permission_required('expenses_report')
 def expenses_report():
     today = date.today().isoformat()
     month_start = date.today().replace(day=1).isoformat()
     date_from   = request.args.get('date_from', month_start)
     date_to     = request.args.get('date_to', today)
     branch_ids  = [b for b in request.args.getlist('branch_ids') if b.isdigit()]
+    branch_ids  = get_effective_branch_ids('expenses_report', branch_ids) or []
     cat_filter  = request.args.get('category', '')
     pay_filter  = request.args.get('pay_type', '')   # 'cash' | 'card' | ''
 
@@ -6898,7 +7141,7 @@ def _pnl_load_settings(conn):
 
 @app.route('/report/pnl')
 @login_required
-@owner_required
+@menu_permission_required('pnl_report')
 def pnl_report():
     from collections import defaultdict
 
@@ -6908,6 +7151,7 @@ def pnl_report():
     date_from  = request.args.get('date_from', month_start)
     date_to    = request.args.get('date_to', today)
     branch_ids = [b for b in request.args.getlist('branch_ids') if b.isdigit()]
+    branch_ids = get_effective_branch_ids('pnl_report', branch_ids) or []
     group_by   = request.args.get('group_by', 'month')
 
     with get_db() as conn:
@@ -7153,7 +7397,7 @@ def pnl_report():
 
 @app.route('/report/pnl/settings', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('pnl_report')
 def pnl_settings_save():
     bank_inc_all = request.form.get('bank_income_all')
     bank_income_val = None if bank_inc_all else request.form.getlist('bank_income_ctr_cats')
@@ -7181,7 +7425,7 @@ def pnl_settings_save():
 
 @app.route('/settings/gsheet', methods=['GET', 'POST'])
 @login_required
-@owner_required
+@menu_permission_required('gsheet_settings')
 def gsheet_settings():
     with get_db() as conn:
         if request.method == 'POST':
@@ -7213,7 +7457,7 @@ def gsheet_settings():
 
 @app.route('/settings/gdrive-auth')
 @login_required
-@owner_required
+@menu_permission_required('gsheet_settings')
 def gdrive_auth():
     import urllib.parse as _up
     client_id = os.environ.get('GOOGLE_OAUTH_CLIENT_ID')
@@ -7233,7 +7477,7 @@ def gdrive_auth():
 
 @app.route('/settings/gdrive-callback')
 @login_required
-@owner_required
+@menu_permission_required('gsheet_settings')
 def gdrive_callback():
     import urllib.request as _ur
     import urllib.parse as _up
@@ -7278,7 +7522,7 @@ def gdrive_callback():
 
 @app.route('/settings/gdrive-test', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('gsheet_settings')
 def gdrive_test():
     """Пошаговая диагностика подключения к Google Drive."""
     steps = []
@@ -7454,6 +7698,9 @@ def backup_db():
 @login_required
 def history():
     role = session.get('role')
+    if not item_visible('history'):
+        flash('Доступ запрещён', 'danger')
+        return redirect(url_for('dashboard'))
     today = date.today().isoformat()
     week_ago = (date.today() - timedelta(days=7)).isoformat()
     date_from = request.args.get('date_from', week_ago)
@@ -7471,9 +7718,11 @@ def history():
         if role != 'owner':
             conds.append('cl.user_id = ?')
             params.append(session['user_id'])
-            if session.get('branch_id'):
-                conds.append('cl.branch_id = ?')
-                params.append(session['branch_id'])
+            hist_bids = get_effective_branch_ids('history', [branch_id] if branch_id.isdigit() else [])
+            if hist_bids:
+                ph = ','.join('?' * len(hist_bids))
+                conds.append(f'cl.branch_id IN ({ph})')
+                params.extend(int(b) for b in hist_bids)
         else:
             if branch_id:
                 conds.append('cl.branch_id = ?')
@@ -7503,6 +7752,10 @@ def history():
             ).fetchall()
             users = conn.execute(
                 "SELECT id, full_name FROM users WHERE role != 'owner' ORDER BY full_name"
+            ).fetchall()
+        elif can_pick_other_branches('history'):
+            branches = conn.execute(
+                'SELECT * FROM branches WHERE is_active=1 ORDER BY name'
             ).fetchall()
 
     return render_template('history.html',
@@ -7545,7 +7798,7 @@ def api_employee(emp_id):
 
 @app.route('/employees/<int:emp_id>/roles/add', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('employees')
 def add_employee_role(emp_id):
     role = request.form.get('role', '').strip()
     rate_template_id = request.form.get('rate_template_id', '').strip() or None
@@ -7583,7 +7836,7 @@ def add_employee_role(emp_id):
 
 @app.route('/employees/roles/<int:role_id>/delete', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('employees')
 def delete_employee_role(role_id):
     with get_db() as conn:
         conn.execute('DELETE FROM employee_roles WHERE id=?', (role_id,))
@@ -7820,6 +8073,9 @@ def inject_globals():
 @login_required
 def shifts_archive():
     role = session.get('role')
+    if not item_visible('shifts_archive'):
+        flash('Доступ запрещён', 'danger')
+        return redirect(url_for('dashboard'))
     today = date.today().isoformat()
     month_start = date.today().replace(day=1).isoformat()
 
@@ -7880,7 +8136,7 @@ def shifts_archive():
         params = [date_from, date_to]
 
         if role != 'owner':
-            bids = _session_branch_ids()
+            bids = get_effective_branch_ids('shifts_archive', branch_ids)
             if bids:
                 ids_str = ','.join(str(int(b)) for b in bids)
                 query += f' AND s.branch_id IN ({ids_str})'
@@ -7911,7 +8167,7 @@ def shifts_archive():
 
 @app.route('/bank/')
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def bank():
     tab = request.args.get('tab', 'statements')
     date_from = request.args.get('date_from', (date.today().replace(day=1)).isoformat())
@@ -8042,7 +8298,7 @@ def bank():
 
 @app.route('/bank/upload', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def bank_upload():
     account_id = request.form.get('account_id', '')
     f = request.files.get('file')
@@ -8084,7 +8340,7 @@ def bank_upload():
 
 @app.route('/bank/statement/<int:stmt_id>/classify', methods=['GET', 'POST'])
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def bank_classify(stmt_id):
     with get_db() as conn:
         stmt = conn.execute('''
@@ -8249,7 +8505,7 @@ def bank_classify(stmt_id):
 
 @app.route('/bank/statement/<int:stmt_id>/delete', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def bank_statement_delete(stmt_id):
     with get_db() as conn:
         conn.execute('DELETE FROM bank_statements WHERE id=?', (stmt_id,))
@@ -8260,7 +8516,7 @@ def bank_statement_delete(stmt_id):
 
 @app.route('/bank/statements/<int:stmt_id>/rematch', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def bank_statement_rematch(stmt_id):
     """Повторно применить автоматический матчинг контрагентов и терминалов."""
     with get_db() as conn:
@@ -8313,7 +8569,7 @@ def bank_statement_rematch(stmt_id):
 
 @app.route('/bank/transaction/<int:txn_id>/update', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def bank_txn_update(txn_id):
     contractor_id = request.form.get('contractor_id') or None
     category = request.form.get('category', '')
@@ -8329,7 +8585,7 @@ def bank_txn_update(txn_id):
 
 @app.route('/bank/accounts/add', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def bank_account_add():
     name = request.form.get('name', '').strip()
     bank_name = request.form.get('bank_name', '').strip()
@@ -8355,7 +8611,7 @@ def bank_account_add():
 
 @app.route('/bank/accounts/<int:acc_id>/delete', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def bank_account_delete(acc_id):
     with get_db() as conn:
         conn.execute('UPDATE bank_accounts SET is_active=0 WHERE id=?', (acc_id,))
@@ -8366,7 +8622,7 @@ def bank_account_delete(acc_id):
 
 @app.route('/bank/contractors/add', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def bank_contractor_add():
     name = request.form.get('name', '').strip()
     category = request.form.get('category', '').strip()
@@ -8389,7 +8645,7 @@ def bank_contractor_add():
 
 @app.route('/bank/contractors/<int:ctr_id>/edit', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def bank_contractor_edit(ctr_id):
     name = request.form.get('name', '').strip()
     category = request.form.get('category', '').strip()
@@ -8408,7 +8664,7 @@ def bank_contractor_edit(ctr_id):
 
 @app.route('/bank/contractors/<int:ctr_id>/delete', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def bank_contractor_delete(ctr_id):
     with get_db() as conn:
         conn.execute('UPDATE contractors SET is_active=0 WHERE id=?', (ctr_id,))
@@ -8419,7 +8675,7 @@ def bank_contractor_delete(ctr_id):
 
 @app.route('/bank/terminals/add', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def bank_terminal_add():
     terminal_number = request.form.get('terminal_number', '').strip()
     name = request.form.get('name', '').strip()
@@ -8442,7 +8698,7 @@ def bank_terminal_add():
 
 @app.route('/bank/terminals/<int:tid>/edit', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def bank_terminal_edit(tid):
     name = request.form.get('name', '').strip()
     branch_id = request.form.get('branch_id') or None
@@ -8458,7 +8714,7 @@ def bank_terminal_edit(tid):
 
 @app.route('/bank/terminals/<int:tid>/delete', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def bank_terminal_delete(tid):
     with get_db() as conn:
         conn.execute('UPDATE bank_terminals SET is_active=0 WHERE id=?', (tid,))
@@ -8469,7 +8725,7 @@ def bank_terminal_delete(tid):
 
 @app.route('/bank/parse-rules/add', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def bank_parse_rule_add():
     name       = request.form.get('name', '').strip()
     keyword    = request.form.get('keyword', '').strip()
@@ -8494,7 +8750,7 @@ def bank_parse_rule_add():
 
 @app.route('/bank/parse-rules/<int:rule_id>/edit', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def bank_parse_rule_edit(rule_id):
     name       = request.form.get('name', '').strip()
     keyword    = request.form.get('keyword', '').strip()
@@ -8519,7 +8775,7 @@ def bank_parse_rule_edit(rule_id):
 
 @app.route('/bank/parse-rules/<int:rule_id>/delete', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def bank_parse_rule_delete(rule_id):
     with get_db() as conn:
         conn.execute('DELETE FROM bank_parse_rules WHERE id=?', (rule_id,))
@@ -8530,7 +8786,7 @@ def bank_parse_rule_delete(rule_id):
 
 @app.route('/bank/statement/<int:stmt_id>')
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def bank_statement_view(stmt_id):
     with get_db() as conn:
         stmt = conn.execute('''
@@ -8655,7 +8911,7 @@ def _sber_set(conn, key, value):
 
 @app.route('/bank/sber/debug')
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def sber_debug():
     """Отладка: показать состояние токенов в базе."""
     import time
@@ -8681,7 +8937,7 @@ def sber_debug():
 
 @app.route('/bank/sber/debug-tx')
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def sber_debug_tx():
     """Показать сырую структуру первых 2 транзакций от Сбера (для отладки полей)."""
     from sber_api import get_statement, _mtls, STMT_URL
@@ -8712,7 +8968,7 @@ def sber_debug_tx():
 
 @app.route('/bank/sber/settings', methods=['GET', 'POST'])
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def sber_settings():
     with get_db() as conn:
         if request.method == 'POST':
@@ -8738,7 +8994,7 @@ def sber_settings():
 
 @app.route('/bank/sber/auth')
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def sber_auth():
     """Редирект на страницу авторизации СберБизнес (OAuth Authorization Code)."""
     import secrets
@@ -8756,7 +9012,7 @@ def sber_auth():
 
 @app.route('/bank/sber/callback')
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def sber_callback():
     """Обработчик callback после авторизации в СберБизнес."""
     from sber_api import exchange_code
@@ -8883,7 +9139,7 @@ def _sber_do_sync(conn, access_token, client_id, bank_account_id, account_number
 
 @app.route('/bank/sber/sync', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def sber_sync():
     data = request.get_json(silent=True) or {}
     date_from = data.get('date_from') or (date.today() - timedelta(days=7)).isoformat()
@@ -8944,7 +9200,7 @@ def sber_sync():
 
 @app.route('/bank/sber/sync-all', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def sber_sync_all():
     """Синхронизировать все счета с включённой авто-загрузкой."""
     data = request.get_json(silent=True) or {}
@@ -8991,7 +9247,7 @@ def sber_sync_all():
 
 @app.route('/bank/accounts/<int:acc_id>/sber-toggle', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def bank_account_sber_toggle(acc_id):
     """Включить / выключить авто-синхронизацию Сбербанка для конкретного счёта."""
     with get_db() as conn:
@@ -9006,7 +9262,7 @@ def bank_account_sber_toggle(acc_id):
 
 @app.route('/bank/sber/test', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('bank')
 def sber_test():
     """Проверка токена: пробуем refresh, если нет — сообщаем переподключиться."""
     from sber_api import refresh_access_token
@@ -9480,14 +9736,14 @@ def _xl_import_sheet_from_parsed(sheet, emp_map, conn, stats, batch_id=None):
 
 @app.route('/excel-import', methods=['GET', 'POST'])
 @login_required
-@owner_required
+@menu_permission_required('import_shifts')
 def excel_import():
     return redirect(url_for('import_shifts'))
 
 
 @app.route('/excel-import/batch/<int:batch_id>/delete', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('import_shifts')
 def delete_import_batch(batch_id):
     with get_db() as conn:
         batch = conn.execute('SELECT * FROM import_batches WHERE id=?', (batch_id,)).fetchone()
@@ -9519,7 +9775,7 @@ def delete_import_batch(batch_id):
 
 @app.route('/shifts/bulk-delete', methods=['GET', 'POST'])
 @login_required
-@owner_required
+@menu_permission_required('import_shifts')
 def shifts_bulk_delete():
     with get_db() as conn:
         branches = conn.execute(
@@ -9582,7 +9838,7 @@ def shifts_bulk_delete():
 
 @app.route('/gdrive-import', methods=['GET', 'POST'])
 @login_required
-@owner_required
+@menu_permission_required('import_shifts')
 def import_shifts():
     import io as _io, json as _json, uuid as _uuid
 
@@ -9675,7 +9931,7 @@ def import_shifts():
 
 @app.route('/gdrive-import/confirm/<token>', methods=['GET', 'POST'])
 @login_required
-@owner_required
+@menu_permission_required('import_shifts')
 def import_shifts_confirm(token):
     import json as _json
 
@@ -9789,7 +10045,7 @@ def import_shifts_confirm(token):
 
 @app.route('/settings/change')
 @login_required
-@owner_required
+@menu_permission_required('change_settings')
 def change_settings():
     WD_LABELS = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']
     today_str = date.today().isoformat()
@@ -9898,7 +10154,7 @@ def change_settings():
 
 @app.route('/settings/change/manual/save', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('change_settings')
 def change_manual_save():
     data = request.json or {}
     with get_db() as conn:
@@ -9918,7 +10174,7 @@ def change_manual_save():
 
 @app.route('/settings/change/future/save', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('change_settings')
 def change_future_save():
     data = request.json or {}
     try:
@@ -9938,7 +10194,7 @@ def change_future_save():
 
 @app.route('/settings/change/schedule/add', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('change_settings')
 def change_schedule_add():
     branch_id  = request.form.get('branch_id') or None
     weekday    = request.form.get('weekday')
@@ -9963,7 +10219,7 @@ def change_schedule_add():
 
 @app.route('/settings/change/schedule/delete/<int:schedule_id>', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('change_settings')
 def change_schedule_delete(schedule_id):
     with get_db() as conn:
         conn.execute('DELETE FROM change_schedule WHERE id=?', (schedule_id,))
@@ -9974,7 +10230,7 @@ def change_schedule_delete(schedule_id):
 
 @app.route('/settings/change/schedule/apply', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('change_settings')
 def change_schedule_apply():
     with get_db() as conn:
         _apply_all_change_schedules(conn)
@@ -9987,7 +10243,7 @@ def change_schedule_apply():
 
 @app.route('/settings/flyer-promo')
 @login_required
-@owner_required
+@menu_permission_required('flyer_promo_settings')
 def flyer_promo_settings():
     date_from = request.args.get('date_from', date.today().isoformat())
     date_to   = request.args.get('date_to', (date.today() + timedelta(days=13)).isoformat())
@@ -10029,7 +10285,7 @@ def flyer_promo_settings():
 
 @app.route('/settings/flyer-promo/save', methods=['POST'])
 @login_required
-@owner_required
+@menu_permission_required('flyer_promo_settings')
 def flyer_promo_save():
     data = request.json or {}
     try:

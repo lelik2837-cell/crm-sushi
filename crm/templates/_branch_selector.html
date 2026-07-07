@@ -1,0 +1,47 @@
+{# Компактный переиспользуемый выбор филиалов.
+   Параметры: branches, branch_groups, selected_ids (список str/int), bs_id (уникальный префикс).
+   Рендерит чекбоксы name="branch_ids" — оборачивающая форма должна сама их отправить (GET). #}
+<div class="dropdown d-inline-block">
+    <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle" id="{{ bs_id }}-btn"
+            data-bs-toggle="dropdown" data-bs-auto-close="outside">
+        <i class="bi bi-shop me-1"></i>
+        <span id="{{ bs_id }}-label">{% if selected_ids %}Выбрано: {{ selected_ids|length }}{% else %}Свои филиалы{% endif %}</span>
+    </button>
+    <ul class="dropdown-menu p-2 shadow" style="min-width:220px;max-height:340px;overflow-y:auto">
+        {% if branch_groups %}
+        <li><div class="text-muted px-1 mb-1" style="font-size:.75rem">ГРУППЫ</div></li>
+        {% for g in branch_groups %}
+        <li class="mb-1">
+            <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1"
+                    onclick="bsSelectGroup('{{ bs_id }}', {{ g.branch_ids|tojson }})">
+                <i class="bi bi-collection me-1"></i>{{ g.name }}
+            </button>
+        </li>
+        {% endfor %}
+        <li><hr class="dropdown-divider my-1"></li>
+        {% endif %}
+        {% for b in branches %}
+        <li>
+            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer">
+                <input type="checkbox" class="{{ bs_id }}-cb" name="branch_ids" value="{{ b.id }}"
+                       {% if b.id|string in selected_ids %}checked{% endif %}
+                       onchange="bsUpdateLabel('{{ bs_id }}')">
+                <span class="small">{{ b.name }}</span>
+            </label>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+<script>
+function bsSelectGroup(id, ids) {
+    document.querySelectorAll('.' + id + '-cb').forEach(function(cb) {
+        cb.checked = ids.indexOf(parseInt(cb.value)) !== -1;
+    });
+    bsUpdateLabel(id);
+}
+function bsUpdateLabel(id) {
+    var checked = document.querySelectorAll('.' + id + '-cb:checked').length;
+    var label = document.getElementById(id + '-label');
+    if (label) label.textContent = checked ? ('Выбрано: ' + checked) : 'Свои филиалы';
+}
+</script>

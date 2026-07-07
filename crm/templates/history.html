@@ -19,7 +19,7 @@
                 <label class="form-label small mb-1">По</label>
                 <input type="date" name="date_to" value="{{ date_to }}" class="form-control form-control-sm">
             </div>
-            {% if is_owner %}
+            {% if is_owner or can_pick_other_branches('history') %}
             <div class="col-auto">
                 <label class="form-label small mb-1">Филиал</label>
                 <select name="branch_id" class="form-select form-select-sm">
@@ -49,6 +49,8 @@
                     {% endif %}
                 </select>
             </div>
+            {% endif %}
+            {% if is_owner %}
             <div class="col-auto">
                 <label class="form-label small mb-1">Администратор</label>
                 <select name="user_id" class="form-select form-select-sm">

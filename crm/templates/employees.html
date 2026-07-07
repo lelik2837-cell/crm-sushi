@@ -24,8 +24,8 @@
                 <option value="{{ pos.code }}" {% if role_filter == pos.code %}selected{% endif %}>{{ pos.name }}</option>
                 {% endfor %}
             </select>
-            {# Фильтр по филиалам (только владелец) #}
-            {% if is_owner and all_branches|length > 1 %}
+            {# Фильтр по филиалам #}
+            {% if (is_owner or can_pick_other_branches('employees')) and all_branches|length > 1 %}
             <div class="dropdown">
                 <button type="button" class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1"
                         data-bs-toggle="dropdown" data-bs-auto-close="outside">

@@ -163,45 +163,53 @@
 <nav class="navbar navbar-expand-lg navbar-dark mb-4">
     <div class="container-fluid">
         <a class="navbar-brand" href="{{ url_for('dashboard') }}">CRMPAPA</a>
-        <!-- Mobile only: Дашборд dropdown слева от гамбургера (только owner) -->
-        <div class="d-lg-none dropdown" {% if session.get('role') != 'owner' %}style="display:none!important"{% endif %}>
+        <!-- Mobile only: Дашборд dropdown слева от гамбургера -->
+        <div class="d-lg-none dropdown" {% if not group_has_visible_item('dash') %}style="display:none!important"{% endif %}>
             <button class="mobile-dash-btn dropdown-toggle" type="button"
                     data-bs-toggle="dropdown" aria-expanded="false">
                 <i class="bi bi-grid"></i> Дашборд
             </button>
             <ul class="dropdown-menu mobile-dash-menu">
+                {% if item_visible('dashboard') %}
                 <li>
                     <a class="dropdown-item {% if request.endpoint=='dashboard' %}active{% endif %}"
                        href="{{ url_for('dashboard') }}">
                         <i class="bi bi-grid me-2"></i>Дашборд
                     </a>
                 </li>
+                {% endif %}
+                {% if item_visible('fot_dashboard') %}
                 <li>
                     <a class="dropdown-item {% if request.endpoint=='fot_dashboard' %}active{% endif %}"
                        href="{{ url_for('fot_dashboard') }}">
                         <i class="bi bi-cash-coin me-2"></i>ФОТ
                     </a>
                 </li>
+                {% endif %}
+                {% if item_visible('lfl_dashboard') %}
                 <li>
                     <a class="dropdown-item {% if request.endpoint=='lfl_dashboard' %}active{% endif %}"
                        href="{{ url_for('lfl_dashboard') }}">
                         <i class="bi bi-graph-up-arrow me-2"></i>LFL
                     </a>
                 </li>
+                {% endif %}
+                {% if item_visible('ratings_dashboard') %}
                 <li>
                     <a class="dropdown-item {% if request.endpoint=='ratings_dashboard' %}active{% endif %}"
                        href="{{ url_for('ratings_dashboard') }}">
                         <i class="bi bi-trophy me-2"></i>Рейтинги
                     </a>
                 </li>
+                {% endif %}
             </ul>
         </div>
-        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav" {% if session.get('role') not in ('owner', 'director') %}style="display:none"{% endif %}>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav" {% if not any_menu_visible() %}style="display:none"{% endif %}>
             <span class="navbar-toggler-icon"></span>
         </button>
         <div class="collapse navbar-collapse" id="nav">
             <ul class="navbar-nav me-auto">
-            {% if session.get('role') == 'owner' %}
+                {% if group_has_visible_item('dash') %}
                 {% set dash_active = request.endpoint in ('dashboard', 'fot_dashboard', 'lfl_dashboard', 'ratings_dashboard') %}
                 <li class="nav-item dropdown d-none d-lg-flex">
                     <a class="nav-link nav-link-dashboard dropdown-toggle {% if dash_active %}active{% endif %}"
@@ -209,28 +217,38 @@
                         <i class="bi bi-grid"></i> Дашборд
                     </a>
                     <ul class="dropdown-menu">
+                        {% if item_visible('dashboard') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='dashboard' %}active{% endif %}" href="{{ url_for('dashboard') }}">
                                 <i class="bi bi-grid me-2"></i>Дашборд
                             </a>
                         </li>
+                        {% endif %}
+                        {% if item_visible('fot_dashboard') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='fot_dashboard' %}active{% endif %}" href="{{ url_for('fot_dashboard') }}">
                                 <i class="bi bi-cash-coin me-2"></i>ФОТ
                             </a>
                         </li>
+                        {% endif %}
+                        {% if item_visible('lfl_dashboard') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='lfl_dashboard' %}active{% endif %}" href="{{ url_for('lfl_dashboard') }}">
                                 <i class="bi bi-graph-up-arrow me-2"></i>LFL
                             </a>
                         </li>
+                        {% endif %}
+                        {% if item_visible('ratings_dashboard') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='ratings_dashboard' %}active{% endif %}" href="{{ url_for('ratings_dashboard') }}">
                                 <i class="bi bi-trophy me-2"></i>Рейтинги
                             </a>
                         </li>
+                        {% endif %}
                     </ul>
                 </li>
+                {% endif %}
+                {% if group_has_visible_item('reports') %}
                 {% set reports_active = request.endpoint in ('reports', 'shifts_archive', 'expenses_report', 'cash_flow_report', 'purchases', 'report_reconciliation', 'pnl_report', 'pnl_settings_save', 'change_settings') or (request.endpoint and (request.endpoint.startswith('bank') or 'purchases_import' in (request.endpoint or ''))) %}
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle {% if reports_active %}active{% endif %}"
@@ -238,52 +256,70 @@
                         <i class="bi bi-bar-chart"></i> Отчёты
                     </a>
                     <ul class="dropdown-menu">
+                        {% if item_visible('shifts_archive') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='shifts_archive' %}active{% endif %}" href="{{ url_for('shifts_archive') }}">
                                 <i class="bi bi-calendar3 me-2"></i>Смены
                             </a>
                         </li>
-                        {% if session.get('role') == 'owner' %}
+                        {% endif %}
+                        {% if item_visible('reports_shifts') %}
                         <li>
                             <a class="dropdown-item" href="{{ url_for('reports') }}?tab=shifts">
                                 <i class="bi bi-graph-up-arrow me-2"></i>Выручка
                             </a>
                         </li>
+                        {% endif %}
+                        {% if item_visible('reports_salary') %}
                         <li>
                             <a class="dropdown-item" href="{{ url_for('reports') }}?tab=salary">
                                 <i class="bi bi-cash-coin me-2"></i>Зарплаты
                             </a>
                         </li>
+                        {% endif %}
+                        {% if item_visible('expenses_report') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='expenses_report' %}active{% endif %}" href="{{ url_for('expenses_report') }}">
                                 <i class="bi bi-receipt me-2"></i>Другие расходы
                             </a>
                         </li>
+                        {% endif %}
+                        {% if item_visible('cash_flow_report') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='cash_flow_report' %}active{% endif %}" href="{{ url_for('cash_flow_report') }}">
                                 <i class="bi bi-cash-stack me-2"></i>Движение наличных
                             </a>
                         </li>
+                        {% endif %}
+                        {% if item_visible('report_reconciliation') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='report_reconciliation' %}active{% endif %}" href="{{ url_for('report_reconciliation') }}">
                                 <i class="bi bi-arrow-left-right me-2"></i>Сверка итогов
                             </a>
                         </li>
+                        {% endif %}
+                        {% if item_visible('pnl_report') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='pnl_report' %}active{% endif %}" href="{{ url_for('pnl_report') }}">
                                 <i class="bi bi-calculator me-2"></i>P&amp;L отчёт
                             </a>
                         </li>
+                        {% endif %}
+                        {% if item_visible('change_settings') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='change_settings' %}active{% endif %}" href="{{ url_for('change_settings') }}">
                                 <i class="bi bi-cash-coin me-2"></i>Размен
                             </a>
                         </li>
+                        {% endif %}
+                        {% if item_visible('purchases') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='purchases' or (request.endpoint and 'purchases_import' in request.endpoint) %}active{% endif %}" href="{{ url_for('purchases') }}">
                                 <i class="bi bi-box-seam me-2"></i>Накладные
                             </a>
                         </li>
+                        {% endif %}
+                        {% if item_visible('bank') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint and request.endpoint.startswith('bank') %}active{% endif %}" href="{{ url_for('bank') }}">
                                 <i class="bi bi-bank me-2"></i>Банк
@@ -292,6 +328,8 @@
                         {% endif %}
                     </ul>
                 </li>
+                {% endif %}
+                {% if group_has_visible_item('settings') %}
                 {% set settings_active = request.endpoint in ('settings','branches','users','employees','history','revenue_manual','flyer_promo_settings') %}
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle {% if settings_active %}active{% endif %}"
@@ -299,80 +337,111 @@
                         <i class="bi bi-gear"></i> Настройки
                     </a>
                     <ul class="dropdown-menu">
+                        {% if item_visible('employees') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='employees' %}active{% endif %}" href="{{ url_for('employees') }}">
                                 <i class="bi bi-person-badge me-2"></i>Сотрудники
                             </a>
                         </li>
+                        {% endif %}
+                        {% if item_visible('history') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='history' %}active{% endif %}" href="{{ url_for('history') }}">
                                 <i class="bi bi-clock-history me-2"></i>История изменений
                             </a>
                         </li>
-                        {% if session.get('role') == 'owner' %}
+                        {% endif %}
+                        {% if item_visible('import_shifts') %}
                         <li><hr class="dropdown-divider"></li>
                         <li>
                             <a class="dropdown-item {% if request.endpoint in ('import_shifts','excel_import') %}active{% endif %}" href="{{ url_for('import_shifts') }}">
                                 <i class="bi bi-cloud-upload me-2 text-primary"></i>Импорт смен
                             </a>
                         </li>
+                        {% endif %}
+                        {% if item_visible('branches') or item_visible('users') %}
                         <li><hr class="dropdown-divider"></li>
+                        {% endif %}
+                        {% if item_visible('branches') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='branches' %}active{% endif %}" href="{{ url_for('branches') }}">
                                 <i class="bi bi-shop me-2"></i>Филиалы
                             </a>
                         </li>
+                        {% endif %}
+                        {% if item_visible('users') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='users' %}active{% endif %}" href="{{ url_for('users') }}">
                                 <i class="bi bi-people me-2"></i>Пользователи
                             </a>
                         </li>
+                        {% endif %}
+                        {% if item_visible('settings_rates') or item_visible('settings_api') or item_visible('settings_categories') or item_visible('settings_bonuses') %}
                         <li><hr class="dropdown-divider"></li>
+                        {% endif %}
+                        {% if item_visible('settings_rates') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='settings' and request.args.get('tab')=='rates' %}active{% endif %}" href="{{ url_for('settings') }}?tab=rates">
                                 <i class="bi bi-currency-dollar me-2"></i>Ставки сотрудников
                             </a>
                         </li>
+                        {% endif %}
+                        {% if item_visible('settings_api') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='settings' and request.args.get('tab')=='api' %}active{% endif %}" href="{{ url_for('settings') }}?tab=api">
                                 <i class="bi bi-plug me-2"></i>Интеграция 1С
                             </a>
-                            <li><hr class="dropdown-divider my-1"></li>
+                        </li>
+                        {% endif %}
+                        {% if item_visible('settings_categories') %}
+                        <li>
                             <a class="dropdown-item {% if request.endpoint=='settings' and request.args.get('tab','categories')=='categories' %}active{% endif %}" href="{{ url_for('settings') }}?tab=categories">
                                 <i class="bi bi-tags me-2"></i>Категории расходов
                             </a>
                         </li>
+                        {% endif %}
+                        {% if item_visible('settings_bonuses') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='settings' and request.args.get('tab')=='bonuses' %}active{% endif %}" href="{{ url_for('settings') }}?tab=bonuses">
                                 <i class="bi bi-star me-2"></i>Премии
                             </a>
                         </li>
+                        {% endif %}
+                        {% if item_visible('flyer_promo_settings') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='flyer_promo_settings' %}active{% endif %}" href="{{ url_for('flyer_promo_settings') }}">
                                 <i class="bi bi-tag me-2"></i>Листовка (промокод)
                             </a>
                         </li>
+                        {% endif %}
+                        {% if item_visible('revenue_manual') or item_visible('gsheet_settings') %}
                         <li><hr class="dropdown-divider"></li>
+                        {% endif %}
+                        {% if item_visible('revenue_manual') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='revenue_manual' %}active{% endif %}" href="{{ url_for('revenue_manual') }}">
                                 <i class="bi bi-calendar2-plus me-2"></i>Старая выручка
                             </a>
                         </li>
+                        {% endif %}
+                        {% if item_visible('gsheet_settings') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='gsheet_settings' %}active{% endif %}" href="{{ url_for('gsheet_settings') }}">
                                 <i class="bi bi-google me-2"></i>Экспорт в Google Sheets
                             </a>
                         </li>
                         {% endif %}
+                        {% if session.get('role') == 'owner' %}
+                        <li><hr class="dropdown-divider"></li>
+                        <li>
+                            <a class="dropdown-item {% if request.endpoint=='settings' and request.args.get('tab')=='roles' %}active{% endif %}" href="{{ url_for('settings') }}?tab=roles">
+                                <i class="bi bi-shield-lock me-2"></i>Роли и доступ
+                            </a>
+                        </li>
+                        {% endif %}
                     </ul>
                 </li>
-            {% elif session.get('role') == 'director' %}
-                <li class="nav-item">
-                    <a class="nav-link {% if request.endpoint=='employees' %}active{% endif %}" href="{{ url_for('employees') }}">
-                        <i class="bi bi-person-badge"></i> Сотрудники
-                    </a>
-                </li>
-            {% endif %}{# owner nav #}
+                {% endif %}
             </ul>
             <ul class="navbar-nav">
                 <li class="nav-item dropdown">

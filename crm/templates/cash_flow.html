@@ -16,6 +16,7 @@
             <input type="date" name="date_to" value="{{ date_to }}" class="form-control form-control-sm" style="width:150px">
 
             <!-- Мультивыбор филиалов -->
+            {% if session.get('role') == 'owner' or can_pick_other_branches('cash_flow_report') %}
             <div class="dropdown" id="branch-dropdown">
                 <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle"
                     data-bs-toggle="dropdown" data-bs-auto-close="outside"
@@ -56,6 +57,7 @@
                     {% endfor %}
                 </ul>
             </div>
+            {% endif %}
 
             <button class="btn btn-primary btn-sm">Показать</button>
         </form>

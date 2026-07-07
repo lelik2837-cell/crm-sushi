@@ -18,7 +18,7 @@
                 <label class="form-label small text-muted mb-1">По дату</label>
                 <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
             </div>
-            {% if is_owner %}
+            {% if is_owner or can_pick_other_branches('shifts_archive') %}
             <div class="col-sm-3 col-12">
                 <label class="form-label small text-muted mb-1">Филиалы</label>
                 <div class="dropdown">

@@ -140,6 +140,7 @@
                 <label class="form-label small fw-semibold mb-1">По</label>
                 <input type="date" name="date_to" class="form-control form-control-sm" value="{{ date_to }}">
             </div>
+            {% if session.get('role') == 'owner' or can_pick_other_branches('pnl_report') %}
             <div class="col-sm-auto">
                 <label class="form-label small fw-semibold mb-1">Филиалы</label>
                 <div class="dropdown">
@@ -182,6 +183,7 @@
                     </ul>
                 </div>
             </div>
+            {% endif %}
             <div class="col-sm-auto">
                 <label class="form-label small fw-semibold mb-1">Группировка</label>
                 <select name="group_by" class="form-select form-select-sm">

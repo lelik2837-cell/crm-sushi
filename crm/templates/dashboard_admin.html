@@ -2,6 +2,19 @@
 {% block title %}Открытие смены{% endblock %}
 {% block content %}
 
+{% if no_access %}
+<div class="alert alert-warning text-center">У вашей роли нет доступа ни к одному разделу. Обратитесь к владельцу.</div>
+{% else %}
+
+{% if can_pick_other_branches('dashboard') %}
+<form method="GET" class="d-flex justify-content-end mb-3">
+    {% with bs_id='dash-bs', branches=all_branches, branch_groups=branch_groups, selected_ids=selected_branch_ids %}
+    {% include '_branch_selector.html' %}
+    {% endwith %}
+    <button type="submit" class="btn btn-primary btn-sm ms-2">Показать</button>
+</form>
+{% endif %}
+
 {% if not branches_shifts %}
 <div class="alert alert-warning text-center">У вашего аккаунта не назначен филиал. Обратитесь к владельцу.</div>
 {% else %}
@@ -67,6 +80,8 @@
   </div>
 </div>
 {% endfor %}
+
+{% endif %}
 
 {% endif %}
 

@@ -29,7 +29,7 @@
                 <input type="date" name="p_date_to" value="{{ date_to }}" class="form-control form-control-sm">
             </div>
 
-            {% if is_owner %}
+            {% if is_owner or can_pick_other_branches('purchases') %}
             <!-- Мультивыбор филиалов -->
             <div class="col-6 col-md-auto">
                 <label class="form-label small fw-semibold">Филиал</label>
