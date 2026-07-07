@@ -4319,8 +4319,11 @@ def add_employee():
     effective_from = request.form.get('effective_from') or date.today().isoformat()
     pay_monthly = 1 if request.form.get('pay_monthly') else 0
     phone = _format_phone(request.form.get('phone', ''))
-    if not full_name:
+    if not last_name:
         flash('Введите фамилию сотрудника', 'danger')
+        return redirect(url_for('employees'))
+    if not first_name:
+        flash('Введите имя сотрудника', 'danger')
         return redirect(url_for('employees'))
     with get_db() as conn:
         if rate_template_id:
@@ -4452,6 +4455,12 @@ def edit_employee(emp_id):
     rate_template_id = request.form.get('rate_template_id', '').strip() or None
     if rate_template_id:
         rate_template_id = int(rate_template_id)
+    if not last_name:
+        flash('Введите фамилию сотрудника', 'danger')
+        return redirect(url_for('employees'))
+    if not first_name:
+        flash('Введите имя сотрудника', 'danger')
+        return redirect(url_for('employees'))
     with get_db() as conn:
         emp = conn.execute('SELECT * FROM employees WHERE id=?', (emp_id,)).fetchone()
         if not emp:
@@ -4466,14 +4475,10 @@ def edit_employee(emp_id):
             rate = float(request.form.get('rate', 0) or 0)
             rate_km = float(request.form.get('rate_per_km', 0) or 0)
             rate_ord = float(request.form.get('rate_per_order', 0) or 0)
-        update_fields = 'rate=?, rate_per_km=?, rate_per_order=?, rate_template_id=?, phone=?'
-        update_vals = [rate, rate_km, rate_ord, rate_template_id, phone]
-        if full_name:
-            update_fields += ', full_name=?, last_name=?, first_name=?, pay_monthly=?'
-            update_vals += [full_name, last_name, first_name, pay_monthly]
-        else:
-            update_fields += ', pay_monthly=?'
-            update_vals += [pay_monthly]
+        update_fields = ('rate=?, rate_per_km=?, rate_per_order=?, rate_template_id=?, phone=?, '
+                          'full_name=?, last_name=?, first_name=?, pay_monthly=?')
+        update_vals = [rate, rate_km, rate_ord, rate_template_id, phone,
+                       full_name, last_name, first_name, pay_monthly]
         if emp_role and emp_role in ROLE_LABELS:
             update_fields += ', role=?'
             update_vals += [emp_role]
