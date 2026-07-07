@@ -5689,7 +5689,9 @@ def reports():
     month_start = _month_start
     s_date_from = request.args.get('s_date_from', month_start)
     s_date_to   = request.args.get('s_date_to',   today)
-    s_branch_id = request.args.get('s_branch_id', '')
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', s_date_from): s_date_from = month_start
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', s_date_to):   s_date_to   = today
+    s_branch_ids = [bid for bid in request.args.getlist('s_branch_ids') if bid.isdigit()]
     s_role      = request.args.get('s_role', '')
     s_unpaid    = request.args.get('s_unpaid', '')
 
@@ -5828,7 +5830,7 @@ def reports():
 
         sal_conds  = ['s.date BETWEEN ? AND ?']
         sal_params = [s_date_from, s_date_to]
-        sal_branch_ids = get_effective_branch_ids('reports_salary', [s_branch_id] if s_branch_id.isdigit() else [])
+        sal_branch_ids = get_effective_branch_ids('reports_salary', s_branch_ids)
         if sal_branch_ids:
             sal_ph = ','.join('?' * len(sal_branch_ids))
             sal_conds.append(f's.branch_id IN ({sal_ph})')
@@ -5985,7 +5987,7 @@ def reports():
         role_labels=ROLE_LABELS, active_tab=active_tab,
         sal_report=sal_report,
         s_date_from=s_date_from, s_date_to=s_date_to,
-        s_branch_id=s_branch_id, s_role=s_role, s_unpaid=s_unpaid,
+        s_branch_ids=s_branch_ids, s_role=s_role, s_unpaid=s_unpaid,
         s_group=s_group, s_emps=s_emps,
         all_sal_emps=all_sal_emps, pivot_rows=pivot_rows, pivot_emps=pivot_emps,
         day_groups=day_groups,

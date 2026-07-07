@@ -15,18 +15,18 @@
     </li>
     <li class="nav-item">
         <a class="nav-link {% if active_tab == 'salary' %}active{% endif %}"
-           href="{{ url_for('reports') }}?tab=salary&s_date_from={{ s_date_from }}&s_date_to={{ s_date_to }}&s_branch_id={{ s_branch_id }}&s_role={{ s_role }}&s_unpaid={{ s_unpaid }}">
+           href="{{ url_for('reports') }}?tab=salary&s_date_from={{ s_date_from }}&s_date_to={{ s_date_to }}{% for bid in s_branch_ids %}&s_branch_ids={{ bid }}{% endfor %}&s_role={{ s_role }}&s_unpaid={{ s_unpaid }}">
             <i class="bi bi-cash-coin"></i> Зарплаты
         </a>
     </li>
 </ul>
 
+{% set _MONTHS_RU = ['','Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'] %}
 
 {# ═══════════════════════════════════════════ ВКЛ. 1 — ПО СМЕНАМ #}
 {% if active_tab != 'salary' %}
 
 {# ── Фильтры выручки ── #}
-{% set _MONTHS_RU = ['','Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'] %}
 {% set _cur_m = r_date_from[5:7] | int %}
 {% set _cur_y = r_date_from[:4] %}
 {% set _month_lbl = _MONTHS_RU[_cur_m] ~ ' ' ~ _cur_y %}
@@ -305,28 +305,69 @@
 {# ═══════════════════════════════════════════ ВКЛ. 2 — ЗАРПЛАТНЫЙ ОТЧЁТ #}
 {% if active_tab == 'salary' %}
 
+{% set _cur_m_s = s_date_from[5:7] | int %}
+{% set _cur_y_s = s_date_from[:4] %}
+{% set _month_lbl_s = _MONTHS_RU[_cur_m_s] ~ ' ' ~ _cur_y_s %}
+
 <!-- Фильтры зарплатного отчёта -->
 <div class="card mb-4">
     <div class="card-body">
         <form method="GET" id="salForm" class="row g-2 align-items-end">
             <input type="hidden" name="tab" value="salary">
-            <div class="col-6 col-md-2">
-                <label class="form-label small fw-semibold">С</label>
-                <input type="date" name="s_date_from" value="{{ s_date_from }}" class="form-control">
-            </div>
-            <div class="col-6 col-md-2">
-                <label class="form-label small fw-semibold">По</label>
-                <input type="date" name="s_date_to" value="{{ s_date_to }}" class="form-control">
+            <input type="hidden" name="s_date_from" id="s_df" value="{{ s_date_from }}">
+            <input type="hidden" name="s_date_to"   id="s_dt" value="{{ s_date_to }}">
+            <div class="col-auto">
+                <label class="form-label small fw-semibold">Период</label>
+                <div class="d-flex align-items-center gap-1" style="white-space:nowrap;">
+                    <button type="button" class="btn btn-outline-secondary btn-sm px-2" style="font-size:15px;line-height:1;" onclick="shiftSalMonth(-1)" title="Предыдущий месяц">‹</button>
+                    <button type="button" class="btn btn-outline-primary btn-sm px-2 fw-semibold" id="salMonthLabel" onclick="setSalCurrentMonth()" title="Текущий месяц" style="white-space:nowrap;">{{ _month_lbl_s }}</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm px-2" style="font-size:15px;line-height:1;" onclick="shiftSalMonth(1)" title="Следующий месяц">›</button>
+                    <input type="text" id="salRangePicker" class="form-control form-control-sm" style="width:110px;cursor:pointer;" readonly placeholder="дд.мм — дд.мм">
+                </div>
             </div>
             {% if session.get('role') == 'owner' or can_pick_other_branches('reports_salary') %}
-            <div class="col-6 col-md-2">
-                <label class="form-label small fw-semibold">Филиал</label>
-                <select name="s_branch_id" class="form-select">
-                    <option value="">Все</option>
-                    {% for b in branches %}
-                    <option value="{{ b.id }}" {% if s_branch_id == b.id|string %}selected{% endif %}>{{ b.name }}</option>
-                    {% endfor %}
-                </select>
+            <div class="col-md-3">
+                <label class="form-label small fw-semibold">Филиалы</label>
+                <div class="dropdown">
+                    <button type="button" class="btn btn-outline-secondary w-100 text-start d-flex justify-content-between align-items-center"
+                            id="branchDropdownBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+                        <span id="branchBtnLabel">{% if s_branch_ids %}Выбрано: {{ s_branch_ids|length }}{% else %}Все филиалы{% endif %}</span>
+                        <i class="bi bi-chevron-down ms-2 small"></i>
+                    </button>
+                    <ul class="dropdown-menu p-2 shadow" style="min-width:240px;max-height:380px;overflow-y:auto">
+                        {% if branch_groups %}
+                        <li><div class="text-muted px-1 mb-1" style="font-size:0.75rem">ГРУППЫ</div></li>
+                        {% for g in branch_groups %}
+                        <li class="mb-1">
+                            <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1"
+                                    onclick="selectBranchGroup({{ g.branch_ids | tojson }})">
+                                <i class="bi bi-collection me-1"></i>{{ g.name }}
+                                <span class="text-muted small">({{ g.branch_ids | length }})</span>
+                            </button>
+                        </li>
+                        {% endfor %}
+                        <li><hr class="dropdown-divider my-1"></li>
+                        {% endif %}
+                        <li class="mb-1">
+                            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                                <input type="checkbox" id="branch-all-cb" onchange="toggleAllBranches(this)"
+                                    {% if not s_branch_ids %}checked{% endif %}>
+                                <span class="fw-semibold small">Все филиалы</span>
+                            </label>
+                        </li>
+                        <li><hr class="dropdown-divider my-1"></li>
+                        {% for b in branches %}
+                        <li>
+                            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                                <input type="checkbox" class="branch-cb" name="s_branch_ids" value="{{ b.id }}"
+                                    {% if b.id|string in s_branch_ids %}checked{% endif %}
+                                    onchange="onBranchCbChange()">
+                                <span class="small">{{ b.name }}</span>
+                            </label>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
             </div>
             {% endif %}
             <div class="col-6 col-md-2">
@@ -848,9 +889,84 @@ function autoDistributePlan() {
 
 </script>
 {% endif %}
+{% if active_tab == 'salary' %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+<script>
+// ── Flatpickr: выбор периода (вкладка «Зарплаты») ──────────────────────────
+var _FP_MONTHS_SAL = ['','Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+var _salFp = null;
+
+function _padz2(n) { return n < 10 ? '0' + n : String(n); }
+
+function _fmtDateStrSal(d) {
+    return d.getFullYear() + '-' + _padz2(d.getMonth() + 1) + '-' + _padz2(d.getDate());
+}
+
+function _setSalRange(df, dt) {
+    document.getElementById('s_df').value = df;
+    document.getElementById('s_dt').value = dt;
+    if (_salFp) _salFp.setDate([df, dt], false);
+    var m = parseInt(df.slice(5, 7));
+    var y = df.slice(0, 4);
+    var lbl = document.getElementById('salMonthLabel');
+    if (lbl) lbl.textContent = _FP_MONTHS_SAL[m] + ' ' + y;
+}
+
+function shiftSalMonth(dir) {
+    var from = new Date(document.getElementById('s_df').value + 'T00:00:00');
+    from.setMonth(from.getMonth() + dir);
+    from.setDate(1);
+    var to = new Date(from.getFullYear(), from.getMonth() + 1, 0);
+    _setSalRange(_fmtDateStrSal(from), _fmtDateStrSal(to));
+    document.getElementById('salForm').submit();
+}
+
+function setSalCurrentMonth() {
+    var now = new Date();
+    var from = new Date(now.getFullYear(), now.getMonth(), 1);
+    var to   = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    _setSalRange(_fmtDateStrSal(from), _fmtDateStrSal(to));
+    document.getElementById('salForm').submit();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    _salFp = flatpickr('#salRangePicker', {
+        mode: 'range',
+        dateFormat: 'Y-m-d',
+        defaultDate: [document.getElementById('s_df').value, document.getElementById('s_dt').value],
+        locale: {
+            weekdays: {
+                shorthand: ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'],
+                longhand:  ['Воскресенье','Понедельник','Вторник','Среда','Четверг','Пятница','Суббота']
+            },
+            months: {
+                shorthand: ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'],
+                longhand:  ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь']
+            },
+            firstDayOfWeek: 1,
+            rangeSeparator: ' — '
+        },
+        altInput: true,
+        altFormat: 'd.m',
+        onClose: function(dates) {
+            if (dates.length === 2) {
+                document.getElementById('s_df').value = _fmtDateStrSal(dates[0]);
+                document.getElementById('s_dt').value = _fmtDateStrSal(dates[1]);
+                var m = dates[0].getMonth() + 1;
+                var y = dates[0].getFullYear();
+                var lbl = document.getElementById('salMonthLabel');
+                if (lbl) lbl.textContent = _FP_MONTHS_SAL[m] + ' ' + y;
+                document.getElementById('salForm').submit();
+            }
+        }
+    });
+});
+</script>
+{% endif %}
 <script>
 (function () {
-    // Branch dropdown (revenue tab)
+    // Branch dropdown (общий для вкладок «Выручка» и «Зарплаты» — на странице рендерится только одна из них)
     function onBranchCbChange() {
         var checked = Array.from(document.querySelectorAll('.branch-cb')).filter(function(c) { return c.checked; });
         var allCb = document.getElementById('branch-all-cb');
