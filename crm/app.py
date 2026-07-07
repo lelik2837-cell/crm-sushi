@@ -98,6 +98,13 @@ ACTION_LABELS = {
     'shift_close':    ('Закрытие',     'secondary'),
     'shift_reopen':   ('Переоткрытие', 'warning'),
     'salary_paid':    ('Выплата ЗП',   'primary'),
+    'morning_cash_update': ('Утром в кассе', 'info'),
+}
+
+ROUTE_REASON_LABELS = {
+    'relocation': 'Перемещение',
+    'store':      'Заезд в магазин',
+    'order':      'По заказу',
 }
 
 # Реестр пунктов меню для настраиваемых прав доступа по ролям (см. role_menu_permissions).
@@ -747,6 +754,20 @@ def init_db():
         existing_cols = [r[1] for r in conn.execute("PRAGMA table_info(employee_shifts)").fetchall()]
         if 'auto_bonus' not in existing_cols:
             conn.execute("ALTER TABLE employee_shifts ADD COLUMN auto_bonus REAL DEFAULT 0")
+
+        # Доп. маршруты курьера (перемещение/заезд в магазин/по заказу) —
+        # разбивка км/заказов сверх «Данных из гуляша». employee_shifts.km/orders
+        # остаются агрегатом (гуляш + сумма/количество этих маршрутов).
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS courier_extra_routes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                employee_shift_id INTEGER NOT NULL REFERENCES employee_shifts(id) ON DELETE CASCADE,
+                reason TEXT NOT NULL DEFAULT 'relocation',
+                km REAL DEFAULT 0,
+                sort_order INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        ''')
 
         # Add branch_id to bonus_rules if missing
         br_cols = [r[1] for r in conn.execute("PRAGMA table_info(bonus_rules)").fetchall()]
@@ -2658,13 +2679,32 @@ def shift_view(shift_id):
         revenue = conn.execute('SELECT * FROM shift_revenue WHERE shift_id=?', (shift_id,)).fetchone()
         expenses = conn.execute('SELECT * FROM expenses WHERE shift_id=? ORDER BY id', (shift_id,)).fetchall()
         plus_entries = conn.execute('SELECT * FROM cash_plus_entries WHERE shift_id=? ORDER BY id', (shift_id,)).fetchall()
-        staff = conn.execute(
+        staff_rows = conn.execute(
             '''SELECT es.*, COALESCE(e.pay_monthly, 0) as pay_monthly
                FROM employee_shifts es
                LEFT JOIN employees e ON e.id = es.employee_id
                WHERE es.shift_id=? ORDER BY es.role_snapshot, es.full_name_snapshot''',
             (shift_id,)
         ).fetchall()
+        # Доп. маршруты курьеров: «Данные из гуляша» = km/orders минус эти маршруты
+        courier_ids = [s['id'] for s in staff_rows if s['role_snapshot'] == 'courier']
+        courier_route_map = {}
+        if courier_ids:
+            ph = ','.join('?' * len(courier_ids))
+            for r in conn.execute(
+                f'SELECT * FROM courier_extra_routes WHERE employee_shift_id IN ({ph}) ORDER BY sort_order, id',
+                courier_ids
+            ).fetchall():
+                courier_route_map.setdefault(r['employee_shift_id'], []).append(dict(r))
+        staff = []
+        for s in staff_rows:
+            d = dict(s)
+            if d['role_snapshot'] == 'courier':
+                routes = courier_route_map.get(d['id'], [])
+                d['extra_routes'] = routes
+                d['gulyash_km'] = float(d['km'] or 0) - sum(float(r['km'] or 0) for r in routes)
+                d['gulyash_orders'] = int(d['orders'] or 0) - len(routes)
+            staff.append(d)
         # Find all branches in same group(s) as this branch (for employee list)
         group_branch_ids = conn.execute('''
             SELECT DISTINCT bgm2.branch_id
@@ -2835,6 +2875,32 @@ def save_revenue(shift_id):
         auto_bonuses = calculate_bonuses(conn, shift_id)
         conn.commit()
     return jsonify({'ok': True, 'auto_bonuses': auto_bonuses})
+
+
+@app.route('/shift/<int:shift_id>/save-morning-cash', methods=['POST'])
+@login_required
+def save_morning_cash(shift_id):
+    if session.get('role') != 'owner':
+        return jsonify({'error': 'Только владелец может менять сумму утром в кассе'}), 403
+    data = request.json or {}
+    comment = (data.get('comment') or '').strip()
+    if not comment:
+        return jsonify({'error': 'Укажите комментарий'}), 400
+    with get_db() as conn:
+        existing = conn.execute(
+            'SELECT morning_cash FROM shift_revenue WHERE shift_id=?', (shift_id,)
+        ).fetchone()
+        old_amount = float(existing['morning_cash'] or 0) if existing else 0.0
+        new_amount = _f(data, 'amount')
+        conn.execute(
+            'UPDATE shift_revenue SET morning_cash=?, kassa_nal=? WHERE shift_id=?',
+            (new_amount, _f(data, 'kassa_nal'), shift_id)
+        )
+        log_action(conn, 'morning_cash_update',
+            f"Утром в кассе: {_fmt_money(old_amount)} → {_fmt_money(new_amount)}. Комментарий: {comment}",
+            shift_id=shift_id)
+        conn.commit()
+    return jsonify({'ok': True})
 
 
 @app.route('/shift/<int:shift_id>/save-terminals', methods=['POST'])
@@ -3092,6 +3158,119 @@ def save_staff(shift_id):
             auto_bonuses = calculate_bonuses(conn, shift_id)
         conn.commit()
     return jsonify({'ok': True, 'id': staff_id, 'auto_bonuses': auto_bonuses})
+
+
+def _recalc_courier_base_pay(existing, km, orders):
+    """base_pay курьера по снапшот-тарифам строки + агрегированные км/заказы."""
+    hours    = float(existing['hours_worked'] or 0)
+    rate     = float(existing['rate_snapshot'] or 0)
+    rate_km  = float(existing['rate_per_km_snapshot'] or 0)
+    rate_ord = float(existing['rate_per_order_snapshot'] or 0)
+    return hours * rate + km * rate_km + orders * rate_ord
+
+
+@app.route('/shift/<int:shift_id>/staff/<int:staff_id>/route/add', methods=['POST'])
+@login_required
+def add_courier_route(shift_id, staff_id):
+    if not _can_edit_shift(shift_id):
+        return jsonify({'error': 'Нет доступа'}), 403
+    data = request.json or {}
+    reason = data.get('reason', 'relocation')
+    if reason not in ROUTE_REASON_LABELS:
+        reason = 'relocation'
+    km = _f(data, 'km')
+    with get_db() as conn:
+        existing = conn.execute(
+            'SELECT * FROM employee_shifts WHERE id=? AND shift_id=?', (staff_id, shift_id)
+        ).fetchone()
+        if not existing:
+            return jsonify({'ok': False, 'error': 'not found'}), 404
+        max_sort = conn.execute(
+            'SELECT COALESCE(MAX(sort_order),-1) FROM courier_extra_routes WHERE employee_shift_id=?',
+            (staff_id,)
+        ).fetchone()[0]
+        route_id = conn.execute(
+            'INSERT INTO courier_extra_routes (employee_shift_id, reason, km, sort_order) VALUES (?,?,?,?)',
+            (staff_id, reason, km, max_sort + 1)
+        ).lastrowid
+        new_km     = float(existing['km'] or 0) + km
+        new_orders = int(existing['orders'] or 0) + 1
+        base_pay   = _recalc_courier_base_pay(existing, new_km, new_orders)
+        conn.execute('UPDATE employee_shifts SET km=?, orders=?, base_pay=? WHERE id=?',
+                     (new_km, new_orders, base_pay, staff_id))
+        auto_bonuses = calculate_bonuses(conn, shift_id)
+        total_row = conn.execute('SELECT total_amount FROM employee_shifts WHERE id=?', (staff_id,)).fetchone()
+        log_action(conn, 'staff_update',
+            f"Добавлен доп. маршрут: {ROUTE_REASON_LABELS[reason]}, {km:g} км",
+            shift_id=shift_id, entity_id=staff_id)
+        conn.commit()
+    return jsonify({'ok': True, 'route_id': route_id, 'reason': reason, 'km': km,
+                    'km_total': new_km, 'orders_total': new_orders,
+                    'total_amount': total_row['total_amount'], 'auto_bonuses': auto_bonuses})
+
+
+@app.route('/shift/<int:shift_id>/staff/<int:staff_id>/route/<int:route_id>/update', methods=['POST'])
+@login_required
+def update_courier_route(shift_id, staff_id, route_id):
+    if not _can_edit_shift(shift_id):
+        return jsonify({'error': 'Нет доступа'}), 403
+    data = request.json or {}
+    reason = data.get('reason', 'relocation')
+    if reason not in ROUTE_REASON_LABELS:
+        reason = 'relocation'
+    new_km = _f(data, 'km')
+    with get_db() as conn:
+        route = conn.execute(
+            'SELECT * FROM courier_extra_routes WHERE id=? AND employee_shift_id=?', (route_id, staff_id)
+        ).fetchone()
+        existing = conn.execute(
+            'SELECT * FROM employee_shifts WHERE id=? AND shift_id=?', (staff_id, shift_id)
+        ).fetchone()
+        if not route or not existing:
+            return jsonify({'ok': False, 'error': 'not found'}), 404
+        km_delta = new_km - float(route['km'] or 0)
+        conn.execute('UPDATE courier_extra_routes SET reason=?, km=? WHERE id=?', (reason, new_km, route_id))
+        aggregate_km = float(existing['km'] or 0) + km_delta
+        aggregate_orders = int(existing['orders'] or 0)  # число маршрутов не меняется
+        base_pay = _recalc_courier_base_pay(existing, aggregate_km, aggregate_orders)
+        conn.execute('UPDATE employee_shifts SET km=?, base_pay=? WHERE id=?',
+                     (aggregate_km, base_pay, staff_id))
+        auto_bonuses = calculate_bonuses(conn, shift_id)
+        total_row = conn.execute('SELECT total_amount FROM employee_shifts WHERE id=?', (staff_id,)).fetchone()
+        log_action(conn, 'staff_update',
+            f"Изменён доп. маршрут: {ROUTE_REASON_LABELS[reason]}, {new_km:g} км",
+            shift_id=shift_id, entity_id=staff_id)
+        conn.commit()
+    return jsonify({'ok': True, 'km_total': aggregate_km, 'orders_total': aggregate_orders,
+                    'total_amount': total_row['total_amount'], 'auto_bonuses': auto_bonuses})
+
+
+@app.route('/shift/<int:shift_id>/staff/<int:staff_id>/route/<int:route_id>/delete', methods=['POST'])
+@login_required
+def delete_courier_route(shift_id, staff_id, route_id):
+    if not _can_edit_shift(shift_id):
+        return jsonify({'error': 'Нет доступа'}), 403
+    with get_db() as conn:
+        route = conn.execute(
+            'SELECT * FROM courier_extra_routes WHERE id=? AND employee_shift_id=?', (route_id, staff_id)
+        ).fetchone()
+        existing = conn.execute(
+            'SELECT * FROM employee_shifts WHERE id=? AND shift_id=?', (staff_id, shift_id)
+        ).fetchone()
+        if not route or not existing:
+            return jsonify({'ok': False, 'error': 'not found'}), 404
+        conn.execute('DELETE FROM courier_extra_routes WHERE id=?', (route_id,))
+        aggregate_km = float(existing['km'] or 0) - float(route['km'] or 0)
+        aggregate_orders = int(existing['orders'] or 0) - 1
+        base_pay = _recalc_courier_base_pay(existing, aggregate_km, aggregate_orders)
+        conn.execute('UPDATE employee_shifts SET km=?, orders=?, base_pay=? WHERE id=?',
+                     (aggregate_km, aggregate_orders, base_pay, staff_id))
+        auto_bonuses = calculate_bonuses(conn, shift_id)
+        total_row = conn.execute('SELECT total_amount FROM employee_shifts WHERE id=?', (staff_id,)).fetchone()
+        log_action(conn, 'staff_update', "Удалён доп. маршрут", shift_id=shift_id, entity_id=staff_id)
+        conn.commit()
+    return jsonify({'ok': True, 'km_total': aggregate_km, 'orders_total': aggregate_orders,
+                    'total_amount': total_row['total_amount'], 'auto_bonuses': auto_bonuses})
 
 
 @app.route('/shift/<int:shift_id>/pay-staff/<int:staff_id>', methods=['POST'])
