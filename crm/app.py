@@ -3188,6 +3188,8 @@ def quick_add_courier(shift_id):
     first_name = (data.get('first_name') or '').strip()
     if not last_name:
         return jsonify({'ok': False, 'error': 'Введите фамилию'}), 400
+    if not first_name:
+        return jsonify({'ok': False, 'error': 'Введите имя'}), 400
     phone_digits = _normalize_phone(data.get('phone') or '')
     if not phone_digits:
         return jsonify({'ok': False, 'error': 'Введите номер телефона'}), 400

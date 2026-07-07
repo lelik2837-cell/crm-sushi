@@ -591,8 +591,8 @@
       data-name="{{ s.full_name_snapshot }}" data-role="{{ s.role_snapshot }}"
       data-auto-bonus="{{ (s.auto_bonus or 0)|int }}">
       <div class="field-input-sm sf-name" style="font-size:12px; padding:5px 8px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; height:28px; box-sizing:border-box; display:flex; align-items:center;">{{ s.full_name_snapshot }}</div>
-      <input type="text" class="mini-input time-inp sf-start" value="{{ s.shift_start or '10:00' }}" placeholder="10:00" maxlength="5" {% if not can_edit %}disabled{% endif %}>
-      <input type="text" class="mini-input time-inp sf-end"   value="{{ s.shift_end   or '22:00' }}" placeholder="22:00" maxlength="5" {% if not can_edit %}disabled{% endif %}>
+      <input type="text" class="mini-input time-inp sf-start" value="{{ s.shift_start or '' }}" placeholder="10:00" maxlength="5" {% if not can_edit %}disabled{% endif %}>
+      <input type="text" class="mini-input time-inp sf-end"   value="{{ s.shift_end   or '' }}" placeholder="22:00" maxlength="5" {% if not can_edit %}disabled{% endif %}>
       <div class="field-calc sf-hours">{{ s.hours_worked or 0 }} ч</div>
       {% if can_edit %}<div class="bonus-btns"><button class="bonus-btn-prem" onclick="toggleBonus(this,'prem')">Премия</button><button class="bonus-btn-fine" onclick="toggleBonus(this,'fine')">Штраф</button></div>{% else %}<div></div>{% endif %}
       <div class="field-calc sf-auto-bonus">{{ (s.auto_bonus or 0)|int if (s.auto_bonus or 0) > 0 else '—' }}</div>
@@ -709,8 +709,8 @@
             </button>
             <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ s.full_name_snapshot }}</span>
           </div>
-          <input type="text" class="mini-input time-inp sf-start" value="{{ s.shift_start or '10:00' }}" placeholder="10:00" maxlength="5" {% if not can_edit %}disabled{% endif %}>
-          <input type="text" class="mini-input time-inp sf-end"   value="{{ s.shift_end   or '22:00' }}" placeholder="22:00" maxlength="5" {% if not can_edit %}disabled{% endif %}>
+          <input type="text" class="mini-input time-inp sf-start" value="{{ s.shift_start or '' }}" placeholder="10:00" maxlength="5" {% if not can_edit %}disabled{% endif %}>
+          <input type="text" class="mini-input time-inp sf-end"   value="{{ s.shift_end   or '' }}" placeholder="22:00" maxlength="5" {% if not can_edit %}disabled{% endif %}>
           <div class="field-calc sf-hours">{{ s.hours_worked or 0 }} ч</div>
           <div class="field-calc sf-km-total">{{ (s.km or 0)|round(1) }}</div>
           <div class="field-calc sf-orders-total">{{ s.orders or 0 }}</div>
@@ -889,7 +889,7 @@
       <input type="text" id="newCourierLastName" class="field-input" placeholder="Иванов" style="margin-bottom:0;">
     </div>
     <div style="margin-bottom:14px;">
-      <div class="field-label">Имя</div>
+      <div class="field-label">Имя *</div>
       <input type="text" id="newCourierFirstName" class="field-input" placeholder="Иван" style="margin-bottom:0;">
     </div>
     <div style="margin-bottom:14px;">
@@ -900,9 +900,11 @@
       <div class="field-label">Ставка *</div>
       {% if courier_rate_templates %}
       <select id="newCourierRateTmpl" class="field-input" style="margin-bottom:0;">
+        {% if courier_rate_templates|length > 1 %}
         <option value="">— выбрать ставку —</option>
+        {% endif %}
         {% for t in courier_rate_templates %}
-        <option value="{{ t.id }}">{{ t.name }} — {{ t.rate|int }}₽/ч{% if t.rate_per_km %} · {{ t.rate_per_km|int }}₽/км{% endif %}{% if t.rate_per_order %} · {{ t.rate_per_order|int }}₽/заказ{% endif %}</option>
+        <option value="{{ t.id }}" {% if courier_rate_templates|length == 1 %}selected{% endif %}>{{ t.name }} — {{ t.rate|int }}₽/ч{% if t.rate_per_km %} · {{ t.rate_per_km|int }}₽/км{% endif %}{% if t.rate_per_order %} · {{ t.rate_per_order|int }}₽/заказ{% endif %}</option>
         {% endfor %}
       </select>
       {% else %}
@@ -1746,7 +1748,7 @@ function openAddCourierModal(fromEl) {
   document.getElementById('newCourierFirstName').value = parts.slice(1).join(' ');
   document.getElementById('newCourierPhone').value = '';
   const tmplSel = document.getElementById('newCourierRateTmpl');
-  if (tmplSel) tmplSel.value = '';
+  if (tmplSel && tmplSel.options.length > 1) tmplSel.value = '';
   document.getElementById('addCourierModal').style.display = 'flex';
   document.getElementById('newCourierLastName').focus();
 }
@@ -1756,12 +1758,14 @@ function closeAddCourierModal() {
 async function submitAddCourier() {
   const lastNameEl = document.getElementById('newCourierLastName');
   const lastName = lastNameEl.value.trim();
-  const firstName = document.getElementById('newCourierFirstName').value.trim();
+  const firstNameEl = document.getElementById('newCourierFirstName');
+  const firstName = firstNameEl.value.trim();
   const phoneEl = document.getElementById('newCourierPhone');
   const phone = phoneEl.value.trim();
   const rateTmplSel = document.getElementById('newCourierRateTmpl');
   const rateTemplateId = rateTmplSel ? rateTmplSel.value : '';
   if (!lastName) { lastNameEl.focus(); return; }
+  if (!firstName) { firstNameEl.focus(); return; }
   if (!phone) { phoneEl.focus(); return; }
   if (!rateTemplateId) { alert('Выберите ставку'); if (rateTmplSel) rateTmplSel.focus(); return; }
   const res = await fetch(`/shift/${SHIFT_ID}/quick-add-courier`, {
@@ -1777,20 +1781,14 @@ async function submitAddCourier() {
 }
 
 function _postStaff(empId, name, role, rate, rateKm) {
-  const isCourier = role === 'courier';
-  const isFriSat = (SHIFT_WEEKDAY === 4 || SHIFT_WEEKDAY === 5);
-  const defStart = isCourier ? '' : '10:00';
-  const defEnd   = isCourier ? '' : (isFriSat ? '23:00' : '22:00');
-  const defHours = isCourier ? 0  : (isFriSat ? 13 : 12);
-  const defBase  = Math.round(rate * defHours);
   fetch(`/shift/${SHIFT_ID}/save-staff`, {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
       employee_id: empId, full_name_snapshot: name, role_snapshot: role,
       rate_snapshot: rate, rate_per_km_snapshot: rateKm, rate_per_order_snapshot: 100,
-      shift_start: defStart, shift_end: defEnd, hours_worked: defHours,
+      shift_start: '', shift_end: '', hours_worked: 0,
       km: 0, orders: 0, bonus_amount: 0, penalty_amount: 0, bonus_comment: '',
-      base_pay: defBase, total_amount: defBase, is_paid: false, paid_amount: 0
+      base_pay: 0, total_amount: 0, is_paid: false, paid_amount: 0
     })
   }).then(r => r.json()).then(d => {
     if (d.error === 'duplicate') {
