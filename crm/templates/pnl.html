@@ -445,7 +445,7 @@ function pnlToggleAll(cb) {
 function pnlSelectGroup(ids) {
     document.getElementById('pnl-all-cb').checked = false;
     document.querySelectorAll('.pnl-branch-cb').forEach(cb => {
-        if (ids.indexOf(parseInt(cb.value)) >= 0) cb.checked = true;
+        cb.checked = ids.indexOf(parseInt(cb.value)) >= 0;
     });
     pnlBranchChange();
 }

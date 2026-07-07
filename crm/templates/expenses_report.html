@@ -252,7 +252,7 @@ function toggleAllBranches(cb) {
 function selectBranchGroup(ids) {
     document.getElementById('branch-all-cb').checked = false;
     document.querySelectorAll('.branch-cb').forEach(function(cb) {
-        if (ids.indexOf(parseInt(cb.value)) >= 0) cb.checked = true;
+        cb.checked = ids.indexOf(parseInt(cb.value)) >= 0;
     });
     onBranchCbChange();
 }

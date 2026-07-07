@@ -987,7 +987,7 @@ document.addEventListener('DOMContentLoaded', function() {
         var allCb = document.getElementById('branch-all-cb');
         if (allCb) allCb.checked = false;
         document.querySelectorAll('.branch-cb').forEach(function (cb) {
-            if (ids.indexOf(parseInt(cb.value)) >= 0) cb.checked = true;
+            cb.checked = ids.indexOf(parseInt(cb.value)) >= 0;
         });
         onBranchCbChange();
     };
