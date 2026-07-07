@@ -3194,8 +3194,9 @@ def quick_add_courier(shift_id):
     phone = _format_phone(data.get('phone') or '')
     full_name = (last_name + (' ' + first_name if first_name else '')).strip()
     rate_template_id = data.get('rate_template_id') or None
-    if rate_template_id:
-        rate_template_id = int(rate_template_id)
+    if not rate_template_id:
+        return jsonify({'ok': False, 'error': 'Выберите ставку'}), 400
+    rate_template_id = int(rate_template_id)
     with get_db() as conn:
         shift = conn.execute('SELECT branch_id FROM shifts WHERE id=?', (shift_id,)).fetchone()
         if not shift:
@@ -3204,15 +3205,12 @@ def quick_add_courier(shift_id):
         for row in conn.execute("SELECT phone FROM employees WHERE role='courier'").fetchall():
             if row['phone'] and _normalize_phone(row['phone']) == phone_digits:
                 return jsonify({'ok': False, 'error': 'Курьер есть в списке сотрудников!'}), 400
-        if rate_template_id:
-            tmpl = conn.execute('SELECT * FROM rate_templates WHERE id=?', (rate_template_id,)).fetchone()
-            rate = float(tmpl['rate'] or 0) if tmpl else 0.0
-            rate_km = float(tmpl['rate_per_km'] or 0) if tmpl else 0.0
-            rate_ord = float(tmpl['rate_per_order'] or 0) if tmpl else 0.0
-        else:
-            rate = _f(data, 'rate')
-            rate_km = _f(data, 'rate_per_km')
-            rate_ord = _f(data, 'rate_per_order')
+        tmpl = conn.execute('SELECT * FROM rate_templates WHERE id=?', (rate_template_id,)).fetchone()
+        if not tmpl:
+            return jsonify({'ok': False, 'error': 'Ставка не найдена'}), 400
+        rate = float(tmpl['rate'] or 0)
+        rate_km = float(tmpl['rate_per_km'] or 0)
+        rate_ord = float(tmpl['rate_per_order'] or 0)
         conn.execute(
             'INSERT INTO employees (branch_id, full_name, last_name, first_name, role, rate, rate_per_km, rate_per_order, rate_template_id, phone) '
             'VALUES (?,?,?,?,?,?,?,?,?,?)',
