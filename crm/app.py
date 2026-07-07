@@ -764,10 +764,14 @@ def init_db():
                 employee_shift_id INTEGER NOT NULL REFERENCES employee_shifts(id) ON DELETE CASCADE,
                 reason TEXT NOT NULL DEFAULT 'relocation',
                 km REAL DEFAULT 0,
+                comment TEXT DEFAULT '',
                 sort_order INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         ''')
+        _cer_cols = [r[1] for r in conn.execute("PRAGMA table_info(courier_extra_routes)").fetchall()]
+        if 'comment' not in _cer_cols:
+            conn.execute("ALTER TABLE courier_extra_routes ADD COLUMN comment TEXT DEFAULT ''")
 
         # Add branch_id to bonus_rules if missing
         br_cols = [r[1] for r in conn.execute("PRAGMA table_info(bonus_rules)").fetchall()]
@@ -3179,6 +3183,7 @@ def add_courier_route(shift_id, staff_id):
     if reason not in ROUTE_REASON_LABELS:
         reason = 'relocation'
     km = _f(data, 'km')
+    comment = (data.get('comment') or '').strip()
     with get_db() as conn:
         existing = conn.execute(
             'SELECT * FROM employee_shifts WHERE id=? AND shift_id=?', (staff_id, shift_id)
@@ -3190,8 +3195,8 @@ def add_courier_route(shift_id, staff_id):
             (staff_id,)
         ).fetchone()[0]
         route_id = conn.execute(
-            'INSERT INTO courier_extra_routes (employee_shift_id, reason, km, sort_order) VALUES (?,?,?,?)',
-            (staff_id, reason, km, max_sort + 1)
+            'INSERT INTO courier_extra_routes (employee_shift_id, reason, km, comment, sort_order) VALUES (?,?,?,?,?)',
+            (staff_id, reason, km, comment, max_sort + 1)
         ).lastrowid
         new_km     = float(existing['km'] or 0) + km
         new_orders = int(existing['orders'] or 0) + 1
@@ -3204,7 +3209,7 @@ def add_courier_route(shift_id, staff_id):
             f"Добавлен доп. маршрут: {ROUTE_REASON_LABELS[reason]}, {km:g} км",
             shift_id=shift_id, entity_id=staff_id)
         conn.commit()
-    return jsonify({'ok': True, 'route_id': route_id, 'reason': reason, 'km': km,
+    return jsonify({'ok': True, 'route_id': route_id, 'reason': reason, 'km': km, 'comment': comment,
                     'km_total': new_km, 'orders_total': new_orders,
                     'total_amount': total_row['total_amount'], 'auto_bonuses': auto_bonuses})
 
@@ -3219,6 +3224,7 @@ def update_courier_route(shift_id, staff_id, route_id):
     if reason not in ROUTE_REASON_LABELS:
         reason = 'relocation'
     new_km = _f(data, 'km')
+    comment = (data.get('comment') or '').strip()
     with get_db() as conn:
         route = conn.execute(
             'SELECT * FROM courier_extra_routes WHERE id=? AND employee_shift_id=?', (route_id, staff_id)
@@ -3229,7 +3235,8 @@ def update_courier_route(shift_id, staff_id, route_id):
         if not route or not existing:
             return jsonify({'ok': False, 'error': 'not found'}), 404
         km_delta = new_km - float(route['km'] or 0)
-        conn.execute('UPDATE courier_extra_routes SET reason=?, km=? WHERE id=?', (reason, new_km, route_id))
+        conn.execute('UPDATE courier_extra_routes SET reason=?, km=?, comment=? WHERE id=?',
+                     (reason, new_km, comment, route_id))
         aggregate_km = float(existing['km'] or 0) + km_delta
         aggregate_orders = int(existing['orders'] or 0)  # число маршрутов не меняется
         base_pay = _recalc_courier_base_pay(existing, aggregate_km, aggregate_orders)
