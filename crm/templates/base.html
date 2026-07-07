@@ -476,6 +476,21 @@
 <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/l10n/ru.js"></script>
 <script>flatpickr.localize(flatpickr.l10ns.ru);</script>
+<script>
+// Маска телефона: вводятся только цифры, сам форматируется как 8-904-572-1334
+function onPhoneInput(el) {
+  let d = (el.value || '').replace(/\D/g, '');
+  if (d.length > 0) {
+    d = (d[0] === '7' || d[0] === '8') ? ('8' + d.slice(1)) : ('8' + d);
+  }
+  d = d.slice(0, 11);
+  let out = d.slice(0, 1);
+  if (d.length > 1) out += '-' + d.slice(1, Math.min(4, d.length));
+  if (d.length > 4) out += '-' + d.slice(4, Math.min(7, d.length));
+  if (d.length > 7) out += '-' + d.slice(7, Math.min(11, d.length));
+  el.value = out;
+}
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

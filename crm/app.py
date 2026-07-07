@@ -1274,6 +1274,10 @@ def init_db():
         if 'pay_monthly' not in _emp_cols2:
             conn.execute("ALTER TABLE employees ADD COLUMN pay_monthly INTEGER DEFAULT 0")
 
+        # Feature: employee phone number
+        if 'phone' not in _emp_cols2:
+            conn.execute("ALTER TABLE employees ADD COLUMN phone TEXT DEFAULT ''")
+
         # One shift per branch per day: unique index
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_shifts_branch_date ON shifts(branch_id, date)"
@@ -3184,6 +3188,10 @@ def quick_add_courier(shift_id):
     first_name = (data.get('first_name') or '').strip()
     if not last_name:
         return jsonify({'ok': False, 'error': 'Введите фамилию'}), 400
+    phone_digits = _normalize_phone(data.get('phone') or '')
+    if not phone_digits:
+        return jsonify({'ok': False, 'error': 'Введите номер телефона'}), 400
+    phone = _format_phone(data.get('phone') or '')
     full_name = (last_name + (' ' + first_name if first_name else '')).strip()
     rate_template_id = data.get('rate_template_id') or None
     if rate_template_id:
@@ -3193,6 +3201,9 @@ def quick_add_courier(shift_id):
         if not shift:
             return jsonify({'ok': False, 'error': 'Смена не найдена'}), 404
         branch_id = shift['branch_id']
+        for row in conn.execute("SELECT phone FROM employees WHERE role='courier'").fetchall():
+            if row['phone'] and _normalize_phone(row['phone']) == phone_digits:
+                return jsonify({'ok': False, 'error': 'Курьер есть в списке сотрудников!'}), 400
         rate = rate_km = rate_ord = 0.0
         if rate_template_id:
             tmpl = conn.execute('SELECT * FROM rate_templates WHERE id=?', (rate_template_id,)).fetchone()
@@ -3201,9 +3212,9 @@ def quick_add_courier(shift_id):
                 rate_km = float(tmpl['rate_per_km'] or 0)
                 rate_ord = float(tmpl['rate_per_order'] or 0)
         conn.execute(
-            'INSERT INTO employees (branch_id, full_name, last_name, first_name, role, rate, rate_per_km, rate_per_order, rate_template_id) '
-            'VALUES (?,?,?,?,?,?,?,?,?)',
-            (branch_id, full_name, last_name, first_name, 'courier', rate, rate_km, rate_ord, rate_template_id)
+            'INSERT INTO employees (branch_id, full_name, last_name, first_name, role, rate, rate_per_km, rate_per_order, rate_template_id, phone) '
+            'VALUES (?,?,?,?,?,?,?,?,?,?)',
+            (branch_id, full_name, last_name, first_name, 'courier', rate, rate_km, rate_ord, rate_template_id, phone)
         )
         emp_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
         conn.execute(
@@ -4296,6 +4307,7 @@ def add_employee():
         rate_template_id = int(rate_template_id)
     effective_from = request.form.get('effective_from') or date.today().isoformat()
     pay_monthly = 1 if request.form.get('pay_monthly') else 0
+    phone = _format_phone(request.form.get('phone', ''))
     if not full_name:
         flash('Введите фамилию сотрудника', 'danger')
         return redirect(url_for('employees'))
@@ -4310,8 +4322,8 @@ def add_employee():
             rate_km = float(request.form.get('rate_per_km', 0) or 0)
             rate_ord = float(request.form.get('rate_per_order', 0) or 0)
         conn.execute(
-            'INSERT INTO employees (branch_id, full_name, last_name, first_name, role, rate, rate_per_km, rate_per_order, pay_monthly, rate_template_id) VALUES (?,?,?,?,?,?,?,?,?,?)',
-            (branch_id, full_name, last_name, first_name, emp_role, rate, rate_km, rate_ord, pay_monthly, rate_template_id)
+            'INSERT INTO employees (branch_id, full_name, last_name, first_name, role, rate, rate_per_km, rate_per_order, pay_monthly, rate_template_id, phone) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+            (branch_id, full_name, last_name, first_name, emp_role, rate, rate_km, rate_ord, pay_monthly, rate_template_id, phone)
         )
         emp_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
         conn.execute(
@@ -4424,6 +4436,7 @@ def edit_employee(emp_id):
     address_from = request.form.get('address_from') or date.today().isoformat()
     rate_from = request.form.get('rate_from') or date.today().isoformat()
     pay_monthly = 1 if request.form.get('pay_monthly') else 0
+    phone = _format_phone(request.form.get('phone', ''))
     emp_role = request.form.get('role', '').strip() or None
     rate_template_id = request.form.get('rate_template_id', '').strip() or None
     if rate_template_id:
@@ -4442,8 +4455,8 @@ def edit_employee(emp_id):
             rate = float(request.form.get('rate', 0) or 0)
             rate_km = float(request.form.get('rate_per_km', 0) or 0)
             rate_ord = float(request.form.get('rate_per_order', 0) or 0)
-        update_fields = 'rate=?, rate_per_km=?, rate_per_order=?, rate_template_id=?'
-        update_vals = [rate, rate_km, rate_ord, rate_template_id]
+        update_fields = 'rate=?, rate_per_km=?, rate_per_order=?, rate_template_id=?, phone=?'
+        update_vals = [rate, rate_km, rate_ord, rate_template_id, phone]
         if full_name:
             update_fields += ', full_name=?, last_name=?, first_name=?, pay_monthly=?'
             update_vals += [full_name, last_name, first_name, pay_monthly]
@@ -8177,6 +8190,26 @@ def _i(data, key):
         return int(data.get(key) or 0)
     except (ValueError, TypeError):
         return 0
+
+
+def _normalize_phone(raw):
+    """Только цифры, приведённые к 11-значному номеру с ведущей 8 (89045721334)."""
+    digits = re.sub(r'\D', '', raw or '')
+    if not digits:
+        return ''
+    if len(digits) == 11 and digits[0] in ('7', '8'):
+        digits = '8' + digits[1:]
+    elif len(digits) == 10:
+        digits = '8' + digits
+    return digits
+
+
+def _format_phone(raw):
+    """8-904-572-1334; если не удалось распознать 11 цифр — возвращает как есть."""
+    digits = _normalize_phone(raw)
+    if len(digits) != 11:
+        return (raw or '').strip()
+    return f'{digits[0]}-{digits[1:4]}-{digits[4:7]}-{digits[7:11]}'
 
 
 def calculate_bonuses(conn, shift_id):

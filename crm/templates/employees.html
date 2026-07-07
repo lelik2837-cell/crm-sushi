@@ -238,6 +238,10 @@
                         </div>
                     </div>
                     <div class="mb-3">
+                        <label class="form-label fw-semibold"><i class="bi bi-telephone me-1"></i>Телефон</label>
+                        <input type="text" name="phone" class="form-control" placeholder="8-904-572-1334" maxlength="14" oninput="onPhoneInput(this)">
+                    </div>
+                    <div class="mb-3">
                         <label class="form-label fw-semibold"><i class="bi bi-geo-alt me-1"></i>Адрес развоза</label>
                         <input type="text" name="address" class="form-control" placeholder="ул. Пушкина, д. 5, кв. 12">
                     </div>
@@ -343,6 +347,13 @@
                             <input type="text" name="first_name" class="form-control"
                                 value="{{ _fn }}" placeholder="Иван">
                         </div>
+                    </div>
+
+                    <!-- Телефон -->
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold"><i class="bi bi-telephone me-1"></i>Телефон</label>
+                        <input type="text" name="phone" class="form-control" placeholder="8-904-572-1334"
+                            maxlength="14" oninput="onPhoneInput(this)" value="{{ emp.phone or '' }}">
                     </div>
 
                     <!-- Адрес -->
