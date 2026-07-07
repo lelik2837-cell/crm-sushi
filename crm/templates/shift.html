@@ -1459,8 +1459,8 @@ function toggleRoutePanel(btn) {
   const row = btn.closest('.courier-row');
   const panel = getRoutePanel(row);
   if (!panel) return;
-  const willShow = panel.style.display === 'none' || !panel.style.display;
-  panel.style.display = willShow ? '' : 'none';
+  const willShow = panel.style.display === 'none';
+  panel.style.display = willShow ? 'block' : 'none';
   btn.classList.toggle('active', willShow);
 }
 
