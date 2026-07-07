@@ -350,6 +350,12 @@
 {% block scripts %}
 {% if kpi_blocks %}
 <script>
+// Локальная дата в формате YYYY-MM-DD (не через toISOString — тот конвертирует
+// в UTC и может сдвинуть дату на день назад/вперёд в зависимости от часового пояса).
+function fmtLocalDate(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
 const KPI_COLORS = {
     primary: '#0d6efd', success: '#198754', danger: '#dc3545',
     warning: '#ffc107', info: '#0dcaf0', dark: '#212529'
@@ -359,7 +365,7 @@ let currentPeriod = 'month';
 
 function getPeriodDates(period) {
     const today = new Date();
-    const fmt = d => d.toISOString().split('T')[0];
+    const fmt = fmtLocalDate;
     if (period === 'today') return [fmt(today), fmt(today)];
     if (period === 'week') {
         const d = new Date(today); d.setDate(d.getDate() - 6);
@@ -421,7 +427,7 @@ document.querySelectorAll('.kpi-period').forEach(btn => {
 document.getElementById('kpi-branch').addEventListener('change', loadKpi);
 
 // Init today's dates for custom range
-const today = new Date().toISOString().split('T')[0];
+const today = fmtLocalDate(new Date());
 document.getElementById('kpi-from').value = today;
 document.getElementById('kpi-to').value = today;
 
@@ -431,6 +437,11 @@ loadKpi();
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
+// Локальная дата в формате YYYY-MM-DD (см. пояснение в первом script-блоке).
+function fmtLocalDate(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
 // ── Revenue card ─────────────────────────────────────────────────────────────
 var revPeriod           = 'today';
 var revChart            = null;
@@ -584,7 +595,7 @@ function openRevCal() {
             disableMobile: true,
             onClose: function(dates) {
                 if (dates.length === 2) {
-                    var fmt = function(d){ return d.toISOString().split('T')[0]; };
+                    var fmt = fmtLocalDate;
                     revCustomFrom = fmt(dates[0]);
                     revCustomTo   = fmt(dates[1]);
                     loadRevCard('custom');
@@ -976,7 +987,7 @@ function loadRevCard(period) {
         if (revPeriod === 'year') {
             var curYear  = new Date().getFullYear();
             var yearFrom = revYear + '-01-01';
-            var yearTo   = revYear === curYear ? new Date().toISOString().split('T')[0] : revYear + '-12-31';
+            var yearTo   = revYear === curYear ? fmtLocalDate(new Date()) : revYear + '-12-31';
             document.getElementById('rev-period-label').textContent = 'рублей за ' + revYear;
             fetch('/api/revenue-months?date_from=' + yearFrom + '&date_to=' + yearTo + _revBranchSuffix())
                 .then(function(r) { return r.json(); })
@@ -1014,7 +1025,7 @@ function loadRevCard(period) {
     if (revChart) { revChart.destroy(); revChart = null; }
     branchesWrap.innerHTML = '<div style="opacity:.5;font-size:13px;">Загрузка…</div>';
 
-    var fmt = function(d) { return d.toISOString().split('T')[0]; };
+    var fmt = fmtLocalDate;
     var fmtLabel = function(s) { return s.split('-').reverse().join('.'); };
     var dateTo, dateFrom;
     if (revPeriod === 'custom' && revCustomFrom && revCustomTo) {

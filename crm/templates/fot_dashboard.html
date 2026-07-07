@@ -127,6 +127,12 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
+// Локальная дата в формате YYYY-MM-DD (не через toISOString — тот конвертирует
+// в UTC и может сдвинуть дату на день назад/вперёд в зависимости от часового пояса).
+function fmtLocalDate(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
 var fotPeriod     = 'month';
 var fotYearChart  = null;
 var fotDayChart   = null;
@@ -247,7 +253,7 @@ function setPb(period) {
 
 // ── диапазон дат ──────────────────────────────────────────────────────────────
 function getDates(period) {
-    var t = new Date(), fmt = function(d){ return d.toISOString().split('T')[0]; };
+    var t = new Date(), fmt = fmtLocalDate;
     if (period === 'today')  return [fmt(t), fmt(t)];
     if (period === 'custom') return [fotCustomFrom || fmt(t), fotCustomTo || fmt(t)];
     return [fmt(t).slice(0,7)+'-01', fmt(t)];
@@ -263,7 +269,7 @@ function openFotCal() {
             disableMobile: true,
             onClose: function(dates) {
                 if (dates.length === 2) {
-                    var fmt = function(d){ return d.toISOString().split('T')[0]; };
+                    var fmt = fmtLocalDate;
                     fotCustomFrom = fmt(dates[0]);
                     fotCustomTo   = fmt(dates[1]);
                     loadFot('custom');

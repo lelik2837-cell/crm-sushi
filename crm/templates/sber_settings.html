@@ -192,8 +192,11 @@
 
 <script>
 (function() {
-  var today = new Date().toISOString().slice(0,10);
-  var week  = new Date(Date.now() - 7*86400000).toISOString().slice(0,10);
+  function fmtLocalDate(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  var today = fmtLocalDate(new Date());
+  var week  = fmtLocalDate(new Date(Date.now() - 7*86400000));
   var f = document.getElementById('syncFrom');
   var t = document.getElementById('syncTo');
   if (f) f.value = week;
