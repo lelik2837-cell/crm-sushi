@@ -894,21 +894,37 @@
     </div>
     <div style="margin-bottom:14px;">
       <div class="field-label">Телефон *</div>
-      <input type="text" id="newCourierPhone" class="field-input" placeholder="8-904-572-1334" maxlength="14" oninput="onPhoneInput(this)" style="margin-bottom:0;">
+      <input type="text" id="newCourierPhone" class="field-input" placeholder="8-900-000-0000" maxlength="14" oninput="onPhoneInput(this)" style="margin-bottom:0;">
     </div>
     {% if courier_rate_templates %}
-    <div style="margin-bottom:4px;">
-      <div class="field-label">Ставка</div>
-      <select id="newCourierRate" class="field-input" style="margin-bottom:0;">
-        <option value="">— выбрать ставку —</option>
+    <div style="margin-bottom:10px;">
+      <div class="field-label">Ставка (шаблон)</div>
+      <select id="newCourierRateTmpl" class="field-input" style="margin-bottom:0;" onchange="applyCourierRateTmpl(this)">
+        <option value="">— свои значения —</option>
         {% for t in courier_rate_templates %}
-        <option value="{{ t.id }}">{{ t.name }} — {{ t.rate|int }}₽/ч{% if t.rate_per_km %} · {{ t.rate_per_km|int }}₽/км{% endif %}{% if t.rate_per_order %} · {{ t.rate_per_order|int }}₽/заказ{% endif %}</option>
+        <option value="{{ t.id }}" data-rate="{{ t.rate|float }}" data-km="{{ t.rate_per_km|float }}" data-ord="{{ t.rate_per_order|float }}">
+          {{ t.name }} — {{ t.rate|int }}₽/ч{% if t.rate_per_km %} · {{ t.rate_per_km|int }}₽/км{% endif %}{% if t.rate_per_order %} · {{ t.rate_per_order|int }}₽/заказ{% endif %}
+        </option>
         {% endfor %}
       </select>
     </div>
     {% else %}
-    <input type="hidden" id="newCourierRate" value="">
+    <input type="hidden" id="newCourierRateTmpl" value="">
     {% endif %}
+    <div style="display:flex; gap:8px; margin-bottom:14px;">
+      <div style="flex:1;">
+        <div class="field-label">₽/час</div>
+        <input type="number" id="newCourierRateHour" class="field-input" placeholder="0" min="0" style="margin-bottom:0;">
+      </div>
+      <div style="flex:1;">
+        <div class="field-label">₽/км</div>
+        <input type="number" id="newCourierRateKm" class="field-input" placeholder="0" min="0" style="margin-bottom:0;">
+      </div>
+      <div style="flex:1;">
+        <div class="field-label">₽/заказ</div>
+        <input type="number" id="newCourierRateOrder" class="field-input" placeholder="0" min="0" style="margin-bottom:0;">
+      </div>
+    </div>
     <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:20px;">
       <button type="button" class="ph-btn ph-btn-outline" onclick="closeAddCourierModal()">Отмена</button>
       <button type="button" class="ph-btn ph-btn-primary" onclick="submitAddCourier()">Добавить</button>
@@ -1744,11 +1760,23 @@ function openAddCourierModal(fromEl) {
   document.getElementById('newCourierLastName').value = parts[0] || '';
   document.getElementById('newCourierFirstName').value = parts.slice(1).join(' ');
   document.getElementById('newCourierPhone').value = '';
+  const tmplSel = document.getElementById('newCourierRateTmpl');
+  if (tmplSel) tmplSel.value = '';
+  document.getElementById('newCourierRateHour').value = '';
+  document.getElementById('newCourierRateKm').value = '';
+  document.getElementById('newCourierRateOrder').value = '';
   document.getElementById('addCourierModal').style.display = 'flex';
   document.getElementById('newCourierLastName').focus();
 }
 function closeAddCourierModal() {
   document.getElementById('addCourierModal').style.display = 'none';
+}
+function applyCourierRateTmpl(sel) {
+  const opt = sel.options[sel.selectedIndex];
+  if (!opt || !opt.value) return;
+  document.getElementById('newCourierRateHour').value = opt.dataset.rate || 0;
+  document.getElementById('newCourierRateKm').value = opt.dataset.km || 0;
+  document.getElementById('newCourierRateOrder').value = opt.dataset.ord || 0;
 }
 async function submitAddCourier() {
   const lastNameEl = document.getElementById('newCourierLastName');
@@ -1756,14 +1784,17 @@ async function submitAddCourier() {
   const firstName = document.getElementById('newCourierFirstName').value.trim();
   const phoneEl = document.getElementById('newCourierPhone');
   const phone = phoneEl.value.trim();
-  const rateSel = document.getElementById('newCourierRate');
+  const rateTmplSel = document.getElementById('newCourierRateTmpl');
   if (!lastName) { lastNameEl.focus(); return; }
   if (!phone) { phoneEl.focus(); return; }
   const res = await fetch(`/shift/${SHIFT_ID}/quick-add-courier`, {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
       last_name: lastName, first_name: firstName, phone: phone,
-      rate_template_id: rateSel ? (rateSel.value || null) : null
+      rate_template_id: rateTmplSel ? (rateTmplSel.value || null) : null,
+      rate: document.getElementById('newCourierRateHour').value || 0,
+      rate_per_km: document.getElementById('newCourierRateKm').value || 0,
+      rate_per_order: document.getElementById('newCourierRateOrder').value || 0
     })
   });
   const d = await res.json();

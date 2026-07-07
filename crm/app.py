@@ -3204,13 +3204,15 @@ def quick_add_courier(shift_id):
         for row in conn.execute("SELECT phone FROM employees WHERE role='courier'").fetchall():
             if row['phone'] and _normalize_phone(row['phone']) == phone_digits:
                 return jsonify({'ok': False, 'error': 'Курьер есть в списке сотрудников!'}), 400
-        rate = rate_km = rate_ord = 0.0
         if rate_template_id:
             tmpl = conn.execute('SELECT * FROM rate_templates WHERE id=?', (rate_template_id,)).fetchone()
-            if tmpl:
-                rate = float(tmpl['rate'] or 0)
-                rate_km = float(tmpl['rate_per_km'] or 0)
-                rate_ord = float(tmpl['rate_per_order'] or 0)
+            rate = float(tmpl['rate'] or 0) if tmpl else 0.0
+            rate_km = float(tmpl['rate_per_km'] or 0) if tmpl else 0.0
+            rate_ord = float(tmpl['rate_per_order'] or 0) if tmpl else 0.0
+        else:
+            rate = _f(data, 'rate')
+            rate_km = _f(data, 'rate_per_km')
+            rate_ord = _f(data, 'rate_per_order')
         conn.execute(
             'INSERT INTO employees (branch_id, full_name, last_name, first_name, role, rate, rate_per_km, rate_per_order, rate_template_id, phone) '
             'VALUES (?,?,?,?,?,?,?,?,?,?)',
@@ -3221,7 +3223,16 @@ def quick_add_courier(shift_id):
             'INSERT INTO employee_rate_history (employee_id, rate, rate_per_km, rate_per_order, effective_from) VALUES (?,?,?,?,?)',
             (emp_id, rate, rate_km, rate_ord, date.today().isoformat())
         )
-        conn.execute('INSERT OR IGNORE INTO employee_branches (employee_id, branch_id) VALUES (?,?)', (emp_id, branch_id))
+        # Привязка к филиалам: если филиал смены входит в группу — привязываем ко всей группе
+        group_rows = conn.execute('''
+            SELECT DISTINCT bgm2.branch_id
+            FROM branch_group_members bgm1
+            JOIN branch_group_members bgm2 ON bgm2.group_id = bgm1.group_id
+            WHERE bgm1.branch_id = ?
+        ''', (branch_id,)).fetchall()
+        group_branch_ids = [r[0] for r in group_rows] or [branch_id]
+        for bid in group_branch_ids:
+            conn.execute('INSERT OR IGNORE INTO employee_branches (employee_id, branch_id) VALUES (?,?)', (emp_id, bid))
 
         conn.execute('''
             INSERT INTO employee_shifts
@@ -8193,7 +8204,7 @@ def _i(data, key):
 
 
 def _normalize_phone(raw):
-    """Только цифры, приведённые к 11-значному номеру с ведущей 8 (89045721334)."""
+    """Только цифры, приведённые к 11-значному номеру с ведущей 8 (89000000000)."""
     digits = re.sub(r'\D', '', raw or '')
     if not digits:
         return ''
@@ -8205,7 +8216,7 @@ def _normalize_phone(raw):
 
 
 def _format_phone(raw):
-    """8-904-572-1334; если не удалось распознать 11 цифр — возвращает как есть."""
+    """8-900-000-0000; если не удалось распознать 11 цифр — возвращает как есть."""
     digits = _normalize_phone(raw)
     if len(digits) != 11:
         return (raw or '').strip()
