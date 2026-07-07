@@ -879,6 +879,40 @@
 </div>
 {% endif %}
 
+<!-- ADD NEW COURIER MODAL -->
+{% if can_edit %}
+<div id="addCourierModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:1000; align-items:center; justify-content:center;">
+  <div style="background:#fff; border-radius:14px; padding:28px; width:380px; max-width:95vw;">
+    <h5 style="font-weight:700; margin-bottom:16px;">🛵 Новый курьер</h5>
+    <div style="margin-bottom:14px;">
+      <div class="field-label">Фамилия *</div>
+      <input type="text" id="newCourierLastName" class="field-input" placeholder="Иванов" style="margin-bottom:0;">
+    </div>
+    <div style="margin-bottom:14px;">
+      <div class="field-label">Имя</div>
+      <input type="text" id="newCourierFirstName" class="field-input" placeholder="Иван" style="margin-bottom:0;">
+    </div>
+    {% if courier_rate_templates %}
+    <div style="margin-bottom:4px;">
+      <div class="field-label">Ставка</div>
+      <select id="newCourierRate" class="field-input" style="margin-bottom:0;">
+        <option value="">— выбрать ставку —</option>
+        {% for t in courier_rate_templates %}
+        <option value="{{ t.id }}">{{ t.name }} — {{ t.rate|int }}₽/ч{% if t.rate_per_km %} · {{ t.rate_per_km|int }}₽/км{% endif %}{% if t.rate_per_order %} · {{ t.rate_per_order|int }}₽/заказ{% endif %}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% else %}
+    <input type="hidden" id="newCourierRate" value="">
+    {% endif %}
+    <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:20px;">
+      <button type="button" class="ph-btn ph-btn-outline" onclick="closeAddCourierModal()">Отмена</button>
+      <button type="button" class="ph-btn ph-btn-primary" onclick="submitAddCourier()">Добавить</button>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 
 {% endblock %}
 {% block scripts %}
@@ -1655,6 +1689,10 @@ function showAddStaffInline(type) {
   const listHtml = empList.map(e =>
     `<div class="isl-opt" data-id="${e.id}" data-name="${e.name.replace(/"/g,'&quot;')}" data-role="${e.role}" data-rate="${e.rate}" data-km="${e.rateKm}" onclick="selectInlineStaff(this,'${type}')">${e.name}</div>`
   ).join('');
+  const isCourier = type === 'courier';
+  const newBtnHtml = isCourier
+    ? `<button class="ph-btn ph-btn-primary" style="white-space:nowrap;padding:5px 10px;font-size:12px;" onclick="openAddCourierModal(this)">+ Новый</button>`
+    : '';
   row.innerHTML = `<div style="display:flex;gap:6px;align-items:center;">
     <div style="flex:1;position:relative;">
       <input class="field-select" type="text" placeholder="Поиск сотрудника..." autocomplete="off"
@@ -1662,7 +1700,7 @@ function showAddStaffInline(type) {
         onkeydown="inlineStaffKey(event,'${type}')" style="width:100%;">
       <div class="inline-staff-list">${listHtml}${empList.length ? '' : '<div class="isl-empty">Нет доступных сотрудников</div>'}</div>
     </div>
-    <button class="ph-btn ph-btn-primary" style="white-space:nowrap;padding:5px 10px;font-size:12px;" onclick="addStaffByNameInline(this,'${type}')">Добавить</button>
+    ${newBtnHtml}
   </div>`;
   body.appendChild(row);
   row.querySelector('input').focus();
@@ -1687,7 +1725,7 @@ function inlineStaffKey(e, type) {
   const list = e.target.nextElementSibling;
   const first = list.querySelector('.isl-opt:not([style*="none"])');
   if (first) { selectInlineStaff(first, type); return; }
-  addStaffByNameInline(e.target.closest('.inline-add-row').querySelector('button'), type);
+  if (type === 'courier') openAddCourierModal(e.target);
 }
 
 function selectInlineStaff(item, type) {
@@ -1695,12 +1733,31 @@ function selectInlineStaff(item, type) {
     parseFloat(item.dataset.rate || 0), parseFloat(item.dataset.km || 10));
 }
 
-function addStaffByNameInline(btn, type) {
-  const input = btn.closest('.inline-add-row').querySelector('input');
-  const name = (input.value || '').trim();
-  if (!name) { input.focus(); return; }
-  const roleMap = { admin: 'admin', cook: 'cook', cleaner: 'cleaner', courier: 'courier' };
-  _postStaff(null, name, roleMap[type] || type, 0, 10);
+// ── Новый курьер: создаётся сразу в справочнике сотрудников и добавляется в смену ──
+function openAddCourierModal(fromEl) {
+  const input = fromEl.closest('.inline-add-row')?.querySelector('input');
+  const parts = (input?.value || '').trim().split(/\s+/).filter(Boolean);
+  document.getElementById('newCourierLastName').value = parts[0] || '';
+  document.getElementById('newCourierFirstName').value = parts.slice(1).join(' ');
+  document.getElementById('addCourierModal').style.display = 'flex';
+  document.getElementById('newCourierLastName').focus();
+}
+function closeAddCourierModal() {
+  document.getElementById('addCourierModal').style.display = 'none';
+}
+async function submitAddCourier() {
+  const lastNameEl = document.getElementById('newCourierLastName');
+  const lastName = lastNameEl.value.trim();
+  const firstName = document.getElementById('newCourierFirstName').value.trim();
+  const rateSel = document.getElementById('newCourierRate');
+  if (!lastName) { lastNameEl.focus(); return; }
+  const res = await fetch(`/shift/${SHIFT_ID}/quick-add-courier`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({last_name: lastName, first_name: firstName, rate_template_id: rateSel ? (rateSel.value || null) : null})
+  });
+  const d = await res.json();
+  if (!d.ok) { alert(d.error || 'Ошибка'); return; }
+  location.reload();
 }
 
 function _postStaff(empId, name, role, rate, rateKm) {

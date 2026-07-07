@@ -2758,6 +2758,14 @@ def shift_view(shift_id):
                 (emp['id'], shift['date'])
             ).fetchone()
             emp_addresses[emp['id']] = addr['address'] if addr else ''
+        # Ставки для модалки быстрого добавления нового курьера
+        courier_rate_templates = conn.execute('''
+            SELECT rt.* FROM rate_templates rt
+            WHERE rt.role='courier' AND rt.is_active=1
+              AND (NOT EXISTS (SELECT 1 FROM rate_template_branches WHERE template_id=rt.id)
+                   OR EXISTS (SELECT 1 FROM rate_template_branches WHERE template_id=rt.id AND branch_id=?))
+            ORDER BY rt.name
+        ''', (shift['branch_id'],)).fetchall()
         # Taxi trips for this shift
         taxi_trips = conn.execute(
             'SELECT * FROM taxi_trips WHERE shift_id=? ORDER BY id',
@@ -2823,6 +2831,7 @@ def shift_view(shift_id):
             shift=shift, revenue=revenue, expenses=expenses, plus_entries=plus_entries,
             staff=staff, employees=employees, taxi_staff=taxi_staff,
             emp_addresses=emp_addresses, emp_extra_roles=emp_extra_roles,
+            courier_rate_templates=courier_rate_templates,
             taxi_trips=taxi_trips, taxi_trip_emps=taxi_trip_emps,
             expense_categories=expense_cats_flat,
             expense_cats_groups=expense_cats_groups,
@@ -3162,6 +3171,67 @@ def save_staff(shift_id):
             auto_bonuses = calculate_bonuses(conn, shift_id)
         conn.commit()
     return jsonify({'ok': True, 'id': staff_id, 'auto_bonuses': auto_bonuses})
+
+
+@app.route('/shift/<int:shift_id>/quick-add-courier', methods=['POST'])
+@login_required
+def quick_add_courier(shift_id):
+    """Создаёт нового курьера в справочнике сотрудников и сразу добавляет его в текущую смену."""
+    if not _can_edit_shift(shift_id):
+        return jsonify({'ok': False, 'error': 'Нет доступа'}), 403
+    data = request.json or {}
+    last_name = (data.get('last_name') or '').strip()
+    first_name = (data.get('first_name') or '').strip()
+    if not last_name:
+        return jsonify({'ok': False, 'error': 'Введите фамилию'}), 400
+    full_name = (last_name + (' ' + first_name if first_name else '')).strip()
+    rate_template_id = data.get('rate_template_id') or None
+    if rate_template_id:
+        rate_template_id = int(rate_template_id)
+    with get_db() as conn:
+        shift = conn.execute('SELECT branch_id FROM shifts WHERE id=?', (shift_id,)).fetchone()
+        if not shift:
+            return jsonify({'ok': False, 'error': 'Смена не найдена'}), 404
+        branch_id = shift['branch_id']
+        rate = rate_km = rate_ord = 0.0
+        if rate_template_id:
+            tmpl = conn.execute('SELECT * FROM rate_templates WHERE id=?', (rate_template_id,)).fetchone()
+            if tmpl:
+                rate = float(tmpl['rate'] or 0)
+                rate_km = float(tmpl['rate_per_km'] or 0)
+                rate_ord = float(tmpl['rate_per_order'] or 0)
+        conn.execute(
+            'INSERT INTO employees (branch_id, full_name, last_name, first_name, role, rate, rate_per_km, rate_per_order, rate_template_id) '
+            'VALUES (?,?,?,?,?,?,?,?,?)',
+            (branch_id, full_name, last_name, first_name, 'courier', rate, rate_km, rate_ord, rate_template_id)
+        )
+        emp_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        conn.execute(
+            'INSERT INTO employee_rate_history (employee_id, rate, rate_per_km, rate_per_order, effective_from) VALUES (?,?,?,?,?)',
+            (emp_id, rate, rate_km, rate_ord, date.today().isoformat())
+        )
+        conn.execute('INSERT OR IGNORE INTO employee_branches (employee_id, branch_id) VALUES (?,?)', (emp_id, branch_id))
+
+        conn.execute('''
+            INSERT INTO employee_shifts
+            (shift_id, employee_id, full_name_snapshot, role_snapshot,
+             rate_snapshot, rate_per_km_snapshot, rate_per_order_snapshot,
+             shift_start, shift_end, hours_worked, km, orders,
+             bonus_amount, penalty_amount, bonus_comment,
+             base_pay, total_amount, is_paid, paid_amount)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ''', (
+            shift_id, emp_id, full_name, 'courier',
+            rate, rate_km, rate_ord,
+            '', '', 0, 0, 0,
+            0, 0, '',
+            0, 0, 0, 0
+        ))
+        staff_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        log_action(conn, 'staff_add', f"Добавлен сотрудник: {full_name} (Курьер)", shift_id=shift_id, entity_id=staff_id)
+        calculate_bonuses(conn, shift_id)
+        conn.commit()
+    return jsonify({'ok': True, 'id': staff_id, 'employee_id': emp_id})
 
 
 def _recalc_courier_base_pay(existing, km, orders):
