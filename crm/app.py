@@ -8772,18 +8772,22 @@ def bank():
         if tab == 'compare':
             compare_rows = conn.execute('''
                 SELECT
-                    COALESCE(bt.txn_date, e.date) as dt,
+                    COALESCE(bt.txn_date, ewd.date) as dt,
                     COALESCE(c.name, bt.counterparty, bt.description, '—') as counterparty,
                     bt.category as bank_cat,
                     ec1.label as bank_cat_label,
                     -bt.amount as bank_amount,
-                    e.amount_cash + e.amount_card as crm_amount,
-                    e.description as crm_desc
+                    ewd.amount_cash + ewd.amount_card as crm_amount,
+                    ewd.description as crm_desc
                 FROM bank_transactions bt
                 LEFT JOIN contractors c ON c.id=bt.contractor_id
                 LEFT JOIN expense_categories ec1 ON ec1.code=bt.category
-                LEFT JOIN expenses e ON e.date=bt.txn_date
-                    AND ABS(e.amount_cash+e.amount_card - (-bt.amount)) < 1
+                LEFT JOIN (
+                    SELECT e.*, s.date as date
+                    FROM expenses e
+                    JOIN shifts s ON s.id = e.shift_id
+                ) ewd ON ewd.date = bt.txn_date
+                    AND ABS(ewd.amount_cash + ewd.amount_card - (-bt.amount)) < 1
                 WHERE bt.txn_date BETWEEN ? AND ? AND bt.amount < 0 AND bt.is_ignored=0
                 ORDER BY dt DESC
             ''', (date_from, date_to)).fetchall()
