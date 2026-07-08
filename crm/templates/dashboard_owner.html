@@ -197,23 +197,13 @@
       <!-- 5. Кемерово / Новокузнецк -->
       <div id="rm-region-card" style="background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 100%); border:1.5px solid #e2e8f0; border-radius:14px; padding:16px 18px; box-shadow:0 2px 10px rgba(0,0,0,0.06);">
         <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:8px;">Кемерово / Новокузнецк</div>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
-          <div>
-            <div style="display:flex; align-items:baseline; gap:2px; line-height:1;">
-              <span id="rm-nvkz-pct" style="font-size:24px;font-weight:800;color:#0f766e;letter-spacing:-1px;">—</span>
-              <span style="font-size:13px;font-weight:700;color:#0f766e;">%</span>
-            </div>
-            <div style="font-size:10px;color:#94a3b8;font-weight:600;margin-top:2px;">Новокузнецк</div>
-            <div id="rm-nvkz-sum" style="font-size:10px;color:#cbd5e1;margin-top:2px;">— ₽ · — %</div>
-          </div>
-          <div>
-            <div style="display:flex; align-items:baseline; gap:2px; line-height:1;">
-              <span id="rm-kem-pct" style="font-size:24px;font-weight:800;color:#1d4ed8;letter-spacing:-1px;">—</span>
-              <span style="font-size:13px;font-weight:700;color:#1d4ed8;">%</span>
-            </div>
-            <div style="font-size:10px;color:#94a3b8;font-weight:600;margin-top:2px;">Кемерово</div>
-            <div id="rm-kem-sum" style="font-size:10px;color:#cbd5e1;margin-top:2px;">— ₽ · — %</div>
-          </div>
+        <div style="display:flex; align-items:baseline; gap:2px; line-height:1;">
+          <span id="rm-region-pct" style="font-size:32px;font-weight:800;color:#1d4ed8;letter-spacing:-1px;">—</span>
+          <span style="font-size:15px;font-weight:700;color:#1d4ed8;">%</span>
+        </div>
+        <div style="display:flex; gap:16px; margin-top:8px; padding-top:8px; border-top:1px solid #f1f5f9;">
+          <div style="font-size:11px;color:#94a3b8;font-weight:600;">Новокузнецк<br><span id="rm-nvkz-sum" style="font-size:12px;font-weight:700;color:#334155;">— ₽</span></div>
+          <div style="font-size:11px;color:#94a3b8;font-weight:600;">Кемерово<br><span id="rm-kem-sum" style="font-size:12px;font-weight:700;color:#334155;">— ₽</span></div>
         </div>
       </div>
 
@@ -691,10 +681,9 @@ function updateRightMetrics(d) {
 function clearMetrics() {
     updateRightMetrics({total:0,cash:0,card:0,online:0,fot:0,pickup:0,delivery:0,courier_fot:0,delivery_orders:0,branches:[]});
     var el;
-    el = document.getElementById('rm-nvkz-pct'); if(el) el.textContent = '—';
-    el = document.getElementById('rm-nvkz-sum'); if(el) el.textContent = '— ₽ · — %';
-    el = document.getElementById('rm-kem-pct');  if(el) el.textContent = '—';
-    el = document.getElementById('rm-kem-sum');  if(el) el.textContent = '— ₽ · — %';
+    el = document.getElementById('rm-region-pct'); if(el) el.textContent = '—';
+    el = document.getElementById('rm-nvkz-sum');   if(el) el.textContent = '— ₽';
+    el = document.getElementById('rm-kem-sum');    if(el) el.textContent = '— ₽';
 }
 
 // Блок "Кемерово / Новокузнецк" всегда считается по всем филиалам,
@@ -704,17 +693,14 @@ function loadRegionSplit(dateFrom, dateTo) {
         .then(function(r) { return r.json(); })
         .then(function(d) {
             if (!d.ok) return;
-            var total  = d.total || 0;
             var nkGrp  = DASH_BRANCH_GROUPS.find(function(g){ return g.abbr === 'НК'  || g.name.indexOf('Новокузнецк') !== -1; });
             var kemGrp = DASH_BRANCH_GROUPS.find(function(g){ return g.abbr === 'КЕМ' || g.name.indexOf('Кемерово') !== -1; });
             var nkRev  = sumGroupRevenue(d.branches, nkGrp);
             var kemRev = sumGroupRevenue(d.branches, kemGrp);
-            var pairTotal = nkRev + kemRev;
             var el;
-            el = document.getElementById('rm-nvkz-pct'); if(el) el.textContent = pairTotal > 0 ? Math.round(nkRev/pairTotal*100) : '—';
-            el = document.getElementById('rm-nvkz-sum'); if(el) el.textContent = fmtNum(nkRev) + ' ₽ · ' + (total > 0 ? Math.round(nkRev/total*100) : 0) + '% общей';
-            el = document.getElementById('rm-kem-pct');  if(el) el.textContent = pairTotal > 0 ? Math.round(kemRev/pairTotal*100) : '—';
-            el = document.getElementById('rm-kem-sum');  if(el) el.textContent = fmtNum(kemRev) + ' ₽ · ' + (total > 0 ? Math.round(kemRev/total*100) : 0) + '% общей';
+            el = document.getElementById('rm-region-pct'); if(el) el.textContent = nkRev > 0 ? Math.round(kemRev/nkRev*100) : '—';
+            el = document.getElementById('rm-nvkz-sum');    if(el) el.textContent = fmtNum(nkRev) + ' ₽';
+            el = document.getElementById('rm-kem-sum');     if(el) el.textContent = fmtNum(kemRev) + ' ₽';
         });
 }
 
