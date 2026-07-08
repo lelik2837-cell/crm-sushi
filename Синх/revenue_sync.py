@@ -65,6 +65,10 @@ CRMPAPA_WEBHOOK_URL = os.environ.get("CRMPAPA_WEBHOOK_URL", "")
 
 POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "600"))  # по умолчанию 10 минут
 
+# Таймаут на все запросы к goulash (в секундах). Без него зависший/недоступный сайт мог
+# заблокировать процесс навсегда без единой строки в логе — ни ошибки, ни следующей попытки.
+REQUEST_TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT_SECONDS", "30"))
+
 LOGIN_PATH = "/site/login"
 HEADER_API_PATH = "/dashboad/api/header"
 
@@ -85,7 +89,7 @@ log = logging.getLogger("revenue_sync")
 
 def get_csrf_token(session: requests.Session) -> Optional[str]:
     """Забирает страницу логина и пытается найти CSRF-токен (Yii2)."""
-    resp = session.get(f"{BASE_URL}{LOGIN_PATH}")
+    resp = session.get(f"{BASE_URL}{LOGIN_PATH}", timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
 
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -123,7 +127,7 @@ def login(session: requests.Session) -> None:
         payload["_csrf-frontend"] = csrf_token
         payload["_csrf"] = csrf_token
 
-    resp = session.post(f"{BASE_URL}{LOGIN_PATH}", data=payload, allow_redirects=True)
+    resp = session.post(f"{BASE_URL}{LOGIN_PATH}", data=payload, allow_redirects=True, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
 
     if "LoginForm[username]" in resp.text and "Авторизация" in resp.text:
@@ -175,6 +179,7 @@ def fetch_department_data(session: requests.Session, department_id: str) -> dict
     resp = session.get(
         f"{BASE_URL}{HEADER_API_PATH}",
         params={"departmentId": department_id},
+        timeout=REQUEST_TIMEOUT,
     )
     resp.raise_for_status()
 
