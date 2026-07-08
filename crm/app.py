@@ -1528,6 +1528,22 @@ def init_db():
                 "INSERT OR REPLACE INTO api_settings (key, value) VALUES ('role_perms_visibility_fix_v1', '1')"
             )
 
+        # Одноразовая корректировка: смены, где "Итого выручка" не заполнилась
+        # (0/пусто) при импорте, хотя нал+безнал+онлайн реально были внесены —
+        # пересчитываем total_revenue из частей, если их сумма больше 1.
+        if not conn.execute(
+            "SELECT 1 FROM api_settings WHERE key='total_revenue_from_parts_fix_v1'"
+        ).fetchone():
+            conn.execute('''
+                UPDATE shift_revenue
+                SET total_revenue = COALESCE(cash_amount,0) + COALESCE(card_amount,0) + COALESCE(online_amount,0)
+                WHERE COALESCE(total_revenue,0) <= 1
+                  AND (COALESCE(cash_amount,0) + COALESCE(card_amount,0) + COALESCE(online_amount,0)) > 1
+            ''')
+            conn.execute(
+                "INSERT OR REPLACE INTO api_settings (key, value) VALUES ('total_revenue_from_parts_fix_v1', '1')"
+            )
+
         conn.execute('''
             CREATE TABLE IF NOT EXISTS revenue_plan (
                 branch_id INTEGER NOT NULL,
@@ -9958,6 +9974,13 @@ def _xl_parse_sheet(ws, branch_id):
     pickup_rev    = _xf(rows[5][6]) if len(rows) > 5 else 0
     online_amount = _xf(rows[6][3]) if len(rows) > 6 else 0
     pickup_ord    = int(_xf(rows[6][6])) if len(rows) > 6 else 0
+
+    # Ячейка "Итого выручка" (F2) иногда не заполнена/не пересчитана в файле,
+    # хотя нал/безнал/онлайн реально внесены — смена должна считаться и
+    # отображаться в выручке, если сумма частей больше 1
+    _rev_parts_sum = cash_amount + card_amount + online_amount
+    if total_revenue <= 1 and _rev_parts_sum > 1:
+        total_revenue = _rev_parts_sum
 
     actual_cash    = 0.0
     closed_by_name = None
