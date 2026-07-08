@@ -249,7 +249,7 @@
                 </li>
                 {% endif %}
                 {% if group_has_visible_item('reports') %}
-                {% set reports_active = request.endpoint in ('reports', 'shifts_archive', 'expenses_report', 'cash_flow_report', 'purchases', 'report_reconciliation', 'pnl_report', 'pnl_settings_save', 'change_settings') or (request.endpoint and (request.endpoint.startswith('bank') or 'purchases_import' in (request.endpoint or ''))) %}
+                {% set reports_active = request.endpoint in ('reports', 'shifts_archive', 'expenses_report', 'cash_flow_report', 'wait_time_report', 'purchases', 'report_reconciliation', 'pnl_report', 'pnl_settings_save', 'change_settings') or (request.endpoint and (request.endpoint.startswith('bank') or 'purchases_import' in (request.endpoint or ''))) %}
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle {% if reports_active %}active{% endif %}"
                        href="#" data-bs-toggle="dropdown" aria-expanded="false">
@@ -288,6 +288,13 @@
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='cash_flow_report' %}active{% endif %}" href="{{ url_for('cash_flow_report') }}">
                                 <i class="bi bi-cash-stack me-2"></i>Движение наличных
+                            </a>
+                        </li>
+                        {% endif %}
+                        {% if item_visible('wait_time_report') %}
+                        <li>
+                            <a class="dropdown-item {% if request.endpoint=='wait_time_report' %}active{% endif %}" href="{{ url_for('wait_time_report') }}">
+                                <i class="bi bi-hourglass-split me-2"></i>Время ожидания
                             </a>
                         </li>
                         {% endif %}

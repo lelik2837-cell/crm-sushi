@@ -119,6 +119,7 @@ MENU_ITEMS = [
     ('reports_salary',        'Зарплаты',                 'reports',  True),
     ('expenses_report',       'Другие расходы',           'reports',  True),
     ('cash_flow_report',      'Движение наличных',        'reports',  True),
+    ('wait_time_report',      'Время ожидания',           'reports',  True),
     ('report_reconciliation', 'Сверка итогов',            'reports',  True),
     ('pnl_report',            'P&L отчёт',                'reports',  True),
     ('change_settings',       'Размен',                   'reports',  True),
@@ -1195,6 +1196,32 @@ def init_db():
                 status      TEXT DEFAULT 'received',
                 parsed_ok   INTEGER DEFAULT 0,
                 created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS api_waittime_tokens (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                branch_id   INTEGER NOT NULL REFERENCES branches(id),
+                token       TEXT    NOT NULL UNIQUE,
+                description TEXT,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS api_waittime_log (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                token       TEXT,
+                branch_id   INTEGER,
+                method      TEXT,
+                path        TEXT,
+                body        TEXT,
+                status      TEXT DEFAULT 'received',
+                parsed_ok   INTEGER DEFAULT 0,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS wait_time_log (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                branch_id         INTEGER NOT NULL REFERENCES branches(id),
+                promised_minutes  REAL,
+                estimated_minutes REAL,
+                recorded_at       TIMESTAMP NOT NULL,
+                created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS purchase_suppliers (
                 id   INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -5221,6 +5248,16 @@ def settings():
             'LEFT JOIN branches b ON b.id=l.branch_id '
             'ORDER BY l.created_at DESC LIMIT 50'
         ).fetchall()
+        api_waittime_tokens = conn.execute('''
+            SELECT t.*, b.name AS branch_name
+            FROM api_waittime_tokens t JOIN branches b ON b.id=t.branch_id
+            ORDER BY b.name
+        ''').fetchall()
+        api_waittime_log = conn.execute(
+            'SELECT l.*, b.name AS branch_name FROM api_waittime_log l '
+            'LEFT JOIN branches b ON b.id=l.branch_id '
+            'ORDER BY l.created_at DESC LIMIT 50'
+        ).fetchall()
         role_perms = {r: get_role_permissions(conn, r) for r in ROLE_CONFIGURABLE}
     return render_template('settings.html',
         exp_cats=exp_cats, exp_cats_parents=exp_cats_parents,
@@ -5231,6 +5268,8 @@ def settings():
         tmpl_branches=tmpl_branches, tmpl_history=tmpl_history,
         api_tokens=api_tokens, api_log=api_log,
         api_revenue_tokens=api_revenue_tokens, api_revenue_log=api_revenue_log,
+        api_waittime_tokens=api_waittime_tokens, api_waittime_log=api_waittime_log,
+        base_url=request.host_url.rstrip('/'),
         today=date.today().isoformat(),
         formula_vars=FORMULA_VARS, role_labels=ROLE_LABELS,
         positions=positions, branch_groups_for_rates=branch_groups_for_rates,
@@ -6461,6 +6500,69 @@ def cash_flow_report():
         date_from=date_from, date_to=date_to)
 
 
+@app.route('/report/wait-time')
+@login_required
+@menu_permission_required('wait_time_report')
+def wait_time_report():
+    today = date.today().isoformat()
+    month_start = date.today().replace(day=1).isoformat()
+    date_from = request.args.get('date_from', month_start)
+    date_to   = request.args.get('date_to', today)
+    branch_ids = [b for b in request.args.getlist('branch_ids') if b.isdigit()]
+    branch_ids = get_effective_branch_ids('wait_time_report', branch_ids) or []
+
+    with get_db() as conn:
+        branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        branch_groups = get_branch_groups(conn)
+        branch_list = [b for b in branches if not branch_ids or str(b['id']) in branch_ids]
+
+        bf = f"AND branch_id IN ({','.join(branch_ids)})" if branch_ids else ''
+
+        rows = conn.execute(f'''
+            SELECT branch_id, DATE(recorded_at) AS d,
+                   AVG(promised_minutes) AS avg_promised,
+                   MIN(promised_minutes) AS min_promised,
+                   MAX(promised_minutes) AS max_promised,
+                   COUNT(*) AS samples
+            FROM wait_time_log
+            WHERE DATE(recorded_at) BETWEEN ? AND ? {bf}
+            GROUP BY branch_id, DATE(recorded_at)
+        ''', (date_from, date_to)).fetchall()
+
+        pivot = {}
+        dates = set()
+        for r in rows:
+            d = r['d']
+            dates.add(d)
+            pivot.setdefault(d, {})[r['branch_id']] = {
+                'avg': r['avg_promised'], 'min': r['min_promised'],
+                'max': r['max_promised'], 'n': r['samples'],
+            }
+        dates = sorted(dates, reverse=True)
+
+        overall = conn.execute(f'''
+            SELECT AVG(promised_minutes) AS avg_all, COUNT(*) AS n_all
+            FROM wait_time_log
+            WHERE DATE(recorded_at) BETWEEN ? AND ? {bf}
+        ''', (date_from, date_to)).fetchone()
+
+        per_branch_avg = conn.execute(f'''
+            SELECT branch_id, AVG(promised_minutes) AS avg_b, COUNT(*) AS n_b
+            FROM wait_time_log
+            WHERE DATE(recorded_at) BETWEEN ? AND ? {bf}
+            GROUP BY branch_id
+        ''', (date_from, date_to)).fetchall()
+        per_branch_avg = {r['branch_id']: {'avg': r['avg_b'], 'n': r['n_b']} for r in per_branch_avg}
+
+    return render_template('wait_time_report.html',
+        date_from=date_from, date_to=date_to,
+        branches=branches, branch_groups=branch_groups,
+        selected_branches=branch_ids, branch_list=branch_list,
+        dates=dates, pivot=pivot,
+        overall_avg=overall['avg_all'], overall_n=overall['n_all'],
+        per_branch_avg=per_branch_avg)
+
+
 # ─── API 1C ИНТЕГРАЦИЯ ────────────────────────────────────────────────────────
 
 import secrets, xml.etree.ElementTree as _ET
@@ -6668,6 +6770,99 @@ def api_revenue_token_delete(tid):
 def api_revenue_log_clear():
     with get_db() as conn:
         conn.execute('DELETE FROM api_revenue_log')
+        conn.commit()
+    flash('Лог очищен', 'success')
+    return redirect(url_for('settings') + '?tab=api')
+
+
+# ─── Вебхук «Время ожидания» (внешний скрипт из Гуляша) ──────────────────────
+
+@app.route('/api/waittime-webhook/<token>', methods=['POST'])
+def api_waittime_webhook(token):
+    body = request.get_data(as_text=True)
+    with get_db() as conn:
+        rec = conn.execute(
+            'SELECT * FROM api_waittime_tokens WHERE token=?', (token,)
+        ).fetchone()
+
+        conn.execute(
+            'INSERT INTO api_waittime_log (token, branch_id, method, path, body) VALUES (?,?,?,?,?)',
+            (token, rec['branch_id'] if rec else None,
+             request.method, request.full_path, body[:20000])
+        )
+        log_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+
+        if not rec:
+            conn.commit()
+            return jsonify({'ok': False, 'error': 'invalid token'}), 401
+
+        branch_id = rec['branch_id']
+        try:
+            data = _json_lib.loads(body) if body.strip() else {}
+            promised  = data.get('promised_minutes')
+            estimated = data.get('estimated_minutes')
+            promised  = float(promised) if promised is not None else None
+            estimated = float(estimated) if estimated is not None else None
+            ts = data.get('timestamp')
+            try:
+                recorded_at = (
+                    datetime.fromisoformat(str(ts).replace('Z', '+00:00')).astimezone().replace(tzinfo=None).isoformat(sep=' ')
+                    if ts else datetime.now().isoformat(sep=' ')
+                )
+            except Exception:
+                recorded_at = datetime.now().isoformat(sep=' ')
+            conn.execute('''
+                INSERT INTO wait_time_log (branch_id, promised_minutes, estimated_minutes, recorded_at)
+                VALUES (?, ?, ?, ?)
+            ''', (branch_id, promised, estimated, recorded_at))
+            conn.execute('UPDATE api_waittime_log SET parsed_ok=1, status=? WHERE id=?',
+                         (f'обещаем {promised} мин за {recorded_at}', log_id))
+            conn.commit()
+            return jsonify({'ok': True})
+        except Exception as e:
+            conn.execute('UPDATE api_waittime_log SET status=? WHERE id=?',
+                         (f'ошибка: {str(e)[:200]}', log_id))
+            conn.commit()
+            return jsonify({'ok': False, 'error': str(e)}), 400
+
+
+@app.route('/settings/api/waittime-tokens/add', methods=['POST'])
+@login_required
+@menu_permission_required('settings_api')
+def api_waittime_token_add():
+    branch_id   = request.form.get('branch_id', type=int)
+    description = request.form.get('description', '').strip()
+    if not branch_id:
+        flash('Выберите филиал', 'danger')
+        return redirect(url_for('settings') + '?tab=api')
+    token = secrets.token_urlsafe(24)
+    with get_db() as conn:
+        conn.execute(
+            'INSERT INTO api_waittime_tokens (branch_id, token, description) VALUES (?,?,?)',
+            (branch_id, token, description or None)
+        )
+        conn.commit()
+    flash('Токен создан', 'success')
+    return redirect(url_for('settings') + '?tab=api')
+
+
+@app.route('/settings/api/waittime-tokens/<int:tid>/delete', methods=['POST'])
+@login_required
+@menu_permission_required('settings_api')
+def api_waittime_token_delete(tid):
+    with get_db() as conn:
+        conn.execute('DELETE FROM api_waittime_tokens WHERE id=?', (tid,))
+        conn.commit()
+    flash('Токен удалён', 'success')
+    return redirect(url_for('settings') + '?tab=api')
+
+
+@app.route('/settings/api/waittime-log/clear', methods=['POST'])
+@login_required
+@menu_permission_required('settings_api')
+def api_waittime_log_clear():
+    with get_db() as conn:
+        conn.execute('DELETE FROM api_waittime_log')
         conn.commit()
     flash('Лог очищен', 'success')
     return redirect(url_for('settings') + '?tab=api')
