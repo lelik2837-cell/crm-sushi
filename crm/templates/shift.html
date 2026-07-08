@@ -591,8 +591,8 @@
       data-name="{{ s.full_name_snapshot }}" data-role="{{ s.role_snapshot }}"
       data-auto-bonus="{{ (s.auto_bonus or 0)|int }}">
       <div class="field-input-sm sf-name" style="font-size:12px; padding:5px 8px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; height:28px; box-sizing:border-box; display:flex; align-items:center;">{{ s.full_name_snapshot }}</div>
-      <input type="text" class="mini-input time-inp sf-start" value="{{ s.shift_start or '' }}" placeholder="10:00" maxlength="5" {% if not can_edit %}disabled{% endif %}>
-      <input type="text" class="mini-input time-inp sf-end"   value="{{ s.shift_end   or '' }}" placeholder="22:00" maxlength="5" {% if not can_edit %}disabled{% endif %}>
+      <input type="text" class="mini-input time-inp sf-start" value="{{ s.shift_start or '' }}" placeholder="--:--" maxlength="5" oninput="onTimeInput(this)" {% if not can_edit %}disabled{% endif %}>
+      <input type="text" class="mini-input time-inp sf-end"   value="{{ s.shift_end   or '' }}" placeholder="--:--" maxlength="5" oninput="onTimeInput(this)" {% if not can_edit %}disabled{% endif %}>
       <div class="field-calc sf-hours">{{ s.hours_worked or 0 }} ч</div>
       {% if can_edit %}<div class="bonus-btns"><button class="bonus-btn-prem" onclick="toggleBonus(this,'prem')">Премия</button><button class="bonus-btn-fine" onclick="toggleBonus(this,'fine')">Штраф</button></div>{% else %}<div></div>{% endif %}
       <div class="field-calc sf-auto-bonus">{{ (s.auto_bonus or 0)|int if (s.auto_bonus or 0) > 0 else '—' }}</div>
@@ -709,8 +709,8 @@
             </button>
             <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ s.full_name_snapshot }}</span>
           </div>
-          <input type="text" class="mini-input time-inp sf-start" value="{{ s.shift_start or '' }}" placeholder="10:00" maxlength="5" {% if not can_edit %}disabled{% endif %}>
-          <input type="text" class="mini-input time-inp sf-end"   value="{{ s.shift_end   or '' }}" placeholder="22:00" maxlength="5" {% if not can_edit %}disabled{% endif %}>
+          <input type="text" class="mini-input time-inp sf-start" value="{{ s.shift_start or '' }}" placeholder="--:--" maxlength="5" oninput="onTimeInput(this)" {% if not can_edit %}disabled{% endif %}>
+          <input type="text" class="mini-input time-inp sf-end"   value="{{ s.shift_end   or '' }}" placeholder="--:--" maxlength="5" oninput="onTimeInput(this)" {% if not can_edit %}disabled{% endif %}>
           <div class="field-calc sf-hours">{{ s.hours_worked or 0 }} ч</div>
           <div class="field-calc sf-km-total">{{ (s.km or 0)|round(1) }}</div>
           <div class="field-calc sf-orders-total">{{ s.orders or 0 }}</div>
@@ -1433,11 +1433,23 @@ function deleteStaff(btn, id) {
     });
 }
 
-// round HH:MM to nearest 15 minutes
+// Маска времени: вводятся только цифры, поле само форматируется как 09:30
+function onTimeInput(el) {
+  const d = (el.value || '').replace(/\D/g, '').slice(0, 4);
+  let out = d.slice(0, 2);
+  if (d.length >= 2) out += ':' + d.slice(2, 4);
+  el.value = out;
+}
+
+// round HH:MM to nearest 15 minutes; понимает и просто цифры без ':' (930 -> 09:30, 22 -> 22:00)
 function roundTime15(val) {
-  const m = val.trim().match(/^(\d{1,2}):(\d{2})$/);
-  if (!m) return val;
-  let h = parseInt(m[1]), min = parseInt(m[2]);
+  const digits = (val || '').replace(/\D/g, '');
+  if (!digits) return '';
+  let h, min;
+  if (digits.length <= 2)      { h = parseInt(digits);            min = 0; }
+  else if (digits.length === 3) { h = parseInt(digits.slice(0, 1)); min = parseInt(digits.slice(1)); }
+  else                          { h = parseInt(digits.slice(0, 2)); min = parseInt(digits.slice(2, 4)); }
+  if (isNaN(h) || isNaN(min) || h > 24 || min > 59) return val;
   min = Math.round(min / 15) * 15;
   if (min === 60) { min = 0; h += 1; }
   if (h > 24) h = 24;
