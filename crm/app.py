@@ -1257,6 +1257,8 @@ def init_db():
         _er_cols = [r[1] for r in conn.execute("PRAGMA table_info(employee_roles)").fetchall()]
         if 'rate_template_id' not in _er_cols:
             conn.execute("ALTER TABLE employee_roles ADD COLUMN rate_template_id INTEGER REFERENCES rate_templates(id)")
+        if 'pay_monthly' not in _er_cols:
+            conn.execute("ALTER TABLE employee_roles ADD COLUMN pay_monthly INTEGER DEFAULT 0")
         _emp_tcols = [r[1] for r in conn.execute("PRAGMA table_info(employees)").fetchall()]
         if 'rate_template_id' not in _emp_tcols:
             conn.execute("ALTER TABLE employees ADD COLUMN rate_template_id INTEGER REFERENCES rate_templates(id)")
@@ -2715,9 +2717,12 @@ def shift_view(shift_id):
         expenses = conn.execute('SELECT * FROM expenses WHERE shift_id=? ORDER BY id', (shift_id,)).fetchall()
         plus_entries = conn.execute('SELECT * FROM cash_plus_entries WHERE shift_id=? ORDER BY id', (shift_id,)).fetchall()
         staff_rows = conn.execute(
-            '''SELECT es.*, COALESCE(e.pay_monthly, 0) as pay_monthly
+            '''SELECT es.*,
+                      CASE WHEN es.role_snapshot = e.role THEN COALESCE(e.pay_monthly, 0)
+                           ELSE COALESCE(er.pay_monthly, 0) END as pay_monthly
                FROM employee_shifts es
                LEFT JOIN employees e ON e.id = es.employee_id
+               LEFT JOIN employee_roles er ON er.employee_id = es.employee_id AND er.role = es.role_snapshot
                WHERE es.shift_id=? ORDER BY es.role_snapshot, es.full_name_snapshot''',
             (shift_id,)
         ).fetchall()
@@ -3413,9 +3418,18 @@ def pay_staff(shift_id, staff_id):
         if not row:
             return jsonify({'error': 'Не найдено'}), 404
         if row['employee_id']:
-            emp = conn.execute('SELECT pay_monthly FROM employees WHERE id=?', (row['employee_id'],)).fetchone()
-            if emp and emp['pay_monthly']:
-                return jsonify({'error': 'pay_monthly'}), 400
+            emp = conn.execute('SELECT role, pay_monthly FROM employees WHERE id=?', (row['employee_id'],)).fetchone()
+            if emp:
+                if row['role_snapshot'] == emp['role']:
+                    pm = emp['pay_monthly']
+                else:
+                    er = conn.execute(
+                        'SELECT pay_monthly FROM employee_roles WHERE employee_id=? AND role=?',
+                        (row['employee_id'], row['role_snapshot'])
+                    ).fetchone()
+                    pm = er['pay_monthly'] if er else 0
+                if pm:
+                    return jsonify({'error': 'pay_monthly'}), 400
         conn.execute(
             'UPDATE employee_shifts SET is_paid=1, paid_amount=? WHERE id=?',
             (amount, staff_id)
@@ -8308,6 +8322,7 @@ def add_employee_role(emp_id):
     rate_template_id = request.form.get('rate_template_id', '').strip() or None
     if rate_template_id:
         rate_template_id = int(rate_template_id)
+    pay_monthly = 1 if request.form.get('pay_monthly') else 0
     if not role or role not in ROLE_LABELS:
         flash('Выберите должность', 'danger')
         return redirect(url_for('employees'))
@@ -8323,15 +8338,15 @@ def add_employee_role(emp_id):
             rate_ord = float(request.form.get('rate_per_order', 0) or 0)
         try:
             conn.execute(
-                'INSERT INTO employee_roles (employee_id, role, rate, rate_per_km, rate_per_order, rate_template_id) VALUES (?,?,?,?,?,?)',
-                (emp_id, role, rate, rate_km, rate_ord, rate_template_id)
+                'INSERT INTO employee_roles (employee_id, role, rate, rate_per_km, rate_per_order, rate_template_id, pay_monthly) VALUES (?,?,?,?,?,?,?)',
+                (emp_id, role, rate, rate_km, rate_ord, rate_template_id, pay_monthly)
             )
             conn.commit()
             flash('Должность добавлена', 'success')
         except Exception:
             conn.execute(
-                'UPDATE employee_roles SET rate=?, rate_per_km=?, rate_per_order=?, rate_template_id=? WHERE employee_id=? AND role=?',
-                (rate, rate_km, rate_ord, rate_template_id, emp_id, role)
+                'UPDATE employee_roles SET rate=?, rate_per_km=?, rate_per_order=?, rate_template_id=?, pay_monthly=? WHERE employee_id=? AND role=?',
+                (rate, rate_km, rate_ord, rate_template_id, pay_monthly, emp_id, role)
             )
             conn.commit()
             flash('Ставка по должности обновлена', 'success')
@@ -8367,6 +8382,17 @@ def update_employee_role_template(role_id):
             conn.execute('UPDATE employee_roles SET rate_template_id=NULL WHERE id=?', (role_id,))
         conn.commit()
     flash('Ставка по должности обновлена', 'success')
+    return redirect(url_for('employees'))
+
+
+@app.route('/employees/roles/<int:role_id>/pay-monthly', methods=['POST'])
+@login_required
+@menu_permission_required('employees')
+def update_employee_role_pay_monthly(role_id):
+    pay_monthly = 1 if request.form.get('pay_monthly') else 0
+    with get_db() as conn:
+        conn.execute('UPDATE employee_roles SET pay_monthly=? WHERE id=?', (pay_monthly, role_id))
+        conn.commit()
     return redirect(url_for('employees'))
 
 
