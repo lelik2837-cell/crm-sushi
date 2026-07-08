@@ -773,6 +773,7 @@
             {% for r in s.extra_routes %}
             <div class="route-grid-row route-extra-row" data-route-id="{{ r.id }}">
               <select class="route-extra-reason" {% if not can_edit %}disabled{% endif %} onchange="onRouteExtraChange(this)">
+                <option value="delivery_run" {% if r.reason == 'delivery_run' %}selected{% endif %}>Развоз</option>
                 <option value="relocation" {% if r.reason == 'relocation' %}selected{% endif %}>Перемещение</option>
                 <option value="store"      {% if r.reason == 'store' %}selected{% endif %}>Заезд в магазин</option>
                 <option value="order"      {% if r.reason == 'order' %}selected{% endif %}>По заказу</option>
@@ -1524,6 +1525,7 @@ function addRouteRow(btn) {
     div.dataset.routeId = d.route_id;
     div.innerHTML = `
       <select class="route-extra-reason" onchange="onRouteExtraChange(this)">
+        <option value="delivery_run">Развоз</option>
         <option value="relocation" selected>Перемещение</option>
         <option value="store">Заезд в магазин</option>
         <option value="order">По заказу</option>

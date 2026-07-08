@@ -102,9 +102,10 @@ ACTION_LABELS = {
 }
 
 ROUTE_REASON_LABELS = {
-    'relocation': 'Перемещение',
-    'store':      'Заезд в магазин',
-    'order':      'По заказу',
+    'delivery_run': 'Развоз',
+    'relocation':   'Перемещение',
+    'store':        'Заезд в магазин',
+    'order':        'По заказу',
 }
 
 # Реестр пунктов меню для настраиваемых прав доступа по ролям (см. role_menu_permissions).
