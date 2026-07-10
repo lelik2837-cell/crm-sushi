@@ -1046,7 +1046,7 @@ function loadRevCard(period) {
         .then(function(d) {
             if (!d.ok) return;
 
-            var renderTotals = function(planTotal) {
+            var renderTotals = function(planTotal, planByName) {
                 if (d.total > 0 || !planTotal) {
                     document.getElementById('rev-total').textContent = fmtNum(d.total);
                     showPlanDiff(d.total, planTotal || 0);
@@ -1056,14 +1056,29 @@ function loadRevCard(period) {
                     pd.style.color = 'rgba(255,255,255,.65)';
                     pd.textContent = '(план)';
                 }
-                branchesWrap.innerHTML = branchListHtml(d.branches, d.total);
+                // План филиала для сравнения — за то же кол-во дней, что и у общего плана
+                // (planByName), а не за весь месяц целиком; факт выручки — за весь месяц.
+                var branchesForList = d.branches;
+                if (planByName) {
+                    branchesForList = d.branches.map(function(b) {
+                        return Object.assign({}, b, {
+                            plan: planByName.hasOwnProperty(b.name) ? planByName[b.name] : b.plan
+                        });
+                    });
+                }
+                branchesWrap.innerHTML = branchListHtml(branchesForList, d.total);
                 updateRightMetrics(d);
             };
 
             if (planDateTo !== dateTo) {
                 fetch('/api/revenue-summary?date_from=' + dateFrom + '&date_to=' + planDateTo + _revBranchSuffix())
                     .then(function(r2) { return r2.json(); })
-                    .then(function(d2) { renderTotals(d2.ok ? d2.plan_total : d.plan_total); });
+                    .then(function(d2) {
+                        if (!d2.ok) { renderTotals(d.plan_total); return; }
+                        var planByName = {};
+                        (d2.branches || []).forEach(function(b) { planByName[b.name] = b.plan; });
+                        renderTotals(d2.plan_total, planByName);
+                    });
             } else {
                 renderTotals(d.plan_total);
             }
