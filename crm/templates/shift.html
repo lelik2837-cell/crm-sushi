@@ -2206,6 +2206,19 @@ function getCloseErrors() {
   if (expCatInvalid) errors.push('Выбери категорию расхода!');
   if (expAmountInvalid) errors.push('Выбери сумму расхода!');
 
+  // 10. У каждого добавленного сотрудника должны быть проставлены часы (приход/уход)
+  var noHoursNames = [];
+  document.querySelectorAll('.staff-row[data-id], .courier-row[data-id]').forEach(function(row) {
+    var startVal = (row.querySelector('.sf-start')?.value || '').trim();
+    var endVal   = (row.querySelector('.sf-end')?.value   || '').trim();
+    if (!startVal || !endVal) {
+      noHoursNames.push(row.dataset.name || 'сотрудник');
+    }
+  });
+  if (noHoursNames.length) {
+    errors.push('Не проставлены часы (приход/уход): ' + noHoursNames.join(', '));
+  }
+
   return errors;
 }
 
