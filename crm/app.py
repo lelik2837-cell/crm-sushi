@@ -129,6 +129,7 @@ MENU_ITEMS = [
     ('employees',             'Сотрудники',               'settings', True),
     ('history',               'История изменений',        'settings', True),
     ('import_shifts',         'Импорт смен',              'settings', False),
+    ('orders_report',         'Отчёт по заказам',         'settings', False),
     ('branches',              'Филиалы',                  'settings', False),
     ('users',                 'Пользователи',             'settings', False),
     ('settings_rates',        'Ставки сотрудников',       'settings', False),
@@ -1584,6 +1585,39 @@ def init_db():
                     conn.execute('DELETE FROM expense_categories WHERE code=?', (bad_code,))
                 else:
                     conn.execute('UPDATE expense_categories SET code=? WHERE code=?', (good_code, bad_code))
+
+        # Отчёт по заказам — импорт из выгрузки iiko (CSV «отчёт по заказам»)
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS orders_import_batches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                filename TEXT,
+                imported_count INTEGER DEFAULT 0,
+                duplicate_count INTEGER DEFAULT 0,
+                skipped_count INTEGER DEFAULT 0,
+                created_by INTEGER,
+                imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS orders_report (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_number TEXT NOT NULL,
+                branch_raw TEXT NOT NULL,
+                branch_id INTEGER REFERENCES branches(id),
+                received_at TEXT NOT NULL,
+                promised_minutes INTEGER,
+                order_type_raw TEXT,
+                order_type TEXT,
+                ready_minutes INTEGER,
+                delivery_minutes INTEGER,
+                promo_code TEXT,
+                amount REAL DEFAULT 0,
+                import_batch_id INTEGER REFERENCES orders_import_batches(id) ON DELETE CASCADE,
+                import_hash TEXT UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_orders_report_received ON orders_report(received_at);
+            CREATE INDEX IF NOT EXISTS idx_orders_report_branch ON orders_report(branch_id);
+            CREATE INDEX IF NOT EXISTS idx_orders_report_number ON orders_report(order_number);
+        ''')
 
         conn.commit()
 
@@ -10631,6 +10665,286 @@ def import_shifts_confirm(token):
         conn.commit()
 
     return redirect(url_for('import_shifts'))
+
+
+# ─── ОТЧЁТ ПО ЗАКАЗАМ (импорт выгрузки «отчёт по заказам» из iiko) ───────────
+
+def _normalize_order_type(raw):
+    """Зал и С собой считаем одним типом — «Общий - самовывоз». Доставка остаётся как есть."""
+    raw = (raw or '').strip()
+    if raw in ('Зал', 'С собой'):
+        return 'Общий - самовывоз'
+    return raw or '—'
+
+
+def _orders_csv_col(header, *names):
+    def _norm(s):
+        return re.sub(r'\s+', ' ', (s or '').strip().lower().replace('ё', 'е'))
+    normed = [_norm(h) for h in header]
+    for n in names:
+        n2 = _norm(n)
+        if n2 in normed:
+            return normed.index(n2)
+    return None
+
+
+def _parse_orders_csv(file_bytes):
+    """Разбирает CSV-выгрузку «Отчёт по заказам» (iiko, разделитель ';')."""
+    text = None
+    for enc in ('utf-8-sig', 'cp1251', 'utf-8'):
+        try:
+            text = file_bytes.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        text = file_bytes.decode('utf-8', errors='replace')
+
+    lines = text.splitlines()
+    header_idx = next((i for i, l in enumerate(lines) if 'Номер заказа' in l), None)
+    if header_idx is None:
+        return []
+
+    reader = csv.reader(lines[header_idx:], delimiter=';')
+    header = next(reader)
+
+    def idx_or(default, *names):
+        v = _orders_csv_col(header, *names)
+        return v if v is not None else default
+
+    idx_number   = idx_or(1, 'Номер заказа')
+    idx_branch   = idx_or(2, 'Подразделение')
+    idx_received = idx_or(3, 'Время приема')
+    idx_promised = _orders_csv_col(header, 'Обещанное время доставки с момента приема заказа')
+    idx_type     = idx_or(5, 'Тип заказа')
+    idx_ready    = _orders_csv_col(header, 'Время между приемом и готовностью заказа')
+    idx_delivery = _orders_csv_col(header, 'Время между приемом и фактической доставкой заказа')
+    idx_promo    = _orders_csv_col(header, 'Промокод')
+    idx_amount   = idx_or(9, 'К оплате', 'Оплачено')
+
+    def cell(row, idx):
+        if idx is None or idx >= len(row):
+            return ''
+        return (row[idx] or '').strip()
+
+    def to_int(v):
+        return int(v) if v.isdigit() else None
+
+    rows = []
+    for row in reader:
+        received_raw = cell(row, idx_received)
+        if not received_raw:
+            continue  # пустая строка или итоговая строка с суммой в конце файла
+        try:
+            dt = datetime.strptime(received_raw, '%d.%m.%Y %H:%M')
+        except ValueError:
+            continue
+        order_number = cell(row, idx_number)
+        if not order_number:
+            continue
+        amount_raw = cell(row, idx_amount).replace(' ', '').replace(',', '.')
+        try:
+            amount = float(amount_raw) if amount_raw else 0.0
+        except ValueError:
+            amount = 0.0
+        type_raw = cell(row, idx_type)
+
+        rows.append({
+            'order_number':     order_number,
+            'branch_raw':       cell(row, idx_branch) or '—',
+            'received_at':      dt.strftime('%Y-%m-%d %H:%M:%S'),
+            'promised_minutes': to_int(cell(row, idx_promised)),
+            'order_type_raw':   type_raw,
+            'order_type':       _normalize_order_type(type_raw),
+            'ready_minutes':    to_int(cell(row, idx_ready)),
+            'delivery_minutes': to_int(cell(row, idx_delivery)),
+            'promo_code':       cell(row, idx_promo) or None,
+            'amount':           amount,
+        })
+    return rows
+
+
+@app.route('/orders-report')
+@login_required
+@menu_permission_required('orders_report')
+def orders_report():
+    with get_db() as conn:
+        branches_raw = [r[0] for r in conn.execute(
+            'SELECT DISTINCT branch_raw FROM orders_report ORDER BY branch_raw'
+        ).fetchall()]
+
+        bounds = conn.execute(
+            'SELECT MIN(received_at), MAX(received_at) FROM orders_report'
+        ).fetchone()
+        data_min = (bounds[0] or '')[:10]
+        data_max = (bounds[1] or '')[:10]
+
+        today       = date.today().isoformat()
+        month_start = date.today().replace(day=1).isoformat()
+        date_from  = request.args.get('date_from', month_start)
+        date_to    = request.args.get('date_to', today)
+        branch_flt = request.args.getlist('branch')
+        type_flt   = request.args.get('type', '')
+        q          = request.args.get('q', '').strip()
+
+        where  = []
+        params = []
+
+        if q:
+            where.append('(order_number LIKE ? OR promo_code LIKE ?)')
+            like = f'%{q}%'
+            params.extend([like, like])
+        else:
+            where.append('received_at >= ?')
+            params.append(date_from + ' 00:00:00')
+            where.append('received_at <= ?')
+            params.append(date_to + ' 23:59:59')
+
+        if branch_flt:
+            ph = ','.join('?' * len(branch_flt))
+            where.append(f'branch_raw IN ({ph})')
+            params.extend(branch_flt)
+
+        if type_flt == 'delivery':
+            where.append("order_type LIKE 'Доставка%'")
+        elif type_flt == 'pickup':
+            where.append("order_type = 'Общий - самовывоз'")
+
+        sql_where = ' AND '.join(where) if where else '1=1'
+
+        rows = conn.execute(f'''
+            SELECT * FROM orders_report
+            WHERE {sql_where}
+            ORDER BY received_at DESC
+            LIMIT 20000
+        ''', params).fetchall()
+
+        stats = conn.execute(f'''
+            SELECT COUNT(*), COALESCE(SUM(amount),0),
+                   SUM(CASE WHEN order_type = 'Общий - самовывоз' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN order_type LIKE 'Доставка%' THEN 1 ELSE 0 END)
+            FROM orders_report
+            WHERE {sql_where}
+        ''', params).fetchone()
+
+    return render_template('orders_report.html',
+        rows=rows,
+        branches_raw=branches_raw,
+        date_from=date_from, date_to=date_to,
+        branch_flt=branch_flt, type_flt=type_flt, q=q,
+        total_count=stats[0] or 0, total_amount=stats[1] or 0,
+        pickup_count=stats[2] or 0, delivery_count=stats[3] or 0,
+        data_min=data_min, data_max=data_max,
+        row_limit_hit=(len(rows) >= 20000))
+
+
+@app.route('/orders-report/import', methods=['GET', 'POST'])
+@login_required
+@menu_permission_required('orders_report')
+def orders_report_import():
+    if request.method == 'GET':
+        with get_db() as conn:
+            batches = conn.execute(
+                'SELECT * FROM orders_import_batches ORDER BY imported_at DESC LIMIT 50'
+            ).fetchall()
+        return render_template('orders_report_import.html', batches=batches)
+
+    file = request.files.get('orders_file')
+    if not file or file.filename == '':
+        flash('Выберите файл', 'danger')
+        return redirect(url_for('orders_report_import'))
+
+    try:
+        rows = _parse_orders_csv(file.read())
+    except Exception as e:
+        flash(f'Ошибка чтения файла: {e}', 'danger')
+        return redirect(url_for('orders_report_import'))
+
+    if not rows:
+        flash('Не найдено строк с заказами в файле. Проверьте, что это CSV-выгрузка «Отчёт по заказам»', 'warning')
+        return redirect(url_for('orders_report_import'))
+
+    import hashlib
+
+    def _row_hash(r):
+        key = f"{r['order_number']}|{r['received_at']}|{r['branch_raw']}|{r['amount']:.2f}"
+        return hashlib.md5(key.encode('utf-8')).hexdigest()
+
+    with get_db() as conn:
+        branches = conn.execute('SELECT id, name FROM branches WHERE is_active=1').fetchall()
+
+        branch_match = {}
+        for raw in set(r['branch_raw'] for r in rows):
+            raw_l = raw.lower()
+            match_id = None
+            for b in branches:
+                if raw_l == b['name'].lower():
+                    match_id = b['id']
+                    break
+            if match_id is None:
+                for b in branches:
+                    bl = b['name'].lower()
+                    if raw_l in bl or bl in raw_l:
+                        match_id = b['id']
+                        break
+            branch_match[raw] = match_id
+
+        cur = conn.execute(
+            'INSERT INTO orders_import_batches (filename, created_by) VALUES (?,?)',
+            (file.filename, session.get('user_id'))
+        )
+        batch_id = cur.lastrowid
+
+        imported = duplicates = 0
+        for r in rows:
+            h = _row_hash(r)
+            res = conn.execute('''
+                INSERT OR IGNORE INTO orders_report
+                    (order_number, branch_raw, branch_id, received_at, promised_minutes,
+                     order_type_raw, order_type, ready_minutes, delivery_minutes,
+                     promo_code, amount, import_batch_id, import_hash)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ''', (
+                r['order_number'], r['branch_raw'], branch_match.get(r['branch_raw']),
+                r['received_at'], r['promised_minutes'], r['order_type_raw'], r['order_type'],
+                r['ready_minutes'], r['delivery_minutes'], r['promo_code'], r['amount'],
+                batch_id, h
+            ))
+            if res.rowcount:
+                imported += 1
+            else:
+                duplicates += 1
+
+        conn.execute(
+            'UPDATE orders_import_batches SET imported_count=?, duplicate_count=? WHERE id=?',
+            (imported, duplicates, batch_id)
+        )
+        conn.commit()
+
+    parts = [f'Импортировано {imported} новых заказов']
+    if duplicates:
+        parts.append(f'пропущено дублей: {duplicates}')
+    flash(', '.join(parts) + f' (всего строк в файле: {len(rows)})', 'success' if imported else 'warning')
+    return redirect(url_for('orders_report'))
+
+
+@app.route('/orders-report/batch/<int:batch_id>/delete', methods=['POST'])
+@login_required
+@menu_permission_required('orders_report')
+def orders_report_batch_delete(batch_id):
+    with get_db() as conn:
+        batch = conn.execute('SELECT * FROM orders_import_batches WHERE id=?', (batch_id,)).fetchone()
+        if not batch:
+            flash('Импорт не найден', 'danger')
+            return redirect(url_for('orders_report_import'))
+        cnt = conn.execute(
+            'SELECT COUNT(*) FROM orders_report WHERE import_batch_id=?', (batch_id,)
+        ).fetchone()[0]
+        conn.execute('DELETE FROM orders_report WHERE import_batch_id=?', (batch_id,))
+        conn.execute('DELETE FROM orders_import_batches WHERE id=?', (batch_id,))
+        conn.commit()
+    flash(f'Импорт «{batch["filename"]}» удалён ({cnt} заказов)', 'success')
+    return redirect(url_for('orders_report_import'))
 
 
 # ─── CHANGE (РАЗМЕН) SETTINGS ────────────────────────────────────────────────

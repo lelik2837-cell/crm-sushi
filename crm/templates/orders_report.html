@@ -1,0 +1,214 @@
+{% extends 'base.html' %}
+{% block title %}Отчёт по заказам{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="fw-bold mb-0"><i class="bi bi-receipt-cutoff"></i> Отчёт по заказам</h4>
+    <a href="{{ url_for('orders_report_import') }}" class="btn btn-primary">
+        <i class="bi bi-cloud-upload me-1"></i>Загрузить данные
+    </a>
+</div>
+
+<!-- Фильтры -->
+<div class="card mb-3">
+    <div class="card-body">
+        <form method="GET" class="row g-2 align-items-end">
+            <div class="col-6 col-md-2">
+                <label class="form-label small fw-semibold">С</label>
+                <input type="date" name="date_from" value="{{ date_from }}" class="form-control form-control-sm">
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label small fw-semibold">По</label>
+                <input type="date" name="date_to" value="{{ date_to }}" class="form-control form-control-sm">
+            </div>
+
+            <div class="col-6 col-md-auto">
+                <label class="form-label small fw-semibold">Подразделение</label>
+                <div class="dropdown">
+                    <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle"
+                        data-bs-toggle="dropdown" data-bs-auto-close="outside"
+                        style="min-width:170px; text-align:left;">
+                        <span id="branch-btn-label">{% if branch_flt %}Выбрано: {{ branch_flt|length }}{% else %}Все{% endif %}</span>
+                    </button>
+                    <ul class="dropdown-menu p-2" style="min-width:230px; max-height:320px; overflow-y:auto;">
+                        <li class="mb-1">
+                            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                                <input type="checkbox" id="branch-all-cb" onchange="toggleAllBranches(this)"
+                                    {% if not branch_flt %}checked{% endif %}>
+                                <span class="fw-semibold small">Все подразделения</span>
+                            </label>
+                        </li>
+                        <li><hr class="dropdown-divider my-1"></li>
+                        {% for b in branches_raw %}
+                        <li>
+                            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                                <input type="checkbox" class="branch-cb" name="branch" value="{{ b }}"
+                                    {% if b in branch_flt %}checked{% endif %}
+                                    onchange="onBranchCbChange()">
+                                <span class="small">{{ b }}</span>
+                            </label>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+
+            <div class="col-6 col-md-2">
+                <label class="form-label small fw-semibold">Тип заказа</label>
+                <select name="type" class="form-select form-select-sm">
+                    <option value="" {% if not type_flt %}selected{% endif %}>Все типы</option>
+                    <option value="delivery" {% if type_flt=='delivery' %}selected{% endif %}>Доставка</option>
+                    <option value="pickup" {% if type_flt=='pickup' %}selected{% endif %}>Общий - самовывоз</option>
+                </select>
+            </div>
+
+            <div class="col-8 col-md-3">
+                <label class="form-label small fw-semibold">Поиск заказа</label>
+                <input type="text" name="q" value="{{ q }}" placeholder="Номер заказа или промокод"
+                       class="form-control form-control-sm">
+            </div>
+
+            <div class="col-auto">
+                <button type="submit" class="btn btn-primary btn-sm">Применить</button>
+                <a href="{{ url_for('orders_report') }}" class="btn btn-outline-secondary btn-sm ms-1">Сброс</a>
+            </div>
+        </form>
+        {% if q %}
+        <div class="small text-primary mt-2">
+            <i class="bi bi-info-circle me-1"></i>Поиск «{{ q }}» — показаны заказы за всё время (период «С / По» не применяется)
+        </div>
+        {% elif data_min %}
+        <div class="small text-muted mt-2">Данные в базе: {{ data_min | datefmt }} — {{ data_max | datefmt }}</div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Итоги -->
+<div class="row g-2 mb-3">
+    <div class="col-6 col-md-3">
+        <div class="card h-100"><div class="card-body py-2 px-3">
+            <div class="text-muted small">Заказов</div>
+            <div class="fw-bold fs-5">{{ total_count }}</div>
+        </div></div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card h-100"><div class="card-body py-2 px-3">
+            <div class="text-muted small">Сумма</div>
+            <div class="fw-bold fs-5">{{ total_amount | money }} ₽</div>
+        </div></div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card h-100"><div class="card-body py-2 px-3">
+            <div class="text-muted small">Доставка</div>
+            <div class="fw-bold fs-5">{{ delivery_count }}</div>
+        </div></div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card h-100"><div class="card-body py-2 px-3">
+            <div class="text-muted small">Общий - самовывоз</div>
+            <div class="fw-bold fs-5">{{ pickup_count }}</div>
+        </div></div>
+    </div>
+</div>
+
+{% if row_limit_hit %}
+<div class="alert alert-warning py-2 small">
+    <i class="bi bi-exclamation-triangle me-1"></i>Показаны первые 20 000 строк — сузьте период или используйте поиск.
+</div>
+{% endif %}
+
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 align-middle" id="ordersTable" style="font-size:12.5px">
+            <thead class="table-light">
+                <tr>
+                    <th class="ord-sort" style="cursor:pointer;user-select:none">Номер <span class="ord-arrow text-muted"></span></th>
+                    <th class="ord-sort" style="cursor:pointer;user-select:none">Подразделение <span class="ord-arrow text-muted"></span></th>
+                    <th class="ord-sort" style="cursor:pointer;user-select:none">Дата и время приёма <span class="ord-arrow text-muted"></span></th>
+                    <th class="ord-sort" style="cursor:pointer;user-select:none">Тип <span class="ord-arrow text-muted"></span></th>
+                    <th class="ord-sort text-end" style="cursor:pointer;user-select:none">Обещано, мин <span class="ord-arrow text-muted"></span></th>
+                    <th class="ord-sort text-end" style="cursor:pointer;user-select:none">Готовность, мин <span class="ord-arrow text-muted"></span></th>
+                    <th class="ord-sort text-end" style="cursor:pointer;user-select:none">Доставка, мин <span class="ord-arrow text-muted"></span></th>
+                    <th class="ord-sort" style="cursor:pointer;user-select:none">Промокод <span class="ord-arrow text-muted"></span></th>
+                    <th class="ord-sort text-end" style="cursor:pointer;user-select:none">Сумма <span class="ord-arrow text-muted"></span></th>
+                </tr>
+            </thead>
+            <tbody id="ordersTbody">
+            {% for r in rows %}
+                <tr>
+                    <td class="fw-semibold">{{ r.order_number }}</td>
+                    <td>{{ r.branch_raw }}</td>
+                    <td data-val="{{ r.received_at }}">{{ r.received_at[8:10] }}.{{ r.received_at[5:7] }}.{{ r.received_at[0:4] }} {{ r.received_at[11:16] }}</td>
+                    <td>
+                        {% if r.order_type == 'Общий - самовывоз' %}
+                        <span class="badge bg-success-subtle text-success-emphasis">{{ r.order_type }}</span>
+                        {% else %}
+                        <span class="badge bg-primary-subtle text-primary-emphasis">{{ r.order_type }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-end">{{ r.promised_minutes if r.promised_minutes is not none else '—' }}</td>
+                    <td class="text-end">{{ r.ready_minutes if r.ready_minutes is not none else '—' }}</td>
+                    <td class="text-end">{{ r.delivery_minutes if r.delivery_minutes is not none else '—' }}</td>
+                    <td class="text-muted">{{ r.promo_code or '—' }}</td>
+                    <td class="text-end fw-semibold" data-val="{{ r.amount }}">{{ r.amount | money }} ₽</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% if not rows %}
+        <div class="text-center text-muted py-4">Заказов не найдено. Загрузите данные или измените фильтры.</div>
+        {% endif %}
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    /* ── Мультивыбор подразделений ── */
+    function onBranchCbChange() {
+        const cbs = document.querySelectorAll('.branch-cb');
+        const checked = [...cbs].filter(c => c.checked);
+        const allCb = document.getElementById('branch-all-cb');
+        if (allCb) allCb.checked = checked.length === 0;
+        const label = document.getElementById('branch-btn-label');
+        if (label) label.textContent = checked.length === 0 ? 'Все' : 'Выбрано: ' + checked.length;
+    }
+    window.onBranchCbChange = onBranchCbChange;
+    window.toggleAllBranches = function (cb) {
+        if (cb.checked) {
+            document.querySelectorAll('.branch-cb').forEach(c => c.checked = false);
+            const label = document.getElementById('branch-btn-label');
+            if (label) label.textContent = 'Все';
+        }
+    };
+
+    /* ── Сортировка таблицы кликом по заголовку ── */
+    var table = document.getElementById('ordersTable');
+    if (!table) return;
+    var tbody = document.getElementById('ordersTbody');
+    var ths = Array.from(table.querySelectorAll('thead .ord-sort'));
+    var curCol = -1, curDir = 0;
+    ths.forEach(function (th, idx) {
+        th.addEventListener('click', function () {
+            var dir = (curCol === idx && curDir === -1) ? 1 : -1;
+            curCol = idx; curDir = dir;
+            ths.forEach(function (h) { h.querySelector('.ord-arrow').textContent = ''; });
+            th.querySelector('.ord-arrow').textContent = dir === -1 ? '↓' : '↑';
+            var rows = Array.from(tbody.querySelectorAll('tr'));
+            rows.sort(function (a, b) {
+                var ac = a.querySelectorAll('td')[idx];
+                var bc = b.querySelectorAll('td')[idx];
+                if (!ac || !bc) return 0;
+                var av = ac.dataset.val !== undefined ? ac.dataset.val : ac.textContent.trim();
+                var bv = bc.dataset.val !== undefined ? bc.dataset.val : bc.textContent.trim();
+                var an = parseFloat(av), bn = parseFloat(bv);
+                return ((!isNaN(an) && !isNaN(bn)) ? an - bn : av.localeCompare(bv, 'ru')) * dir;
+            });
+            rows.forEach(function (r) { tbody.appendChild(r); });
+        });
+    });
+})();
+</script>
+{% endblock %}

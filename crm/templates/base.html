@@ -337,7 +337,7 @@
                 </li>
                 {% endif %}
                 {% if group_has_visible_item('settings') %}
-                {% set settings_active = request.endpoint in ('settings','branches','users','employees','history','revenue_manual','flyer_promo_settings') %}
+                {% set settings_active = request.endpoint in ('settings','branches','users','employees','history','revenue_manual','flyer_promo_settings') or (request.endpoint and request.endpoint.startswith('orders_report')) %}
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle {% if settings_active %}active{% endif %}"
                        href="#" data-bs-toggle="dropdown" aria-expanded="false">
@@ -363,6 +363,13 @@
                         <li>
                             <a class="dropdown-item {% if request.endpoint in ('import_shifts','excel_import') %}active{% endif %}" href="{{ url_for('import_shifts') }}">
                                 <i class="bi bi-cloud-upload me-2 text-primary"></i>Импорт смен
+                            </a>
+                        </li>
+                        {% endif %}
+                        {% if item_visible('orders_report') %}
+                        <li>
+                            <a class="dropdown-item {% if request.endpoint and request.endpoint.startswith('orders_report') %}active{% endif %}" href="{{ url_for('orders_report') }}">
+                                <i class="bi bi-receipt-cutoff me-2 text-primary"></i>Отчёт по заказам
                             </a>
                         </li>
                         {% endif %}

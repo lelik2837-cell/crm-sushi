@@ -208,3 +208,34 @@ CREATE TABLE IF NOT EXISTS taxi_trip_employees (
     name_snapshot TEXT NOT NULL,
     address_snapshot TEXT
 );
+
+CREATE TABLE IF NOT EXISTS orders_import_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    filename TEXT,
+    imported_count INTEGER DEFAULT 0,
+    duplicate_count INTEGER DEFAULT 0,
+    skipped_count INTEGER DEFAULT 0,
+    created_by INTEGER,
+    imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS orders_report (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_number TEXT NOT NULL,
+    branch_raw TEXT NOT NULL,
+    branch_id INTEGER REFERENCES branches(id),
+    received_at TEXT NOT NULL,
+    promised_minutes INTEGER,
+    order_type_raw TEXT,
+    order_type TEXT,
+    ready_minutes INTEGER,
+    delivery_minutes INTEGER,
+    promo_code TEXT,
+    amount REAL DEFAULT 0,
+    import_batch_id INTEGER REFERENCES orders_import_batches(id) ON DELETE CASCADE,
+    import_hash TEXT UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_orders_report_received ON orders_report(received_at);
+CREATE INDEX IF NOT EXISTS idx_orders_report_branch ON orders_report(branch_id);
+CREATE INDEX IF NOT EXISTS idx_orders_report_number ON orders_report(order_number);
