@@ -37,7 +37,9 @@
     <div class="text-muted px-1 mb-1" style="font-size:0.7rem;font-weight:600;letter-spacing:.5px;">ГРУППЫ</div>
     {% for g in branch_groups %}
     <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1 mb-1"
-            onclick="dashBpSelectGroup('{{ bs_prefix }}', {{ g.branch_ids | tojson }}, {{ (g.abbr or g.name[:3].upper()) | tojson }})">
+            data-branch-ids="{{ g.branch_ids | join(',') }}"
+            data-abbr="{{ g.abbr or g.name[:3].upper() }}"
+            onclick="dashBpSelectGroupFromBtn('{{ bs_prefix }}', this)">
       <span class="fw-bold">{{ g.abbr or g.name[:3].upper() }}</span>
       <span class="text-muted ms-1 small">{{ g.name }} ({{ g.branch_ids | length }})</span>
     </button>

@@ -562,6 +562,13 @@ function dashBpSelectGroup(prefix, ids, abbr) {
     if (label) label.textContent = abbr;
     if (typeof window[prefix + 'OnBranchChange'] === 'function') window[prefix + 'OnBranchChange']();
 }
+// Читает id и сокращение из data-атрибутов кнопки группы (см. _dash_branch_picker.html) —
+// значения идут через HTML-атрибуты (безопасно экранированы Jinja), а не через |tojson
+// внутри onclick="...", где JSON-строка в двойных кавычках ломала бы сам атрибут onclick="".
+function dashBpSelectGroupFromBtn(prefix, btn) {
+    var ids = (btn.dataset.branchIds || '').split(',').filter(Boolean).map(function (s) { return parseInt(s, 10); });
+    dashBpSelectGroup(prefix, ids, btn.dataset.abbr || '');
+}
 function dashBpEmptyLabel(prefix) {
     var btn = document.getElementById(prefix + '-branch-btn');
     return (btn && btn.dataset.emptyLabel) || 'Все';
