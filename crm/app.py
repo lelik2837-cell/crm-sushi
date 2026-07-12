@@ -1594,6 +1594,7 @@ def init_db():
                 filename TEXT,
                 imported_count INTEGER DEFAULT 0,
                 duplicate_count INTEGER DEFAULT 0,
+                updated_count INTEGER DEFAULT 0,
                 skipped_count INTEGER DEFAULT 0,
                 created_by INTEGER,
                 imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -1623,6 +1624,9 @@ def init_db():
         _or_cols = [r[1] for r in conn.execute("PRAGMA table_info(orders_report)").fetchall()]
         if 'new_client' not in _or_cols:
             conn.execute("ALTER TABLE orders_report ADD COLUMN new_client TEXT")
+        _oib_cols = [r[1] for r in conn.execute("PRAGMA table_info(orders_import_batches)").fetchall()]
+        if 'updated_count' not in _oib_cols:
+            conn.execute("ALTER TABLE orders_import_batches ADD COLUMN updated_count INTEGER DEFAULT 0")
 
         conn.commit()
 
@@ -11036,7 +11040,9 @@ def orders_report_import():
     import hashlib
 
     def _row_hash(r):
-        key = f"{r['order_number']}|{r['received_at']}|{r['branch_raw']}|{r['amount']:.2f}"
+        # Идентификатор заказа для повторной загрузки — дата приёма + номер заказа.
+        # Совпадение по этому ключу не создаёт дубль, а обновляет уже загруженную строку.
+        key = f"{r['order_number']}|{r['received_at'][:10]}"
         return hashlib.md5(key.encode('utf-8')).hexdigest()
 
     with get_db() as conn:
@@ -11058,42 +11064,57 @@ def orders_report_import():
                         break
             branch_match[raw] = match_id
 
+        existing_keys = set(
+            (er['order_number'], er['received_at'][:10])
+            for er in conn.execute('SELECT order_number, received_at FROM orders_report').fetchall()
+        )
+
         cur = conn.execute(
             'INSERT INTO orders_import_batches (filename, created_by) VALUES (?,?)',
             (file.filename, session.get('user_id'))
         )
         batch_id = cur.lastrowid
 
-        imported = duplicates = 0
+        imported = updated = 0
         for r in rows:
+            key = (r['order_number'], r['received_at'][:10])
+            is_new = key not in existing_keys
+            existing_keys.add(key)
             h = _row_hash(r)
-            res = conn.execute('''
-                INSERT OR IGNORE INTO orders_report
+            conn.execute('''
+                INSERT INTO orders_report
                     (order_number, branch_raw, branch_id, received_at, promised_minutes,
                      order_type_raw, order_type, ready_minutes, delivery_minutes,
                      promo_code, amount, new_client, import_batch_id, import_hash)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(import_hash) DO UPDATE SET
+                    branch_raw=excluded.branch_raw, branch_id=excluded.branch_id,
+                    received_at=excluded.received_at, promised_minutes=excluded.promised_minutes,
+                    order_type_raw=excluded.order_type_raw, order_type=excluded.order_type,
+                    ready_minutes=excluded.ready_minutes, delivery_minutes=excluded.delivery_minutes,
+                    promo_code=excluded.promo_code, amount=excluded.amount,
+                    new_client=excluded.new_client, import_batch_id=excluded.import_batch_id
             ''', (
                 r['order_number'], r['branch_raw'], branch_match.get(r['branch_raw']),
                 r['received_at'], r['promised_minutes'], r['order_type_raw'], r['order_type'],
                 r['ready_minutes'], r['delivery_minutes'], r['promo_code'], r['amount'],
                 r['new_client'], batch_id, h
             ))
-            if res.rowcount:
+            if is_new:
                 imported += 1
             else:
-                duplicates += 1
+                updated += 1
 
         conn.execute(
-            'UPDATE orders_import_batches SET imported_count=?, duplicate_count=? WHERE id=?',
-            (imported, duplicates, batch_id)
+            'UPDATE orders_import_batches SET imported_count=?, updated_count=? WHERE id=?',
+            (imported, updated, batch_id)
         )
         conn.commit()
 
     parts = [f'Импортировано {imported} новых заказов']
-    if duplicates:
-        parts.append(f'пропущено дублей: {duplicates}')
-    flash(', '.join(parts) + f' (всего строк в файле: {len(rows)})', 'success' if imported else 'warning')
+    if updated:
+        parts.append(f'обновлено: {updated}')
+    flash(', '.join(parts) + f' (всего строк в файле: {len(rows)})', 'success' if (imported or updated) else 'warning')
     return redirect(url_for('orders_report'))
 
 

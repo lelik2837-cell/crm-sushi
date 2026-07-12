@@ -17,7 +17,7 @@
         <p class="text-muted small mb-3">
             Файл CSV «Отчёт по заказам» (выгружается из системы учёта). Разделитель — «;».<br>
             Заказы «Зал» и «С собой» объединяются в отчёте в один тип — <strong>«Общий - самовывоз»</strong>.<br>
-            Повторная загрузка файла с пересекающимся периодом <strong>не создаёт дубли</strong> — уже загруженные заказы пропускаются.
+            Повторная загрузка файла с пересекающимся периодом <strong>не создаёт дубли</strong> — заказ определяется по дате приёма и номеру, уже загруженные заказы не дублируются, а обновляются свежими данными.
         </p>
         <form method="POST" enctype="multipart/form-data" id="ordersImportForm">
             <div class="mb-3">
@@ -44,7 +44,7 @@
                     <th>Файл</th>
                     <th>Дата загрузки</th>
                     <th class="text-center">Импортировано</th>
-                    <th class="text-center">Дублей пропущено</th>
+                    <th class="text-center">Обновлено</th>
                     <th></th>
                 </tr>
             </thead>
@@ -54,11 +54,11 @@
                     <td>{{ b.filename }}</td>
                     <td class="small text-muted">{{ b.imported_at[:16] if b.imported_at else '—' }}</td>
                     <td class="text-center">{{ b.imported_count }}</td>
-                    <td class="text-center text-muted">{{ b.duplicate_count }}</td>
+                    <td class="text-center text-muted">{{ b.updated_count }}</td>
                     <td class="text-end">
-                        {% if b.imported_count > 0 %}
+                        {% if (b.imported_count + b.updated_count) > 0 %}
                         <form method="POST" action="{{ url_for('orders_report_batch_delete', batch_id=b.id) }}"
-                              onsubmit="return confirm('Удалить импорт «{{ b.filename }}»?\nБудут удалены {{ b.imported_count }} заказ(ов) из отчёта. Это нельзя отменить.')">
+                              onsubmit="return confirm('Удалить импорт «{{ b.filename }}»?\nБудут удалены {{ b.imported_count + b.updated_count }} заказ(ов) из отчёта. Это нельзя отменить.')">
                             <button class="btn btn-sm btn-outline-danger" title="Удалить импорт">
                                 <i class="bi bi-trash"></i> Удалить
                             </button>

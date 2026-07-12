@@ -214,6 +214,7 @@ CREATE TABLE IF NOT EXISTS orders_import_batches (
     filename TEXT,
     imported_count INTEGER DEFAULT 0,
     duplicate_count INTEGER DEFAULT 0,
+    updated_count INTEGER DEFAULT 0,
     skipped_count INTEGER DEFAULT 0,
     created_by INTEGER,
     imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
