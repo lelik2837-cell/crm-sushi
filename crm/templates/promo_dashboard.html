@@ -47,7 +47,6 @@
 
         <!-- Branch selector -->
         {% set bs_prefix = 'promo' %}
-        {% set bs_mode = 'text' %}
         {% include '_dash_branch_picker.html' %}
       </div>
 
@@ -295,7 +294,7 @@ function showPromoMonthDetail(monthIdx, monthYear, monthLabel) {
     detail.style.display = '';
     titleEl.textContent   = monthLabel + ' ' + y;
 
-    var qs = (selectedPromo ? '&promo=' + encodeURIComponent(selectedPromo) : '') + dashBpTextSuffix('promo');
+    var qs = (selectedPromo ? '&promo=' + encodeURIComponent(selectedPromo) : '') + dashBpSuffix('promo');
     fetch('/api/promo-days?date_from=' + dateFrom + '&date_to=' + dateTo + qs)
         .then(function(r) { return r.json(); })
         .then(function(d) {
@@ -365,7 +364,7 @@ function loadPromoCard(period) {
         if (promoYearDayChart) { promoYearDayChart.destroy(); promoYearDayChart = null; }
     }
 
-    var qsPromo = (selectedPromo ? '&promo=' + encodeURIComponent(selectedPromo) : '') + dashBpTextSuffix('promo');
+    var qsPromo = (selectedPromo ? '&promo=' + encodeURIComponent(selectedPromo) : '') + dashBpSuffix('promo');
 
     var isCustomMonthly = promoPeriod === 'custom' && promoCustomFrom && promoCustomTo &&
         Math.round((new Date(promoCustomTo) - new Date(promoCustomFrom)) / 86400000) > 35;
@@ -488,7 +487,7 @@ function loadPromoList() {
         dateTo   = fmtLocalDate(new Date());
     }
 
-    fetch('/api/promo-list?date_from=' + dateFrom + '&date_to=' + dateTo + dashBpTextSuffix('promo'))
+    fetch('/api/promo-list?date_from=' + dateFrom + '&date_to=' + dateTo + dashBpSuffix('promo'))
         .then(function(r) { return r.json(); })
         .then(function(d) {
             var tbody = document.getElementById('promoTbody');

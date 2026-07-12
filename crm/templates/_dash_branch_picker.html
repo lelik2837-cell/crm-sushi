@@ -1,51 +1,20 @@
-{# Единая кнопка мультивыбора филиалов для AJAX-дашбордов (Дашборд, ФОТ, LFL, Рейтинги, Ожидание, Промокоды).
+{# Единая кнопка мультивыбора филиалов для AJAX-дашбордов (Дашборд, ФОТ, LFL, Рейтинги, Ожидание, Промокоды, Отчёт по заказам).
    Параметры:
      bs_prefix       — уникальный префикс, напр. 'dash','fot','lfl','rat','w','promo'
-     bs_mode         — 'id' (по умолчанию, ключ branches.id + группы branch_groups) или 'text'
-                        (ключ — текст подразделения branch_raw из «Отчёта по заказам», группы — branch_raw_groups,
-                        управляются на странице «Отчёт по заказам»)
-     branches, branch_groups — для bs_mode='id'
-     branches_raw, branch_raw_groups — для bs_mode='text'
+     branches, branch_groups — список филиалов и их групп (один общий справочник для всех дашбордов)
      bs_empty_label  — необязательно, текст кнопки когда ничего не выбрано (по умолчанию «Все»)
    При выборе группы кнопка показывает её сокращённое название (abbr).
    Хост-страница слушает изменение через window['<bs_prefix>OnBranchChange'] = function(){...}
-   и получает текущий выбор через dashBpSuffix('<bs_prefix>') -> '&branch_ids=1,2,3' (id)
-   или dashBpTextSuffix('<bs_prefix>') -> '&branch_raw=a,b' (text). #}
+   и получает текущий выбор через dashBpSuffix('<bs_prefix>') -> '&branch_ids=1,2,3'. #}
 <div class="dropdown" style="flex-shrink:0; position:relative;">
   <button id="{{ bs_prefix }}-branch-btn" type="button" class="dash-branch-btn"
     data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
     data-empty-label="{{ bs_empty_label|default('Все') }}"
-    title="Выбор {{ 'подразделений' if bs_mode == 'text' else 'филиалов' }}">
+    title="Выбор филиалов">
     <span id="{{ bs_prefix }}-branch-abbr" class="dash-branch-abbr">{{ bs_empty_label|default('Все') }}</span>
     <svg viewBox="0 0 8 5" width="8" height="5" fill="currentColor" style="opacity:.75;flex-shrink:0;"><path d="M0 0l4 5 4-5z"/></svg>
   </button>
   <div class="dropdown-menu p-2 shadow" style="min-width:220px;max-height:320px;overflow-y:auto;">
-    {% if bs_mode == 'text' %}
-    {% if branch_raw_groups %}
-    <div class="text-muted px-1 mb-1" style="font-size:0.7rem;font-weight:600;letter-spacing:.5px;">ГРУППЫ</div>
-    {% for g in branch_raw_groups %}
-    <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1 mb-1"
-            data-branch-raw="{{ g.branch_raw_list | join(',') }}"
-            data-abbr="{{ g.abbr or g.name[:3].upper() }}"
-            onclick="dashBpTextSelectGroupFromBtn('{{ bs_prefix }}', this)">
-      <span class="fw-bold">{{ g.abbr or g.name[:3].upper() }}</span>
-      <span class="text-muted ms-1 small">{{ g.name }} ({{ g.branch_raw_list | length }})</span>
-    </button>
-    {% endfor %}
-    <hr class="dropdown-divider my-1">
-    {% endif %}
-    <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2 mb-1" style="cursor:pointer;">
-      <input type="checkbox" id="{{ bs_prefix }}-branch-all-cb" checked onchange="dashBpTextToggleAll('{{ bs_prefix }}', this)">
-      <span class="fw-semibold small">Все подразделения</span>
-    </label>
-    <hr class="dropdown-divider my-1">
-    {% for b in branches_raw %}
-    <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
-      <input type="checkbox" class="{{ bs_prefix }}-branch-cb" value="{{ b }}" onchange="dashBpTextOnChange('{{ bs_prefix }}')">
-      <span class="small">{{ b }}</span>
-    </label>
-    {% endfor %}
-    {% else %}
     {% if branch_groups %}
     <div class="text-muted px-1 mb-1" style="font-size:0.7rem;font-weight:600;letter-spacing:.5px;">ГРУППЫ</div>
     {% for g in branch_groups %}
@@ -71,6 +40,5 @@
       <span class="small">{{ b.name }}</span>
     </label>
     {% endfor %}
-    {% endif %}
   </div>
 </div>

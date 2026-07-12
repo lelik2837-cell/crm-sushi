@@ -53,6 +53,49 @@
     Если прописать IP в настройках филиала, сотрудники с этого IP смогут входить только в этот филиал.
 </div>
 
+{% if branches_raw %}
+<h6 class="text-muted fw-semibold mb-2"><i class="bi bi-link-45deg me-1"></i>Сопоставление с «Отчётом по заказам»</h6>
+<div class="card mb-4">
+    <div class="card-body">
+        <p class="text-muted small mb-3">
+            Подразделения из CSV-выгрузки «Отчёт по заказам» не всегда совпадают по названию с филиалами ниже.
+            Укажите для каждого подразделения, какому филиалу оно соответствует — это нужно для фильтров и групп
+            в «Ожидании», «Промокодах» и самом «Отчёте по заказам». Несопоставленные подразделения нельзя будет
+            загрузить повторно, пока не сопоставите.
+        </p>
+        <form method="POST" action="{{ url_for('save_branch_raw_mapping') }}">
+            <table class="table table-sm mb-2">
+                <thead>
+                    <tr>
+                        <th>Подразделение в отчёте</th>
+                        <th>Филиал</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for raw in branches_raw %}
+                    <tr>
+                        <td class="align-middle">
+                            {{ raw }}
+                            <input type="hidden" name="map_raw" value="{{ raw }}">
+                        </td>
+                        <td>
+                            <select name="map_branch_id" class="form-select form-select-sm" style="max-width:260px;">
+                                <option value="">— не сопоставлено —</option>
+                                {% for b in branches %}
+                                <option value="{{ b.id }}" {% if branch_raw_map.get(raw) == b.id %}selected{% endif %}>{{ b.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <button type="submit" class="btn btn-primary btn-sm">Сохранить сопоставление</button>
+        </form>
+    </div>
+</div>
+{% endif %}
+
 <h6 class="text-muted fw-semibold mb-2"><i class="bi bi-shop me-1"></i>Все филиалы</h6>
 <div class="card">
     <div class="card-body p-0">

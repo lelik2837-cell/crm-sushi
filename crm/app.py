@@ -244,27 +244,13 @@ def get_branch_groups(conn):
     return result
 
 
-def get_branch_raw_groups(conn):
-    """Группы по branch_raw (текст подразделения из «Отчёта по заказам») —
-    отдельно от branch_groups, т.к. branches.id не соответствует реальным
-    подразделениям выгрузки (см. заметку про 4 vs 8 филиалов)."""
-    groups = conn.execute(
-        'SELECT * FROM branch_raw_groups ORDER BY sort_order, name'
-    ).fetchall()
-    result = []
-    for g in groups:
-        members = conn.execute(
-            'SELECT branch_raw FROM branch_raw_group_members WHERE group_id = ? ORDER BY branch_raw',
-            (g['id'],)
-        ).fetchall()
-        result.append({
-            'id': g['id'],
-            'name': g['name'],
-            'abbr': g['abbr'] or '',
-            'sort_order': g['sort_order'],
-            'branch_raw_list': [m['branch_raw'] for m in members],
-        })
-    return result
+def get_branch_raw_map(conn):
+    """Сопоставление branch_raw (текст подразделения из CSV-выгрузки «Отчёт по заказам»)
+    с branches.id — задаётся вручную на странице «Филиалы» (см. save_branch_raw_mapping)."""
+    return {
+        r['branch_raw']: r['branch_id']
+        for r in conn.execute('SELECT branch_raw, branch_id FROM branch_raw_map').fetchall()
+    }
 
 
 def get_expense_categories(conn, branch_id=None):
@@ -992,19 +978,14 @@ def init_db():
                 branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
                 UNIQUE(group_id, branch_id)
             );
-            CREATE TABLE IF NOT EXISTS branch_raw_groups (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                abbr TEXT DEFAULT '',
-                sort_order INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            CREATE TABLE IF NOT EXISTS branch_raw_map (
+                branch_raw TEXT PRIMARY KEY,
+                branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE
             );
-            CREATE TABLE IF NOT EXISTS branch_raw_group_members (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                group_id INTEGER NOT NULL REFERENCES branch_raw_groups(id) ON DELETE CASCADE,
-                branch_raw TEXT NOT NULL,
-                UNIQUE(group_id, branch_raw)
-            );
+            -- Разовая уборка: короткоживущая параллельная система групп по branch_raw
+            -- (branch_raw_groups/branch_raw_group_members), заменена на branch_raw_map выше.
+            DROP TABLE IF EXISTS branch_raw_group_members;
+            DROP TABLE IF EXISTS branch_raw_groups;
             CREATE TABLE IF NOT EXISTS branch_cards (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
@@ -2756,11 +2737,9 @@ def ratings_dashboard():
 @menu_permission_required('wait_dashboard')
 def wait_dashboard():
     with get_db() as conn:
-        branches_raw = [r[0] for r in conn.execute(
-            'SELECT DISTINCT branch_raw FROM orders_report ORDER BY branch_raw'
-        ).fetchall()]
-        branch_raw_groups = get_branch_raw_groups(conn)
-    return render_template('wait_dashboard.html', branches_raw=branches_raw, branch_raw_groups=branch_raw_groups)
+        branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        branch_groups = get_branch_groups(conn)
+    return render_template('wait_dashboard.html', branches=branches, branch_groups=branch_groups)
 
 
 def _wait_scope_where(mode):
@@ -2787,12 +2766,12 @@ def _wait_metric_for(mode, requested):
 
 
 def _wait_branch_filter():
-    raw = request.args.get('branch_raw', '')
-    names = [x for x in raw.split(',') if x]
-    if not names:
+    raw = request.args.get('branch_ids', '')
+    ids = [int(x) for x in raw.split(',') if x.isdigit()]
+    if not ids:
         return '', []
-    ph = ','.join('?' * len(names))
-    return f'AND branch_raw IN ({ph})', names
+    ph = ','.join('?' * len(ids))
+    return f'AND branch_id IN ({ph})', ids
 
 
 def _wait_request_params():
@@ -2919,20 +2898,18 @@ def api_wait_months():
 @menu_permission_required('promo_dashboard')
 def promo_dashboard():
     with get_db() as conn:
-        branches_raw = [r[0] for r in conn.execute(
-            'SELECT DISTINCT branch_raw FROM orders_report ORDER BY branch_raw'
-        ).fetchall()]
-        branch_raw_groups = get_branch_raw_groups(conn)
-    return render_template('promo_dashboard.html', branches_raw=branches_raw, branch_raw_groups=branch_raw_groups)
+        branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        branch_groups = get_branch_groups(conn)
+    return render_template('promo_dashboard.html', branches=branches, branch_groups=branch_groups)
 
 
 def _promo_branch_filter():
-    raw = request.args.get('branch_raw', '')
-    names = [x for x in raw.split(',') if x]
-    if not names:
+    raw = request.args.get('branch_ids', '')
+    ids = [int(x) for x in raw.split(',') if x.isdigit()]
+    if not ids:
         return '', []
-    ph = ','.join('?' * len(names))
-    return f'AND branch_raw IN ({ph})', names
+    ph = ','.join('?' * len(ids))
+    return f'AND branch_id IN ({ph})', ids
 
 
 def _promo_scope(promo, bparams):
@@ -5271,11 +5248,16 @@ def branches():
         blist = conn.execute('SELECT * FROM branches ORDER BY name').fetchall()
         groups = get_branch_groups(conn)
         cards_rows = conn.execute('SELECT * FROM branch_cards ORDER BY branch_id, id').fetchall()
+        branches_raw = [r[0] for r in conn.execute(
+            'SELECT DISTINCT branch_raw FROM orders_report ORDER BY branch_raw'
+        ).fetchall()]
+        branch_raw_map = get_branch_raw_map(conn)
     cards_by_branch = {}
     for c in cards_rows:
         cards_by_branch.setdefault(c['branch_id'], []).append(dict(c))
     return render_template('branches.html', branches=blist, my_ip=get_client_ip(),
-                           branch_groups=groups, cards_by_branch=cards_by_branch)
+                           branch_groups=groups, cards_by_branch=cards_by_branch,
+                           branches_raw=branches_raw, branch_raw_map=branch_raw_map)
 
 
 @app.route('/branches/groups/add', methods=['POST'])
@@ -5338,66 +5320,34 @@ def delete_branch_group(group_id):
     return redirect(url_for('branches'))
 
 
-# ─── Группы подразделений (branch_raw) для «Отчёта по заказам» / Ожидание / Промокоды ─────
+# ─── Сопоставление подразделений «Отчёта по заказам» (branch_raw) с филиалами из Настроек ─────
+# Один общий справочник филиалов и групп (branches/branch_groups) — Ожидание/Промокоды/Отчёт по
+# заказам используют branch_id, полученный через это сопоставление, а не текст branch_raw напрямую.
 
-@app.route('/orders-report/groups/add', methods=['POST'])
+@app.route('/branches/mapping/save', methods=['POST'])
 @login_required
-@menu_permission_required('orders_report')
-def add_branch_raw_group():
-    name = request.form.get('name', '').strip()
-    abbr = request.form.get('abbr', '').strip().upper()[:3]
-    branch_raw_list = [b for b in request.form.getlist('branch_raw') if b]
-    if not name:
-        flash('Введите название группы', 'danger')
-        return redirect(url_for('orders_report'))
+@menu_permission_required('branches')
+def save_branch_raw_mapping():
+    raws = request.form.getlist('map_raw')
+    branch_ids = request.form.getlist('map_branch_id')
     with get_db() as conn:
-        sort_order = conn.execute('SELECT COUNT(*) FROM branch_raw_groups').fetchone()[0] * 10
-        conn.execute('INSERT INTO branch_raw_groups (name, abbr, sort_order) VALUES (?,?,?)', (name, abbr, sort_order))
-        group_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
-        for b in branch_raw_list:
-            conn.execute(
-                'INSERT OR IGNORE INTO branch_raw_group_members (group_id, branch_raw) VALUES (?,?)',
-                (group_id, b)
-            )
+        valid_ids = {b['id'] for b in conn.execute('SELECT id FROM branches').fetchall()}
+        for raw, bid in zip(raws, branch_ids):
+            if not raw:
+                continue
+            if bid and bid.isdigit() and int(bid) in valid_ids:
+                conn.execute(
+                    'INSERT INTO branch_raw_map (branch_raw, branch_id) VALUES (?,?) '
+                    'ON CONFLICT(branch_raw) DO UPDATE SET branch_id=excluded.branch_id',
+                    (raw, int(bid))
+                )
+                conn.execute('UPDATE orders_report SET branch_id=? WHERE branch_raw=?', (int(bid), raw))
+            else:
+                conn.execute('DELETE FROM branch_raw_map WHERE branch_raw=?', (raw,))
+                conn.execute('UPDATE orders_report SET branch_id=NULL WHERE branch_raw=?', (raw,))
         conn.commit()
-    flash(f'Группа «{name}» создана', 'success')
-    return redirect(url_for('orders_report'))
-
-
-@app.route('/orders-report/groups/<int:group_id>/edit', methods=['POST'])
-@login_required
-@menu_permission_required('orders_report')
-def edit_branch_raw_group(group_id):
-    name = request.form.get('name', '').strip()
-    abbr = request.form.get('abbr', '').strip().upper()[:3]
-    branch_raw_list = [b for b in request.form.getlist('branch_raw') if b]
-    if not name:
-        flash('Введите название группы', 'danger')
-        return redirect(url_for('orders_report'))
-    with get_db() as conn:
-        conn.execute('UPDATE branch_raw_groups SET name=?, abbr=? WHERE id=?', (name, abbr, group_id))
-        conn.execute('DELETE FROM branch_raw_group_members WHERE group_id=?', (group_id,))
-        for b in branch_raw_list:
-            conn.execute(
-                'INSERT OR IGNORE INTO branch_raw_group_members (group_id, branch_raw) VALUES (?,?)',
-                (group_id, b)
-            )
-        conn.commit()
-    flash(f'Группа «{name}» обновлена', 'success')
-    return redirect(url_for('orders_report'))
-
-
-@app.route('/orders-report/groups/<int:group_id>/delete', methods=['POST'])
-@login_required
-@menu_permission_required('orders_report')
-def delete_branch_raw_group(group_id):
-    with get_db() as conn:
-        g = conn.execute('SELECT name FROM branch_raw_groups WHERE id=?', (group_id,)).fetchone()
-        if g:
-            conn.execute('DELETE FROM branch_raw_groups WHERE id=?', (group_id,))
-            conn.commit()
-            flash(f'Группа «{g["name"]}» удалена', 'success')
-    return redirect(url_for('orders_report'))
+    flash('Сопоставление подразделений сохранено', 'success')
+    return redirect(url_for('branches'))
 
 
 @app.route('/branches/add', methods=['POST'])
@@ -11266,9 +11216,8 @@ def _parse_orders_csv(file_bytes):
 @menu_permission_required('orders_report')
 def orders_report():
     with get_db() as conn:
-        branches_raw = [r[0] for r in conn.execute(
-            'SELECT DISTINCT branch_raw FROM orders_report ORDER BY branch_raw'
-        ).fetchall()]
+        branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        branch_groups = get_branch_groups(conn)
 
         bounds = conn.execute(
             'SELECT MIN(received_at), MAX(received_at) FROM orders_report'
@@ -11280,7 +11229,7 @@ def orders_report():
         month_start = date.today().replace(day=1).isoformat()
         date_from  = request.args.get('date_from', month_start)
         date_to    = request.args.get('date_to', today)
-        branch_flt = request.args.getlist('branch')
+        branch_flt = [int(b) for b in request.args.getlist('branch_ids') if b.isdigit()]
         type_flt   = request.args.get('type', '')
         q          = request.args.get('q', '').strip()
 
@@ -11299,7 +11248,7 @@ def orders_report():
 
         if branch_flt:
             ph = ','.join('?' * len(branch_flt))
-            where.append(f'branch_raw IN ({ph})')
+            where.append(f'branch_id IN ({ph})')
             params.extend(branch_flt)
 
         if type_flt == 'delivery':
@@ -11324,12 +11273,10 @@ def orders_report():
             WHERE {sql_where}
         ''', params).fetchone()
 
-        branch_raw_groups = get_branch_raw_groups(conn)
-
     return render_template('orders_report.html',
         rows=rows,
-        branches_raw=branches_raw,
-        branch_raw_groups=branch_raw_groups,
+        branches=branches,
+        branch_groups=branch_groups,
         date_from=date_from, date_to=date_to,
         branch_flt=branch_flt, type_flt=type_flt, q=q,
         total_count=stats[0] or 0, total_amount=stats[1] or 0,
@@ -11373,23 +11320,16 @@ def orders_report_import():
         return hashlib.md5(key.encode('utf-8')).hexdigest()
 
     with get_db() as conn:
-        branches = conn.execute('SELECT id, name FROM branches WHERE is_active=1').fetchall()
-
-        branch_match = {}
-        for raw in set(r['branch_raw'] for r in rows):
-            raw_l = raw.lower()
-            match_id = None
-            for b in branches:
-                if raw_l == b['name'].lower():
-                    match_id = b['id']
-                    break
-            if match_id is None:
-                for b in branches:
-                    bl = b['name'].lower()
-                    if raw_l in bl or bl in raw_l:
-                        match_id = b['id']
-                        break
-            branch_match[raw] = match_id
+        branch_map = get_branch_raw_map(conn)
+        unmapped = sorted(set(r['branch_raw'] for r in rows) - set(branch_map))
+        if unmapped:
+            flash(
+                'Загрузка отменена: в файле есть подразделения, не сопоставленные с филиалом — '
+                + ', '.join(unmapped) +
+                '. Сопоставьте их на странице «Филиалы» и загрузите файл заново.',
+                'danger'
+            )
+            return redirect(url_for('orders_report_import'))
 
         existing_keys = set(
             (er['order_number'], er['received_at'][:10])
@@ -11422,7 +11362,7 @@ def orders_report_import():
                     promo_code=excluded.promo_code, amount=excluded.amount,
                     new_client=excluded.new_client, import_batch_id=excluded.import_batch_id
             ''', (
-                r['order_number'], r['branch_raw'], branch_match.get(r['branch_raw']),
+                r['order_number'], r['branch_raw'], branch_map.get(r['branch_raw']),
                 r['received_at'], r['promised_minutes'], r['order_type_raw'], r['order_type'],
                 r['ready_minutes'], r['delivery_minutes'], r['promo_code'], r['amount'],
                 r['new_client'], batch_id, h

@@ -609,47 +609,6 @@ function dashBpInitGroup(prefix, groups, matcherFn) {
     if (label) label.textContent = g.abbr || g.name;
 }
 
-// ── Текстовый режим (bs_mode='text'): ключ — branch_raw из «Отчёта по заказам», без групп ──
-function dashBpTextToggleAll(prefix, cb) {
-    if (cb.checked) {
-        window[prefix + 'BranchIds'] = [];
-        document.querySelectorAll('.' + prefix + '-branch-cb').forEach(function (c) { c.checked = false; });
-        var label = document.getElementById(prefix + '-branch-abbr');
-        if (label) label.textContent = dashBpEmptyLabel(prefix);
-    } else {
-        cb.checked = false;
-    }
-    if (typeof window[prefix + 'OnBranchChange'] === 'function') window[prefix + 'OnBranchChange']();
-}
-function dashBpTextOnChange(prefix) {
-    var vals = [];
-    document.querySelectorAll('.' + prefix + '-branch-cb:checked').forEach(function (cb) { vals.push(cb.value); });
-    window[prefix + 'BranchIds'] = vals;
-    var allCb = document.getElementById(prefix + '-branch-all-cb');
-    if (allCb) allCb.checked = vals.length === 0;
-    var label = document.getElementById(prefix + '-branch-abbr');
-    if (label) label.textContent = vals.length === 0 ? dashBpEmptyLabel(prefix) : (vals.length === 1 ? vals[0] : vals.length + ' подразд.');
-    if (typeof window[prefix + 'OnBranchChange'] === 'function') window[prefix + 'OnBranchChange']();
-}
-function dashBpTextSuffix(prefix) {
-    var vals = window[prefix + 'BranchIds'] || [];
-    return vals.length ? '&branch_raw=' + vals.map(encodeURIComponent).join(',') : '';
-}
-function dashBpTextSelectGroup(prefix, vals, abbr) {
-    window[prefix + 'BranchIds'] = vals.slice();
-    document.querySelectorAll('.' + prefix + '-branch-cb').forEach(function (cb) {
-        cb.checked = vals.indexOf(cb.value) !== -1;
-    });
-    var allCb = document.getElementById(prefix + '-branch-all-cb');
-    if (allCb) allCb.checked = false;
-    var label = document.getElementById(prefix + '-branch-abbr');
-    if (label) label.textContent = abbr;
-    if (typeof window[prefix + 'OnBranchChange'] === 'function') window[prefix + 'OnBranchChange']();
-}
-function dashBpTextSelectGroupFromBtn(prefix, btn) {
-    var vals = (btn.dataset.branchRaw || '').split(',').filter(Boolean);
-    dashBpTextSelectGroup(prefix, vals, btn.dataset.abbr || '');
-}
 </script>
 {% block scripts %}{% endblock %}
 </body>

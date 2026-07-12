@@ -5,48 +5,14 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="fw-bold mb-0"><i class="bi bi-receipt-cutoff"></i> Отчёт по заказам</h4>
     <div class="d-flex gap-2">
-        <button class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#addRawGroupModal">
-            <i class="bi bi-collection-fill"></i> Новая группа
-        </button>
+        <a href="{{ url_for('branches') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-link-45deg me-1"></i>Филиалы и группы
+        </a>
         <a href="{{ url_for('orders_report_import') }}" class="btn btn-primary">
             <i class="bi bi-cloud-upload me-1"></i>Загрузить данные
         </a>
     </div>
 </div>
-
-{% if branch_raw_groups %}
-<h6 class="text-muted fw-semibold mb-2"><i class="bi bi-collection me-1"></i>Группы подразделений</h6>
-<div class="row g-3 mb-4">
-    {% for g in branch_raw_groups %}
-    <div class="col-md-4 col-sm-6">
-        <div class="card h-100">
-            <div class="card-header d-flex justify-content-between align-items-center py-2">
-                <span class="fw-semibold"><i class="bi bi-collection me-1 text-primary"></i>{{ g.name }}</span>
-                <div class="d-flex gap-1">
-                    <button class="btn btn-sm btn-outline-secondary py-0"
-                            data-bs-toggle="modal" data-bs-target="#editRawGroupModal{{ g.id }}">
-                        <i class="bi bi-pencil"></i>
-                    </button>
-                    <form method="POST" action="{{ url_for('delete_branch_raw_group', group_id=g.id) }}"
-                          onsubmit="return confirm('Удалить группу «{{ g.name }}»?')">
-                        <button class="btn btn-sm btn-outline-danger py-0"><i class="bi bi-trash"></i></button>
-                    </form>
-                </div>
-            </div>
-            <div class="card-body py-2">
-                {% if g.branch_raw_list %}
-                    {% for b in g.branch_raw_list %}
-                    <span class="badge bg-light text-dark border me-1 mb-1">{{ b }}</span>
-                    {% endfor %}
-                {% else %}
-                    <span class="text-muted small">Нет подразделений</span>
-                {% endif %}
-            </div>
-        </div>
-    </div>
-    {% endfor %}
-</div>
-{% endif %}
 
 <!-- Фильтры -->
 <div class="card mb-3">
@@ -62,7 +28,7 @@
             </div>
 
             <div class="col-6 col-md-auto">
-                <label class="form-label small fw-semibold">Подразделение</label>
+                <label class="form-label small fw-semibold">Филиал</label>
                 <div class="dropdown">
                     <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle"
                         data-bs-toggle="dropdown" data-bs-auto-close="outside"
@@ -70,21 +36,35 @@
                         <span id="branch-btn-label">{% if branch_flt %}Выбрано: {{ branch_flt|length }}{% else %}Все{% endif %}</span>
                     </button>
                     <ul class="dropdown-menu p-2" style="min-width:230px; max-height:320px; overflow-y:auto;">
+                        {% if branch_groups %}
+                        <li class="text-muted px-1 mb-1" style="font-size:0.7rem;font-weight:600;letter-spacing:.5px;">ГРУППЫ</li>
+                        {% for g in branch_groups %}
+                        <li class="mb-1">
+                            <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1"
+                                    data-branch-ids="{{ g.branch_ids | join(',') }}"
+                                    onclick="selectOrdBranchGroup(this)">
+                                <span class="fw-bold">{{ g.abbr or g.name[:3].upper() }}</span>
+                                <span class="text-muted ms-1 small">{{ g.name }} ({{ g.branch_ids | length }})</span>
+                            </button>
+                        </li>
+                        {% endfor %}
+                        <li><hr class="dropdown-divider my-1"></li>
+                        {% endif %}
                         <li class="mb-1">
                             <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
                                 <input type="checkbox" id="branch-all-cb" onchange="toggleAllBranches(this)"
                                     {% if not branch_flt %}checked{% endif %}>
-                                <span class="fw-semibold small">Все подразделения</span>
+                                <span class="fw-semibold small">Все филиалы</span>
                             </label>
                         </li>
                         <li><hr class="dropdown-divider my-1"></li>
-                        {% for b in branches_raw %}
+                        {% for b in branches %}
                         <li>
                             <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
-                                <input type="checkbox" class="branch-cb" name="branch" value="{{ b }}"
-                                    {% if b in branch_flt %}checked{% endif %}
+                                <input type="checkbox" class="branch-cb" name="branch_ids" value="{{ b.id }}"
+                                    {% if b.id in branch_flt %}checked{% endif %}
                                     onchange="onBranchCbChange()">
-                                <span class="small">{{ b }}</span>
+                                <span class="small">{{ b.name }}</span>
                             </label>
                         </li>
                         {% endfor %}
@@ -212,94 +192,6 @@
     </div>
 </div>
 
-<!-- Add Group Modal -->
-<div class="modal fade" id="addRawGroupModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title"><i class="bi bi-collection-fill me-2"></i>Новая группа подразделений</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <form method="POST" action="{{ url_for('add_branch_raw_group') }}">
-                <div class="modal-body">
-                    <div class="row g-2 mb-3">
-                        <div class="col-8">
-                            <label class="form-label fw-semibold">Название группы *</label>
-                            <input type="text" name="name" class="form-control" placeholder="Например: Центр" required>
-                        </div>
-                        <div class="col-4">
-                            <label class="form-label fw-semibold">Сокращение</label>
-                            <input type="text" name="abbr" class="form-control font-monospace text-uppercase"
-                                   placeholder="ЦНТ" maxlength="3"
-                                   title="До 3 букв — используется в кнопках">
-                        </div>
-                    </div>
-                    <div class="mb-1">
-                        <label class="form-label fw-semibold">Подразделения в группе</label>
-                        {% for b in branches_raw %}
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" name="branch_raw"
-                                   value="{{ b }}" id="addRawGrBr{{ loop.index }}">
-                            <label class="form-check-label" for="addRawGrBr{{ loop.index }}">{{ b }}</label>
-                        </div>
-                        {% endfor %}
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                    <button type="submit" class="btn btn-primary">Создать</button>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
-
-<!-- Edit Group Modals -->
-{% for g in branch_raw_groups %}
-<div class="modal fade" id="editRawGroupModal{{ g.id }}" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title"><i class="bi bi-collection me-2"></i>Редактировать группу</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <form method="POST" action="{{ url_for('edit_branch_raw_group', group_id=g.id) }}">
-                <div class="modal-body">
-                    <div class="row g-2 mb-3">
-                        <div class="col-8">
-                            <label class="form-label fw-semibold">Название группы *</label>
-                            <input type="text" name="name" class="form-control" value="{{ g.name }}" required>
-                        </div>
-                        <div class="col-4">
-                            <label class="form-label fw-semibold">Сокращение</label>
-                            <input type="text" name="abbr" class="form-control font-monospace text-uppercase"
-                                   maxlength="3"
-                                   value="{{ g.abbr or g.name[:3].upper() }}"
-                                   title="До 3 букв — используется в кнопках">
-                        </div>
-                    </div>
-                    <div class="mb-1">
-                        <label class="form-label fw-semibold">Подразделения в группе</label>
-                        {% for b in branches_raw %}
-                        <div class="form-check">
-                            <input class="form-check-input" type="checkbox" name="branch_raw"
-                                   value="{{ b }}" id="editRawGrBr{{ g.id }}_{{ loop.index }}"
-                                   {% if b in g.branch_raw_list %}checked{% endif %}>
-                            <label class="form-check-label" for="editRawGrBr{{ g.id }}_{{ loop.index }}">{{ b }}</label>
-                        </div>
-                        {% endfor %}
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                    <button type="submit" class="btn btn-primary">Сохранить</button>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
-{% endfor %}
-
 {% endblock %}
 
 {% block scripts %}
@@ -321,6 +213,16 @@
             const label = document.getElementById('branch-btn-label');
             if (label) label.textContent = 'Все';
         }
+    };
+    window.selectOrdBranchGroup = function (btn) {
+        const ids = (btn.dataset.branchIds || '').split(',').filter(Boolean);
+        document.querySelectorAll('.branch-cb').forEach(function (cb) {
+            cb.checked = ids.indexOf(cb.value) !== -1;
+        });
+        const allCb = document.getElementById('branch-all-cb');
+        if (allCb) allCb.checked = false;
+        const label = document.getElementById('branch-btn-label');
+        if (label) label.textContent = 'Выбрано: ' + ids.length;
     };
 
     /* ── Сортировка таблицы кликом по заголовку ── */

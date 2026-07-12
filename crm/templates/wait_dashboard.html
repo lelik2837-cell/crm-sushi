@@ -43,7 +43,6 @@
         <!-- Branch selector -->
         <div style="margin-left:auto;">
           {% set bs_prefix = 'w' %}
-          {% set bs_mode = 'text' %}
           {% include '_dash_branch_picker.html' %}
         </div>
       </div>
@@ -223,7 +222,7 @@ document.addEventListener('click', function(e) {
     }
 });
 
-function _waitBranchSuffix() { return dashBpTextSuffix('w'); }
+function _waitBranchSuffix() { return dashBpSuffix('w'); }
 
 var waitCalPicker = null;
 function openWaitCal() {

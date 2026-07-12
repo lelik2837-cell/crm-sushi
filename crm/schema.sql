@@ -242,16 +242,7 @@ CREATE INDEX IF NOT EXISTS idx_orders_report_received ON orders_report(received_
 CREATE INDEX IF NOT EXISTS idx_orders_report_branch ON orders_report(branch_id);
 CREATE INDEX IF NOT EXISTS idx_orders_report_number ON orders_report(order_number);
 
-CREATE TABLE IF NOT EXISTS branch_raw_groups (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    abbr TEXT DEFAULT '',
-    sort_order INTEGER DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-CREATE TABLE IF NOT EXISTS branch_raw_group_members (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    group_id INTEGER NOT NULL REFERENCES branch_raw_groups(id) ON DELETE CASCADE,
-    branch_raw TEXT NOT NULL,
-    UNIQUE(group_id, branch_raw)
+CREATE TABLE IF NOT EXISTS branch_raw_map (
+    branch_raw TEXT PRIMARY KEY,
+    branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE
 );
