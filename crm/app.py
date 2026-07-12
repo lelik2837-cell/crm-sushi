@@ -244,6 +244,29 @@ def get_branch_groups(conn):
     return result
 
 
+def get_branch_raw_groups(conn):
+    """Группы по branch_raw (текст подразделения из «Отчёта по заказам») —
+    отдельно от branch_groups, т.к. branches.id не соответствует реальным
+    подразделениям выгрузки (см. заметку про 4 vs 8 филиалов)."""
+    groups = conn.execute(
+        'SELECT * FROM branch_raw_groups ORDER BY sort_order, name'
+    ).fetchall()
+    result = []
+    for g in groups:
+        members = conn.execute(
+            'SELECT branch_raw FROM branch_raw_group_members WHERE group_id = ? ORDER BY branch_raw',
+            (g['id'],)
+        ).fetchall()
+        result.append({
+            'id': g['id'],
+            'name': g['name'],
+            'abbr': g['abbr'] or '',
+            'sort_order': g['sort_order'],
+            'branch_raw_list': [m['branch_raw'] for m in members],
+        })
+    return result
+
+
 def get_expense_categories(conn, branch_id=None):
     all_cats = conn.execute(
         'SELECT id, code, label, type, parent_id, show_contractors, show_shift '
@@ -968,6 +991,19 @@ def init_db():
                 group_id INTEGER NOT NULL REFERENCES branch_groups(id) ON DELETE CASCADE,
                 branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
                 UNIQUE(group_id, branch_id)
+            );
+            CREATE TABLE IF NOT EXISTS branch_raw_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                abbr TEXT DEFAULT '',
+                sort_order INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS branch_raw_group_members (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL REFERENCES branch_raw_groups(id) ON DELETE CASCADE,
+                branch_raw TEXT NOT NULL,
+                UNIQUE(group_id, branch_raw)
             );
             CREATE TABLE IF NOT EXISTS branch_cards (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2723,7 +2759,8 @@ def wait_dashboard():
         branches_raw = [r[0] for r in conn.execute(
             'SELECT DISTINCT branch_raw FROM orders_report ORDER BY branch_raw'
         ).fetchall()]
-    return render_template('wait_dashboard.html', branches_raw=branches_raw)
+        branch_raw_groups = get_branch_raw_groups(conn)
+    return render_template('wait_dashboard.html', branches_raw=branches_raw, branch_raw_groups=branch_raw_groups)
 
 
 def _wait_scope_where(mode):
@@ -2885,7 +2922,8 @@ def promo_dashboard():
         branches_raw = [r[0] for r in conn.execute(
             'SELECT DISTINCT branch_raw FROM orders_report ORDER BY branch_raw'
         ).fetchall()]
-    return render_template('promo_dashboard.html', branches_raw=branches_raw)
+        branch_raw_groups = get_branch_raw_groups(conn)
+    return render_template('promo_dashboard.html', branches_raw=branches_raw, branch_raw_groups=branch_raw_groups)
 
 
 def _promo_branch_filter():
@@ -5298,6 +5336,68 @@ def delete_branch_group(group_id):
             conn.commit()
             flash(f'Группа «{g["name"]}» удалена', 'success')
     return redirect(url_for('branches'))
+
+
+# ─── Группы подразделений (branch_raw) для «Отчёта по заказам» / Ожидание / Промокоды ─────
+
+@app.route('/orders-report/groups/add', methods=['POST'])
+@login_required
+@menu_permission_required('orders_report')
+def add_branch_raw_group():
+    name = request.form.get('name', '').strip()
+    abbr = request.form.get('abbr', '').strip().upper()[:3]
+    branch_raw_list = [b for b in request.form.getlist('branch_raw') if b]
+    if not name:
+        flash('Введите название группы', 'danger')
+        return redirect(url_for('orders_report'))
+    with get_db() as conn:
+        sort_order = conn.execute('SELECT COUNT(*) FROM branch_raw_groups').fetchone()[0] * 10
+        conn.execute('INSERT INTO branch_raw_groups (name, abbr, sort_order) VALUES (?,?,?)', (name, abbr, sort_order))
+        group_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        for b in branch_raw_list:
+            conn.execute(
+                'INSERT OR IGNORE INTO branch_raw_group_members (group_id, branch_raw) VALUES (?,?)',
+                (group_id, b)
+            )
+        conn.commit()
+    flash(f'Группа «{name}» создана', 'success')
+    return redirect(url_for('orders_report'))
+
+
+@app.route('/orders-report/groups/<int:group_id>/edit', methods=['POST'])
+@login_required
+@menu_permission_required('orders_report')
+def edit_branch_raw_group(group_id):
+    name = request.form.get('name', '').strip()
+    abbr = request.form.get('abbr', '').strip().upper()[:3]
+    branch_raw_list = [b for b in request.form.getlist('branch_raw') if b]
+    if not name:
+        flash('Введите название группы', 'danger')
+        return redirect(url_for('orders_report'))
+    with get_db() as conn:
+        conn.execute('UPDATE branch_raw_groups SET name=?, abbr=? WHERE id=?', (name, abbr, group_id))
+        conn.execute('DELETE FROM branch_raw_group_members WHERE group_id=?', (group_id,))
+        for b in branch_raw_list:
+            conn.execute(
+                'INSERT OR IGNORE INTO branch_raw_group_members (group_id, branch_raw) VALUES (?,?)',
+                (group_id, b)
+            )
+        conn.commit()
+    flash(f'Группа «{name}» обновлена', 'success')
+    return redirect(url_for('orders_report'))
+
+
+@app.route('/orders-report/groups/<int:group_id>/delete', methods=['POST'])
+@login_required
+@menu_permission_required('orders_report')
+def delete_branch_raw_group(group_id):
+    with get_db() as conn:
+        g = conn.execute('SELECT name FROM branch_raw_groups WHERE id=?', (group_id,)).fetchone()
+        if g:
+            conn.execute('DELETE FROM branch_raw_groups WHERE id=?', (group_id,))
+            conn.commit()
+            flash(f'Группа «{g["name"]}» удалена', 'success')
+    return redirect(url_for('orders_report'))
 
 
 @app.route('/branches/add', methods=['POST'])
@@ -11224,9 +11324,12 @@ def orders_report():
             WHERE {sql_where}
         ''', params).fetchone()
 
+        branch_raw_groups = get_branch_raw_groups(conn)
+
     return render_template('orders_report.html',
         rows=rows,
         branches_raw=branches_raw,
+        branch_raw_groups=branch_raw_groups,
         date_from=date_from, date_to=date_to,
         branch_flt=branch_flt, type_flt=type_flt, q=q,
         total_count=stats[0] or 0, total_amount=stats[1] or 0,

@@ -157,18 +157,15 @@
             color: #1e293b;
         }
 
-        /* Единая кнопка выбора филиалов на карточках дашборда (Выручка/ФОТ/LFL/Рейтинги/Ожидание/Промокоды) */
+        /* Единая кнопка выбора филиалов на карточках дашборда (Выручка/ФОТ/LFL/Рейтинги/Ожидание/Промокоды) —
+           высота как у остальных круглых/пилюльных кнопок в том же ряду (26px), сокращение всегда видно */
         .dash-branch-btn {
-            width: 32px; height: 32px; border-radius: 50%; padding: 0;
+            height: 26px; min-width: 26px; border-radius: 16px; padding: 0 10px;
             border: 1.5px solid rgba(255,255,255,.45); background: rgba(255,255,255,.15); color: #fff;
             cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
             flex-shrink: 0; transition: all .15s; gap: 5px;
         }
-        .dash-branch-abbr { display: none; font-size: 11px; font-weight: 700; white-space: nowrap; }
-        @media (min-width: 992px) {
-            .dash-branch-btn { width: auto; height: 26px; border-radius: 20px; padding: 0 10px; }
-            .dash-branch-abbr { display: inline; }
-        }
+        .dash-branch-abbr { display: inline; font-size: 11px; font-weight: 700; white-space: nowrap; }
     </style>
 </head>
 <body>
@@ -637,6 +634,21 @@ function dashBpTextOnChange(prefix) {
 function dashBpTextSuffix(prefix) {
     var vals = window[prefix + 'BranchIds'] || [];
     return vals.length ? '&branch_raw=' + vals.map(encodeURIComponent).join(',') : '';
+}
+function dashBpTextSelectGroup(prefix, vals, abbr) {
+    window[prefix + 'BranchIds'] = vals.slice();
+    document.querySelectorAll('.' + prefix + '-branch-cb').forEach(function (cb) {
+        cb.checked = vals.indexOf(cb.value) !== -1;
+    });
+    var allCb = document.getElementById(prefix + '-branch-all-cb');
+    if (allCb) allCb.checked = false;
+    var label = document.getElementById(prefix + '-branch-abbr');
+    if (label) label.textContent = abbr;
+    if (typeof window[prefix + 'OnBranchChange'] === 'function') window[prefix + 'OnBranchChange']();
+}
+function dashBpTextSelectGroupFromBtn(prefix, btn) {
+    var vals = (btn.dataset.branchRaw || '').split(',').filter(Boolean);
+    dashBpTextSelectGroup(prefix, vals, btn.dataset.abbr || '');
 }
 </script>
 {% block scripts %}{% endblock %}
