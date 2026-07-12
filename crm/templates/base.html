@@ -245,6 +245,13 @@
                             </a>
                         </li>
                         {% endif %}
+                        {% if item_visible('wait_dashboard') %}
+                        <li>
+                            <a class="dropdown-item {% if request.endpoint=='wait_dashboard' %}active{% endif %}" href="{{ url_for('wait_dashboard') }}">
+                                <i class="bi bi-stopwatch me-2"></i>Ожидание
+                            </a>
+                        </li>
+                        {% endif %}
                     </ul>
                 </li>
                 {% endif %}

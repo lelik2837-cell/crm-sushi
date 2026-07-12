@@ -115,6 +115,7 @@ MENU_ITEMS = [
     ('fot_dashboard',         'ФОТ',                      'dash',     True),
     ('lfl_dashboard',         'LFL',                      'dash',     True),
     ('ratings_dashboard',     'Рейтинги',                 'dash',     True),
+    ('wait_dashboard',        'Ожидание',                 'dash',     True),
     ('shifts_archive',        'Смены',                    'reports',  True),
     ('reports_shifts',        'Выручка',                  'reports',  True),
     ('reports_salary',        'Зарплаты',                 'reports',  True),
@@ -2701,6 +2702,223 @@ def ratings_dashboard():
             branches = [b for b in branches if b['id'] in own]
         branch_groups = get_branch_groups(conn)
     return render_template('ratings_dashboard.html', branches=branches, branch_groups=branch_groups)
+
+
+# ─── ОЖИДАНИЕ (среднее время доставки/готовности из «Отчёта по заказам») ─────
+
+@app.route('/wait-dashboard')
+@login_required
+@menu_permission_required('wait_dashboard')
+def wait_dashboard():
+    with get_db() as conn:
+        branches_raw = [r[0] for r in conn.execute(
+            'SELECT DISTINCT branch_raw FROM orders_report ORDER BY branch_raw'
+        ).fetchall()]
+    return render_template('wait_dashboard.html', branches_raw=branches_raw)
+
+
+def _wait_where(mode):
+    """Тип заказа + отсечка по времени приёма (не считаем заказы до открытия точки)."""
+    if mode == 'pickup':
+        return "order_type = 'Общий - самовывоз' AND TIME(received_at) >= '10:00:00'"
+    return ("order_type LIKE 'Доставка%' AND TIME(received_at) >= '10:30:00' "
+            "AND delivery_minutes IS NOT NULL AND delivery_minutes <= 300")
+
+
+def _wait_branch_filter():
+    raw = request.args.get('branch_raw', '')
+    names = [x for x in raw.split(',') if x]
+    if not names:
+        return '', []
+    ph = ','.join('?' * len(names))
+    return f'AND branch_raw IN ({ph})', names
+
+
+@app.route('/api/wait-summary')
+@login_required
+@menu_permission_required('wait_dashboard')
+def api_wait_summary():
+    date_from   = request.args.get('date_from', date.today().isoformat())
+    date_to     = request.args.get('date_to',   date.today().isoformat())
+    mode        = request.args.get('mode', 'delivery')
+    bf, bparams = _wait_branch_filter()
+    where       = _wait_where(mode)
+
+    with get_db() as conn:
+        if mode == 'pickup':
+            total = conn.execute(f'''
+                SELECT COUNT(*) AS cnt, AVG(ready_minutes) AS avg_ready, AVG(promised_minutes) AS avg_promised
+                FROM orders_report
+                WHERE {where} AND DATE(received_at) BETWEEN ? AND ? {bf}
+            ''', [date_from, date_to] + bparams).fetchone()
+            branch_rows = conn.execute(f'''
+                SELECT branch_raw AS name, COUNT(*) AS cnt,
+                       AVG(ready_minutes) AS avg_ready, AVG(promised_minutes) AS avg_promised
+                FROM orders_report
+                WHERE {where} AND DATE(received_at) BETWEEN ? AND ? {bf}
+                GROUP BY branch_raw ORDER BY name
+            ''', [date_from, date_to] + bparams).fetchall()
+            return jsonify({
+                'ok': True, 'mode': 'pickup',
+                'count': total['cnt'] or 0,
+                'avg_ready':    round(total['avg_ready'] or 0, 1),
+                'avg_promised': round(total['avg_promised'] or 0, 1),
+                'branches': [{
+                    'name': r['name'], 'abbr': (r['name'] or '')[:3].upper(), 'count': r['cnt'],
+                    'avg_ready':    round(r['avg_ready'] or 0, 1),
+                    'avg_promised': round(r['avg_promised'] or 0, 1),
+                } for r in branch_rows],
+            })
+        else:
+            total = conn.execute(f'''
+                SELECT COUNT(*) AS cnt, AVG(delivery_minutes) AS avg_delivery
+                FROM orders_report
+                WHERE {where} AND DATE(received_at) BETWEEN ? AND ? {bf}
+            ''', [date_from, date_to] + bparams).fetchone()
+            branch_rows = conn.execute(f'''
+                SELECT branch_raw AS name, COUNT(*) AS cnt, AVG(delivery_minutes) AS avg_delivery
+                FROM orders_report
+                WHERE {where} AND DATE(received_at) BETWEEN ? AND ? {bf}
+                GROUP BY branch_raw ORDER BY name
+            ''', [date_from, date_to] + bparams).fetchall()
+            return jsonify({
+                'ok': True, 'mode': 'delivery',
+                'count': total['cnt'] or 0,
+                'avg_delivery': round(total['avg_delivery'] or 0, 1),
+                'branches': [{
+                    'name': r['name'], 'abbr': (r['name'] or '')[:3].upper(), 'count': r['cnt'],
+                    'avg_delivery': round(r['avg_delivery'] or 0, 1),
+                } for r in branch_rows],
+            })
+
+
+@app.route('/api/wait-days')
+@login_required
+@menu_permission_required('wait_dashboard')
+def api_wait_days():
+    date_from   = request.args.get('date_from', date.today().isoformat())
+    date_to     = request.args.get('date_to',   date.today().isoformat())
+    mode        = request.args.get('mode', 'delivery')
+    bf, bparams = _wait_branch_filter()
+    where       = _wait_where(mode)
+
+    with get_db() as conn:
+        if mode == 'pickup':
+            rows = conn.execute(f'''
+                SELECT DATE(received_at) AS d, COUNT(*) AS cnt,
+                       AVG(ready_minutes) AS avg_ready, AVG(promised_minutes) AS avg_promised
+                FROM orders_report
+                WHERE {where} AND DATE(received_at) BETWEEN ? AND ? {bf}
+                GROUP BY d
+            ''', [date_from, date_to] + bparams).fetchall()
+        else:
+            rows = conn.execute(f'''
+                SELECT DATE(received_at) AS d, COUNT(*) AS cnt, AVG(delivery_minutes) AS avg_delivery
+                FROM orders_report
+                WHERE {where} AND DATE(received_at) BETWEEN ? AND ? {bf}
+                GROUP BY d
+            ''', [date_from, date_to] + bparams).fetchall()
+    by_day = {r['d']: r for r in rows}
+
+    days = []
+    _d    = datetime.strptime(date_from, '%Y-%m-%d').date()
+    _dend = datetime.strptime(date_to, '%Y-%m-%d').date()
+    while _d <= _dend:
+        ds = _d.isoformat()
+        r  = by_day.get(ds)
+        if mode == 'pickup':
+            days.append({'date': ds, 'count': (r['cnt'] if r else 0),
+                         'ready':    round(r['avg_ready'] or 0, 1)    if r else 0,
+                         'promised': round(r['avg_promised'] or 0, 1) if r else 0})
+        else:
+            days.append({'date': ds, 'count': (r['cnt'] if r else 0),
+                         'value': round(r['avg_delivery'] or 0, 1) if r else 0})
+        _d += timedelta(days=1)
+    return jsonify({'ok': True, 'mode': mode, 'days': days})
+
+
+def _wait_months_query(conn, mode, date_from, date_to, bf, bparams):
+    where = _wait_where(mode)
+    if mode == 'pickup':
+        rows = conn.execute(f'''
+            SELECT CAST(strftime('%Y', received_at) AS INTEGER) AS year,
+                   CAST(strftime('%m', received_at) AS INTEGER) AS month,
+                   COUNT(*) AS cnt, AVG(ready_minutes) AS avg_ready, AVG(promised_minutes) AS avg_promised
+            FROM orders_report
+            WHERE {where} AND DATE(received_at) BETWEEN ? AND ? {bf}
+            GROUP BY year, month ORDER BY year, month
+        ''', [date_from, date_to] + bparams).fetchall()
+    else:
+        rows = conn.execute(f'''
+            SELECT CAST(strftime('%Y', received_at) AS INTEGER) AS year,
+                   CAST(strftime('%m', received_at) AS INTEGER) AS month,
+                   COUNT(*) AS cnt, AVG(delivery_minutes) AS avg_delivery
+            FROM orders_report
+            WHERE {where} AND DATE(received_at) BETWEEN ? AND ? {bf}
+            GROUP BY year, month ORDER BY year, month
+        ''', [date_from, date_to] + bparams).fetchall()
+    return {(r['year'], r['month']): r for r in rows}
+
+
+def _wait_months_list(agg, date_from, date_to, mode):
+    labels = ['', 'Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн',
+              'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
+    start = date.fromisoformat(date_from)
+    end   = date.fromisoformat(date_to)
+    months_list = []
+    y, m = start.year, start.month
+    while (y < end.year) or (y == end.year and m <= end.month):
+        label = labels[m] + " '" + str(y)[-2:]
+        r = agg.get((y, m))
+        if mode == 'pickup':
+            months_list.append({'year': y, 'month': m, 'label': label,
+                                'count': (r['cnt'] if r else 0),
+                                'ready':    round(r['avg_ready'] or 0, 1)    if r else 0,
+                                'promised': round(r['avg_promised'] or 0, 1) if r else 0})
+        else:
+            months_list.append({'year': y, 'month': m, 'label': label,
+                                'count': (r['cnt'] if r else 0),
+                                'value': round(r['avg_delivery'] or 0, 1) if r else 0})
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return months_list
+
+
+@app.route('/api/wait-months')
+@login_required
+@menu_permission_required('wait_dashboard')
+def api_wait_months():
+    date_from   = request.args.get('date_from')
+    date_to     = request.args.get('date_to', date.today().isoformat())
+    mode        = request.args.get('mode', 'delivery')
+    bf, bparams = _wait_branch_filter()
+    if not date_from:
+        return jsonify({'ok': False, 'error': 'date_from required'}), 400
+    with get_db() as conn:
+        agg = _wait_months_query(conn, mode, date_from, date_to, bf, bparams)
+    months = _wait_months_list(agg, date_from, date_to, mode)
+    return jsonify({'ok': True, 'mode': mode, 'total_count': sum(x['count'] for x in months), 'months': months})
+
+
+@app.route('/api/wait-all')
+@login_required
+@menu_permission_required('wait_dashboard')
+def api_wait_all():
+    mode        = request.args.get('mode', 'delivery')
+    bf, bparams = _wait_branch_filter()
+    today_iso   = date.today().isoformat()
+    with get_db() as conn:
+        min_row = conn.execute(f'''
+            SELECT MIN(DATE(received_at)) FROM orders_report WHERE {_wait_where(mode)} {bf}
+        ''', bparams).fetchone()
+        date_from = min_row[0]
+        if not date_from:
+            return jsonify({'ok': True, 'mode': mode, 'months': []})
+        agg = _wait_months_query(conn, mode, date_from, today_iso, bf, bparams)
+    months = _wait_months_list(agg, date_from, today_iso, mode)
+    return jsonify({'ok': True, 'mode': mode, 'total_count': sum(x['count'] for x in months), 'months': months})
 
 
 # ─── SHIFTS ───────────────────────────────────────────────────────────────────
