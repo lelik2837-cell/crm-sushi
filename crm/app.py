@@ -1611,6 +1611,7 @@ def init_db():
                 delivery_minutes INTEGER,
                 promo_code TEXT,
                 amount REAL DEFAULT 0,
+                new_client TEXT,
                 import_batch_id INTEGER REFERENCES orders_import_batches(id) ON DELETE CASCADE,
                 import_hash TEXT UNIQUE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -1619,6 +1620,9 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_orders_report_branch ON orders_report(branch_id);
             CREATE INDEX IF NOT EXISTS idx_orders_report_number ON orders_report(order_number);
         ''')
+        _or_cols = [r[1] for r in conn.execute("PRAGMA table_info(orders_report)").fetchall()]
+        if 'new_client' not in _or_cols:
+            conn.execute("ALTER TABLE orders_report ADD COLUMN new_client TEXT")
 
         conn.commit()
 
@@ -10884,6 +10888,7 @@ def _parse_orders_csv(file_bytes):
     idx_delivery = _orders_csv_col(header, 'Время между приемом и фактической доставкой заказа')
     idx_promo    = _orders_csv_col(header, 'Промокод')
     idx_amount   = idx_or(9, 'К оплате', 'Оплачено')
+    idx_new_cli  = _orders_csv_col(header, 'Новый клиент')
 
     def cell(row, idx):
         if idx is None or idx >= len(row):
@@ -10923,6 +10928,7 @@ def _parse_orders_csv(file_bytes):
             'delivery_minutes': to_int(cell(row, idx_delivery)),
             'promo_code':       cell(row, idx_promo) or None,
             'amount':           amount,
+            'new_client':       cell(row, idx_new_cli) or None,
         })
     return rows
 
@@ -11065,13 +11071,13 @@ def orders_report_import():
                 INSERT OR IGNORE INTO orders_report
                     (order_number, branch_raw, branch_id, received_at, promised_minutes,
                      order_type_raw, order_type, ready_minutes, delivery_minutes,
-                     promo_code, amount, import_batch_id, import_hash)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     promo_code, amount, new_client, import_batch_id, import_hash)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ''', (
                 r['order_number'], r['branch_raw'], branch_match.get(r['branch_raw']),
                 r['received_at'], r['promised_minutes'], r['order_type_raw'], r['order_type'],
                 r['ready_minutes'], r['delivery_minutes'], r['promo_code'], r['amount'],
-                batch_id, h
+                r['new_client'], batch_id, h
             ))
             if res.rowcount:
                 imported += 1

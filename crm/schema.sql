@@ -232,6 +232,7 @@ CREATE TABLE IF NOT EXISTS orders_report (
     delivery_minutes INTEGER,
     promo_code TEXT,
     amount REAL DEFAULT 0,
+    new_client TEXT,
     import_batch_id INTEGER REFERENCES orders_import_batches(id) ON DELETE CASCADE,
     import_hash TEXT UNIQUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

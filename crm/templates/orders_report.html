@@ -131,6 +131,7 @@
                     <th class="ord-sort text-end" style="cursor:pointer;user-select:none">Доставка, мин <span class="ord-arrow text-muted"></span></th>
                     <th class="ord-sort" style="cursor:pointer;user-select:none">Промокод <span class="ord-arrow text-muted"></span></th>
                     <th class="ord-sort text-end" style="cursor:pointer;user-select:none">Сумма <span class="ord-arrow text-muted"></span></th>
+                    <th class="ord-sort" style="cursor:pointer;user-select:none">Новый клиент <span class="ord-arrow text-muted"></span></th>
                 </tr>
             </thead>
             <tbody id="ordersTbody">
@@ -151,6 +152,17 @@
                     <td class="text-end">{{ r.delivery_minutes if r.delivery_minutes is not none else '—' }}</td>
                     <td class="text-muted">{{ r.promo_code or '—' }}</td>
                     <td class="text-end fw-semibold" data-val="{{ r.amount }}">{{ r.amount | money }} ₽</td>
+                    <td>
+                        {% if r.new_client == 'Да' %}
+                        <span class="badge bg-success-subtle text-success-emphasis">Да</span>
+                        {% elif r.new_client == 'н/д' %}
+                        <span class="text-muted small">н/д</span>
+                        {% elif r.new_client == 'Нет' %}
+                        <span class="text-muted">Нет</span>
+                        {% else %}
+                        <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
                 </tr>
             {% endfor %}
             </tbody>
