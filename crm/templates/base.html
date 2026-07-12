@@ -202,6 +202,14 @@
                     </a>
                 </li>
                 {% endif %}
+                {% if item_visible('wait_dashboard') %}
+                <li>
+                    <a class="dropdown-item {% if request.endpoint=='wait_dashboard' %}active{% endif %}"
+                       href="{{ url_for('wait_dashboard') }}">
+                        <i class="bi bi-stopwatch me-2"></i>Ожидание
+                    </a>
+                </li>
+                {% endif %}
             </ul>
         </div>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav" {% if not any_menu_visible() %}style="display:none"{% endif %}>
@@ -210,7 +218,7 @@
         <div class="collapse navbar-collapse" id="nav">
             <ul class="navbar-nav me-auto">
                 {% if group_has_visible_item('dash') %}
-                {% set dash_active = request.endpoint in ('dashboard', 'fot_dashboard', 'lfl_dashboard', 'ratings_dashboard') %}
+                {% set dash_active = request.endpoint in ('dashboard', 'fot_dashboard', 'lfl_dashboard', 'ratings_dashboard', 'wait_dashboard') %}
                 <li class="nav-item dropdown d-none d-lg-flex">
                     <a class="nav-link nav-link-dashboard dropdown-toggle {% if dash_active %}active{% endif %}"
                        href="#" data-bs-toggle="dropdown" aria-expanded="false">
