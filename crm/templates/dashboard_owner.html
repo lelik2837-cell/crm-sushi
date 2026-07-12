@@ -785,14 +785,21 @@ function showMonthDetail(monthIdx, monthYear, monthLabel) {
 function makeDayChart(canvasId, days) {
     var DOW = ['вс','пн','вт','ср','чт','пт','сб'];
     var canvas = document.getElementById(canvasId);
+    var todayStr = fmtLocalDate(new Date());
+    // Дни, которые ещё не наступили и по факту без выручки, но с заполненным
+    // планом — показываем план светло-жёлтым столбиком вместо факта
+    var isPlanBar = function(d) { return !(d.revenue > 0) && d.date > todayStr && (d.plan || 0) > 0; };
+    var barVals   = days.map(function(d) { return isPlanBar(d) ? d.plan : d.revenue; });
+    var barBg     = days.map(function(d) { return isPlanBar(d) ? 'rgba(250,204,21,0.55)' : 'rgba(255,255,255,0.5)'; });
+    var barHoverBg= days.map(function(d) { return isPlanBar(d) ? 'rgba(250,204,21,0.9)'  : 'rgba(255,255,255,0.9)'; });
     return new Chart(canvas, {
         type: 'bar',
         data: {
             labels: days.map(function(d) { return d.date.slice(8); }),
             datasets: [{
-                data: days.map(function(d) { return d.revenue; }),
-                backgroundColor: 'rgba(255,255,255,0.5)',
-                hoverBackgroundColor: 'rgba(255,255,255,0.9)',
+                data: barVals,
+                backgroundColor: barBg,
+                hoverBackgroundColor: barHoverBg,
                 borderRadius: 4,
                 borderSkipped: false,
             }]
@@ -809,7 +816,9 @@ function makeDayChart(canvasId, days) {
                             var d   = new Date(raw + 'T00:00:00');
                             return raw.split('-').reverse().join('.') + ', ' + DOW[d.getDay()];
                         },
-                        label: function(ctx) { return fmtNum(ctx.parsed.y) + ' ₽'; }
+                        label: function(ctx) {
+                            return fmtNum(ctx.parsed.y) + ' ₽' + (isPlanBar(days[ctx.dataIndex]) ? ' (план)' : '');
+                        }
                     },
                     backgroundColor: 'rgba(0,0,0,.7)',
                     titleColor: '#fff',

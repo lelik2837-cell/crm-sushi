@@ -2451,6 +2451,7 @@ def api_revenue_days():
     raw_bids  = request.args.get('branch_ids', '')
     bids      = [int(x) for x in raw_bids.split(',') if x.strip().isdigit()]
     bfilt     = f"AND s.branch_id IN ({','.join('?'*len(bids))})" if bids else ''
+    plan_bf = f"AND branch_id IN ({','.join('?'*len(bids))})" if bids else ''
     with get_db() as conn:
         rows = conn.execute(f'''
             SELECT s.date, COALESCE(SUM(r.total_revenue), 0) AS revenue
@@ -2459,13 +2460,26 @@ def api_revenue_days():
             GROUP BY s.date ORDER BY s.date
         ''', [date_from, date_to] + bids).fetchall()
         manual_days = _manual_rev_by_day(conn, date_from, date_to, bids or None)
+        plan_rows = conn.execute(f'''
+            SELECT date, COALESCE(SUM(amount), 0) AS plan
+            FROM revenue_plan
+            WHERE date BETWEEN ? AND ? {plan_bf}
+            GROUP BY date
+        ''', [date_from, date_to] + bids).fetchall()
     rev_map = {r['date']: int(r['revenue']) for r in rows}
     for d, amt in manual_days.items():
         rev_map[d] = rev_map.get(d, 0) + int(amt)
-    return jsonify({
-        'ok': True,
-        'days': [{'date': d, 'revenue': rev_map[d]} for d in sorted(rev_map)]
-    })
+    plan_map = {r['date']: int(r['plan'] or 0) for r in plan_rows}
+    # Возвращаем все дни диапазона (включая ещё не наступившие), чтобы на
+    # дашборде можно было показать план на будущие дни столбцами
+    all_days = []
+    _d = datetime.strptime(date_from, '%Y-%m-%d').date()
+    _dt_to = datetime.strptime(date_to, '%Y-%m-%d').date()
+    while _d <= _dt_to:
+        ds = _d.isoformat()
+        all_days.append({'date': ds, 'revenue': rev_map.get(ds, 0), 'plan': plan_map.get(ds, 0)})
+        _d += timedelta(days=1)
+    return jsonify({'ok': True, 'days': all_days})
 
 
 @app.route('/api/fot-summary')
