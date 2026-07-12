@@ -114,7 +114,7 @@
         </div>
     </div>
     <div class="col-6 col-md-2">
-        <div class="card p-3" style="border-left:4px solid {% if _pct >= 0 %}#198754{% elif _pct >= -10 %}#fd7e14{% else %}#dc3545{% endif %}">
+        <div class="card p-3" style="border-left:4px solid {% if _pct >= 0 %}#198754{% else %}#dc3545{% endif %}">
             <div class="text-muted small">Отклонение</div>
             <div class="fw-bold fs-5" id="grand-pct-card">{% if _pct > 0 %}+{% endif %}{{ _pct }}%</div>
         </div>
@@ -136,7 +136,7 @@
 
 {# ── Сводная таблица: даты × филиалы ── #}
 {%- macro dev_color(pct, has_plan, has_act) -%}
-{%- if not has_plan or not has_act -%}#adb5bd{%- elif pct >= 0 -%}#198754{%- elif pct >= -10 -%}#fd7e14{%- else -%}#dc3545{%- endif -%}
+{%- if not has_plan or not has_act -%}#adb5bd{%- elif pct >= 0 -%}#198754{%- else -%}#dc3545{%- endif -%}
 {%- endmacro -%}
 {%- macro dev_text(amt, pct, has_plan, has_act) -%}
 {%- if has_plan and has_act -%}{%- if amt >= 0 -%}+{%- endif -%}{{ '{:,.0f}'.format(amt).replace(',', ' ') }} ({%- if pct > 0 -%}+{%- endif -%}{{ pct }}%){%- else -%}—{%- endif -%}
@@ -666,7 +666,7 @@ function _fmt(n) {
 function _devColor(act, plan) {
     if (act <= 0 || plan <= 0) return '#adb5bd';
     var pct = (act - plan) / plan * 100;
-    return pct >= 0 ? '#198754' : pct >= -10 ? '#fd7e14' : '#dc3545';
+    return pct >= 0 ? '#198754' : '#dc3545';
 }
 
 function _devText(act, plan) {
@@ -847,7 +847,7 @@ function updatePivotTotals() {
     if (gpc2) {
         var pct = grandPlan > 0 ? Math.round((grandAct - grandPlan) / grandPlan * 100) : 0;
         gpc2.textContent = (pct >= 0 ? '+' : '') + pct + '%';
-        gpc2.parentElement.style.borderLeftColor = pct >= 0 ? '#198754' : pct >= -10 ? '#fd7e14' : '#dc3545';
+        gpc2.parentElement.style.borderLeftColor = pct >= 0 ? '#198754' : '#dc3545';
     }
 }
 
