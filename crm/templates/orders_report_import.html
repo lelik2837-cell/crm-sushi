@@ -9,20 +9,69 @@
     </a>
 </div>
 
+{% if unmapped %}
+<div class="card mb-3 border-warning" style="max-width:640px">
+    <div class="card-header fw-semibold bg-warning-subtle">
+        <i class="bi bi-signpost-split me-2"></i>Сопоставьте подразделения
+    </div>
+    <div class="card-body">
+        <p class="text-muted small mb-3">
+            В загруженном файле есть подразделения, которых ещё нет в справочнике «Филиалы» —
+            укажите для каждого, какому филиалу оно соответствует, чтобы продолжить загрузку.
+            Если нужного филиала в списке нет — сначала добавьте его на странице
+            <a href="{{ url_for('branches') }}" target="_blank">«Филиалы»</a>, затем вернитесь сюда и загрузите файл заново.
+        </p>
+        <form method="POST" id="ordersMappingForm">
+            <input type="hidden" name="resubmit" value="1">
+            {% for pf in pending_files %}
+            <input type="hidden" name="file_name" value="{{ pf.name }}">
+            <input type="hidden" name="file_b64" value="{{ pf.b64 }}">
+            {% endfor %}
+            <table class="table table-sm mb-3">
+                <thead>
+                    <tr><th>Подразделение в файле</th><th>Филиал</th></tr>
+                </thead>
+                <tbody>
+                    {% for raw in unmapped %}
+                    <tr>
+                        <td class="align-middle">
+                            {{ raw }}
+                            <input type="hidden" name="map_raw" value="{{ raw }}">
+                        </td>
+                        <td>
+                            <select name="map_branch_id" class="form-select form-select-sm" required style="max-width:260px;">
+                                <option value="" selected disabled>— выберите филиал —</option>
+                                {% for b in branches %}
+                                <option value="{{ b.id }}">{{ b.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <button type="submit" class="btn btn-primary w-100" id="ordersMappingSubmit">
+                <i class="bi bi-upload me-1"></i>Сопоставить и загрузить
+            </button>
+        </form>
+    </div>
+</div>
+{% endif %}
+
 <div class="card mb-3" style="max-width:520px">
     <div class="card-header fw-semibold bg-light">
         <i class="bi bi-file-earmark-spreadsheet me-2"></i>Загрузить файл выгрузки
     </div>
     <div class="card-body">
         <p class="text-muted small mb-3">
-            Файл CSV «Отчёт по заказам» (выгружается из системы учёта). Разделитель — «;».<br>
+            Файл CSV «Отчёт по заказам» (выгружается из системы учёта). Разделитель — «;». Можно выбрать сразу несколько файлов.<br>
             Заказы «Зал» и «С собой» объединяются в отчёте в один тип — <strong>«Общий - самовывоз»</strong>.<br>
             Повторная загрузка файла с пересекающимся периодом <strong>не создаёт дубли</strong> — заказ определяется по дате приёма и номеру, уже загруженные заказы не дублируются, а обновляются свежими данными.
         </p>
         <form method="POST" enctype="multipart/form-data" id="ordersImportForm">
             <div class="mb-3">
-                <label class="form-label fw-semibold">Файл CSV</label>
-                <input type="file" name="orders_file" class="form-control" accept=".csv" required>
+                <label class="form-label fw-semibold">Файл(ы) CSV</label>
+                <input type="file" name="orders_file" class="form-control" accept=".csv" multiple required>
             </div>
             <button type="submit" class="btn btn-primary w-100" id="ordersImportSubmit">
                 <i class="bi bi-upload me-1"></i>Загрузить данные
@@ -84,5 +133,13 @@ document.getElementById('ordersImportForm').addEventListener('submit', function 
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Загрузка...';
 });
+var mappingForm = document.getElementById('ordersMappingForm');
+if (mappingForm) {
+    mappingForm.addEventListener('submit', function () {
+        var btn = document.getElementById('ordersMappingSubmit');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Загрузка...';
+    });
+}
 </script>
 {% endblock %}

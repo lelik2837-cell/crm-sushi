@@ -11299,29 +11299,7 @@ def orders_report():
 @login_required
 @menu_permission_required('orders_report')
 def orders_report_import():
-    if request.method == 'GET':
-        with get_db() as conn:
-            batches = conn.execute(
-                'SELECT * FROM orders_import_batches ORDER BY imported_at DESC LIMIT 50'
-            ).fetchall()
-        return render_template('orders_report_import.html', batches=batches)
-
-    file = request.files.get('orders_file')
-    if not file or file.filename == '':
-        flash('Выберите файл', 'danger')
-        return redirect(url_for('orders_report_import'))
-
-    try:
-        rows = _parse_orders_csv(file.read())
-    except Exception as e:
-        flash(f'Ошибка чтения файла: {e}', 'danger')
-        return redirect(url_for('orders_report_import'))
-
-    if not rows:
-        flash('Не найдено строк с заказами в файле. Проверьте, что это CSV-выгрузка «Отчёт по заказам»', 'warning')
-        return redirect(url_for('orders_report_import'))
-
-    import hashlib
+    import base64, hashlib
 
     def _row_hash(r):
         # Идентификатор заказа для повторной загрузки — дата приёма + номер заказа.
@@ -11329,69 +11307,128 @@ def orders_report_import():
         key = f"{r['order_number']}|{r['received_at'][:10]}"
         return hashlib.md5(key.encode('utf-8')).hexdigest()
 
+    def _batches():
+        with get_db() as conn:
+            return conn.execute(
+                'SELECT * FROM orders_import_batches ORDER BY imported_at DESC LIMIT 50'
+            ).fetchall()
+
+    if request.method == 'GET':
+        return render_template('orders_report_import.html', batches=_batches())
+
+    # Повторная отправка после сопоставления подразделений прямо на этой странице —
+    # файлы уже разобраны один раз и закодированы в форме, заново их не запрашиваем.
+    if request.form.get('resubmit') == '1':
+        names = request.form.getlist('file_name')
+        b64s  = request.form.getlist('file_b64')
+        file_items = [(n, base64.b64decode(b)) for n, b in zip(names, b64s)]
+        with get_db() as conn:
+            valid_ids = {b['id'] for b in conn.execute('SELECT id FROM branches').fetchall()}
+            for raw, bid in zip(request.form.getlist('map_raw'), request.form.getlist('map_branch_id')):
+                if raw and bid and bid.isdigit() and int(bid) in valid_ids:
+                    conn.execute(
+                        'INSERT INTO branch_raw_map (branch_raw, branch_id) VALUES (?,?) '
+                        'ON CONFLICT(branch_raw) DO UPDATE SET branch_id=excluded.branch_id',
+                        (raw, int(bid))
+                    )
+                    conn.execute('UPDATE orders_report SET branch_id=? WHERE branch_raw=?', (int(bid), raw))
+            conn.commit()
+    else:
+        files = [f for f in request.files.getlist('orders_file') if f and f.filename]
+        if not files:
+            flash('Выберите файл', 'danger')
+            return redirect(url_for('orders_report_import'))
+        file_items = [(f.filename, f.read()) for f in files]
+
+    parsed = []
+    for fname, fbytes in file_items:
+        try:
+            frows = _parse_orders_csv(fbytes)
+        except Exception as e:
+            flash(f'Ошибка чтения файла «{fname}»: {e}', 'danger')
+            return redirect(url_for('orders_report_import'))
+        if not frows:
+            flash(f'В файле «{fname}» не найдено строк с заказами. Проверьте, что это CSV-выгрузка «Отчёт по заказам»', 'warning')
+            continue
+        parsed.append((fname, frows))
+
+    if not parsed:
+        return redirect(url_for('orders_report_import'))
+
     with get_db() as conn:
         branch_map = get_branch_raw_map(conn)
-        unmapped = sorted(set(r['branch_raw'] for r in rows) - set(branch_map))
+        all_raws = set()
+        for _, frows in parsed:
+            all_raws.update(r['branch_raw'] for r in frows)
+        unmapped = sorted(all_raws - set(branch_map))
+
         if unmapped:
-            flash(
-                'Загрузка отменена: в файле есть подразделения, не сопоставленные с филиалом — '
-                + ', '.join(unmapped) +
-                '. Сопоставьте их на странице «Филиалы» и загрузите файл заново.',
-                'danger'
-            )
-            return redirect(url_for('orders_report_import'))
+            branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+            pending_files = [
+                {'name': fname, 'b64': base64.b64encode(fbytes).decode('ascii')}
+                for fname, fbytes in file_items
+            ]
+            return render_template('orders_report_import.html', batches=_batches(),
+                                    unmapped=unmapped, branches=branches, pending_files=pending_files)
 
         existing_keys = set(
             (er['order_number'], er['received_at'][:10])
             for er in conn.execute('SELECT order_number, received_at FROM orders_report').fetchall()
         )
 
-        cur = conn.execute(
-            'INSERT INTO orders_import_batches (filename, created_by) VALUES (?,?)',
-            (file.filename, session.get('user_id'))
-        )
-        batch_id = cur.lastrowid
+        total_imported = total_updated = total_rows = 0
+        for fname, frows in parsed:
+            cur = conn.execute(
+                'INSERT INTO orders_import_batches (filename, created_by) VALUES (?,?)',
+                (fname, session.get('user_id'))
+            )
+            batch_id = cur.lastrowid
 
-        imported = updated = 0
-        for r in rows:
-            key = (r['order_number'], r['received_at'][:10])
-            is_new = key not in existing_keys
-            existing_keys.add(key)
-            h = _row_hash(r)
-            conn.execute('''
-                INSERT INTO orders_report
-                    (order_number, branch_raw, branch_id, received_at, promised_minutes,
-                     order_type_raw, order_type, ready_minutes, delivery_minutes,
-                     promo_code, amount, new_client, import_batch_id, import_hash)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(import_hash) DO UPDATE SET
-                    branch_raw=excluded.branch_raw, branch_id=excluded.branch_id,
-                    received_at=excluded.received_at, promised_minutes=excluded.promised_minutes,
-                    order_type_raw=excluded.order_type_raw, order_type=excluded.order_type,
-                    ready_minutes=excluded.ready_minutes, delivery_minutes=excluded.delivery_minutes,
-                    promo_code=excluded.promo_code, amount=excluded.amount,
-                    new_client=excluded.new_client, import_batch_id=excluded.import_batch_id
-            ''', (
-                r['order_number'], r['branch_raw'], branch_map.get(r['branch_raw']),
-                r['received_at'], r['promised_minutes'], r['order_type_raw'], r['order_type'],
-                r['ready_minutes'], r['delivery_minutes'], r['promo_code'], r['amount'],
-                r['new_client'], batch_id, h
-            ))
-            if is_new:
-                imported += 1
-            else:
-                updated += 1
+            imported = updated = 0
+            for r in frows:
+                key = (r['order_number'], r['received_at'][:10])
+                is_new = key not in existing_keys
+                existing_keys.add(key)
+                h = _row_hash(r)
+                conn.execute('''
+                    INSERT INTO orders_report
+                        (order_number, branch_raw, branch_id, received_at, promised_minutes,
+                         order_type_raw, order_type, ready_minutes, delivery_minutes,
+                         promo_code, amount, new_client, import_batch_id, import_hash)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(import_hash) DO UPDATE SET
+                        branch_raw=excluded.branch_raw, branch_id=excluded.branch_id,
+                        received_at=excluded.received_at, promised_minutes=excluded.promised_minutes,
+                        order_type_raw=excluded.order_type_raw, order_type=excluded.order_type,
+                        ready_minutes=excluded.ready_minutes, delivery_minutes=excluded.delivery_minutes,
+                        promo_code=excluded.promo_code, amount=excluded.amount,
+                        new_client=excluded.new_client, import_batch_id=excluded.import_batch_id
+                ''', (
+                    r['order_number'], r['branch_raw'], branch_map.get(r['branch_raw']),
+                    r['received_at'], r['promised_minutes'], r['order_type_raw'], r['order_type'],
+                    r['ready_minutes'], r['delivery_minutes'], r['promo_code'], r['amount'],
+                    r['new_client'], batch_id, h
+                ))
+                if is_new:
+                    imported += 1
+                else:
+                    updated += 1
 
-        conn.execute(
-            'UPDATE orders_import_batches SET imported_count=?, updated_count=? WHERE id=?',
-            (imported, updated, batch_id)
-        )
+            conn.execute(
+                'UPDATE orders_import_batches SET imported_count=?, updated_count=? WHERE id=?',
+                (imported, updated, batch_id)
+            )
+            total_imported += imported
+            total_updated  += updated
+            total_rows     += len(frows)
+
         conn.commit()
 
-    parts = [f'Импортировано {imported} новых заказов']
-    if updated:
-        parts.append(f'обновлено: {updated}')
-    flash(', '.join(parts) + f' (всего строк в файле: {len(rows)})', 'success' if (imported or updated) else 'warning')
+    parts = [f'Импортировано {total_imported} новых заказов']
+    if total_updated:
+        parts.append(f'обновлено: {total_updated}')
+    suffix = f' из {len(parsed)} файлов' if len(parsed) > 1 else ''
+    flash(', '.join(parts) + f' (всего строк: {total_rows}{suffix})', 'success' if (total_imported or total_updated) else 'warning')
     return redirect(url_for('orders_report'))
 
 
