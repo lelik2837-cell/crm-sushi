@@ -14,8 +14,8 @@
   <div class="col-12 col-lg-7">
     <div id="w-card" style="background:linear-gradient(135deg,#5c1015 0%,#7f1d1d 50%,#9f1239 100%); border-radius:20px; padding:28px 28px 24px; color:#fff; position:relative;">
 
-      <!-- Period buttons + mode toggle + branch selector -->
-      <div style="display:flex; gap:6px; margin-bottom:20px; align-items:center; flex-wrap:wrap;">
+      <!-- Row 1: period buttons + calendar + branch selector -->
+      <div style="display:flex; gap:6px; margin-bottom:10px; align-items:center; flex-wrap:wrap;">
         <div class="w-nav" data-period="today" style="display:flex; align-items:center; gap:1px; background:rgba(255,255,255,.12); border:1.5px solid rgba(255,255,255,.35); border-radius:16px; padding:2px;">
           <button onclick="navWaitToday(-1)" title="Предыдущий день"
             style="width:19px; height:19px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; line-height:1;">‹</button>
@@ -43,22 +43,13 @@
           </div>
           <div id="w-year-menu" style="display:none; position:absolute; top:calc(100% + 4px); left:0; background:#fff; border-radius:10px; min-width:88px; overflow:hidden; z-index:30; box-shadow:0 6px 20px rgba(0,0,0,.25);"></div>
         </div>
-        <button id="w-all-btn" onclick="loadWaitCard('all')" data-rp="all" class="w-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px;">Всё</button>
         <button id="w-cal-btn" onclick="openWaitCal()" title="Выбрать период" style="width:26px; height:26px; flex-shrink:0; border-radius:50%; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); cursor:pointer; padding:0; display:inline-flex; align-items:center; justify-content:center;">
           <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><path d="M3.5 0a.5.5 0 0 1 .5.5V1h8V.5a.5.5 0 0 1 1 0V1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h1V.5a.5.5 0 0 1 .5-.5zM1 4v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4H1z"/></svg>
         </button>
         <input id="w-cal-hidden" type="text" style="display:none; position:absolute;">
 
-        <!-- Доставка / Самовывоз -->
-        <div style="display:flex; align-items:center; gap:1px; background:rgba(255,255,255,.12); border:1.5px solid rgba(255,255,255,.35); border-radius:16px; padding:2px; margin-left:auto;">
-          <button id="w-mode-delivery" onclick="setWaitMode('delivery')"
-            style="border:none; border-radius:14px; background:rgba(255,255,255,.28); color:#fff; cursor:pointer; font-size:11px; font-weight:700; padding:4px 12px; letter-spacing:.2px; white-space:nowrap;">Доставка</button>
-          <button id="w-mode-pickup" onclick="setWaitMode('pickup')"
-            style="border:none; border-radius:14px; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; padding:4px 12px; letter-spacing:.2px; white-space:nowrap;">Самовывоз</button>
-        </div>
-
         <!-- Branch selector -->
-        <div class="dropdown" style="flex-shrink:0; position:relative;">
+        <div class="dropdown" style="margin-left:auto; flex-shrink:0; position:relative;">
           <button id="w-branch-btn" type="button"
             data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
             title="Выбор подразделений"
@@ -82,32 +73,33 @@
         </div>
       </div>
 
+      <!-- Row 2: Доставка/Самовывоз + метрика -->
+      <div style="display:flex; gap:6px; margin-bottom:20px; align-items:center; flex-wrap:wrap;">
+        <div style="display:flex; align-items:center; gap:1px; background:rgba(255,255,255,.12); border:1.5px solid rgba(255,255,255,.35); border-radius:16px; padding:2px;">
+          <button id="w-mode-delivery" onclick="setWaitMode('delivery')"
+            style="border:none; border-radius:14px; background:rgba(255,255,255,.28); color:#fff; cursor:pointer; font-size:11px; font-weight:700; padding:4px 12px; letter-spacing:.2px; white-space:nowrap;">Доставка</button>
+          <button id="w-mode-pickup" onclick="setWaitMode('pickup')"
+            style="border:none; border-radius:14px; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; padding:4px 12px; letter-spacing:.2px; white-space:nowrap;">Самовывоз</button>
+        </div>
+        <div style="display:flex; align-items:center; gap:1px; background:rgba(255,255,255,.12); border:1.5px solid rgba(255,255,255,.35); border-radius:16px; padding:2px; margin-left:auto;">
+          <button id="w-metric-ready" onclick="setWaitMetric('ready')"
+            style="border:none; border-radius:14px; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; padding:4px 12px; letter-spacing:.2px; white-space:nowrap;">Кухня</button>
+          <button id="w-metric-promised" onclick="setWaitMetric('promised')"
+            style="border:none; border-radius:14px; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; padding:4px 12px; letter-spacing:.2px; white-space:nowrap;">Обещали</button>
+          <button id="w-metric-delivery" onclick="setWaitMetric('delivery')"
+            style="border:none; border-radius:14px; background:rgba(255,255,255,.28); color:#fff; cursor:pointer; font-size:11px; font-weight:700; padding:4px 12px; letter-spacing:.2px; white-space:nowrap;">Доставили</button>
+        </div>
+      </div>
+
       <!-- Label -->
-      <div style="font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; opacity:.7; margin-bottom:6px;">Ожидание</div>
+      <div id="w-label-title" style="font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; opacity:.7; margin-bottom:6px;">Время доставки</div>
 
-      <!-- Big number: delivery (single) -->
-      <div id="w-single">
-        <div id="w-total" style="font-size:clamp(32px,6vw,52px); font-weight:800; letter-spacing:-1px; line-height:1.05; margin-bottom:2px;">—</div>
-        <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:18px;">
-          <div id="w-period-label" style="font-size:14px; opacity:.6;">минут · среднее фактическое время доставки</div>
-        </div>
+      <!-- Big number -->
+      <div id="w-total" style="font-size:clamp(32px,6vw,52px); font-weight:800; letter-spacing:-1px; line-height:1.05; margin-bottom:2px;">—</div>
+      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px;">
+        <div id="w-period-label" style="font-size:14px; opacity:.6;">минут</div>
       </div>
-      <!-- Big numbers: pickup (dual) -->
-      <div id="w-dual" style="display:none; margin-bottom:18px;">
-        <div style="display:flex; gap:32px; flex-wrap:wrap;">
-          <div>
-            <div style="font-size:clamp(26px,4.5vw,40px); font-weight:800; letter-spacing:-1px; line-height:1.05;" id="w-promised">—</div>
-            <div style="font-size:13px; opacity:.65;">мин · обещано</div>
-          </div>
-          <div>
-            <div style="font-size:clamp(26px,4.5vw,40px); font-weight:800; letter-spacing:-1px; line-height:1.05;" id="w-ready">—</div>
-            <div style="font-size:13px; opacity:.65;">мин · готовность</div>
-          </div>
-        </div>
-        <div id="w-period-label-dual" style="font-size:13px; opacity:.55; margin-top:8px;"></div>
-      </div>
-
-      <div id="w-count-label" style="font-size:12px; opacity:.55; margin-top:-10px; margin-bottom:14px;"></div>
+      <div id="w-count-label" style="font-size:12px; opacity:.55; margin-bottom:14px;"></div>
 
       <!-- Divider -->
       <div style="border-top:1px solid rgba(255,255,255,.2); margin-bottom:14px;"></div>
@@ -122,7 +114,7 @@
         <canvas id="w-day-canvas" height="130"></canvas>
       </div>
 
-      <!-- Year chart (year/all/custom-long mode) -->
+      <!-- Year chart (year/custom-long mode) -->
       <div id="w-year-wrap" style="display:none;">
         <canvas id="w-year-canvas" height="180"></canvas>
         <div id="w-month-detail" style="display:none; margin-top:16px; border-top:1px solid rgba(255,255,255,.2); padding-top:14px;">
@@ -142,8 +134,10 @@
       <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:10px;">О расчёте</div>
       <ul style="font-size:12.5px; color:#475569; padding-left:18px; margin-bottom:0; line-height:1.7;">
         <li>Источник данных — <a href="{{ url_for('orders_report') }}">Отчёт по заказам</a> (загружайте выгрузку туда).</li>
-        <li><strong>Доставка</strong> — среднее фактическое время доставки; не учитываются заказы, принятые до 10:30, и заказы дольше 300 минут (аномалии).</li>
-        <li><strong>Самовывоз</strong> (Зал + С собой) — среднее обещанное время и среднее время готовности; не учитываются заказы, принятые до 10:00.</li>
+        <li><strong>Кухня</strong> — среднее время готовности заказа (не учитываются заказы с нулевым временем готовности).</li>
+        <li><strong>Обещали</strong> — среднее обещанное клиенту время.</li>
+        <li><strong>Доставили</strong> — среднее фактическое время доставки; недоступно для самовывоза; не учитываются заказы дольше 300 минут (аномалии).</li>
+        <li>Доставка — не учитываются заказы, принятые до 10:30. Самовывоз (Зал + С собой) — до 10:00.</li>
       </ul>
     </div>
   </div>
@@ -165,7 +159,14 @@ var MONTHS_RU_FULL = ['', 'Январь','Февраль','Март','Апрел
 var MONTHS_RU_GEN  = ['', 'января','февраля','марта','апреля','мая','июня',
                       'июля','августа','сентября','октября','ноября','декабря'];
 
+var WAIT_METRIC_LABELS = {
+    ready:    { title: 'Готовность на кухне', unit: 'мин · среднее время готовности' },
+    promised: { title: 'Обещано клиенту',     unit: 'мин · среднее обещанное время' },
+    delivery: { title: 'Время доставки',      unit: 'мин · среднее фактическое время доставки' },
+};
+
 var waitMode       = 'delivery';
+var waitMetric     = 'delivery';
 var waitPeriod     = 'today';
 var waitChart      = null;
 var waitDayChart   = null;
@@ -177,13 +178,32 @@ var waitTodayDate  = new Date();
 var waitMonthDate  = (function() { var d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); })();
 var waitBranches   = [];
 
+function updateWaitModeButtons() {
+    document.getElementById('w-mode-delivery').style.background = waitMode === 'delivery' ? 'rgba(255,255,255,.28)' : 'transparent';
+    document.getElementById('w-mode-pickup').style.background   = waitMode === 'pickup'   ? 'rgba(255,255,255,.28)' : 'transparent';
+    document.getElementById('w-metric-delivery').style.display  = waitMode === 'pickup' ? 'none' : '';
+}
+function updateWaitMetricButtons() {
+    ['ready', 'promised', 'delivery'].forEach(function(m) {
+        var el = document.getElementById('w-metric-' + m);
+        if (el) el.style.background = (waitMetric === m) ? 'rgba(255,255,255,.28)' : 'transparent';
+    });
+    var lbl = WAIT_METRIC_LABELS[waitMetric];
+    document.getElementById('w-label-title').textContent = lbl.title;
+}
 function setWaitMode(mode) {
     if (waitMode === mode) return;
     waitMode = mode;
-    document.getElementById('w-mode-delivery').style.background = mode === 'delivery' ? 'rgba(255,255,255,.28)' : 'transparent';
-    document.getElementById('w-mode-pickup').style.background   = mode === 'pickup'   ? 'rgba(255,255,255,.28)' : 'transparent';
-    document.getElementById('w-single').style.display = mode === 'delivery' ? '' : 'none';
-    document.getElementById('w-dual').style.display   = mode === 'pickup'   ? '' : 'none';
+    if (waitMode === 'pickup' && waitMetric === 'delivery') waitMetric = 'ready';
+    updateWaitModeButtons();
+    updateWaitMetricButtons();
+    loadWaitCard(waitPeriod);
+}
+function setWaitMetric(metric) {
+    if (waitMetric === metric) return;
+    if (waitMode === 'pickup' && metric === 'delivery') return;
+    waitMetric = metric;
+    updateWaitMetricButtons();
     loadWaitCard(waitPeriod);
 }
 
@@ -285,27 +305,17 @@ function waitUnitLabel(count) {
     return 'заказов';
 }
 
-function branchWaitListHtml(branches, mode) {
+function branchWaitListHtml(branches) {
     if (!branches || !branches.length) return '<div style="opacity:.5;font-size:13px;">Нет данных</div>';
-    if (mode === 'pickup') {
-        return branches.filter(function(b){ return b.count > 0; }).map(function(b) {
-            return '<div style="display:flex;align-items:center;gap:8px;">' +
-                '<span style="font-size:11px;font-weight:700;background:rgba(255,255,255,.18);border-radius:6px;padding:2px 7px;letter-spacing:.5px;min-width:36px;text-align:center;">' + b.abbr + '</span>' +
-                '<div style="flex:1;display:flex;justify-content:space-between;">' +
-                  '<span style="font-size:12px;opacity:.85;font-weight:500;">' + b.name + '</span>' +
-                  '<span style="font-size:12px;font-weight:700;">' + fmtNum1(b.avg_promised) + ' мин обещано · ' + fmtNum1(b.avg_ready) + ' мин готовность</span>' +
-                '</div></div>';
-        }).join('');
-    }
-    var maxVal = Math.max.apply(null, branches.map(function(b) { return b.avg_delivery || 0; })) || 1;
+    var maxVal = Math.max.apply(null, branches.map(function(b) { return b.avg || 0; })) || 1;
     return branches.filter(function(b){ return b.count > 0; }).map(function(b) {
-        var barW = Math.min(100, Math.round((b.avg_delivery || 0) / maxVal * 100));
+        var barW = Math.min(100, Math.round((b.avg || 0) / maxVal * 100));
         return '<div style="display:flex;align-items:center;gap:8px;">' +
             '<span style="font-size:11px;font-weight:700;background:rgba(255,255,255,.18);border-radius:6px;padding:2px 7px;letter-spacing:.5px;min-width:36px;text-align:center;">' + b.abbr + '</span>' +
             '<div style="flex:1;">' +
               '<div style="display:flex;justify-content:space-between;margin-bottom:3px;">' +
                 '<span style="font-size:12px;opacity:.85;font-weight:500;">' + b.name + '</span>' +
-                '<span style="font-size:12px;font-weight:700;">' + fmtNum1(b.avg_delivery) + ' мин</span>' +
+                '<span style="font-size:12px;font-weight:700;">' + fmtNum1(b.avg) + ' мин</span>' +
               '</div>' +
               '<div style="height:3px;background:rgba(255,255,255,.15);border-radius:2px;">' +
                 '<div style="height:100%;width:' + barW + '%;background:rgba(255,255,255,.7);border-radius:2px;"></div>' +
@@ -332,43 +342,42 @@ function showWaitMonthDetail(monthIdx, monthYear, monthLabel) {
     titleEl.textContent   = monthLabel + ' ' + y;
     branchEl.innerHTML    = '<div style="opacity:.5;font-size:12px;">Загрузка…</div>';
 
-    fetch('/api/wait-summary?date_from=' + dateFrom + '&date_to=' + dateTo + '&mode=' + waitMode + _waitBranchSuffix())
+    var qs = '&mode=' + waitMode + '&metric=' + waitMetric + _waitBranchSuffix();
+    fetch('/api/wait-summary?date_from=' + dateFrom + '&date_to=' + dateTo + qs)
         .then(function(r) { return r.json(); })
         .then(function(d) {
             if (!d.ok) return;
-            branchEl.innerHTML = branchWaitListHtml(d.branches, waitMode);
+            branchEl.innerHTML = branchWaitListHtml(d.branches);
         });
 
-    fetch('/api/wait-days?date_from=' + dateFrom + '&date_to=' + dateTo + '&mode=' + waitMode + _waitBranchSuffix())
+    fetch('/api/wait-days?date_from=' + dateFrom + '&date_to=' + dateTo + qs)
         .then(function(r) { return r.json(); })
         .then(function(d) {
             if (!d.ok) return;
-            waitYearDayChart = makeWaitChart('w-year-day-canvas', d.days, waitMode, 'date');
+            waitYearDayChart = makeWaitChart('w-year-day-canvas', d.days, 'date');
         });
 }
 
-function _waitChartDatasets(items, mode) {
-    if (mode === 'pickup') {
-        return [
-            { label: 'Обещано',    data: items.map(function(x){ return x.promised; }), backgroundColor: 'rgba(255,255,255,0.85)', hoverBackgroundColor: 'rgba(255,255,255,1)', borderRadius: 4, borderSkipped: false },
-            { label: 'Готовность', data: items.map(function(x){ return x.ready; }),     backgroundColor: 'rgba(255,255,255,0.4)',  hoverBackgroundColor: 'rgba(255,255,255,0.7)', borderRadius: 4, borderSkipped: false },
-        ];
-    }
-    return [{ data: items.map(function(x){ return x.value; }), backgroundColor: 'rgba(255,255,255,0.5)', hoverBackgroundColor: 'rgba(255,255,255,0.9)', borderRadius: 4, borderSkipped: false }];
-}
-
-function makeWaitChart(canvasId, items, mode, labelMode) {
+function makeWaitChart(canvasId, items, labelMode) {
     var DOW = ['вс','пн','вт','ср','чт','пт','сб'];
     var canvas = document.getElementById(canvasId);
     var labels = labelMode === 'date' ? items.map(function(d) { return d.date.slice(8); }) : items.map(function(m) { return m.label; });
     return new Chart(canvas, {
         type: 'bar',
-        data: { labels: labels, datasets: _waitChartDatasets(items, mode) },
+        data: {
+            labels: labels,
+            datasets: [{
+                data: items.map(function(x){ return x.value; }),
+                backgroundColor: 'rgba(255,255,255,0.5)',
+                hoverBackgroundColor: 'rgba(255,255,255,0.9)',
+                borderRadius: 4, borderSkipped: false,
+            }]
+        },
         options: {
             responsive: true,
             animation: { duration: 350 },
             plugins: {
-                legend: { display: mode === 'pickup', labels: { color: 'rgba(255,255,255,.8)', font: { size: 10 }, boxWidth: 10 } },
+                legend: { display: false },
                 tooltip: {
                     callbacks: {
                         title: function(ctx) {
@@ -377,11 +386,7 @@ function makeWaitChart(canvasId, items, mode, labelMode) {
                             var d = new Date(raw + 'T00:00:00');
                             return raw.split('-').reverse().join('.') + ', ' + DOW[d.getDay()];
                         },
-                        label: function(ctx) {
-                            var val = ctx.parsed.y;
-                            var lbl = ctx.dataset.label ? ctx.dataset.label + ': ' : '';
-                            return lbl + fmtNum1(val) + ' мин';
-                        }
+                        label: function(ctx) { return fmtNum1(ctx.parsed.y) + ' мин'; }
                     },
                     backgroundColor: 'rgba(0,0,0,.7)', titleColor: '#fff', bodyColor: '#fff',
                 }
@@ -404,11 +409,6 @@ function makeWaitChart(canvasId, items, mode, labelMode) {
 function loadWaitCard(period) {
     if (period) waitPeriod = period;
     var calActive = waitPeriod === 'custom';
-    document.querySelectorAll('.w-period-btn').forEach(function(b) {
-        var active = !calActive && b.dataset.rp === waitPeriod;
-        b.style.background  = active ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.12)';
-        b.style.borderColor = active ? 'rgba(255,255,255,.9)'  : 'rgba(255,255,255,.35)';
-    });
     document.querySelectorAll('.w-nav').forEach(function(nav) {
         var active = !calActive && nav.dataset.period === waitPeriod;
         nav.style.background  = active ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.12)';
@@ -420,9 +420,7 @@ function loadWaitCard(period) {
         calBtn.style.borderColor = calActive ? 'rgba(255,255,255,.9)'  : 'rgba(255,255,255,.35)';
     }
 
-    document.getElementById('w-total').textContent     = '…';
-    document.getElementById('w-promised').textContent  = '…';
-    document.getElementById('w-ready').textContent     = '…';
+    document.getElementById('w-total').textContent = '…';
     document.getElementById('w-count-label').textContent = '';
 
     var branchesWrap = document.getElementById('w-branches');
@@ -445,55 +443,50 @@ function loadWaitCard(period) {
         dayWrap.style.display = 'none';
         if (waitDayChart) { waitDayChart.destroy(); waitDayChart = null; }
     }
-    if (waitPeriod !== 'year' && waitPeriod !== 'all') {
+    if (waitPeriod !== 'year') {
         document.getElementById('w-year-day-wrap').style.display = 'none';
         if (waitYearDayChart) { waitYearDayChart.destroy(); waitYearDayChart = null; }
     }
 
+    var unit = WAIT_METRIC_LABELS[waitMetric].unit;
+    var qsMode = '&mode=' + waitMode + '&metric=' + waitMetric + _waitBranchSuffix();
+
     var isCustomMonthly = waitPeriod === 'custom' && waitCustomFrom && waitCustomTo &&
         Math.round((new Date(waitCustomTo) - new Date(waitCustomFrom)) / 86400000) > 35;
 
-    if (waitPeriod === 'year' || waitPeriod === 'all' || isCustomMonthly) {
+    if (waitPeriod === 'year' || isCustomMonthly) {
         branchesWrap.style.display = 'none';
         yearWrap.style.display     = '';
         monthDetail.style.display  = 'none';
         if (waitChart) { waitChart.destroy(); waitChart = null; }
 
-        var renderMonths = function(d) {
-            if (!d.ok) return;
-            var lastWithData = d.months.filter(function(m){ return m.count > 0; }).pop();
-            if (waitMode === 'pickup') {
-                document.getElementById('w-promised').textContent = lastWithData ? fmtNum1(lastWithData.promised) : '—';
-                document.getElementById('w-ready').textContent    = lastWithData ? fmtNum1(lastWithData.ready) : '—';
-            } else {
-                var withData = d.months.filter(function(m){ return m.count > 0; });
-                var avgAll = withData.length ? withData.reduce(function(s,m){ return s + m.value * m.count; }, 0) / withData.reduce(function(s,m){ return s + m.count; }, 0) : 0;
-                document.getElementById('w-total').textContent = withData.length ? fmtNum1(avgAll) : '—';
-            }
-            document.getElementById('w-count-label').textContent = (d.total_count || 0) + ' ' + waitUnitLabel(d.total_count || 0) + ' за период';
-            waitChart = makeWaitChart('w-year-canvas', d.months, waitMode, 'month');
-        };
-
+        var yearFrom, yearTo, periodLabel;
         if (waitPeriod === 'year') {
             var curYear2 = new Date().getFullYear();
-            var yearFrom = waitYear + '-01-01';
-            var yearTo   = waitYear === curYear2 ? fmtLocalDate(new Date()) : waitYear + '-12-31';
-            document.getElementById('w-period-label').textContent = 'минут за ' + waitYear;
-            document.getElementById('w-period-label-dual').textContent = waitYear;
-            fetch('/api/wait-months?date_from=' + yearFrom + '&date_to=' + yearTo + '&mode=' + waitMode + _waitBranchSuffix())
-                .then(function(r) { return r.json(); }).then(renderMonths);
-        } else if (waitPeriod === 'all') {
-            document.getElementById('w-period-label').textContent = 'минут за всё время';
-            document.getElementById('w-period-label-dual').textContent = 'за всё время';
-            fetch('/api/wait-all?mode=' + waitMode + (_waitBranchSuffix() ? '?' + _waitBranchSuffix().slice(1) : ''))
-                .then(function(r) { return r.json(); }).then(renderMonths);
+            yearFrom = waitYear + '-01-01';
+            yearTo   = waitYear === curYear2 ? fmtLocalDate(new Date()) : waitYear + '-12-31';
+            periodLabel = 'за ' + waitYear;
         } else {
+            yearFrom = waitCustomFrom;
+            yearTo   = waitCustomTo;
             var fmtLabelM = function(s) { return s.split('-').reverse().join('.'); };
-            document.getElementById('w-period-label').textContent = fmtLabelM(waitCustomFrom) + ' — ' + fmtLabelM(waitCustomTo);
-            document.getElementById('w-period-label-dual').textContent = fmtLabelM(waitCustomFrom) + ' — ' + fmtLabelM(waitCustomTo);
-            fetch('/api/wait-months?date_from=' + waitCustomFrom + '&date_to=' + waitCustomTo + '&mode=' + waitMode + _waitBranchSuffix())
-                .then(function(r) { return r.json(); }).then(renderMonths);
+            periodLabel = fmtLabelM(yearFrom) + ' — ' + fmtLabelM(yearTo);
         }
+        document.getElementById('w-period-label').textContent = 'минут ' + periodLabel;
+
+        fetch('/api/wait-summary?date_from=' + yearFrom + '&date_to=' + yearTo + qsMode)
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (!d.ok) return;
+                document.getElementById('w-total').textContent = d.count ? fmtNum1(d.avg) : '—';
+                document.getElementById('w-count-label').textContent = d.count ? (d.count + ' ' + waitUnitLabel(d.count)) : 'нет заказов за период';
+            });
+        fetch('/api/wait-months?date_from=' + yearFrom + '&date_to=' + yearTo + qsMode)
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (!d.ok) return;
+                waitChart = makeWaitChart('w-year-canvas', d.months, 'month');
+            });
         return;
     }
 
@@ -507,45 +500,36 @@ function loadWaitCard(period) {
     var dateTo, dateFrom;
     if (waitPeriod === 'custom' && waitCustomFrom && waitCustomTo) {
         dateFrom = waitCustomFrom; dateTo = waitCustomTo;
-        var lbl = fmtLabel(dateFrom) + ' — ' + fmtLabel(dateTo);
-        document.getElementById('w-period-label').textContent = 'минут · ' + lbl;
-        document.getElementById('w-period-label-dual').textContent = lbl;
+        document.getElementById('w-period-label').textContent = 'минут · ' + fmtLabel(dateFrom) + ' — ' + fmtLabel(dateTo);
     } else if (waitPeriod === 'today') {
         dateFrom = dateTo = fmtLocalDate(waitTodayDate);
-        document.getElementById('w-period-label').textContent = 'минут · среднее фактическое время доставки';
-        document.getElementById('w-period-label-dual').textContent = '';
+        document.getElementById('w-period-label').textContent = unit;
     } else {
         var y = waitMonthDate.getFullYear();
         var m = waitMonthDate.getMonth();
         var lastDay = new Date(y, m + 1, 0).getDate();
         dateFrom = y + '-' + String(m + 1).padStart(2, '0') + '-01';
         dateTo   = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
-        document.getElementById('w-period-label').textContent = 'минут · среднее фактическое время доставки';
-        document.getElementById('w-period-label-dual').textContent = '';
+        document.getElementById('w-period-label').textContent = unit;
     }
 
-    fetch('/api/wait-summary?date_from=' + dateFrom + '&date_to=' + dateTo + '&mode=' + waitMode + _waitBranchSuffix())
+    fetch('/api/wait-summary?date_from=' + dateFrom + '&date_to=' + dateTo + qsMode)
         .then(function(r) { return r.json(); })
         .then(function(d) {
             if (!d.ok) return;
-            if (waitMode === 'pickup') {
-                document.getElementById('w-promised').textContent = d.count ? fmtNum1(d.avg_promised) : '—';
-                document.getElementById('w-ready').textContent    = d.count ? fmtNum1(d.avg_ready) : '—';
-            } else {
-                document.getElementById('w-total').textContent = d.count ? fmtNum1(d.avg_delivery) : '—';
-            }
+            document.getElementById('w-total').textContent = d.count ? fmtNum1(d.avg) : '—';
             document.getElementById('w-count-label').textContent = d.count ? (d.count + ' ' + waitUnitLabel(d.count)) : 'нет заказов за период';
-            branchesWrap.innerHTML = branchWaitListHtml(d.branches, waitMode);
+            branchesWrap.innerHTML = branchWaitListHtml(d.branches);
         });
 
     if (waitPeriod === 'month') {
         dayWrap.style.display = '';
-        fetch('/api/wait-days?date_from=' + dateFrom + '&date_to=' + dateTo + '&mode=' + waitMode + _waitBranchSuffix())
+        fetch('/api/wait-days?date_from=' + dateFrom + '&date_to=' + dateTo + qsMode)
             .then(function(r) { return r.json(); })
             .then(function(d) {
                 if (!d.ok) return;
                 if (waitDayChart) { waitDayChart.destroy(); }
-                waitDayChart = makeWaitChart('w-day-canvas', d.days, waitMode, 'date');
+                waitDayChart = makeWaitChart('w-day-canvas', d.days, 'date');
             });
     }
 }
