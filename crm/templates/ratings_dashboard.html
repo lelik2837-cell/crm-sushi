@@ -26,38 +26,9 @@
         </div>
 
         {% if can_pick_other_branches('ratings_dashboard') %}
-        <div class="dropdown" style="margin-left:auto; flex-shrink:0; position:relative;">
-          <button id="rat-branch-btn" type="button"
-            data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
-            style="border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700;border:1.5px solid rgba(255,255,255,.45);background:rgba(255,255,255,.15);color:#fff;cursor:pointer;display:inline-flex;align-items:center;white-space:nowrap;flex-shrink:0;transition:all .15s;height:26px;">
-            <span id="rat-branch-abbr">Свои филиалы</span>
-          </button>
-          <div class="dropdown-menu p-2 shadow" style="min-width:220px;max-height:320px;overflow-y:auto;">
-            {% if branch_groups %}
-            <div class="text-muted px-1 mb-1" style="font-size:0.7rem;font-weight:600;letter-spacing:.5px;">ГРУППЫ</div>
-            {% for g in branch_groups %}
-            <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1 mb-1"
-                    onclick="selectRatBranchGroup({{ g.branch_ids | tojson }}, '{{ g.abbr or g.name }}')">
-              <span class="fw-bold">{{ g.abbr or g.name[:3].upper() }}</span>
-              <span class="text-muted ms-1 small">{{ g.name }} ({{ g.branch_ids | length }})</span>
-            </button>
-            {% endfor %}
-            <hr class="dropdown-divider my-1">
-            {% endif %}
-            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2 mb-1" style="cursor:pointer;">
-              <input type="checkbox" id="rat-branch-all-cb" onchange="toggleAllRatBranches(this)">
-              <span class="fw-semibold small">Все филиалы</span>
-            </label>
-            <hr class="dropdown-divider my-1">
-            {% for b in branches %}
-            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
-              <input type="checkbox" class="rat-branch-cb" value="{{ b.id }}" onchange="onRatBranchChange()">
-              <span class="fw-bold" style="font-size:11px;min-width:26px;color:#6c757d;">{{ b.abbr or b.name[:3].upper() }}</span>
-              <span class="small">{{ b.name }}</span>
-            </label>
-            {% endfor %}
-          </div>
-        </div>
+        {% set bs_prefix = 'rat' %}
+        {% set bs_empty_label = 'Свои филиалы' %}
+        {% include '_dash_branch_picker.html' %}
         {% endif %}
       </div>
 
@@ -92,43 +63,8 @@ var currentPeriod = 'day';   // 'day' | 'month'
 var currentMetric = 'revenue';
 var dayDate   = new Date();
 var monthDate = new Date();
-var ratBranchIds = [];
-
-function selectRatBranchGroup(ids, label) {
-  ratBranchIds = ids.slice();
-  document.querySelectorAll('.rat-branch-cb').forEach(function(cb) {
-    cb.checked = ratBranchIds.indexOf(parseInt(cb.value)) !== -1;
-  });
-  var allCb = document.getElementById('rat-branch-all-cb');
-  if (allCb) allCb.checked = false;
-  updateRatBranchLabel();
-  loadRatings();
-}
-function toggleAllRatBranches(cb) {
-  if (cb.checked) {
-    ratBranchIds = [];
-    document.querySelectorAll('.rat-branch-cb').forEach(function(c) { c.checked = false; });
-  } else {
-    cb.checked = false;
-  }
-  updateRatBranchLabel();
-  loadRatings();
-}
-function onRatBranchChange() {
-  ratBranchIds = [];
-  document.querySelectorAll('.rat-branch-cb:checked').forEach(function(cb) {
-    ratBranchIds.push(parseInt(cb.value));
-  });
-  var allCb = document.getElementById('rat-branch-all-cb');
-  if (allCb) allCb.checked = false;
-  updateRatBranchLabel();
-  loadRatings();
-}
-function updateRatBranchLabel() {
-  var el = document.getElementById('rat-branch-abbr');
-  if (!el) return;
-  el.textContent = ratBranchIds.length ? ('Выбрано: ' + ratBranchIds.length) : 'Свои филиалы';
-}
+window.ratBranchIds = [];
+window.ratOnBranchChange = function () { loadRatings(); };
 
 var MONTHS_GEN = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
 var MONTHS_NOM = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
@@ -264,8 +200,7 @@ function loadRatings() {
   document.getElementById('ratings-list').innerHTML =
     '<div style="text-align:center;opacity:.6;padding:20px 0;font-size:13px;">Загрузка...</div>';
 
-  var url = '/api/revenue-summary?date_from=' + dateFrom + '&date_to=' + dateTo;
-  if (ratBranchIds.length) url += '&branch_ids=' + ratBranchIds.join(',');
+  var url = '/api/revenue-summary?date_from=' + dateFrom + '&date_to=' + dateTo + dashBpSuffix('rat');
   fetch(url)
     .then(function(r) { return r.json(); })
     .then(function(d) {

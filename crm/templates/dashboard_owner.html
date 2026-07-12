@@ -2,13 +2,6 @@
 {% block title %}Панель директора{% endblock %}
 {% block content %}
 <style>
-/* Кнопка выбора филиала: круг на мобиле, пилюля на десктопе */
-#dash-branch-btn { width:32px; height:32px; border-radius:50%; padding:0; }
-#dash-branch-abbr { display:none; }
-@media (min-width:992px) {
-  #dash-branch-btn { width:auto; height:26px; border-radius:20px; padding:0 10px; gap:5px; }
-  #dash-branch-abbr { display:inline; }
-}
 @media (max-width:991.98px) {
   #rev-all-btn { display:none !important; }
 }
@@ -54,40 +47,8 @@
         </button>
         <input id="rev-cal-hidden" type="text" style="display:none; position:absolute;">
         <!-- Branch selector (pushes chart buttons right) -->
-        <div class="dropdown" style="margin-left:auto; flex-shrink:0; position:relative;">
-          <button id="dash-branch-btn" type="button"
-            data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
-            title="Выбор филиалов"
-            style="border:1.5px solid rgba(255,255,255,.45);background:rgba(255,255,255,.15);color:#fff;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .15s;">
-            <span id="dash-branch-abbr" style="font-size:11px;font-weight:700;white-space:nowrap;">Филиал</span>
-            <svg viewBox="0 0 8 5" width="8" height="5" fill="currentColor" style="opacity:.75;flex-shrink:0;"><path d="M0 0l4 5 4-5z"/></svg>
-          </button>
-          <div class="dropdown-menu p-2 shadow" style="min-width:220px;max-height:320px;overflow-y:auto;">
-            {% if branch_groups %}
-            <div class="text-muted px-1 mb-1" style="font-size:0.7rem;font-weight:600;letter-spacing:.5px;">ГРУППЫ</div>
-            {% for g in branch_groups %}
-            <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1 mb-1"
-                    onclick="selectDashBranchGroup({{ g.branch_ids | tojson }}, '{{ g.abbr or g.name }}')">
-              <span class="fw-bold">{{ g.abbr or g.name[:3].upper() }}</span>
-              <span class="text-muted ms-1 small">{{ g.name }} ({{ g.branch_ids | length }})</span>
-            </button>
-            {% endfor %}
-            <hr class="dropdown-divider my-1">
-            {% endif %}
-            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2 mb-1" style="cursor:pointer;">
-              <input type="checkbox" id="dash-branch-all-cb" onchange="toggleAllDashBranches(this)">
-              <span class="fw-semibold small">Все филиалы</span>
-            </label>
-            <hr class="dropdown-divider my-1">
-            {% for b in branches %}
-            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
-              <input type="checkbox" class="dash-branch-cb" value="{{ b.id }}" onchange="onDashBranchChange()">
-              <span class="fw-bold d-lg-none" style="font-size:11px;min-width:26px;color:#6c757d;">{{ b.abbr or b.name[:3].upper() }}</span>
-              <span class="small">{{ b.name }}</span>
-            </label>
-            {% endfor %}
-          </div>
-        </div>
+        {% set bs_prefix = 'dash' %}
+        {% include '_dash_branch_picker.html' %}
       </div>
       <!-- Label -->
       <div style="font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; opacity:.7; margin-bottom:6px;">Общая выручка</div>
@@ -499,80 +460,14 @@ document.addEventListener('click', function(e) {
     }
 });
 
-// ── Branch selector ───────────────────────────────────────────────────────────
+// ── Branch selector (единый компонент, см. _dash_branch_picker.html / base.html) ──
 var DASH_BRANCH_GROUPS = {{ branch_groups | tojson }};
-var DASH_BRANCHES = [{% for b in branches %}{"id":{{ b.id }},"name":{{ b.name | tojson }},"abbr":{{ (b.abbr or b.name[:3].upper()) | tojson }}}{% if not loop.last %},{% endif %}{% endfor %}];
-var revBranchIds = [];
-
-(function() {
-    var nkGroup = DASH_BRANCH_GROUPS.find(function(g) {
-        return g.abbr === 'НК' || g.name.indexOf('Новокузнецк') !== -1 || g.name === 'НК';
-    });
-    if (nkGroup && nkGroup.branch_ids && nkGroup.branch_ids.length) {
-        revBranchIds = nkGroup.branch_ids.slice();
-        updateDashBranchBtn();
-    }
-})();
-
-function getDashBranchParam() {
-    return revBranchIds.length ? revBranchIds.join(',') : '';
-}
-function _revBranchSuffix() {
-    return revBranchIds.length ? '&branch_ids=' + revBranchIds.join(',') : '';
-}
-
-function _dashIsDesktop() { return window.innerWidth >= 992; }
-
-function updateDashBranchBtn() {
-    var el = document.getElementById('dash-branch-abbr');
-    if (!el) return;
-    var ids = revBranchIds;
-    if (!ids.length) { el.textContent = 'Все филиалы'; return; }
-    var grp = DASH_BRANCH_GROUPS.find(function(g) {
-        return g.branch_ids.length === ids.length &&
-               g.branch_ids.every(function(id) { return ids.indexOf(id) !== -1; });
-    });
-    if (grp) { el.textContent = grp.name || grp.abbr; return; }
-    var b1 = DASH_BRANCHES.find(function(x){ return x.id === ids[0]; });
-    el.textContent = ids.length === 1 && b1 ? b1.name : ids.length + ' филиалов';
-}
-
-function selectDashBranchGroup(ids, label) {
-    revBranchIds = ids.slice();
-    document.querySelectorAll('.dash-branch-cb').forEach(function(cb) {
-        cb.checked = revBranchIds.indexOf(parseInt(cb.value)) !== -1;
-    });
-    var allCb = document.getElementById('dash-branch-all-cb');
-    if (allCb) allCb.checked = false;
-    updateDashBranchBtn();
-    refreshDashRevData();
-}
-
-function toggleAllDashBranches(cb) {
-    if (cb.checked) {
-        revBranchIds = [];
-        document.querySelectorAll('.dash-branch-cb').forEach(function(c){ c.checked = false; });
-    } else {
-        cb.checked = false;
-    }
-    updateDashBranchBtn();
-    refreshDashRevData();
-}
-
-function onDashBranchChange() {
-    revBranchIds = [];
-    document.querySelectorAll('.dash-branch-cb:checked').forEach(function(cb) {
-        revBranchIds.push(parseInt(cb.value));
-    });
-    var allCb = document.getElementById('dash-branch-all-cb');
-    if (allCb) allCb.checked = false;
-    updateDashBranchBtn();
-    refreshDashRevData();
-}
-
-function refreshDashRevData() {
-    loadRevCard(revPeriod);
-}
+window.dashBranchIds = [];
+window.dashOnBranchChange = function () { loadRevCard(revPeriod); };
+dashBpInitGroup('dash', DASH_BRANCH_GROUPS, function (g) {
+    return g.abbr === 'НК' || g.name.indexOf('Новокузнецк') !== -1 || g.name === 'НК';
+});
+function _revBranchSuffix() { return dashBpSuffix('dash'); }
 // ─────────────────────────────────────────────────────────────────────────────
 
 var revCalPicker = null;

@@ -14,38 +14,8 @@
         <button id="lfl-btn-ord" onclick="setLflMetric('orders')"
           style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px; transition:all .15s;">Заказы</button>
         <!-- branch dropdown -->
-        <div class="dropdown" style="margin-left:auto; flex-shrink:0; position:relative;">
-          <button id="lfl-branch-btn" type="button"
-            data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
-            style="border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700;border:1.5px solid rgba(255,255,255,.45);background:rgba(255,255,255,.15);color:#fff;cursor:pointer;display:inline-flex;align-items:center;white-space:nowrap;flex-shrink:0;transition:all .15s;height:26px;">
-            <span id="lfl-branch-abbr">Все</span>
-          </button>
-          <div class="dropdown-menu p-2 shadow" style="min-width:220px;max-height:320px;overflow-y:auto;">
-            {% if branch_groups %}
-            <div class="text-muted px-1 mb-1" style="font-size:0.7rem;font-weight:600;letter-spacing:.5px;">ГРУППЫ</div>
-            {% for g in branch_groups %}
-            <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1 mb-1"
-                    onclick="selectLflBranchGroup({{ g.branch_ids | tojson }}, '{{ g.abbr or g.name }}')">
-              <span class="fw-bold">{{ g.abbr or g.name[:3].upper() }}</span>
-              <span class="text-muted ms-1 small">{{ g.name }} ({{ g.branch_ids | length }})</span>
-            </button>
-            {% endfor %}
-            <hr class="dropdown-divider my-1">
-            {% endif %}
-            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2 mb-1" style="cursor:pointer;">
-              <input type="checkbox" id="lfl-branch-all-cb" onchange="toggleAllLflBranches(this)" checked>
-              <span class="fw-semibold small">Все филиалы</span>
-            </label>
-            <hr class="dropdown-divider my-1">
-            {% for b in branches %}
-            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
-              <input type="checkbox" class="lfl-branch-cb" value="{{ b.id }}" onchange="onLflBranchChange()">
-              <span class="fw-bold" style="font-size:11px;min-width:26px;color:#6c757d;">{{ b.abbr or b.name[:3].upper() }}</span>
-              <span class="small">{{ b.name }}</span>
-            </label>
-            {% endfor %}
-          </div>
-        </div>
+        {% set bs_prefix = 'lfl' %}
+        {% include '_dash_branch_picker.html' %}
       </div>
       <!-- Label -->
       <div id="lfl-card-title" style="font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; opacity:.7; margin-bottom:6px;">LFL — Рост выручки</div>
@@ -78,77 +48,14 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
 var LFL_BRANCH_GROUPS = {{ branch_groups | tojson }};
-var LFL_BRANCHES = [{% for b in branches %}{"id":{{ b.id }},"name":{{ b.name | tojson }},"abbr":{{ (b.abbr or b.name[:3].upper()) | tojson }}}{% if not loop.last %},{% endif %}{% endfor %}];
+window.lflBranchIds = [];
+window.lflOnBranchChange = function () { loadLfl(); };
+dashBpInitGroup('lfl', LFL_BRANCH_GROUPS, function (g) {
+    return g.abbr === 'НК' || g.name === 'НК' || g.name.indexOf('Новокузнецк') !== -1;
+});
 
-var lflChart     = null;
-var lflMetric    = 'revenue';
-var lflBranchIds = [];
-
-// Авто-выбор группы НК при загрузке
-(function() {
-    var nkGroup = LFL_BRANCH_GROUPS.find(function(g) {
-        return g.abbr === 'НК' || g.name === 'НК' || g.name.indexOf('Новокузнецк') !== -1;
-    });
-    if (nkGroup && nkGroup.branch_ids && nkGroup.branch_ids.length) {
-        lflBranchIds = nkGroup.branch_ids.slice();
-        document.querySelectorAll('.lfl-branch-cb').forEach(function(cb) {
-            cb.checked = lflBranchIds.indexOf(parseInt(cb.value)) !== -1;
-        });
-        var allCb = document.getElementById('lfl-branch-all-cb');
-        if (allCb) allCb.checked = false;
-    }
-})();
-
-function updateLflBranchBtn() {
-    var btn = document.getElementById('lfl-branch-abbr');
-    if (!btn) return;
-    var ids = lflBranchIds;
-    if (!ids.length) { btn.textContent = 'Все'; return; }
-    var grp = LFL_BRANCH_GROUPS.find(function(g) {
-        return g.branch_ids.length === ids.length &&
-               g.branch_ids.every(function(id) { return ids.indexOf(id) !== -1; });
-    });
-    if (grp) { btn.textContent = grp.abbr || grp.name; return; }
-    if (ids.length === 1) {
-        var b = LFL_BRANCHES.find(function(x){ return x.id === ids[0]; });
-        btn.textContent = b ? (b.abbr || b.name.slice(0, 3)) : ids[0];
-    } else {
-        btn.textContent = ids.length + ' фил.';
-    }
-}
-
-function selectLflBranchGroup(ids) {
-    lflBranchIds = ids.slice();
-    document.querySelectorAll('.lfl-branch-cb').forEach(function(cb) {
-        cb.checked = lflBranchIds.indexOf(parseInt(cb.value)) !== -1;
-    });
-    var allCb = document.getElementById('lfl-branch-all-cb');
-    if (allCb) allCb.checked = false;
-    updateLflBranchBtn();
-    loadLfl();
-}
-
-function toggleAllLflBranches(cb) {
-    if (cb.checked) {
-        lflBranchIds = [];
-        document.querySelectorAll('.lfl-branch-cb').forEach(function(c){ c.checked = false; });
-    } else {
-        cb.checked = true;
-    }
-    updateLflBranchBtn();
-    loadLfl();
-}
-
-function onLflBranchChange() {
-    lflBranchIds = [];
-    document.querySelectorAll('.lfl-branch-cb:checked').forEach(function(cb) {
-        lflBranchIds.push(parseInt(cb.value));
-    });
-    var allCb = document.getElementById('lfl-branch-all-cb');
-    if (allCb) allCb.checked = false;
-    updateLflBranchBtn();
-    loadLfl();
-}
+var lflChart  = null;
+var lflMetric = 'revenue';
 
 function setLflMetric(metric) {
     lflMetric = metric;
@@ -256,8 +163,7 @@ function buildLflChart(months) {
 }
 
 function loadLfl() {
-    var url = '/api/lfl?metric=' + lflMetric;
-    if (lflBranchIds.length) url += '&branch_ids=' + lflBranchIds.join(',');
+    var url = '/api/lfl?metric=' + lflMetric + dashBpSuffix('lfl');
     fetch(url).then(function(r) { return r.json(); }).then(function(d) {
         if (!d.ok) return;
         var months = d.months;
@@ -284,7 +190,6 @@ function loadLfl() {
     });
 }
 
-updateLflBranchBtn();
 loadLfl();
 loadLflBranches();
 </script>

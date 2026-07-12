@@ -156,6 +156,19 @@
             background: #e2e8f0;
             color: #1e293b;
         }
+
+        /* Единая кнопка выбора филиалов на карточках дашборда (Выручка/ФОТ/LFL/Рейтинги/Ожидание/Промокоды) */
+        .dash-branch-btn {
+            width: 32px; height: 32px; border-radius: 50%; padding: 0;
+            border: 1.5px solid rgba(255,255,255,.45); background: rgba(255,255,255,.15); color: #fff;
+            cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+            flex-shrink: 0; transition: all .15s; gap: 5px;
+        }
+        .dash-branch-abbr { display: none; font-size: 11px; font-weight: 700; white-space: nowrap; }
+        @media (min-width: 992px) {
+            .dash-branch-btn { width: auto; height: 26px; border-radius: 20px; padding: 0 10px; }
+            .dash-branch-abbr { display: inline; }
+        }
     </style>
 </head>
 <body>
@@ -210,6 +223,14 @@
                     </a>
                 </li>
                 {% endif %}
+                {% if item_visible('promo_dashboard') %}
+                <li>
+                    <a class="dropdown-item {% if request.endpoint=='promo_dashboard' %}active{% endif %}"
+                       href="{{ url_for('promo_dashboard') }}">
+                        <i class="bi bi-ticket-perforated me-2"></i>Промокоды
+                    </a>
+                </li>
+                {% endif %}
             </ul>
         </div>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav" {% if not any_menu_visible() %}style="display:none"{% endif %}>
@@ -218,7 +239,7 @@
         <div class="collapse navbar-collapse" id="nav">
             <ul class="navbar-nav me-auto">
                 {% if group_has_visible_item('dash') %}
-                {% set dash_active = request.endpoint in ('dashboard', 'fot_dashboard', 'lfl_dashboard', 'ratings_dashboard', 'wait_dashboard') %}
+                {% set dash_active = request.endpoint in ('dashboard', 'fot_dashboard', 'lfl_dashboard', 'ratings_dashboard', 'wait_dashboard', 'promo_dashboard') %}
                 <li class="nav-item dropdown d-none d-lg-flex">
                     <a class="nav-link nav-link-dashboard dropdown-toggle {% if dash_active %}active{% endif %}"
                        href="#" data-bs-toggle="dropdown" aria-expanded="false">
@@ -257,6 +278,13 @@
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='wait_dashboard' %}active{% endif %}" href="{{ url_for('wait_dashboard') }}">
                                 <i class="bi bi-stopwatch me-2"></i>Ожидание
+                            </a>
+                        </li>
+                        {% endif %}
+                        {% if item_visible('promo_dashboard') %}
+                        <li>
+                            <a class="dropdown-item {% if request.endpoint=='promo_dashboard' %}active{% endif %}" href="{{ url_for('promo_dashboard') }}">
+                                <i class="bi bi-ticket-perforated me-2"></i>Промокоды
                             </a>
                         </li>
                         {% endif %}
@@ -518,6 +546,90 @@ function onPhoneInput(el) {
   if (d.length > 4) out += '-' + d.slice(4, Math.min(7, d.length));
   if (d.length > 7) out += '-' + d.slice(7, Math.min(11, d.length));
   el.value = out;
+}
+
+// ── Единая кнопка выбора филиалов на карточках дашборда (см. _dash_branch_picker.html) ──
+// Состояние хранится в window[prefix + 'BranchIds']; страница-хост слушает изменения
+// через window[prefix + 'OnBranchChange'] и читает выбор через dashBpSuffix(prefix).
+function dashBpSelectGroup(prefix, ids, abbr) {
+    window[prefix + 'BranchIds'] = ids.slice();
+    document.querySelectorAll('.' + prefix + '-branch-cb').forEach(function (cb) {
+        cb.checked = ids.indexOf(parseInt(cb.value)) !== -1;
+    });
+    var allCb = document.getElementById(prefix + '-branch-all-cb');
+    if (allCb) allCb.checked = false;
+    var label = document.getElementById(prefix + '-branch-abbr');
+    if (label) label.textContent = abbr;
+    if (typeof window[prefix + 'OnBranchChange'] === 'function') window[prefix + 'OnBranchChange']();
+}
+function dashBpEmptyLabel(prefix) {
+    var btn = document.getElementById(prefix + '-branch-btn');
+    return (btn && btn.dataset.emptyLabel) || 'Все';
+}
+function dashBpToggleAll(prefix, cb) {
+    if (cb.checked) {
+        window[prefix + 'BranchIds'] = [];
+        document.querySelectorAll('.' + prefix + '-branch-cb').forEach(function (c) { c.checked = false; });
+        var label = document.getElementById(prefix + '-branch-abbr');
+        if (label) label.textContent = dashBpEmptyLabel(prefix);
+    } else {
+        cb.checked = false;
+    }
+    if (typeof window[prefix + 'OnBranchChange'] === 'function') window[prefix + 'OnBranchChange']();
+}
+function dashBpOnChange(prefix) {
+    var ids = [];
+    document.querySelectorAll('.' + prefix + '-branch-cb:checked').forEach(function (cb) { ids.push(parseInt(cb.value)); });
+    window[prefix + 'BranchIds'] = ids;
+    var allCb = document.getElementById(prefix + '-branch-all-cb');
+    if (allCb) allCb.checked = ids.length === 0;
+    var label = document.getElementById(prefix + '-branch-abbr');
+    if (label) label.textContent = ids.length === 0 ? dashBpEmptyLabel(prefix) : ids.length + ' филиалов';
+    if (typeof window[prefix + 'OnBranchChange'] === 'function') window[prefix + 'OnBranchChange']();
+}
+function dashBpSuffix(prefix) {
+    var ids = window[prefix + 'BranchIds'] || [];
+    return ids.length ? '&branch_ids=' + ids.join(',') : '';
+}
+// Предвыбор группы по умолчанию при загрузке страницы (например «НК»), без вызова OnBranchChange.
+function dashBpInitGroup(prefix, groups, matcherFn) {
+    var g = (groups || []).find(matcherFn);
+    if (!g || !g.branch_ids || !g.branch_ids.length) return;
+    window[prefix + 'BranchIds'] = g.branch_ids.slice();
+    document.querySelectorAll('.' + prefix + '-branch-cb').forEach(function (cb) {
+        cb.checked = window[prefix + 'BranchIds'].indexOf(parseInt(cb.value)) !== -1;
+    });
+    var allCb = document.getElementById(prefix + '-branch-all-cb');
+    if (allCb) allCb.checked = false;
+    var label = document.getElementById(prefix + '-branch-abbr');
+    if (label) label.textContent = g.abbr || g.name;
+}
+
+// ── Текстовый режим (bs_mode='text'): ключ — branch_raw из «Отчёта по заказам», без групп ──
+function dashBpTextToggleAll(prefix, cb) {
+    if (cb.checked) {
+        window[prefix + 'BranchIds'] = [];
+        document.querySelectorAll('.' + prefix + '-branch-cb').forEach(function (c) { c.checked = false; });
+        var label = document.getElementById(prefix + '-branch-abbr');
+        if (label) label.textContent = dashBpEmptyLabel(prefix);
+    } else {
+        cb.checked = false;
+    }
+    if (typeof window[prefix + 'OnBranchChange'] === 'function') window[prefix + 'OnBranchChange']();
+}
+function dashBpTextOnChange(prefix) {
+    var vals = [];
+    document.querySelectorAll('.' + prefix + '-branch-cb:checked').forEach(function (cb) { vals.push(cb.value); });
+    window[prefix + 'BranchIds'] = vals;
+    var allCb = document.getElementById(prefix + '-branch-all-cb');
+    if (allCb) allCb.checked = vals.length === 0;
+    var label = document.getElementById(prefix + '-branch-abbr');
+    if (label) label.textContent = vals.length === 0 ? dashBpEmptyLabel(prefix) : (vals.length === 1 ? vals[0] : vals.length + ' подразд.');
+    if (typeof window[prefix + 'OnBranchChange'] === 'function') window[prefix + 'OnBranchChange']();
+}
+function dashBpTextSuffix(prefix) {
+    var vals = window[prefix + 'BranchIds'] || [];
+    return vals.length ? '&branch_raw=' + vals.map(encodeURIComponent).join(',') : '';
 }
 </script>
 {% block scripts %}{% endblock %}

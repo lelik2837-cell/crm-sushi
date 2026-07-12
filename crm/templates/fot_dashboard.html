@@ -23,38 +23,8 @@
         </button>
         <input id="fot-cal-hidden" type="text" style="display:none; position:absolute;">
         <!-- Branch selector -->
-        <div class="dropdown" style="margin-left:auto; flex-shrink:0; position:relative;">
-          <button id="fot-branch-btn" type="button"
-            data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
-            title="Выбор филиалов"
-            style="border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700;border:1.5px solid rgba(255,255,255,.45);background:rgba(255,255,255,.15);color:#fff;cursor:pointer;display:inline-flex;align-items:center;white-space:nowrap;flex-shrink:0;transition:all .15s;height:26px;">
-            <span id="fot-branch-abbr">НК</span>
-          </button>
-          <div class="dropdown-menu p-2 shadow" style="min-width:220px;max-height:320px;overflow-y:auto;">
-            {% if branch_groups %}
-            <div class="text-muted px-1 mb-1" style="font-size:0.7rem;font-weight:600;letter-spacing:.5px;">ГРУППЫ</div>
-            {% for g in branch_groups %}
-            <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1 mb-1"
-                    onclick="selectFotBranchGroup({{ g.branch_ids | tojson }}, '{{ g.name }}')">
-              {{ g.name }} <span class="text-muted">({{ g.branch_ids | length }})</span>
-            </button>
-            {% endfor %}
-            <hr class="dropdown-divider my-1">
-            {% endif %}
-            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2 mb-1" style="cursor:pointer;">
-              <input type="checkbox" id="fot-branch-all-cb" onchange="toggleAllFotBranches(this)">
-              <span class="fw-semibold small">Все филиалы</span>
-            </label>
-            <hr class="dropdown-divider my-1">
-            {% for b in branches %}
-            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
-              <input type="checkbox" class="fot-branch-cb" value="{{ b.id }}" onchange="onFotBranchChange()">
-              <span class="fw-semibold d-lg-none" style="font-size:11px;min-width:22px;color:#6c757d;">{{ b.abbr if b.abbr else b.name[:3].upper() }}</span>
-              <span class="small">{{ b.name }}</span>
-            </label>
-            {% endfor %}
-          </div>
-        </div>
+        {% set bs_prefix = 'fot' %}
+        {% include '_dash_branch_picker.html' %}
         <!-- % toggle -->
         <button id="fot-unit-btn" onclick="toggleUnit()" title="Переключить % / ₽"
           style="flex-shrink:0;width:26px;height:26px;border-radius:50%;border:1.5px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);cursor:pointer;padding:0;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;transition:all .15s;">%</button>
@@ -145,83 +115,13 @@ var fotCustomFrom = null;
 var fotCustomTo   = null;
 var fotCalPicker  = null;
 
-var FOT_BRANCHES      = {{ branches | tojson }};
 var FOT_BRANCH_GROUPS = {{ branch_groups | tojson }};
-var fotBranchIds      = [];   // пусто = все филиалы
+window.fotBranchIds = [];
+window.fotOnBranchChange = function () { loadFot(fotPeriod); };
+dashBpInitGroup('fot', FOT_BRANCH_GROUPS, function (g) { return g.name === 'НК'; });
 
-// Инициализация дефолтной группы НК
-(function() {
-    var nk = FOT_BRANCH_GROUPS.find(function(g) { return g.name === 'НК'; });
-    if (nk && nk.branch_ids && nk.branch_ids.length) {
-        fotBranchIds = nk.branch_ids.slice();
-    }
-    updateFotBranchBtn();
-})();
-
-function getFotBranchParam() {
-    return fotBranchIds.length ? fotBranchIds.join(',') : '';
-}
-
-function _fotBranchSuffix() {
-    var p = getFotBranchParam();
-    return p ? '&branch_ids=' + p : '';
-}
-
-function _fotIsDesktop() { return window.innerWidth >= 992; }
-
-function updateFotBranchBtn() {
-    var el = document.getElementById('fot-branch-abbr');
-    if (!el) return;
-    if (!fotBranchIds.length) { el.textContent = 'Все'; return; }
-    var grp = FOT_BRANCH_GROUPS.find(function(g) {
-        return g.branch_ids.length === fotBranchIds.length &&
-               g.branch_ids.every(function(id) { return fotBranchIds.indexOf(id) >= 0; });
-    });
-    if (grp) {
-        el.textContent = _fotIsDesktop() ? grp.name : (grp.abbr || grp.name);
-        return;
-    }
-    var bs = FOT_BRANCHES.filter(function(b) { return fotBranchIds.indexOf(b.id) >= 0; });
-    if (_fotIsDesktop()) {
-        el.textContent = bs.length === 1 ? bs[0].name : bs.length + ' филиалов';
-    } else {
-        el.textContent = bs.length <= 2
-            ? bs.map(function(b){ return b.abbr || b.name.slice(0,3); }).join(',')
-            : bs.length + 'фил';
-    }
-}
-
-function selectFotBranchGroup(ids, name) {
-    fotBranchIds = ids.slice();
-    document.querySelectorAll('.fot-branch-cb').forEach(function(cb) {
-        cb.checked = ids.indexOf(parseInt(cb.value)) >= 0;
-    });
-    var allCb = document.getElementById('fot-branch-all-cb');
-    if (allCb) allCb.checked = false;
-    updateFotBranchBtn();
-    var dd = bootstrap.Dropdown.getOrCreateInstance(document.getElementById('fot-branch-btn'));
-    dd.hide();
-    loadFot(fotPeriod);
-}
-
-function toggleAllFotBranches(cb) {
-    if (cb.checked) {
-        document.querySelectorAll('.fot-branch-cb').forEach(function(c) { c.checked = false; });
-        fotBranchIds = [];
-        updateFotBranchBtn();
-        loadFot(fotPeriod);
-    }
-}
-
-function onFotBranchChange() {
-    var checked = Array.from(document.querySelectorAll('.fot-branch-cb:checked'));
-    fotBranchIds = checked.map(function(c) { return parseInt(c.value); });
-    var allCb = document.getElementById('fot-branch-all-cb');
-    if (allCb) allCb.checked = (fotBranchIds.length === 0);
-    updateFotBranchBtn();
-    clearTimeout(window._fotBranchTimer);
-    window._fotBranchTimer = setTimeout(function() { loadFot(fotPeriod); }, 300);
-}
+function getFotBranchParam() { return (window.fotBranchIds || []).join(','); }
+function _fotBranchSuffix() { return dashBpSuffix('fot'); }
 
 function fmtN(n) { return Math.round(n).toLocaleString('ru-RU'); }
 

@@ -1,0 +1,542 @@
+{% extends 'base.html' %}
+{% block title %}Промокоды{% endblock %}
+{% block content %}
+
+<div class="row g-3 mb-4">
+  <div class="col-12">
+    <div id="promo-card" style="background:linear-gradient(135deg,#4a2f0f 0%,#78350f 45%,#a16207 100%); border-radius:20px; padding:28px 28px 24px; color:#fff; position:relative;">
+
+      <!-- Row 1: period buttons + calendar + branch selector -->
+      <div style="display:flex; gap:6px; margin-bottom:10px; align-items:center; flex-wrap:wrap;">
+        <div class="p-nav" data-period="today" style="display:flex; align-items:center; gap:1px; background:rgba(255,255,255,.12); border:1.5px solid rgba(255,255,255,.35); border-radius:16px; padding:2px;">
+          <button onclick="navPromoToday(-1)" title="Предыдущий день"
+            style="width:19px; height:19px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; line-height:1;">‹</button>
+          <button onclick="selectPromoToday()" id="p-today-btn"
+            style="border:none; background:transparent; color:#fff; cursor:pointer; font-size:10px; font-weight:700; padding:2px 5px; letter-spacing:.2px; white-space:nowrap;">Сегодня</button>
+          <button onclick="navPromoToday(1)" title="Следующий день"
+            style="width:19px; height:19px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; line-height:1;">›</button>
+        </div>
+        <div class="p-nav" data-period="month" style="display:flex; align-items:center; gap:1px; background:rgba(255,255,255,.25); border:1.5px solid rgba(255,255,255,.9); border-radius:16px; padding:2px;">
+          <button onclick="navPromoMonth(-1)" title="Предыдущий месяц"
+            style="width:19px; height:19px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; line-height:1;">‹</button>
+          <button onclick="selectPromoMonth()" id="p-month-btn"
+            style="border:none; background:transparent; color:#fff; cursor:pointer; font-size:10px; font-weight:700; padding:2px 5px; letter-spacing:.2px; white-space:nowrap;">Месяц</button>
+          <button onclick="navPromoMonth(1)" title="Следующий месяц"
+            style="width:19px; height:19px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; line-height:1;">›</button>
+        </div>
+        <div style="position:relative;">
+          <div class="p-nav" data-period="year" style="display:flex; align-items:center; gap:1px; background:rgba(255,255,255,.12); border:1.5px solid rgba(255,255,255,.35); border-radius:16px; padding:2px;">
+            <button onclick="loadPromoCard('year')" id="p-year-btn"
+              style="border:none; background:transparent; color:#fff; cursor:pointer; font-size:10px; font-weight:700; padding:2px 3px 2px 6px; letter-spacing:.2px; white-space:nowrap;">Год</button>
+            <button onclick="togglePromoYearMenu(event)" id="p-year-caret" title="Выбрать год"
+              style="width:16px; height:19px; border:none; background:transparent; color:#fff; cursor:pointer; padding:0 4px 0 0; display:flex; align-items:center; justify-content:center;">
+              <svg viewBox="0 0 8 5" width="8" height="5" fill="currentColor"><path d="M0 0l4 5 4-5z"/></svg>
+            </button>
+          </div>
+          <div id="p-year-menu" style="display:none; position:absolute; top:calc(100% + 4px); left:0; background:#fff; border-radius:10px; min-width:88px; overflow:hidden; z-index:30; box-shadow:0 6px 20px rgba(0,0,0,.25);"></div>
+        </div>
+        <button id="p-all-btn" onclick="loadPromoCard('all')" data-rp="all" class="p-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px;">Всё</button>
+        <button id="p-cal-btn" onclick="openPromoCal()" title="Выбрать период" style="width:26px; height:26px; flex-shrink:0; border-radius:50%; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); cursor:pointer; padding:0; display:inline-flex; align-items:center; justify-content:center;">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><path d="M3.5 0a.5.5 0 0 1 .5.5V1h8V.5a.5.5 0 0 1 1 0V1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h1V.5a.5.5 0 0 1 .5-.5zM1 4v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4H1z"/></svg>
+        </button>
+        <input id="p-cal-hidden" type="text" style="display:none; position:absolute;">
+
+        <!-- ₽ / % toggle -->
+        <button id="p-unit-btn" onclick="togglePromoUnit()" title="Переключить ₽ / %"
+          style="flex-shrink:0;width:26px;height:26px;border-radius:50%;border:1.5px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);cursor:pointer;padding:0;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;">₽</button>
+
+        <!-- Branch selector -->
+        {% set bs_prefix = 'promo' %}
+        {% set bs_mode = 'text' %}
+        {% include '_dash_branch_picker.html' %}
+      </div>
+
+      <!-- Label -->
+      <div id="p-label-title" style="font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; opacity:.7; margin-bottom:6px;">Все промокоды</div>
+
+      <!-- Big number -->
+      <div id="p-total" style="font-size:clamp(32px,6vw,52px); font-weight:800; letter-spacing:-1px; line-height:1.05; margin-bottom:2px;">—</div>
+      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px;">
+        <div id="p-period-label" style="font-size:14px; opacity:.6;">рублей</div>
+      </div>
+      <div id="p-count-label" style="font-size:12px; opacity:.55; margin-bottom:14px;"></div>
+
+      <!-- Divider -->
+      <div style="border-top:1px solid rgba(255,255,255,.2); margin-bottom:14px;"></div>
+
+      <!-- Day chart (month mode) -->
+      <div id="p-day-wrap" style="display:none;">
+        <canvas id="p-day-canvas" height="120"></canvas>
+      </div>
+
+      <!-- Year chart (year/all/custom-long mode) -->
+      <div id="p-year-wrap" style="display:none;">
+        <canvas id="p-year-canvas" height="150"></canvas>
+        <div id="p-month-detail" style="display:none; margin-top:16px; border-top:1px solid rgba(255,255,255,.2); padding-top:14px;">
+          <div id="p-month-title" style="font-size:12px; font-weight:700; letter-spacing:.5px; opacity:.8; margin-bottom:10px; text-transform:uppercase;"></div>
+          <div id="p-year-day-wrap" style="display:none;">
+            <canvas id="p-year-day-canvas" height="110"></canvas>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ══ Список промокодов ══ -->
+<div class="card mb-4">
+  <div class="card-header bg-light d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <span class="fw-bold"><i class="bi bi-ticket-perforated"></i> Промокоды за период</span>
+    <a href="#" id="p-reset-link" onclick="selectPromo(''); return false;" class="small text-decoration-none" style="display:none;">
+      <i class="bi bi-x-circle me-1"></i>Сбросить выбор промокода
+    </a>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0 align-middle" id="promoTable" style="font-size:12.5px">
+      <thead class="table-light">
+        <tr>
+          <th class="p-sort" style="cursor:pointer;user-select:none">Промокод <span class="p-arrow text-muted"></span></th>
+          <th class="p-sort" style="cursor:pointer;user-select:none">Последний заказ <span class="p-arrow text-muted"></span></th>
+          <th class="p-sort text-end" style="cursor:pointer;user-select:none">Сумма выручки <span class="p-arrow text-muted"></span></th>
+          <th class="p-sort text-end" style="cursor:pointer;user-select:none">% от выручки <span class="p-arrow text-muted"></span></th>
+          <th class="p-sort text-end" style="cursor:pointer;user-select:none">Новых клиентов <span class="p-arrow text-muted"></span></th>
+          <th class="p-sort text-end" style="cursor:pointer;user-select:none">Средний чек <span class="p-arrow text-muted"></span></th>
+        </tr>
+      </thead>
+      <tbody id="promoTbody">
+        <tr><td colspan="6" class="text-center text-muted py-3">Загрузка...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+function fmtLocalDate(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function isSameDay(a, b) { return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate(); }
+function fmtNum(n) { return Math.round(n).toLocaleString('ru-RU'); }
+function fmtPct1(n) { var r = Math.round(n * 10) / 10; return (r % 1 === 0) ? String(Math.round(r)) : String(r).replace('.', ','); }
+
+var MONTHS_RU_FULL = ['', 'Январь','Февраль','Март','Апрель','Май','Июнь',
+                      'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+var MONTHS_RU_GEN  = ['', 'января','февраля','марта','апреля','мая','июня',
+                      'июля','августа','сентября','октября','ноября','декабря'];
+
+var promoPeriod     = 'today';
+var promoChart      = null;
+var promoDayChart   = null;
+var promoYearDayChart = null;
+var promoYear       = new Date().getFullYear();
+var promoCustomFrom = null;
+var promoCustomTo   = null;
+var promoTodayDate  = new Date();
+var promoMonthDate  = (function() { var d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); })();
+var selectedPromo   = '';
+var showPct         = false;
+var lastDays         = [];
+var lastMonths        = [];
+
+window.promoBranchIds = [];
+window.promoOnBranchChange = function () { loadPromoCard(promoPeriod); loadPromoList(); };
+
+function togglePromoUnit() {
+    showPct = !showPct;
+    var btn = document.getElementById('p-unit-btn');
+    btn.textContent = showPct ? '%' : '₽';
+    btn.style.background = showPct ? 'rgba(255,255,255,.28)' : 'rgba(255,255,255,.12)';
+    btn.style.borderColor = showPct ? 'rgba(255,255,255,.9)' : 'rgba(255,255,255,.35)';
+    renderPromoTotals(lastSummary);
+    if (lastDays.length) promoDayChart = redrawPromoChart('p-day-canvas', lastDays, 'date', promoDayChart);
+    if (lastMonths.length) promoChart = redrawPromoChart('p-year-canvas', lastMonths, 'month', promoChart, true);
+}
+
+function selectPromo(name) {
+    selectedPromo = name || '';
+    document.getElementById('p-label-title').textContent = selectedPromo ? ('Промокод: ' + selectedPromo) : 'Все промокоды';
+    document.getElementById('p-reset-link').style.display = selectedPromo ? '' : 'none';
+    document.querySelectorAll('#promoTbody tr').forEach(function(tr) {
+        tr.classList.toggle('table-active', tr.dataset.name === selectedPromo);
+    });
+    loadPromoCard(promoPeriod);
+}
+
+function selectPromoToday() { promoTodayDate = new Date(); loadPromoCard('today'); }
+function selectPromoMonth() { var d = new Date(); promoMonthDate = new Date(d.getFullYear(), d.getMonth(), 1); loadPromoCard('month'); }
+function navPromoToday(delta) { promoTodayDate.setDate(promoTodayDate.getDate() + delta); loadPromoCard('today'); }
+function navPromoMonth(delta) { promoMonthDate = new Date(promoMonthDate.getFullYear(), promoMonthDate.getMonth() + delta, 1); loadPromoCard('month'); }
+
+function togglePromoYearMenu(ev) {
+    ev.stopPropagation();
+    var menu = document.getElementById('p-year-menu');
+    if (!menu) return;
+    if (menu.style.display === 'block') { menu.style.display = 'none'; return; }
+    var curYear = new Date().getFullYear();
+    var items = '';
+    for (var y = curYear; y >= curYear - 4; y--) {
+        var active = promoPeriod === 'year' && promoYear === y;
+        items += '<div class="p-year-opt" data-y="' + y + '" style="padding:7px 16px;font-size:13px;color:#1e293b;cursor:pointer;white-space:nowrap;' +
+                 (active ? 'font-weight:700;background:#f1f5f9;' : '') + '">' + y + '</div>';
+    }
+    menu.innerHTML = items;
+    menu.style.display = 'block';
+}
+document.addEventListener('click', function(e) {
+    var menu = document.getElementById('p-year-menu');
+    if (!menu) return;
+    var opt = e.target.closest && e.target.closest('.p-year-opt');
+    if (opt) {
+        menu.style.display = 'none';
+        promoYear = parseInt(opt.dataset.y);
+        loadPromoCard('year');
+        return;
+    }
+    if (menu.style.display === 'block' && !menu.contains(e.target) && !(e.target.closest && e.target.closest('#p-year-caret'))) {
+        menu.style.display = 'none';
+    }
+});
+
+var promoCalPicker = null;
+function openPromoCal() {
+    if (!promoCalPicker) {
+        promoCalPicker = flatpickr('#p-cal-hidden', {
+            mode: 'range', dateFormat: 'Y-m-d', appendTo: document.body, disableMobile: true,
+            onClose: function(dates) {
+                if (dates.length === 2) {
+                    promoCustomFrom = fmtLocalDate(dates[0]);
+                    promoCustomTo   = fmtLocalDate(dates[1]);
+                    loadPromoCard('custom');
+                }
+            }
+        });
+    }
+    promoCalPicker.open();
+}
+
+function promoValue(item) { return showPct ? (item.pct || 0) : (item.revenue || 0); }
+
+function redrawPromoChart(canvasId, items, labelMode, existing, onClickDrill) {
+    if (existing) { existing.destroy(); }
+    var DOW = ['вс','пн','вт','ср','чт','пт','сб'];
+    var canvas = document.getElementById(canvasId);
+    var labels = labelMode === 'date' ? items.map(function(d) { return d.date.slice(8); }) : items.map(function(m) { return m.label; });
+    return new Chart(canvas, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: items.map(promoValue),
+                backgroundColor: 'rgba(255,255,255,0.5)',
+                hoverBackgroundColor: 'rgba(255,255,255,0.9)',
+                borderRadius: 4, borderSkipped: false,
+            }]
+        },
+        options: {
+            responsive: true,
+            animation: { duration: 300 },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        title: function(ctx) {
+                            if (labelMode !== 'date') return ctx[0].label;
+                            var raw = items[ctx[0].dataIndex].date;
+                            var d = new Date(raw + 'T00:00:00');
+                            return raw.split('-').reverse().join('.') + ', ' + DOW[d.getDay()];
+                        },
+                        label: function(ctx) { return showPct ? (fmtPct1(ctx.parsed.y) + ' %') : (fmtNum(ctx.parsed.y) + ' ₽'); }
+                    },
+                    backgroundColor: 'rgba(0,0,0,.7)', titleColor: '#fff', bodyColor: '#fff',
+                }
+            },
+            scales: {
+                x: { ticks: { color: 'rgba(255,255,255,.65)', font: { size: 10, weight: '600' } }, grid: { display: false }, border: { color: 'rgba(255,255,255,.15)' } },
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        color: 'rgba(255,255,255,.5)', font: { size: 9 },
+                        callback: function(v) {
+                            if (showPct) return v + '%';
+                            return v >= 1000000 ? (v/1000000).toFixed(1) + 'М' : v >= 1000 ? Math.round(v/1000) + 'К' : v;
+                        }
+                    },
+                    grid: { color: 'rgba(255,255,255,.08)' }, border: { display: false }
+                }
+            },
+            onClick: onClickDrill ? function(evt, elements) {
+                if (!elements.length) return;
+                var idx = elements[0].index;
+                var month = items[idx];
+                if (!month.total) return;
+                showPromoMonthDetail(month.month, month.year, MONTHS_RU_FULL[month.month]);
+            } : undefined
+        }
+    });
+}
+
+function showPromoMonthDetail(monthIdx, monthYear, monthLabel) {
+    var y = monthYear;
+    var m = String(monthIdx).padStart(2, '0');
+    var lastDay = new Date(y, monthIdx, 0).getDate();
+    var dateFrom = y + '-' + m + '-01';
+    var dateTo   = y + '-' + m + '-' + String(lastDay).padStart(2, '0');
+
+    var yDayWrap = document.getElementById('p-year-day-wrap');
+    if (promoYearDayChart) { promoYearDayChart.destroy(); promoYearDayChart = null; }
+    if (yDayWrap) yDayWrap.style.display = '';
+
+    var detail  = document.getElementById('p-month-detail');
+    var titleEl = document.getElementById('p-month-title');
+    detail.style.display = '';
+    titleEl.textContent   = monthLabel + ' ' + y;
+
+    var qs = (selectedPromo ? '&promo=' + encodeURIComponent(selectedPromo) : '') + dashBpTextSuffix('promo');
+    fetch('/api/promo-days?date_from=' + dateFrom + '&date_to=' + dateTo + qs)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.ok) return;
+            promoYearDayChart = redrawPromoChart('p-year-day-canvas', d.days, 'date', promoYearDayChart);
+        });
+}
+
+var lastSummary = { revenue: 0, pct: 0, count: 0 };
+
+function renderPromoTotals(d) {
+    lastSummary = d;
+    var big = document.getElementById('p-total');
+    if (!d || !d.count) { big.textContent = '—'; document.getElementById('p-count-label').textContent = 'нет заказов за период'; return; }
+    if (showPct) {
+        big.textContent = fmtPct1(d.pct) + '%';
+    } else {
+        big.textContent = fmtNum(d.revenue);
+    }
+    document.getElementById('p-count-label').textContent = d.count + (selectedPromo ? ' заказов по этому промокоду' : ' заказов с промокодом') +
+        (showPct ? '' : ' · ' + fmtPct1(d.pct) + '% от выручки');
+}
+
+function loadPromoCard(period) {
+    if (period) promoPeriod = period;
+    var calActive = promoPeriod === 'custom';
+    document.querySelectorAll('.p-period-btn').forEach(function(b) {
+        var active = !calActive && b.dataset.rp === promoPeriod;
+        b.style.background  = active ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.12)';
+        b.style.borderColor = active ? 'rgba(255,255,255,.9)'  : 'rgba(255,255,255,.35)';
+    });
+    document.querySelectorAll('.p-nav').forEach(function(nav) {
+        var active = !calActive && nav.dataset.period === promoPeriod;
+        nav.style.background  = active ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.12)';
+        nav.style.borderColor = active ? 'rgba(255,255,255,.9)'  : 'rgba(255,255,255,.35)';
+    });
+    var calBtn = document.getElementById('p-cal-btn');
+    if (calBtn) {
+        calBtn.style.background  = calActive ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.12)';
+        calBtn.style.borderColor = calActive ? 'rgba(255,255,255,.9)'  : 'rgba(255,255,255,.35)';
+    }
+
+    document.getElementById('p-total').textContent = '…';
+    document.getElementById('p-count-label').textContent = '';
+
+    var dayWrap     = document.getElementById('p-day-wrap');
+    var yearWrap    = document.getElementById('p-year-wrap');
+    var monthDetail = document.getElementById('p-month-detail');
+
+    var todayBtn = document.getElementById('p-today-btn');
+    if (todayBtn) {
+        var now = new Date();
+        todayBtn.textContent = isSameDay(promoTodayDate, now) ? 'Сегодня' : (promoTodayDate.getDate() + ' ' + MONTHS_RU_GEN[promoTodayDate.getMonth() + 1]);
+    }
+    var monthBtn = document.getElementById('p-month-btn');
+    if (monthBtn) {
+        var curYear = new Date().getFullYear();
+        monthBtn.textContent = MONTHS_RU_FULL[promoMonthDate.getMonth() + 1] + (promoMonthDate.getFullYear() !== curYear ? ' ' + promoMonthDate.getFullYear() : '');
+    }
+
+    if (promoPeriod !== 'month') {
+        dayWrap.style.display = 'none';
+        if (promoDayChart) { promoDayChart.destroy(); promoDayChart = null; }
+    }
+    if (promoPeriod !== 'year' && promoPeriod !== 'all') {
+        document.getElementById('p-year-day-wrap').style.display = 'none';
+        if (promoYearDayChart) { promoYearDayChart.destroy(); promoYearDayChart = null; }
+    }
+
+    var qsPromo = (selectedPromo ? '&promo=' + encodeURIComponent(selectedPromo) : '') + dashBpTextSuffix('promo');
+
+    var isCustomMonthly = promoPeriod === 'custom' && promoCustomFrom && promoCustomTo &&
+        Math.round((new Date(promoCustomTo) - new Date(promoCustomFrom)) / 86400000) > 35;
+
+    if (promoPeriod === 'year' || promoPeriod === 'all' || isCustomMonthly) {
+        dayWrap.style.display  = 'none';
+        yearWrap.style.display = '';
+        monthDetail.style.display = 'none';
+        if (promoChart) { promoChart.destroy(); promoChart = null; }
+
+        var yearFrom, yearTo, periodLabel;
+        if (promoPeriod === 'year') {
+            var curYear2 = new Date().getFullYear();
+            yearFrom = promoYear + '-01-01';
+            yearTo   = promoYear === curYear2 ? fmtLocalDate(new Date()) : promoYear + '-12-31';
+            periodLabel = 'за ' + promoYear;
+        } else if (promoPeriod === 'all') {
+            periodLabel = 'за всё время';
+        } else {
+            yearFrom = promoCustomFrom; yearTo = promoCustomTo;
+            var fmtLabelM = function(s) { return s.split('-').reverse().join('.'); };
+            periodLabel = fmtLabelM(yearFrom) + ' — ' + fmtLabelM(yearTo);
+        }
+        document.getElementById('p-period-label').textContent = (showPct ? '% от выручки ' : 'рублей ') + periodLabel;
+
+        var summaryUrl = promoPeriod === 'all'
+            ? null
+            : '/api/promo-summary?date_from=' + yearFrom + '&date_to=' + yearTo + qsPromo;
+        var monthsUrl = promoPeriod === 'all'
+            ? '/api/promo-all?' + qsPromo.replace(/^&/, '')
+            : '/api/promo-months?date_from=' + yearFrom + '&date_to=' + yearTo + qsPromo;
+
+        fetch(monthsUrl).then(function(r) { return r.json(); }).then(function(d) {
+            if (!d.ok) return;
+            lastMonths = d.months;
+            promoChart = redrawPromoChart('p-year-canvas', d.months, 'month', promoChart, true);
+            if (promoPeriod === 'all') {
+                var totalRevenue = d.months.reduce(function(s, m) { return s + m.revenue; }, 0);
+                var totalAll     = d.months.reduce(function(s, m) { return s + m.total; }, 0);
+                renderPromoTotals({
+                    revenue: totalRevenue, total_revenue: totalAll,
+                    pct: totalAll > 0 ? Math.round(totalRevenue / totalAll * 1000) / 10 : 0,
+                    count: null
+                });
+                document.getElementById('p-total').textContent = showPct
+                    ? fmtPct1(totalAll > 0 ? totalRevenue / totalAll * 100 : 0) + '%'
+                    : fmtNum(totalRevenue);
+                document.getElementById('p-count-label').textContent = '';
+            }
+        });
+        if (summaryUrl) {
+            fetch(summaryUrl).then(function(r) { return r.json(); }).then(function(d) {
+                if (!d.ok) return;
+                renderPromoTotals(d);
+            });
+        }
+        return;
+    }
+
+    // today / month / custom (short, ≤35 days)
+    dayWrap.style.display  = 'none';
+    yearWrap.style.display = 'none';
+    if (promoChart) { promoChart.destroy(); promoChart = null; }
+
+    var fmtLabel = function(s) { return s.split('-').reverse().join('.'); };
+    var dateTo, dateFrom;
+    if (promoPeriod === 'custom' && promoCustomFrom && promoCustomTo) {
+        dateFrom = promoCustomFrom; dateTo = promoCustomTo;
+        document.getElementById('p-period-label').textContent = (showPct ? '% от выручки · ' : 'рублей · ') + fmtLabel(dateFrom) + ' — ' + fmtLabel(dateTo);
+    } else if (promoPeriod === 'today') {
+        dateFrom = dateTo = fmtLocalDate(promoTodayDate);
+        document.getElementById('p-period-label').textContent = showPct ? '% от выручки' : 'рублей';
+    } else {
+        var y = promoMonthDate.getFullYear();
+        var m = promoMonthDate.getMonth();
+        var lastDay = new Date(y, m + 1, 0).getDate();
+        dateFrom = y + '-' + String(m + 1).padStart(2, '0') + '-01';
+        dateTo   = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
+        document.getElementById('p-period-label').textContent = showPct ? '% от выручки' : 'рублей';
+    }
+
+    fetch('/api/promo-summary?date_from=' + dateFrom + '&date_to=' + dateTo + qsPromo)
+        .then(function(r) { return r.json(); })
+        .then(renderPromoTotals);
+
+    if (promoPeriod === 'month') {
+        dayWrap.style.display = '';
+        fetch('/api/promo-days?date_from=' + dateFrom + '&date_to=' + dateTo + qsPromo)
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (!d.ok) return;
+                lastDays = d.days;
+                promoDayChart = redrawPromoChart('p-day-canvas', d.days, 'date', promoDayChart);
+            });
+    }
+}
+
+function fmtLastUsed(iso) {
+    if (!iso) return '—';
+    return iso.slice(8,10) + '.' + iso.slice(5,7) + '.' + iso.slice(0,4);
+}
+
+function loadPromoList() {
+    var dateFrom, dateTo;
+    if (promoPeriod === 'custom' && promoCustomFrom && promoCustomTo) {
+        dateFrom = promoCustomFrom; dateTo = promoCustomTo;
+    } else if (promoPeriod === 'today') {
+        dateFrom = dateTo = fmtLocalDate(promoTodayDate);
+    } else if (promoPeriod === 'month') {
+        var y = promoMonthDate.getFullYear(), m = promoMonthDate.getMonth();
+        var lastDay = new Date(y, m + 1, 0).getDate();
+        dateFrom = y + '-' + String(m + 1).padStart(2, '0') + '-01';
+        dateTo   = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
+    } else if (promoPeriod === 'year') {
+        var curYear2 = new Date().getFullYear();
+        dateFrom = promoYear + '-01-01';
+        dateTo   = promoYear === curYear2 ? fmtLocalDate(new Date()) : promoYear + '-12-31';
+    } else {
+        dateFrom = '2000-01-01';
+        dateTo   = fmtLocalDate(new Date());
+    }
+
+    fetch('/api/promo-list?date_from=' + dateFrom + '&date_to=' + dateTo + dashBpTextSuffix('promo'))
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            var tbody = document.getElementById('promoTbody');
+            if (!d.ok || !d.promos.length) {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">Нет заказов с промокодом за период</td></tr>';
+                return;
+            }
+            tbody.innerHTML = d.promos.map(function(p) {
+                return '<tr data-name="' + p.name.replace(/"/g,'&quot;') + '"' + (p.name === selectedPromo ? ' class="table-active"' : '') + '>' +
+                    '<td class="fw-semibold"><a href="#" onclick="selectPromo(' + JSON.stringify(p.name) + '); return false;" class="text-decoration-none">' + p.name + '</a></td>' +
+                    '<td class="text-muted" data-val="' + (p.last_used || '') + '">' + fmtLastUsed(p.last_used) + '</td>' +
+                    '<td class="text-end fw-semibold" data-val="' + p.revenue + '">' + fmtNum(p.revenue) + ' ₽</td>' +
+                    '<td class="text-end" data-val="' + p.pct + '">' + fmtPct1(p.pct) + '%</td>' +
+                    '<td class="text-end" data-val="' + p.new_clients + '">' + p.new_clients + '</td>' +
+                    '<td class="text-end" data-val="' + p.avg_check + '">' + fmtNum(p.avg_check) + ' ₽</td>' +
+                '</tr>';
+            }).join('');
+        });
+}
+
+(function () {
+    var table = document.getElementById('promoTable');
+    if (!table) return;
+    var tbody = table.querySelector('tbody');
+    var ths = Array.from(table.querySelectorAll('thead .p-sort'));
+    var curCol = -1, curDir = 0;
+    ths.forEach(function (th, idx) {
+        th.addEventListener('click', function () {
+            var dir = (curCol === idx && curDir === -1) ? 1 : -1;
+            curCol = idx; curDir = dir;
+            ths.forEach(function (h) { h.querySelector('.p-arrow').textContent = ''; });
+            th.querySelector('.p-arrow').textContent = dir === -1 ? '↓' : '↑';
+            var rows = Array.from(tbody.querySelectorAll('tr'));
+            rows.sort(function (a, b) {
+                var ac = a.querySelectorAll('td')[idx];
+                var bc = b.querySelectorAll('td')[idx];
+                if (!ac || !bc) return 0;
+                var av = ac.dataset.val !== undefined ? ac.dataset.val : ac.textContent.trim();
+                var bv = bc.dataset.val !== undefined ? bc.dataset.val : bc.textContent.trim();
+                var an = parseFloat(av), bn = parseFloat(bv);
+                return ((!isNaN(an) && !isNaN(bn)) ? an - bn : av.localeCompare(bv, 'ru')) * dir;
+            });
+            rows.forEach(function (r) { tbody.appendChild(r); });
+        });
+    });
+})();
+
+loadPromoCard('month');
+loadPromoList();
+</script>
+{% endblock %}

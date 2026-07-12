@@ -1,14 +1,6 @@
 {% extends 'base.html' %}
 {% block title %}Ожидание{% endblock %}
 {% block content %}
-<style>
-#w-branch-btn { width:32px; height:32px; border-radius:50%; padding:0; }
-#w-branch-abbr { display:none; }
-@media (min-width:992px) {
-  #w-branch-btn { width:auto; height:26px; border-radius:20px; padding:0 10px; gap:5px; }
-  #w-branch-abbr { display:inline; }
-}
-</style>
 
 <div class="row g-3 mb-4">
   <div class="col-12 col-lg-7">
@@ -49,27 +41,10 @@
         <input id="w-cal-hidden" type="text" style="display:none; position:absolute;">
 
         <!-- Branch selector -->
-        <div class="dropdown" style="margin-left:auto; flex-shrink:0; position:relative;">
-          <button id="w-branch-btn" type="button"
-            data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
-            title="Выбор подразделений"
-            style="border:1.5px solid rgba(255,255,255,.45);background:rgba(255,255,255,.15);color:#fff;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">
-            <span id="w-branch-abbr" style="font-size:11px;font-weight:700;white-space:nowrap;">Все</span>
-            <svg viewBox="0 0 8 5" width="8" height="5" fill="currentColor" style="opacity:.75;flex-shrink:0;"><path d="M0 0l4 5 4-5z"/></svg>
-          </button>
-          <div class="dropdown-menu p-2 shadow" style="min-width:220px;max-height:320px;overflow-y:auto;">
-            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2 mb-1" style="cursor:pointer;">
-              <input type="checkbox" id="w-branch-all-cb" checked onchange="toggleAllWaitBranches(this)">
-              <span class="fw-semibold small">Все подразделения</span>
-            </label>
-            <hr class="dropdown-divider my-1">
-            {% for b in branches_raw %}
-            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
-              <input type="checkbox" class="w-branch-cb" value="{{ b }}" onchange="onWaitBranchChange()">
-              <span class="small">{{ b }}</span>
-            </label>
-            {% endfor %}
-          </div>
+        <div style="margin-left:auto;">
+          {% set bs_prefix = 'w' %}
+          {% set bs_mode = 'text' %}
+          {% include '_dash_branch_picker.html' %}
         </div>
       </div>
 
@@ -176,7 +151,8 @@ var waitCustomFrom = null;
 var waitCustomTo   = null;
 var waitTodayDate  = new Date();
 var waitMonthDate  = (function() { var d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); })();
-var waitBranches   = [];
+window.wBranchIds = [];
+window.wOnBranchChange = function () { loadWaitCard(waitPeriod); };
 
 function updateWaitModeButtons() {
     document.getElementById('w-mode-delivery').style.background = waitMode === 'delivery' ? 'rgba(255,255,255,.28)' : 'transparent';
@@ -247,33 +223,7 @@ document.addEventListener('click', function(e) {
     }
 });
 
-function _waitBranchSuffix() {
-    return waitBranches.length ? '&branch_raw=' + waitBranches.map(encodeURIComponent).join(',') : '';
-}
-function updateWaitBranchBtn() {
-    var el = document.getElementById('w-branch-abbr');
-    if (!el) return;
-    if (!waitBranches.length) { el.textContent = 'Все'; return; }
-    el.textContent = waitBranches.length === 1 ? waitBranches[0] : waitBranches.length + ' подразд.';
-}
-function toggleAllWaitBranches(cb) {
-    if (cb.checked) {
-        waitBranches = [];
-        document.querySelectorAll('.w-branch-cb').forEach(function(c){ c.checked = false; });
-    } else {
-        cb.checked = false;
-    }
-    updateWaitBranchBtn();
-    loadWaitCard(waitPeriod);
-}
-function onWaitBranchChange() {
-    waitBranches = [];
-    document.querySelectorAll('.w-branch-cb:checked').forEach(function(cb) { waitBranches.push(cb.value); });
-    var allCb = document.getElementById('w-branch-all-cb');
-    if (allCb) allCb.checked = waitBranches.length === 0;
-    updateWaitBranchBtn();
-    loadWaitCard(waitPeriod);
-}
+function _waitBranchSuffix() { return dashBpTextSuffix('w'); }
 
 var waitCalPicker = null;
 function openWaitCal() {

@@ -116,6 +116,7 @@ MENU_ITEMS = [
     ('lfl_dashboard',         'LFL',                      'dash',     True),
     ('ratings_dashboard',     'Рейтинги',                 'dash',     True),
     ('wait_dashboard',        'Ожидание',                 'dash',     True),
+    ('promo_dashboard',       'Промокоды',                'dash',     True),
     ('shifts_archive',        'Смены',                    'reports',  True),
     ('reports_shifts',        'Выручка',                  'reports',  True),
     ('reports_salary',        'Зарплаты',                 'reports',  True),
@@ -2872,6 +2873,229 @@ def api_wait_months():
     months = _wait_months_list(agg, date_from, date_to)
     return jsonify({'ok': True, 'mode': mode, 'metric': metric,
                     'total_count': sum(x['count'] for x in months), 'months': months})
+
+
+# ─── ПРОМОКОДЫ (выручка/новые клиенты/средний чек по промокоду из «Отчёта по заказам») ─
+
+@app.route('/promo-dashboard')
+@login_required
+@menu_permission_required('promo_dashboard')
+def promo_dashboard():
+    with get_db() as conn:
+        branches_raw = [r[0] for r in conn.execute(
+            'SELECT DISTINCT branch_raw FROM orders_report ORDER BY branch_raw'
+        ).fetchall()]
+    return render_template('promo_dashboard.html', branches_raw=branches_raw)
+
+
+def _promo_branch_filter():
+    raw = request.args.get('branch_raw', '')
+    names = [x for x in raw.split(',') if x]
+    if not names:
+        return '', []
+    ph = ','.join('?' * len(names))
+    return f'AND branch_raw IN ({ph})', names
+
+
+def _promo_scope(promo, bparams):
+    """(доп. WHERE, параметры) для конкретного промокода либо для всех промокодов сразу."""
+    if promo:
+        return 'AND promo_code = ?', bparams + [promo]
+    return "AND promo_code IS NOT NULL AND promo_code != ''", bparams
+
+
+@app.route('/api/promo-summary')
+@login_required
+@menu_permission_required('promo_dashboard')
+def api_promo_summary():
+    date_from = request.args.get('date_from', date.today().isoformat())
+    date_to   = request.args.get('date_to',   date.today().isoformat())
+    promo     = request.args.get('promo', '').strip()
+    bf, bparams = _promo_branch_filter()
+    extra, pparams = _promo_scope(promo, bparams)
+
+    with get_db() as conn:
+        total_row = conn.execute(f'''
+            SELECT COALESCE(SUM(amount),0) AS total
+            FROM orders_report
+            WHERE DATE(received_at) BETWEEN ? AND ? {bf}
+        ''', [date_from, date_to] + bparams).fetchone()
+        promo_row = conn.execute(f'''
+            SELECT COUNT(*) AS cnt, COALESCE(SUM(amount),0) AS revenue, COALESCE(AVG(amount),0) AS avg_check,
+                   SUM(CASE WHEN new_client='Да' THEN 1 ELSE 0 END) AS new_clients
+            FROM orders_report
+            WHERE DATE(received_at) BETWEEN ? AND ? {bf} {extra}
+        ''', [date_from, date_to] + pparams).fetchone()
+
+    total_revenue = total_row['total'] or 0
+    revenue = promo_row['revenue'] or 0
+    return jsonify({
+        'ok': True, 'promo': promo or None,
+        'count': promo_row['cnt'] or 0,
+        'revenue': round(revenue, 2),
+        'total_revenue': round(total_revenue, 2),
+        'pct': round(revenue / total_revenue * 100, 1) if total_revenue > 0 else 0,
+        'avg_check': round(promo_row['avg_check'] or 0, 2),
+        'new_clients': promo_row['new_clients'] or 0,
+    })
+
+
+@app.route('/api/promo-list')
+@login_required
+@menu_permission_required('promo_dashboard')
+def api_promo_list():
+    date_from = request.args.get('date_from', date.today().isoformat())
+    date_to   = request.args.get('date_to',   date.today().isoformat())
+    bf, bparams = _promo_branch_filter()
+
+    with get_db() as conn:
+        total_row = conn.execute(f'''
+            SELECT COALESCE(SUM(amount),0) AS total
+            FROM orders_report WHERE DATE(received_at) BETWEEN ? AND ? {bf}
+        ''', [date_from, date_to] + bparams).fetchone()
+        total_revenue = total_row['total'] or 0
+
+        rows = conn.execute(f'''
+            SELECT promo_code AS name, COUNT(*) AS cnt, COALESCE(SUM(amount),0) AS revenue,
+                   COALESCE(AVG(amount),0) AS avg_check,
+                   SUM(CASE WHEN new_client='Да' THEN 1 ELSE 0 END) AS new_clients,
+                   MAX(received_at) AS last_used
+            FROM orders_report
+            WHERE DATE(received_at) BETWEEN ? AND ? {bf}
+              AND promo_code IS NOT NULL AND promo_code != ''
+            GROUP BY promo_code
+            ORDER BY revenue DESC
+        ''', [date_from, date_to] + bparams).fetchall()
+
+    promos = [{
+        'name': r['name'], 'count': r['cnt'],
+        'revenue': round(r['revenue'], 2),
+        'pct': round(r['revenue'] / total_revenue * 100, 1) if total_revenue > 0 else 0,
+        'avg_check': round(r['avg_check'], 2),
+        'new_clients': r['new_clients'] or 0,
+        'last_used': r['last_used'],
+    } for r in rows]
+
+    return jsonify({'ok': True, 'total_revenue': round(total_revenue, 2), 'promos': promos})
+
+
+@app.route('/api/promo-days')
+@login_required
+@menu_permission_required('promo_dashboard')
+def api_promo_days():
+    date_from = request.args.get('date_from', date.today().isoformat())
+    date_to   = request.args.get('date_to',   date.today().isoformat())
+    promo     = request.args.get('promo', '').strip()
+    bf, bparams = _promo_branch_filter()
+    extra, pparams = _promo_scope(promo, bparams)
+
+    with get_db() as conn:
+        total_rows = conn.execute(f'''
+            SELECT DATE(received_at) AS d, COALESCE(SUM(amount),0) AS total
+            FROM orders_report
+            WHERE DATE(received_at) BETWEEN ? AND ? {bf}
+            GROUP BY d
+        ''', [date_from, date_to] + bparams).fetchall()
+        promo_rows = conn.execute(f'''
+            SELECT DATE(received_at) AS d, COALESCE(SUM(amount),0) AS revenue
+            FROM orders_report
+            WHERE DATE(received_at) BETWEEN ? AND ? {bf} {extra}
+            GROUP BY d
+        ''', [date_from, date_to] + pparams).fetchall()
+    total_by_day = {r['d']: r['total'] for r in total_rows}
+    promo_by_day = {r['d']: r['revenue'] for r in promo_rows}
+
+    days = []
+    _d    = datetime.strptime(date_from, '%Y-%m-%d').date()
+    _dend = datetime.strptime(date_to, '%Y-%m-%d').date()
+    while _d <= _dend:
+        ds  = _d.isoformat()
+        rev = promo_by_day.get(ds, 0)
+        tot = total_by_day.get(ds, 0)
+        days.append({'date': ds, 'revenue': round(rev, 2), 'total': round(tot, 2),
+                     'pct': round(rev / tot * 100, 1) if tot > 0 else 0})
+        _d += timedelta(days=1)
+    return jsonify({'ok': True, 'promo': promo or None, 'days': days})
+
+
+def _promo_months_query(conn, bf, bparams, extra, pparams, date_from, date_to):
+    total_rows = conn.execute(f'''
+        SELECT CAST(strftime('%Y', received_at) AS INTEGER) AS year,
+               CAST(strftime('%m', received_at) AS INTEGER) AS month,
+               COALESCE(SUM(amount),0) AS total
+        FROM orders_report
+        WHERE DATE(received_at) BETWEEN ? AND ? {bf}
+        GROUP BY year, month
+    ''', [date_from, date_to] + bparams).fetchall()
+    promo_rows = conn.execute(f'''
+        SELECT CAST(strftime('%Y', received_at) AS INTEGER) AS year,
+               CAST(strftime('%m', received_at) AS INTEGER) AS month,
+               COALESCE(SUM(amount),0) AS revenue
+        FROM orders_report
+        WHERE DATE(received_at) BETWEEN ? AND ? {bf} {extra}
+        GROUP BY year, month
+    ''', [date_from, date_to] + pparams).fetchall()
+    total_by_ym = {(r['year'], r['month']): r['total'] for r in total_rows}
+    promo_by_ym = {(r['year'], r['month']): r['revenue'] for r in promo_rows}
+    return total_by_ym, promo_by_ym
+
+
+def _promo_months_list(total_by_ym, promo_by_ym, date_from, date_to):
+    labels = ['', 'Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн',
+              'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
+    start = date.fromisoformat(date_from)
+    end   = date.fromisoformat(date_to)
+    months_list = []
+    y, m = start.year, start.month
+    while (y < end.year) or (y == end.year and m <= end.month):
+        label = labels[m] + " '" + str(y)[-2:]
+        tot = total_by_ym.get((y, m), 0)
+        rev = promo_by_ym.get((y, m), 0)
+        months_list.append({'year': y, 'month': m, 'label': label,
+                            'revenue': round(rev, 2), 'total': round(tot, 2),
+                            'pct': round(rev / tot * 100, 1) if tot > 0 else 0})
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return months_list
+
+
+@app.route('/api/promo-months')
+@login_required
+@menu_permission_required('promo_dashboard')
+def api_promo_months():
+    date_from = request.args.get('date_from')
+    date_to   = request.args.get('date_to', date.today().isoformat())
+    promo     = request.args.get('promo', '').strip()
+    bf, bparams = _promo_branch_filter()
+    extra, pparams = _promo_scope(promo, bparams)
+    if not date_from:
+        return jsonify({'ok': False, 'error': 'date_from required'}), 400
+    with get_db() as conn:
+        total_by_ym, promo_by_ym = _promo_months_query(conn, bf, bparams, extra, pparams, date_from, date_to)
+    months = _promo_months_list(total_by_ym, promo_by_ym, date_from, date_to)
+    return jsonify({'ok': True, 'promo': promo or None, 'months': months})
+
+
+@app.route('/api/promo-all')
+@login_required
+@menu_permission_required('promo_dashboard')
+def api_promo_all():
+    promo = request.args.get('promo', '').strip()
+    bf, bparams = _promo_branch_filter()
+    today_iso = date.today().isoformat()
+    with get_db() as conn:
+        min_row = conn.execute(f'''
+            SELECT MIN(DATE(received_at)) FROM orders_report WHERE 1=1 {bf}
+        ''', bparams).fetchone()
+        date_from = min_row[0]
+        if not date_from:
+            return jsonify({'ok': True, 'promo': promo or None, 'months': []})
+        extra, pparams = _promo_scope(promo, bparams)
+        total_by_ym, promo_by_ym = _promo_months_query(conn, bf, bparams, extra, pparams, date_from, today_iso)
+    months = _promo_months_list(total_by_ym, promo_by_ym, date_from, today_iso)
+    return jsonify({'ok': True, 'promo': promo or None, 'months': months})
 
 
 # ─── SHIFTS ───────────────────────────────────────────────────────────────────
