@@ -145,6 +145,7 @@
                     <th class="ord-sort" style="cursor:pointer;user-select:none">Подразделение <span class="ord-arrow text-muted"></span></th>
                     <th class="ord-sort" style="cursor:pointer;user-select:none">Дата и время приёма <span class="ord-arrow text-muted"></span></th>
                     <th class="ord-sort" style="cursor:pointer;user-select:none">Тип <span class="ord-arrow text-muted"></span></th>
+                    <th class="ord-sort" style="cursor:pointer;user-select:none">Оформлен на <span class="ord-arrow text-muted"></span></th>
                     <th class="ord-sort text-end" style="cursor:pointer;user-select:none">Обещано, мин <span class="ord-arrow text-muted"></span></th>
                     <th class="ord-sort text-end" style="cursor:pointer;user-select:none">Готовность, мин <span class="ord-arrow text-muted"></span></th>
                     <th class="ord-sort text-end" style="cursor:pointer;user-select:none">Доставка, мин <span class="ord-arrow text-muted"></span></th>
@@ -164,6 +165,15 @@
                         <span class="badge bg-success-subtle text-success-emphasis">{{ r.order_type }}</span>
                         {% else %}
                         <span class="badge bg-primary-subtle text-primary-emphasis">{{ r.order_type }}</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if r.order_status == 'Текущий' %}
+                        <span class="badge bg-primary-subtle text-primary-emphasis">Текущий</span>
+                        {% elif r.order_status == 'Предварит.' %}
+                        <span class="badge bg-warning-subtle text-warning-emphasis">Предварит.</span>
+                        {% else %}
+                        <span class="text-muted">—</span>
                         {% endif %}
                     </td>
                     <td class="text-end">{{ r.promised_minutes if r.promised_minutes is not none else '—' }}</td>

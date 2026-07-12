@@ -2743,10 +2743,13 @@ def wait_dashboard():
 
 
 def _wait_scope_where(mode):
-    """Тип заказа + отсечка по времени приёма (не считаем заказы до открытия точки)."""
+    """Тип заказа + отсечка по времени приёма (не считаем заказы до открытия точки) + только
+    заказы в статусе «Текущий» (указано обещанное время) — «Предварит.» заказы без обещанного
+    времени в статистику ожидания не входят (см. колонку «Оформлен на» в Отчёте по заказам)."""
+    current_only = "AND promised_minutes IS NOT NULL AND promised_minutes != 0"
     if mode == 'pickup':
-        return "order_type = 'Общий - самовывоз' AND TIME(received_at) >= '10:00:00'"
-    return "order_type LIKE 'Доставка%' AND TIME(received_at) >= '10:30:00'"
+        return f"order_type = 'Общий - самовывоз' AND TIME(received_at) >= '10:00:00' {current_only}"
+    return f"order_type LIKE 'Доставка%' AND TIME(received_at) >= '10:30:00' {current_only}"
 
 
 def _wait_metric_col(metric):
@@ -11259,7 +11262,14 @@ def orders_report():
         sql_where = ' AND '.join(where) if where else '1=1'
 
         rows = conn.execute(f'''
-            SELECT * FROM orders_report
+            SELECT *,
+                CASE
+                    WHEN (order_type LIKE 'Доставка%' OR order_type = 'Общий - самовывоз')
+                         AND (promised_minutes IS NULL OR promised_minutes = 0) THEN 'Предварит.'
+                    WHEN (order_type LIKE 'Доставка%' OR order_type = 'Общий - самовывоз') THEN 'Текущий'
+                    ELSE NULL
+                END AS order_status
+            FROM orders_report
             WHERE {sql_where}
             ORDER BY received_at DESC
             LIMIT 20000
