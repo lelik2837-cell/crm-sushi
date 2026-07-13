@@ -10759,7 +10759,10 @@ def _xl_parse_sheet_alt(ws, branch_id):
     morning_cash  = _xf(rows[1][3]) if len(rows) > 1 and len(rows[1]) > 3 else 0.0    # D2 "РАЗМЕН" = утренняя касса
     actual_cash   = _xf(rows[33][3]) if len(rows) > 33 and len(rows[33]) > 3 else 0.0  # D34 "Итого нал. в кассе"
     change_amount = 0.0
-    delivery_rev = delivery_ord = pickup_rev = pickup_ord = 0
+    # Деления заказов на доставку/самовывоз в этом формате нет — общее число
+    # («Кол-во заказов Папа-Суши», D3) целиком идёт в «Доставка», т.к. это сеть доставки.
+    delivery_ord  = int(_xf(rows[2][3])) if len(rows) > 2 and len(rows[2]) > 3 else 0   # D3
+    delivery_rev = pickup_rev = pickup_ord = 0
 
     # Терминалы: пары код/сумма на строках 25-27 (E/F)
     terminal_entries = []
