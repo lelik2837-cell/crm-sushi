@@ -11353,9 +11353,25 @@ def import_shifts_confirm(token):
         unique_employees = staging['unique_employees']
         emp_map = {}   # name -> employee_id
 
+        # Пропускать сотрудников нельзя — для каждого нужно выбрать существующего
+        # или создать нового. Проверяем это до того, как что-либо записано в базу.
+        unresolved = [
+            emp['name'] for i, emp in enumerate(unique_employees)
+            if not (request.form.get(f'action_{i}', '') or '').strip()
+            or (request.form.get(f'action_{i}', '') not in ('new',)
+                and not request.form.get(f'action_{i}', '').startswith('existing:'))
+        ]
+        if unresolved:
+            flash(
+                'Для этих сотрудников нужно выбрать существующего или создать нового: '
+                + ', '.join(unresolved),
+                'danger'
+            )
+            return redirect(url_for('import_shifts_confirm', token=token))
+
         for i, emp in enumerate(unique_employees):
             name   = emp['name']
-            action = request.form.get(f'action_{i}', 'skip')
+            action = request.form.get(f'action_{i}', '')
 
             if action.startswith('existing:'):
                 emp_id = int(action.split(':', 1)[1])

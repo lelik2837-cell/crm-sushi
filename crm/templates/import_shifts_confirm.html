@@ -39,8 +39,8 @@
       <div class="card-body p-0">
         <div class="alert alert-info m-3 mb-0 py-2" style="font-size:0.88rem">
           <i class="bi bi-info-circle me-1"></i>
-          Для каждого сотрудника из файла выберите: кто это в базе, или создайте нового, или пропустите.
-          Совпадения по имени подставлены автоматически — проверьте их. Список показывает сотрудников
+          Для каждого сотрудника из файла выберите, кто это в базе, или создайте нового — пропустить сотрудника
+          нельзя. Совпадения по имени подставлены автоматически — проверьте их. Список показывает сотрудников
           филиалов той же группы, что и импортируемый филиал. Если сотрудник в файле числится под другой
           должностью — она будет добавлена ему как дополнительная автоматически.
         </div>
@@ -80,7 +80,7 @@
                         data-default-name="{{ emp.name | e }}"
                         data-default-rate="{{ emp.rate }}"
                         style="max-width:380px">
-                  <option value="skip">— Пропустить этого сотрудника —</option>
+                  <option value="" {% if not auto_id %}selected{% endif %}>— Выберите сотрудника —</option>
                   <optgroup label="Существующие сотрудники">
                     {% for db_emp in employees_db %}
                     <option value="existing:{{ db_emp.id }}"
@@ -252,7 +252,14 @@ document.querySelectorAll('.emp-search-input').forEach(function(input) {
 document.getElementById('submitBtn').addEventListener('click', function(e) {
   // Check that no "new" employee has empty name
   var ok = true;
+  var unresolved = false;
   document.querySelectorAll('.emp-action-select').forEach(function(sel) {
+    if (!sel.value) {
+      sel.classList.add('is-invalid');
+      unresolved = true;
+      return;
+    }
+    sel.classList.remove('is-invalid');
     if (sel.value === 'new') {
       var idx = sel.dataset.idx;
       var nameInput = document.getElementById('new_name_' + idx);
@@ -264,6 +271,11 @@ document.getElementById('submitBtn').addEventListener('click', function(e) {
       }
     }
   });
+  if (unresolved) {
+    e.preventDefault();
+    alert('Пропустить сотрудника нельзя — выберите его в базе или создайте нового для всех строк');
+    return;
+  }
   if (!ok) {
     e.preventDefault();
     alert('Заполните имя для всех новых сотрудников');
