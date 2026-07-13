@@ -10711,6 +10711,254 @@ def _xl_parse_sheet(ws, branch_id):
     }
 
 
+# ─── Альтернативный формат (Красноармейская, Шахтёров, 40 лет Октября, Октябрьский) ───
+# Та же смена, но другая раскладка ячеек. Возвращает тот же словарь, что и _xl_parse_sheet.
+
+_XL2_CAT_LEFT = {
+    'Пополнение кассы': 'cash_plus',
+    'Вывоз фритюрного масла': 'oil',
+}
+_XL2_CAT_RIGHT = {
+    'Забрал из кассы': 'other',
+    'Зарплата персоналу': 'staff',
+}
+_XL2_COURIER_SLOTS = [
+    (36, 4, 5, 37, 4, 5),
+    (36, 11, 12, 37, 11, 12),
+    (36, 18, 19, 37, 18, 19),
+    (84, 4, 5, 85, 4, 5),
+    (84, 11, 12, 85, 11, 12),
+    (84, 18, 19, 85, 18, 19),
+]
+
+
+def _xl_parse_sheet_alt(ws, branch_id):
+    """Парсит лист альтернативного формата. Возвращает тот же словарь, что и _xl_parse_sheet, или None."""
+    from datetime import date as _d, datetime as _dt
+    rows = list(ws.iter_rows(min_row=1, values_only=True))
+    if len(rows) < 35:
+        return None
+
+    date_val = rows[1][1] if len(rows) > 1 and len(rows[1]) > 1 else None   # B2
+    if isinstance(date_val, _dt):
+        shift_date = date_val.date()
+    elif isinstance(date_val, _d):
+        shift_date = date_val
+    else:
+        return None
+
+    total_revenue = _xf(rows[1][5]) if len(rows) > 1 and len(rows[1]) > 5 else 0   # F2
+    cash_amount   = _xf(rows[3][3]) if len(rows) > 3 and len(rows[3]) > 3 else 0   # D4
+    card_amount   = _xf(rows[4][3]) if len(rows) > 4 and len(rows[4]) > 3 else 0   # D5
+    online_amount = _xf(rows[5][3]) if len(rows) > 5 and len(rows[5]) > 3 else 0   # D6
+
+    _rev_parts_sum = cash_amount + card_amount + online_amount
+    if total_revenue <= 1 and _rev_parts_sum > 1:
+        total_revenue = _rev_parts_sum
+
+    morning_cash  = _xf(rows[1][3]) if len(rows) > 1 and len(rows[1]) > 3 else 0.0    # D2 "РАЗМЕН" = утренняя касса
+    actual_cash   = _xf(rows[33][3]) if len(rows) > 33 and len(rows[33]) > 3 else 0.0  # D34 "Итого нал. в кассе"
+    change_amount = 0.0
+    delivery_rev = delivery_ord = pickup_rev = pickup_ord = 0
+
+    # Терминалы: пары код/сумма на строках 25-27 (E/F)
+    terminal_entries = []
+    terminal_codes   = []
+    for r in rows[24:27]:
+        if len(r) < 6:
+            continue
+        code = str(r[4]).strip() if r[4] is not None and str(r[4]).strip() else None
+        amt  = _xf(r[5])
+        if code and amt > 0:
+            terminal_entries.append([code, amt])
+            terminal_codes.append(code)
+    terminal_amount = sum(a for _, a in terminal_entries)
+
+    # Плюсы в кассу / расходы — построчный разбор с текущей категорией (как в исходном
+    # скрипте импорта): строка-заголовок категории может сразу нести сумму, а следующие
+    # строки без нового заголовка — дополнительные позиции той же категории.
+    cash_plus = []
+    expenses  = []
+    cur_left  = None
+    cur_right = None
+    for r in rows[14:23]:
+        if len(r) < 6:
+            continue
+        b_text = str(r[1]).strip() if r[1] is not None and str(r[1]).strip() else None
+        d_amt  = _xf(r[3])
+        e_text = str(r[4]).strip() if r[4] is not None and str(r[4]).strip() else None
+        f_amt  = _xf(r[5])
+
+        desc_left = ''
+        if b_text and b_text in _XL2_CAT_LEFT:
+            cur_left = _XL2_CAT_LEFT[b_text]
+        elif b_text and b_text != 'Комментарий:':
+            desc_left = b_text
+        if cur_left and d_amt > 0:
+            cash_plus.append({'amount': d_amt, 'category': cur_left, 'description': desc_left})
+
+        desc_right = ''
+        if e_text and e_text in _XL2_CAT_RIGHT:
+            cur_right = _XL2_CAT_RIGHT[e_text]
+        elif e_text and e_text not in ('Комментарий:', 'Прочие расходы'):
+            desc_right = e_text
+        if cur_right and f_amt > 0:
+            expenses.append({'category': cur_right, 'description': desc_right, 'cash': f_amt, 'card': 0.0, 'gulash': 0})
+
+    plus_amount = sum(cp['amount'] for cp in cash_plus)
+
+    # Такси: после заголовка (строка 26) — адрес в B, сумма в D (одна колонка, без деления нал/безнал)
+    taxi = []
+    for r in rows[26:33]:
+        if len(r) < 4:
+            continue
+        addr = str(r[1]).strip() if r[1] is not None and str(r[1]).strip() else None
+        if not addr:
+            continue
+        amt = _xf(r[3])
+        if amt <= 0:
+            continue
+        taxi.append({'addr': addr, 'cash': amt, 'card': 0.0, 'gulash': 0})
+
+    def _read_hm2(row_idx, col_h, col_m):
+        if len(rows) <= row_idx:
+            return None
+        r = rows[row_idx]
+        h = int(_xf(r[col_h])) if len(r) > col_h and r[col_h] is not None else None
+        m = int(_xf(r[col_m])) if len(r) > col_m and r[col_m] is not None else 0
+        if h is None:
+            return None
+        return f"{h:02d}:{m:02d}"
+
+    def _is_paid(r, idx):
+        return 1 if len(r) > idx and r[idx] is not None and str(r[idx]).strip().lower() == 'да' else 0
+
+    # Сотрудники
+    employees = []
+
+    # Курьеры — строки 3-8, колонки I..T
+    for ci, r in enumerate(rows[2:8]):
+        if len(r) < 19:
+            continue
+        name = r[8]   # I
+        if not name or not isinstance(name, str) or name.strip() in _XL_SKIP:
+            continue
+        name = name.strip()
+        if not name:
+            continue
+        total = _xf(r[18])   # S
+        if total == 0:
+            continue
+        km      = _xf(r[9])                          # J
+        hours   = _xf(r[10])                          # K
+        hrs_pay = _xf(r[11])                          # L
+        orders  = int(_xf(r[12]))                     # M
+        ord_pay = _xf(r[14])                          # O
+        s_label = str(r[15]).strip() if len(r) > 15 and r[15] else ''   # P
+        t_amount = _xf(r[16]) if len(r) > 16 else 0.0                    # Q
+        if 'премия' in s_label.lower():
+            bonus = t_amount; penalty = 0.0; comment = ''
+        elif 'штраф' in s_label.lower():
+            bonus = 0.0; penalty = t_amount; comment = ''
+        else:
+            bonus = 0.0; penalty = 0.0
+            comment = s_label if s_label and s_label != 'Ничего' else ''
+        paid     = _is_paid(r, 17)                    # R
+        rate_km  = 10.0
+        rate_ord = round(ord_pay / orders, 2) if orders > 0 else 100.0
+        rate_hr  = round(hrs_pay / hours, 2) if hours > 0 else 0.0
+        sr, sh, sm, er, eh, em = _XL2_COURIER_SLOTS[ci]
+        start = _read_hm2(sr, sh, sm)
+        end   = _read_hm2(er, eh, em)
+        employees.append({
+            'name': name, 'role': 'courier', 'rate': rate_hr,
+            'hours': hours, 'km': km, 'orders': orders,
+            'rate_km': rate_km, 'rate_ord': rate_ord,
+            'start': start, 'end': end,
+            'bonus': bonus, 'penalty': penalty, 'comment': comment,
+            'base_pay': hrs_pay + km * rate_km, 'total': total, 'paid': paid,
+        })
+
+    # Остальные сотрудники — строки 10-34. Роль по фиксированным диапазонам
+    # (метки «Админ»/«Повара»/«Другое» стоят на строках 13/20/32 во всём шаблоне).
+    for row_num, r in enumerate(rows[9:34], start=10):
+        if len(r) < 19:
+            continue
+        name = r[8]   # I
+        if not name or not isinstance(name, str) or name.strip() in _XL_SKIP:
+            continue
+        name = name.strip()
+        if not name:
+            continue
+        total = _xf(r[18])   # S
+        if total == 0:
+            continue
+        if name == 'Уборщица':
+            role = 'cleaner'
+        elif row_num <= 19:
+            role = 'admin'
+        elif row_num <= 31:
+            role = 'cook'
+        else:
+            role = 'admin'
+        rate    = _xf(r[9])                            # J
+        start   = _xts(r[10])                           # K
+        end     = _xts(r[11])                           # L
+        hours   = _xt(r[12])                             # M
+        s_label = str(r[15]).strip() if len(r) > 15 and r[15] else ''   # P
+        t_amount = _xf(r[16]) if len(r) > 16 else 0.0                    # Q
+        if 'премия' in s_label.lower():
+            bonus = t_amount; penalty = 0.0; comment = ''
+        elif 'штраф' in s_label.lower():
+            bonus = 0.0; penalty = t_amount; comment = ''
+        else:
+            bonus = 0.0; penalty = 0.0
+            comment = s_label if s_label and s_label != 'Ничего' else ''
+        paid = _is_paid(r, 17)                          # R
+        base = round(rate * hours, 2)
+        employees.append({
+            'name': name, 'role': role, 'rate': rate,
+            'hours': hours, 'km': 0.0, 'orders': 0,
+            'rate_km': 10.0, 'rate_ord': 100.0,
+            'start': start, 'end': end,
+            'bonus': bonus, 'penalty': penalty, 'comment': comment,
+            'base_pay': base, 'total': total, 'paid': paid,
+        })
+
+    return {
+        'date': shift_date.isoformat(),
+        'branch_id': branch_id,
+        'closed_by_name': None,
+        'force_closed': True,
+        'revenue': {
+            'total_revenue': total_revenue,
+            'delivery_rev': delivery_rev,
+            'delivery_ord': delivery_ord,
+            'pickup_rev': pickup_rev,
+            'pickup_ord': pickup_ord,
+            'cash_amount': cash_amount,
+            'card_amount': card_amount,
+            'online_amount': online_amount,
+            'terminal_entries': terminal_entries,
+            'terminal_codes': terminal_codes,
+            'terminal_amount': terminal_amount,
+            'actual_cash': actual_cash,
+            'change_amount': change_amount,
+            'plus_amount': plus_amount,
+            'morning_cash': morning_cash,
+        },
+        'cash_plus': cash_plus,
+        'expenses': expenses,
+        'taxi': taxi,
+        'employees': employees,
+    }
+
+
+_XL_ALT_BRANCH_NAMES = {
+    '40 лет октября', 'красноармейская', 'октябрьский', 'шахтеров', 'шахтёров',
+}
+
+
 def _xl_import_sheet_from_parsed(sheet, emp_map, conn, stats, batch_id=None):
     """Write a parsed sheet dict to the DB using emp_map {name -> employee_id}."""
     branch_id      = sheet['branch_id']
@@ -10724,7 +10972,7 @@ def _xl_import_sheet_from_parsed(sheet, emp_map, conn, stats, batch_id=None):
     if existing:
         shift_id = existing[0]
     else:
-        status = 'closed' if closed_by_name else 'open'
+        status = 'closed' if (closed_by_name or sheet.get('force_closed')) else 'open'
         conn.execute(
             "INSERT INTO shifts (branch_id, date, status, closed_by_name, import_batch_id) VALUES (?,?,?,?,?)",
             (branch_id, shift_date, status, closed_by_name, batch_id)
@@ -10945,6 +11193,13 @@ def import_shifts():
             flash('Библиотека openpyxl не установлена на сервере', 'danger')
             return redirect(url_for('import_shifts'))
 
+        with get_db() as conn:
+            branch_row = conn.execute(
+                "SELECT name FROM branches WHERE id=?", (branch_id_int,)
+            ).fetchone()
+        branch_name_norm = (branch_row['name'] if branch_row else '').strip().lower()
+        parse_fn = _xl_parse_sheet_alt if branch_name_norm in _XL_ALT_BRANCH_NAMES else _xl_parse_sheet
+
         # Parse all sheets without writing to DB
         parsed_files = []
         for file in files:
@@ -10956,7 +11211,7 @@ def import_shifts():
             for sheet_name in wb.sheetnames:
                 if sheet_name not in _XL_DAY_SHEETS:
                     continue
-                parsed = _xl_parse_sheet(wb[sheet_name], branch_id_int)
+                parsed = parse_fn(wb[sheet_name], branch_id_int)
                 if parsed:
                     parsed['sheet_name'] = sheet_name
                     sheets.append(parsed)
@@ -11040,6 +11295,22 @@ def import_shifts_confirm(token):
             # Count sheets/dates across all files
             total_sheets = sum(len(pf['sheets']) for pf in staging['files'])
 
+            # Плоский список (файл, лист, сотрудник) для ручной правки сумм на подтверждении
+            payout_rows = []
+            for fi, pf in enumerate(staging['files']):
+                for si, sheet in enumerate(pf['sheets']):
+                    for ei, emp in enumerate(sheet['employees']):
+                        payout_rows.append({
+                            'fi': fi, 'si': si, 'ei': ei,
+                            'filename': pf['filename'],
+                            'date': sheet['date'],
+                            'name': emp['name'],
+                            'role': emp['role'],
+                            'total': emp['total'],
+                            'bonus': emp['bonus'],
+                        })
+            payout_rows.sort(key=lambda x: (x['date'], x['name']))
+
             return render_template(
                 'import_shifts_confirm.html',
                 staging=staging,
@@ -11049,6 +11320,7 @@ def import_shifts_confirm(token):
                 total_sheets=total_sheets,
                 token=token,
                 role_labels=ROLE_LABELS,
+                payout_rows=payout_rows,
             )
 
         # POST: process mapping and do the actual import
@@ -11080,6 +11352,23 @@ def import_shifts_confirm(token):
                 new_emp_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
                 emp_map[name] = new_emp_id
             # action == 'skip': emp_map[name] stays absent → employee skipped
+
+        # Ручные правки «Итого к выплате» / «Премия» с экрана подтверждения
+        for fi, pf in enumerate(staging['files']):
+            for si, sheet in enumerate(pf['sheets']):
+                for ei, emp in enumerate(sheet['employees']):
+                    total_raw = request.form.get(f'total_override_{fi}_{si}_{ei}', '').strip()
+                    bonus_raw = request.form.get(f'bonus_override_{fi}_{si}_{ei}', '').strip()
+                    if total_raw != '':
+                        try:
+                            emp['total'] = float(total_raw)
+                        except ValueError:
+                            pass
+                    if bonus_raw != '':
+                        try:
+                            emp['bonus'] = float(bonus_raw)
+                        except ValueError:
+                            pass
 
         # Import all sheets
         total_stats = {'shifts': 0, 'expenses': 0, 'employees': 0, 'employee_shifts': 0}
