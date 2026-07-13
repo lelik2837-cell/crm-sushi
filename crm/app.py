@@ -1280,6 +1280,15 @@ def init_db():
             conn.execute("ALTER TABLE employee_roles ADD COLUMN rate_template_id INTEGER REFERENCES rate_templates(id)")
         if 'pay_monthly' not in _er_cols:
             conn.execute("ALTER TABLE employee_roles ADD COLUMN pay_monthly INTEGER DEFAULT 0")
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS employee_pay_monthly_branches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                role TEXT NOT NULL,
+                branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                UNIQUE(employee_id, role, branch_id)
+            )
+        ''')
         _emp_tcols = [r[1] for r in conn.execute("PRAGMA table_info(employees)").fetchall()]
         if 'rate_template_id' not in _emp_tcols:
             conn.execute("ALTER TABLE employees ADD COLUMN rate_template_id INTEGER REFERENCES rate_templates(id)")
@@ -3196,13 +3205,22 @@ def shift_view(shift_id):
         plus_entries = conn.execute('SELECT * FROM cash_plus_entries WHERE shift_id=? ORDER BY id', (shift_id,)).fetchall()
         staff_rows = conn.execute(
             '''SELECT es.*,
-                      CASE WHEN es.role_snapshot = e.role THEN COALESCE(e.pay_monthly, 0)
-                           ELSE COALESCE(er.pay_monthly, 0) END as pay_monthly
+                      CASE WHEN
+                        (CASE WHEN es.role_snapshot = e.role THEN COALESCE(e.pay_monthly, 0)
+                              ELSE COALESCE(er.pay_monthly, 0) END) = 1
+                        AND (
+                          NOT EXISTS (SELECT 1 FROM employee_pay_monthly_branches pmb
+                                      WHERE pmb.employee_id = es.employee_id AND pmb.role = es.role_snapshot)
+                          OR EXISTS (SELECT 1 FROM employee_pay_monthly_branches pmb
+                                     WHERE pmb.employee_id = es.employee_id AND pmb.role = es.role_snapshot
+                                       AND pmb.branch_id = ?)
+                        )
+                      THEN 1 ELSE 0 END as pay_monthly
                FROM employee_shifts es
                LEFT JOIN employees e ON e.id = es.employee_id
                LEFT JOIN employee_roles er ON er.employee_id = es.employee_id AND er.role = es.role_snapshot
                WHERE es.shift_id=? ORDER BY es.role_snapshot, es.full_name_snapshot''',
-            (shift_id,)
+            (shift['branch_id'], shift_id)
         ).fetchall()
         # Доп. маршруты курьеров: «Данные из гуляша» = km/orders минус эти маршруты
         courier_ids = [s['id'] for s in staff_rows if s['role_snapshot'] == 'courier']
@@ -3907,7 +3925,18 @@ def pay_staff(shift_id, staff_id):
                     ).fetchone()
                     pm = er['pay_monthly'] if er else 0
                 if pm:
-                    return jsonify({'error': 'pay_monthly'}), 400
+                    # Правило ежемесячной оплаты может быть ограничено конкретными филиалами
+                    # (employee_pay_monthly_branches). Если для этой должности ничего не выбрано —
+                    # правило действует везде, как и раньше.
+                    scope = conn.execute(
+                        'SELECT branch_id FROM employee_pay_monthly_branches WHERE employee_id=? AND role=?',
+                        (row['employee_id'], row['role_snapshot'])
+                    ).fetchall()
+                    scope_ids = {s['branch_id'] for s in scope}
+                    shift_row = conn.execute('SELECT branch_id FROM shifts WHERE id=?', (shift_id,)).fetchone()
+                    shift_branch_id = shift_row['branch_id'] if shift_row else None
+                    if not scope_ids or shift_branch_id in scope_ids:
+                        return jsonify({'error': 'pay_monthly'}), 400
         conn.execute(
             'UPDATE employee_shifts SET is_paid=1, paid_amount=? WHERE id=?',
             (amount, staff_id)
@@ -4752,6 +4781,22 @@ def employees():
         for row in conn.execute('SELECT * FROM employee_roles WHERE is_active=1 ORDER BY role').fetchall():
             emp_roles_map.setdefault(row['employee_id'], []).append(dict(row))
 
+        # Филиалы, на которых действует ежемесячная оплата — по (сотрудник, должность)
+        pm_scope_map = {}
+        for row in conn.execute('SELECT employee_id, role, branch_id FROM employee_pay_monthly_branches').fetchall():
+            pm_scope_map.setdefault((row['employee_id'], row['role']), []).append(row['branch_id'])
+        pm_branches_map = {}       # employee_id -> [branch_id] (для основной должности)
+        for emp in emps:
+            key = (emp['id'], emp['role'])
+            if key in pm_scope_map:
+                pm_branches_map[emp['id']] = pm_scope_map[key]
+        pm_role_branches_map = {}  # employee_roles.id -> [branch_id] (для доп. должностей)
+        for er_list in emp_roles_map.values():
+            for er in er_list:
+                key = (er['employee_id'], er['role'])
+                if key in pm_scope_map:
+                    pm_role_branches_map[er['id']] = pm_scope_map[key]
+
         # Position abbreviations: code -> abbr
         pos_abbr_map = {
             r['code']: (r['abbr'] or r['name'][:4]).upper()
@@ -4802,6 +4847,8 @@ def employees():
                            selected_branches=selected_branches,
                            emp_branches_map=emp_branches_map,
                            emp_roles_map=emp_roles_map,
+                           pm_branches_map=pm_branches_map,
+                           pm_role_branches_map=pm_role_branches_map,
                            pos_abbr_map=pos_abbr_map,
                            role_labels=ROLE_LABELS, is_owner=(role == 'owner'),
                            rate_history=rate_history, address_history=address_history,
@@ -5010,6 +5057,15 @@ def edit_employee(emp_id):
                 conn.execute('DELETE FROM employee_branches WHERE employee_id=?', (emp_id,))
                 for bid in branch_ids_form:
                     conn.execute('INSERT OR IGNORE INTO employee_branches (employee_id, branch_id) VALUES (?,?)', (emp_id, int(bid)))
+            # Филиалы, на которых действует ежемесячная оплата основной должности
+            final_role = emp_role if (emp_role and emp_role in ROLE_LABELS) else emp['role']
+            pm_branch_ids = [bid for bid in request.form.getlist('pm_branch_ids') if bid.isdigit()]
+            conn.execute('DELETE FROM employee_pay_monthly_branches WHERE employee_id=? AND role=?', (emp_id, final_role))
+            for bid in pm_branch_ids:
+                conn.execute(
+                    'INSERT OR IGNORE INTO employee_pay_monthly_branches (employee_id, role, branch_id) VALUES (?,?,?)',
+                    (emp_id, final_role, int(bid))
+                )
         conn.execute(
             'INSERT INTO employee_rate_history (employee_id, rate, rate_per_km, rate_per_order, effective_from) VALUES (?,?,?,?,?)',
             (emp_id, rate, rate_km, rate_ord, rate_from)
@@ -8903,8 +8959,20 @@ def update_employee_role_template(role_id):
 @menu_permission_required('employees')
 def update_employee_role_pay_monthly(role_id):
     pay_monthly = 1 if request.form.get('pay_monthly') else 0
+    pm_branch_ids = [bid for bid in request.form.getlist('pm_branch_ids') if bid.isdigit()]
     with get_db() as conn:
         conn.execute('UPDATE employee_roles SET pay_monthly=? WHERE id=?', (pay_monthly, role_id))
+        er = conn.execute('SELECT employee_id, role FROM employee_roles WHERE id=?', (role_id,)).fetchone()
+        if er:
+            conn.execute(
+                'DELETE FROM employee_pay_monthly_branches WHERE employee_id=? AND role=?',
+                (er['employee_id'], er['role'])
+            )
+            for bid in pm_branch_ids:
+                conn.execute(
+                    'INSERT OR IGNORE INTO employee_pay_monthly_branches (employee_id, role, branch_id) VALUES (?,?,?)',
+                    (er['employee_id'], er['role'], int(bid))
+                )
         conn.commit()
     return redirect(url_for('employees'))
 

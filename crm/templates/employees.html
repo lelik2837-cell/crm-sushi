@@ -433,6 +433,36 @@
                                {% if emp.pay_monthly %}checked{% endif %}>
                         <label class="form-check-label" for="editEmpPayMonthly{{ emp.id }}">Выплачивать ЗП ежемесячно</label>
                     </div>
+                    {% if is_owner %}
+                    {% set pm_bids = pm_branches_map.get(emp.id, []) %}
+                    <div class="mt-2">
+                        <label class="form-label small mb-1">
+                            Филиалы, где действует ежемес. оплата
+                            <span class="text-muted">(пусто — везде, где работает сотрудник)</span>
+                        </label>
+                        <div class="dropdown">
+                            <button type="button" class="btn btn-sm btn-outline-secondary w-100 text-start d-flex justify-content-between align-items-center"
+                                    data-bs-toggle="dropdown" data-bs-auto-close="outside">
+                                <span class="emp-branch-label" data-group="pmMain{{ emp.id }}">{% if pm_bids %}Выбрано: {{ pm_bids|length }}{% else %}— везде —{% endif %}</span>
+                                <i class="bi bi-chevron-down small"></i>
+                            </button>
+                            <div class="dropdown-menu p-2 shadow w-100" style="max-height:220px;overflow-y:auto">
+                                <input type="text" class="form-control form-control-sm mb-2 emp-branch-search" placeholder="Поиск..." autocomplete="off">
+                                {% for b in all_branches if b.id in cur_bids %}
+                                <div class="form-check emp-branch-item" data-group="pmMain{{ emp.id }}">
+                                    <input class="form-check-input emp-branch-cb" type="checkbox" name="pm_branch_ids"
+                                           value="{{ b.id }}" id="pmMainBr{{ emp.id }}_{{ b.id }}"
+                                           data-group="pmMain{{ emp.id }}"
+                                           {% if b.id in pm_bids %}checked{% endif %}>
+                                    <label class="form-check-label w-100" for="pmMainBr{{ emp.id }}_{{ b.id }}" style="cursor:pointer">{{ b.name }}</label>
+                                </div>
+                                {% else %}
+                                <div class="text-muted small px-1">У сотрудника пока нет назначенных филиалов</div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
 
                 </div>
                 <div class="modal-footer">
@@ -468,12 +498,38 @@
                                 <i class="bi bi-check2"></i>
                             </button>
                         </form>
+                        {% set pm_er_bids = pm_role_branches_map.get(er.id, []) %}
                         <form method="POST" action="{{ url_for('update_employee_role_pay_monthly', role_id=er.id) }}"
-                              class="form-check d-flex align-items-center gap-1 mb-0">
-                            <input class="form-check-input mt-0" type="checkbox" name="pay_monthly" value="1"
-                                   id="erPayMonthly{{ er.id }}" onchange="this.form.submit()"
-                                   {% if er.pay_monthly %}checked{% endif %}>
-                            <label class="form-check-label small text-nowrap" for="erPayMonthly{{ er.id }}">Ежемес.</label>
+                              class="d-flex align-items-center gap-1 mb-0">
+                            <div class="form-check d-flex align-items-center gap-1 mb-0">
+                                <input class="form-check-input mt-0" type="checkbox" name="pay_monthly" value="1"
+                                       id="erPayMonthly{{ er.id }}"
+                                       {% if er.pay_monthly %}checked{% endif %}>
+                                <label class="form-check-label small text-nowrap" for="erPayMonthly{{ er.id }}">Ежемес.</label>
+                            </div>
+                            <div class="dropdown">
+                                <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 dropdown-toggle"
+                                        data-bs-toggle="dropdown" data-bs-auto-close="outside" style="font-size:.78rem">
+                                    <span class="emp-branch-label" data-group="pmRole{{ er.id }}">{% if pm_er_bids %}Выбрано: {{ pm_er_bids|length }}{% else %}везде{% endif %}</span>
+                                </button>
+                                <div class="dropdown-menu p-2 shadow" style="max-height:220px;overflow-y:auto; min-width:220px">
+                                    <input type="text" class="form-control form-control-sm mb-2 emp-branch-search" placeholder="Поиск..." autocomplete="off">
+                                    {% for b in all_branches if b.id in cur_bids %}
+                                    <div class="form-check emp-branch-item" data-group="pmRole{{ er.id }}">
+                                        <input class="form-check-input emp-branch-cb" type="checkbox" name="pm_branch_ids"
+                                               value="{{ b.id }}" id="pmRoleBr{{ er.id }}_{{ b.id }}"
+                                               data-group="pmRole{{ er.id }}"
+                                               {% if b.id in pm_er_bids %}checked{% endif %}>
+                                        <label class="form-check-label w-100" for="pmRoleBr{{ er.id }}_{{ b.id }}" style="cursor:pointer">{{ b.name }}</label>
+                                    </div>
+                                    {% else %}
+                                    <div class="text-muted small px-1">Нет назначенных филиалов</div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            <button type="submit" class="btn btn-sm btn-outline-secondary py-0 px-2" title="Сохранить">
+                                <i class="bi bi-check2"></i>
+                            </button>
                         </form>
                         <form method="POST" action="{{ url_for('delete_employee_role', role_id=er.id) }}" class="d-inline">
                             <button class="btn btn-sm btn-outline-danger py-0 px-1" title="Удалить должность"
