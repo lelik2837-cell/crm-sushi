@@ -10970,15 +10970,18 @@ def _xl_import_sheet_from_parsed(sheet, emp_map, conn, stats, batch_id=None):
         "SELECT id FROM shifts WHERE branch_id=? AND date=?", (branch_id, shift_date)
     ).fetchone()
     if existing:
-        shift_id = existing[0]
-    else:
-        status = 'closed' if (closed_by_name or sheet.get('force_closed')) else 'open'
-        conn.execute(
-            "INSERT INTO shifts (branch_id, date, status, closed_by_name, import_batch_id) VALUES (?,?,?,?,?)",
-            (branch_id, shift_date, status, closed_by_name, batch_id)
-        )
-        shift_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-        stats['shifts'] += 1
+        # Смена уже есть в системе — импорт её не трогает и не дописывает данные,
+        # чтобы не задвоить расходы/премии и не затереть то, что уже внесено вручную.
+        stats['skipped'] = stats.get('skipped', 0) + 1
+        return
+
+    status = 'closed' if (closed_by_name or sheet.get('force_closed')) else 'open'
+    conn.execute(
+        "INSERT INTO shifts (branch_id, date, status, closed_by_name, import_batch_id) VALUES (?,?,?,?,?)",
+        (branch_id, shift_date, status, closed_by_name, batch_id)
+    )
+    shift_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    stats['shifts'] += 1
 
     if not conn.execute("SELECT id FROM shift_revenue WHERE shift_id=?", (shift_id,)).fetchone():
         conn.execute(
@@ -11371,14 +11374,14 @@ def import_shifts_confirm(token):
                             pass
 
         # Import all sheets
-        total_stats = {'shifts': 0, 'expenses': 0, 'employees': 0, 'employee_shifts': 0}
+        total_stats = {'shifts': 0, 'expenses': 0, 'employees': 0, 'employee_shifts': 0, 'skipped': 0}
         for pf in staging['files']:
             conn.execute(
                 "INSERT INTO import_batches (branch_id, filename, imported_by) VALUES (?,?,?)",
                 (staging['branch_id'], pf['filename'], staging.get('user_id'))
             )
             batch_id   = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-            file_stats = {'shifts': 0, 'expenses': 0, 'employees': 0, 'employee_shifts': 0}
+            file_stats = {'shifts': 0, 'expenses': 0, 'employees': 0, 'employee_shifts': 0, 'skipped': 0}
 
             for sheet in pf['sheets']:
                 _xl_import_sheet_from_parsed(sheet, emp_map, conn, file_stats, batch_id=batch_id)
@@ -11391,10 +11394,12 @@ def import_shifts_confirm(token):
             )
             for k in total_stats:
                 total_stats[k] += file_stats[k]
+            skipped_note = f', пропущено (уже есть в системе) {file_stats["skipped"]}' if file_stats['skipped'] else ''
             flash(
                 f'«{pf["filename"]}»: смен +{file_stats["shifts"]}, '
                 f'расходов +{file_stats["expenses"]}, '
-                f'записей ЗП +{file_stats["employee_shifts"]}',
+                f'записей ЗП +{file_stats["employee_shifts"]}'
+                f'{skipped_note}',
                 'success'
             )
 
