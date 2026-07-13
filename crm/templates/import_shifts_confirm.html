@@ -40,7 +40,9 @@
         <div class="alert alert-info m-3 mb-0 py-2" style="font-size:0.88rem">
           <i class="bi bi-info-circle me-1"></i>
           Для каждого сотрудника из файла выберите: кто это в базе, или создайте нового, или пропустите.
-          Совпадения по имени подставлены автоматически — проверьте их.
+          Совпадения по имени подставлены автоматически — проверьте их. Список показывает сотрудников
+          филиалов той же группы, что и импортируемый филиал. Если сотрудник в файле числится под другой
+          должностью — она будет добавлена ему как дополнительная автоматически.
         </div>
         <div class="table-responsive">
           <table class="table table-hover mb-0 align-middle" style="font-size:0.9rem">
@@ -67,8 +69,12 @@
                 {% endfor %}
               </td>
               <td>
+                <input type="text" class="form-control form-control-sm mb-1 emp-search-input"
+                       data-target="emp_select_{{ i }}"
+                       placeholder="Поиск по имени…" autocomplete="off" style="max-width:380px">
                 <select class="form-select form-select-sm emp-action-select"
                         name="action_{{ i }}"
+                        id="emp_select_{{ i }}"
                         data-idx="{{ i }}"
                         data-emp-name="{{ emp.name | e }}"
                         data-default-name="{{ emp.name | e }}"
@@ -106,19 +112,6 @@
                              placeholder="0" min="0" style="width:100px">
                     </div>
                   </div>
-                </div>
-
-                <!-- Чекбокс: добавить доп. должность в профиль -->
-                <div class="add-role-div mt-1" id="add_role_div_{{ i }}" style="display:none">
-                  <label class="form-check-label" style="font-size:0.82rem; color:#475569; cursor:pointer">
-                    <input type="checkbox" class="form-check-input me-1"
-                           name="add_role_{{ i }}" value="1">
-                    Добавить должность
-                    {% for role in emp.roles %}
-                    «{{ role_labels.get(role, role) }}»{% if not loop.last %}, {% endif %}
-                    {% endfor %}
-                    в профиль сотрудника
-                  </label>
                 </div>
 
               </td>
@@ -228,26 +221,32 @@ document.querySelectorAll('.emp-action-select').forEach(function(sel) {
     var idx = sel.dataset.idx;
     var val = sel.value;
     var newFields = document.getElementById('new_fields_' + idx);
-    var addRoleDiv = document.getElementById('add_role_div_' + idx);
 
     if (val === 'new') {
       newFields.style.display = 'block';
-      addRoleDiv.style.display = 'none';
       // Pre-fill name and rate
       var nameInput = document.getElementById('new_name_' + idx);
       var rateInput = document.getElementById('new_rate_' + idx);
       if (nameInput && !nameInput.value) nameInput.value = sel.dataset.defaultName;
       if (rateInput && !rateInput.value) rateInput.value = sel.dataset.defaultRate;
-    } else if (val.startsWith('existing:')) {
-      newFields.style.display = 'none';
-      addRoleDiv.style.display = 'block';
     } else {
       newFields.style.display = 'none';
-      addRoleDiv.style.display = 'none';
     }
   }
   sel.addEventListener('change', update);
   update(); // init on page load
+});
+
+// Поиск по сотрудникам внутри выпадающего списка
+document.querySelectorAll('.emp-search-input').forEach(function(input) {
+  var select = document.getElementById(input.dataset.target);
+  if (!select) return;
+  input.addEventListener('input', function() {
+    var q = input.value.trim().toLowerCase();
+    select.querySelectorAll('optgroup option').forEach(function(opt) {
+      opt.hidden = !!q && !opt.textContent.toLowerCase().includes(q);
+    });
+  });
 });
 
 document.getElementById('submitBtn').addEventListener('click', function(e) {
