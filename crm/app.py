@@ -10831,12 +10831,10 @@ def _xl_parse_sheet_alt(ws, branch_id):
         return f"{h:02d}:{m:02d}"
 
     def _is_paid(r, idx):
+        # Учитывается только да/нет. Любая другая пометка (например «зп 2р/мес»)
+        # для импорта — то же самое, что «нет»: за эту смену не выплачено.
+        # Настройка ежемесячной оплаты в профиле сотрудника импортом не трогается.
         return 1 if len(r) > idx and r[idx] is not None and str(r[idx]).strip().lower() == 'да' else 0
-
-    def _is_pay_monthly(r, idx):
-        # «Выпл-но» иногда содержит не «да/нет», а пометку вида «зп 2р/мес» —
-        # значит сотрудник получает зарплату не за смену, а ежемесячно.
-        return 1 if len(r) > idx and isinstance(r[idx], str) and 'мес' in r[idx].lower() else 0
 
     # Сотрудники
     employees = []
@@ -10869,7 +10867,6 @@ def _xl_parse_sheet_alt(ws, branch_id):
             bonus = 0.0; penalty = 0.0
             comment = s_label if s_label and s_label != 'Ничего' else ''
         paid     = _is_paid(r, 17)                    # R
-        pay_monthly = _is_pay_monthly(r, 17)          # R
         rate_km  = 10.0
         rate_ord = round(ord_pay / orders, 2) if orders > 0 else 100.0
         rate_hr  = round(hrs_pay / hours, 2) if hours > 0 else 0.0
@@ -10883,7 +10880,6 @@ def _xl_parse_sheet_alt(ws, branch_id):
             'start': start, 'end': end,
             'bonus': bonus, 'penalty': penalty, 'comment': comment,
             'base_pay': hrs_pay + km * rate_km, 'total': total, 'paid': paid,
-            'pay_monthly': pay_monthly,
         })
 
     # Остальные сотрудники — строки 10-34. Роль по фиксированным диапазонам
@@ -10922,7 +10918,6 @@ def _xl_parse_sheet_alt(ws, branch_id):
             bonus = 0.0; penalty = 0.0
             comment = s_label if s_label and s_label != 'Ничего' else ''
         paid = _is_paid(r, 17)                          # R
-        pay_monthly = _is_pay_monthly(r, 17)            # R
         base = round(rate * hours, 2)
         employees.append({
             'name': name, 'role': role, 'rate': rate,
@@ -10931,7 +10926,6 @@ def _xl_parse_sheet_alt(ws, branch_id):
             'start': start, 'end': end,
             'bonus': bonus, 'penalty': penalty, 'comment': comment,
             'base_pay': base, 'total': total, 'paid': paid,
-            'pay_monthly': pay_monthly,
         })
 
     return {
@@ -11241,11 +11235,9 @@ def import_shifts():
                 for emp in sheet['employees']:
                     n = emp['name']
                     if n not in unique_emp_map:
-                        unique_emp_map[n] = {'name': n, 'roles': [], 'rate': emp['rate'], 'pay_monthly': 0}
+                        unique_emp_map[n] = {'name': n, 'roles': [], 'rate': emp['rate']}
                     if emp['role'] not in unique_emp_map[n]['roles']:
                         unique_emp_map[n]['roles'].append(emp['role'])
-                    if emp.get('pay_monthly'):
-                        unique_emp_map[n]['pay_monthly'] = 1
         unique_employees = list(unique_emp_map.values())
 
         # Store parsed data to staging table
@@ -11384,16 +11376,16 @@ def import_shifts_confirm(token):
                     if role == cur_role:
                         continue
                     conn.execute(
-                        "INSERT OR IGNORE INTO employee_roles (employee_id, role, is_active, pay_monthly) VALUES (?,?,1,?)",
-                        (emp_id, role, emp.get('pay_monthly', 0))
+                        "INSERT OR IGNORE INTO employee_roles (employee_id, role, is_active) VALUES (?,?,1)",
+                        (emp_id, role)
                     )
             elif action == 'new':
                 new_name = request.form.get(f'new_name_{i}', name).strip() or name
                 new_rate = float(request.form.get(f'new_rate_{i}', '0') or '0')
                 primary_role = emp['roles'][0] if emp['roles'] else 'admin'
                 conn.execute(
-                    "INSERT INTO employees (branch_id, full_name, role, rate, is_active, pay_monthly) VALUES (?,?,?,?,1,?)",
-                    (staging['branch_id'], new_name, primary_role, new_rate, emp.get('pay_monthly', 0))
+                    "INSERT INTO employees (branch_id, full_name, role, rate, is_active) VALUES (?,?,?,?,1)",
+                    (staging['branch_id'], new_name, primary_role, new_rate)
                 )
                 new_emp_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
                 emp_map[name] = new_emp_id
@@ -11403,8 +11395,8 @@ def import_shifts_confirm(token):
                 )
                 for role in emp['roles'][1:]:
                     conn.execute(
-                        "INSERT OR IGNORE INTO employee_roles (employee_id, role, is_active, pay_monthly) VALUES (?,?,1,?)",
-                        (new_emp_id, role, emp.get('pay_monthly', 0))
+                        "INSERT OR IGNORE INTO employee_roles (employee_id, role, is_active) VALUES (?,?,1)",
+                        (new_emp_id, role)
                     )
             # action == 'skip': emp_map[name] stays absent → employee skipped
 
