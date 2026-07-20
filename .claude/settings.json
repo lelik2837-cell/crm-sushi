@@ -1,5 +1,15 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"Перед началом работы обязательно прочитай файл /Users/aleksey/Desktop/CRM sushi/plan.md, чтобы ознакомиться с текущим планом и контекстом проекта, если ещё не читал его в этой сессии.\"}}'"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
