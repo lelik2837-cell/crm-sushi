@@ -12428,6 +12428,17 @@ def call_center_schedule_save():
 CONTACT_CENTER_CAT_CODE = 'contact_center'
 CONTACT_CENTER_CAT_LABEL = 'Контакт-центр'
 
+# Цвета для строк групп филиалов в отчёте «Контакт-центр» (group_bg — строка группы,
+# branch_bg — вложенные строки филиалов, accent — левая полоса-акцент).
+GROUP_COLOR_PALETTE = [
+    {'group_bg': '#dbe9ff', 'branch_bg': '#eef4ff', 'accent': '#0d6efd'},
+    {'group_bg': '#ffe8cc', 'branch_bg': '#fff4e5', 'accent': '#fd7e14'},
+    {'group_bg': '#d2f4e0', 'branch_bg': '#eafaf1', 'accent': '#198754'},
+    {'group_bg': '#fbd9e4', 'branch_bg': '#fdeef2', 'accent': '#d63384'},
+    {'group_bg': '#e5d9fa', 'branch_bg': '#f3eefc', 'accent': '#6f42c1'},
+    {'group_bg': '#cdf1f7', 'branch_bg': '#e7f6f8', 'accent': '#0891a8'},
+]
+
 
 def _ensure_contact_center_category(conn):
     """Находит категорию «Контакт-центр» по названию (код мог быть создан вручную
@@ -12546,6 +12557,22 @@ def contact_center_report():
         ''', (date_from, date_to)).fetchall():
             branch_rev_by_month.setdefault(r['bid'], {})[r['month']] = r['revenue']
 
+        # Там, где нет смены с выручкой — берём из «Старой выручки» (revenue_manual),
+        # тот же fallback, что и в остальных отчётах (см. _manual_rev_by_month).
+        for r in conn.execute('''
+            SELECT m.branch_id AS bid, strftime('%Y-%m', m.date) AS month,
+                   COALESCE(SUM(m.amount),0) as revenue
+            FROM revenue_manual m
+            WHERE m.date BETWEEN ? AND ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM shifts s JOIN shift_revenue sr ON sr.shift_id=s.id
+                  WHERE s.date=m.date AND s.branch_id=m.branch_id AND (sr.total_revenue > 0 OR s.status='closed')
+              )
+            GROUP BY m.branch_id, month
+        ''', (date_from, date_to)).fetchall():
+            by_month = branch_rev_by_month.setdefault(r['bid'], {})
+            by_month[r['month']] = by_month.get(r['month'], 0.0) + r['revenue']
+
     def _row(label, by_month, extra=None):
         r = {'label': label, 'amounts': {}, 'total': 0.0}
         if extra:
@@ -12594,7 +12621,7 @@ def contact_center_report():
 
     grouped_branch_ids = set()
     group_alloc_rows = []
-    for g in branch_groups:
+    for i, g in enumerate(branch_groups):
         member_ids = [bid for bid in g['branch_ids'] if bid in branch_names]
         grouped_branch_ids.update(member_ids)
         g_rev_by_month = {
@@ -12607,6 +12634,7 @@ def contact_center_report():
         ]
         group_row = _row(g['name'], _alloc_by_month(g_rev_by_month))
         group_row['branches'] = branch_rows
+        group_row['color'] = GROUP_COLOR_PALETTE[i % len(GROUP_COLOR_PALETTE)]
         group_alloc_rows.append(group_row)
 
     ungrouped_alloc_rows = sorted((
@@ -12614,11 +12642,19 @@ def contact_center_report():
         for bid in branch_names if bid not in grouped_branch_ids
     ), key=lambda x: x['label'])
 
+    # % от общей выручки всех групп/филиалов, которую «съедает» контакт-центр
+    pct_of_revenue_row = _row('% от общей выручки', {
+        mo: (grand_total_row['amounts'].get(mo, 0.0) / total_rev_by_month[mo] * 100)
+            if total_rev_by_month.get(mo) else 0.0
+        for mo in months
+    })
+
     return render_template(
         'report_contact_center.html',
         months=months, month_labels=month_labels,
         op_rows=op_rows, ctr_rows=ctr_rows,
         fot_total_row=fot_total_row, exp_total_row=exp_total_row, grand_total_row=grand_total_row,
+        pct_of_revenue_row=pct_of_revenue_row,
         date_from=date_from, date_to=date_to,
         group_alloc_rows=group_alloc_rows, ungrouped_alloc_rows=ungrouped_alloc_rows,
     )
