@@ -72,16 +72,19 @@
                 </tr>
             </thead>
             <tbody>
-                <tr>
-                    <td colspan="{{ months|length + 1 }}" class="small fw-bold text-muted"
-                        style="background:#f0f2f7;text-transform:uppercase;letter-spacing:.5px;font-size:11px;">
-                        <i class="bi bi-headset me-1"></i>ФОТ операторов колл-центра
+                <tr class="table-light" style="cursor:pointer" onclick="toggleOperators()">
+                    <td class="fw-bold small">
+                        <i class="bi bi-chevron-right" id="opChevron" style="transition:transform .2s"></i>
+                        {{ fot_total_row.label }}
                     </td>
+                    {% for mo in months %}
+                    <td class="text-end fw-bold small">{% if fot_total_row.amounts[mo] %}{{ fot_total_row.amounts[mo]|money }} ₽{% else %}—{% endif %}</td>
+                    {% endfor %}
                 </tr>
                 {% if op_rows %}
                 {% for row in op_rows %}
-                <tr>
-                    <td class="small {% if row.fired %}text-muted{% endif %}">
+                <tr class="op-detail-row" style="display:none">
+                    <td class="small ps-4 {% if row.fired %}text-muted{% endif %}">
                         {{ row.label }}{% if row.fired %} <span class="badge bg-secondary">уволен</span>{% endif %}
                     </td>
                     {% for mo in months %}
@@ -90,16 +93,10 @@
                 </tr>
                 {% endfor %}
                 {% else %}
-                <tr>
-                    <td colspan="{{ months|length + 1 }}" class="text-muted small py-2">Нет операторов колл-центра</td>
+                <tr class="op-detail-row" style="display:none">
+                    <td colspan="{{ months|length + 1 }}" class="text-muted small py-2 ps-4">Нет операторов колл-центра</td>
                 </tr>
                 {% endif %}
-                <tr class="table-light">
-                    <td class="fw-bold small">{{ fot_total_row.label }}</td>
-                    {% for mo in months %}
-                    <td class="text-end fw-bold small">{% if fot_total_row.amounts[mo] %}{{ fot_total_row.amounts[mo]|money }} ₽{% else %}—{% endif %}</td>
-                    {% endfor %}
-                </tr>
 
                 <tr>
                     <td colspan="{{ months|length + 1 }}" class="small fw-bold text-muted"
@@ -143,6 +140,95 @@
     </div>
 </div>
 
+<div class="card mt-4">
+    <div class="card-header bg-light fw-semibold d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-pie-chart me-2"></i>Распределение по филиалам (пропорционально выручке за период)</span>
+        <span class="text-muted small">Выручка всего: {{ total_revenue_all|money }} ₽</span>
+    </div>
+    {% if total_revenue_all %}
+    <div class="table-responsive">
+        <table class="table table-sm mb-0 align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th style="min-width:200px;">Филиал / группа</th>
+                    <th class="text-end">Выручка</th>
+                    <th class="text-end">Доля</th>
+                    <th class="text-end">Контакт-центр</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for g in group_alloc_rows %}
+                {% set gi = loop.index %}
+                <tr class="table-light fw-semibold" style="cursor:pointer" onclick="toggleGroup({{ gi }})">
+                    <td>
+                        <i class="bi bi-chevron-right" id="grpChevron{{ gi }}" style="transition:transform .2s"></i>
+                        {{ g.name }}
+                    </td>
+                    <td class="text-end">{{ g.revenue|money }} ₽</td>
+                    <td class="text-end">{{ '%.1f'|format(g.pct) }}%</td>
+                    <td class="text-end text-success fw-semibold">{{ g.alloc|money }} ₽</td>
+                </tr>
+                {% for b in g.branches %}
+                <tr class="grp-detail-{{ gi }}" style="display:none">
+                    <td class="small text-muted ps-4">{{ b.name }}</td>
+                    <td class="text-end small">{{ b.revenue|money }} ₽</td>
+                    <td class="text-end small">{{ '%.1f'|format(b.pct) }}%</td>
+                    <td class="text-end small">{{ b.alloc|money }} ₽</td>
+                </tr>
+                {% endfor %}
+                {% endfor %}
+
+                {% if ungrouped_alloc_rows %}
+                <tr>
+                    <td colspan="4" class="small fw-bold text-muted"
+                        style="background:#f0f2f7;text-transform:uppercase;letter-spacing:.5px;font-size:11px;">
+                        Без группы
+                    </td>
+                </tr>
+                {% for b in ungrouped_alloc_rows %}
+                <tr>
+                    <td class="small">{{ b.name }}</td>
+                    <td class="text-end small">{{ b.revenue|money }} ₽</td>
+                    <td class="text-end small">{{ '%.1f'|format(b.pct) }}%</td>
+                    <td class="text-end small">{{ b.alloc|money }} ₽</td>
+                </tr>
+                {% endfor %}
+                {% endif %}
+            </tbody>
+            <tfoot>
+                <tr style="background:#e7f5ec;">
+                    <td class="fw-bold">Итого</td>
+                    <td class="text-end fw-bold">{{ total_revenue_all|money }} ₽</td>
+                    <td class="text-end fw-bold">100%</td>
+                    <td class="text-end fw-bold text-success">{{ cc_total|money }} ₽</td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+    {% else %}
+    <div class="text-center text-muted py-4 small">Нет данных о выручке за выбранный период</div>
+    {% endif %}
+</div>
+
 {% endif %}
 
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleOperators() {
+    const rows = document.querySelectorAll('.op-detail-row');
+    const chv = document.getElementById('opChevron');
+    const hidden = rows.length > 0 && rows[0].style.display === 'none';
+    rows.forEach(r => r.style.display = hidden ? '' : 'none');
+    if (chv) chv.style.transform = hidden ? 'rotate(90deg)' : '';
+}
+function toggleGroup(gi) {
+    const rows = document.querySelectorAll('.grp-detail-' + gi);
+    const chv = document.getElementById('grpChevron' + gi);
+    const hidden = rows.length > 0 && rows[0].style.display === 'none';
+    rows.forEach(r => r.style.display = hidden ? '' : 'none');
+    if (chv) chv.style.transform = hidden ? 'rotate(90deg)' : '';
+}
+</script>
 {% endblock %}

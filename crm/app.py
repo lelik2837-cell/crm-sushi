@@ -12527,6 +12527,20 @@ def contact_center_report():
         ''', (cc_cat_code, date_from, date_to)).fetchall():
             ctr_pay.setdefault(r['cid'], {})[r['month']] = r['amt']
 
+        # Выручка по филиалам за период — база для распределения расходов на контакт-центр
+        branch_groups = get_branch_groups(conn)
+        branch_revenue = {}
+        for r in conn.execute('''
+            SELECT b.id, b.name, COALESCE(SUM(sr.total_revenue),0) as revenue
+            FROM branches b
+            LEFT JOIN shifts s ON s.branch_id=b.id AND s.date BETWEEN ? AND ?
+            LEFT JOIN shift_revenue sr ON sr.shift_id = s.id
+            WHERE b.is_active=1
+            GROUP BY b.id
+            ORDER BY b.name
+        ''', (date_from, date_to)).fetchall():
+            branch_revenue[r['id']] = {'name': r['name'], 'revenue': r['revenue']}
+
     def _row(label, by_month, extra=None):
         r = {'label': label, 'amounts': {}, 'total': 0.0}
         if extra:
@@ -12557,12 +12571,59 @@ def contact_center_report():
 
     month_labels = {mo: _pnl_period_label(mo) for mo in months}
 
+    # Распределение итога контакт-центра по филиалам/группам пропорционально их
+    # выручке за период: доля_филиала = выручка_филиала / выручка_всех_филиалов.
+    cc_total = grand_total_row['total']
+    total_revenue_all = sum(v['revenue'] for v in branch_revenue.values())
+
+    def _alloc(revenue):
+        if not total_revenue_all:
+            return 0.0
+        return cc_total * (revenue / total_revenue_all)
+
+    def _pct(revenue):
+        return (revenue / total_revenue_all * 100) if total_revenue_all else 0.0
+
+    grouped_branch_ids = set()
+    group_alloc_rows = []
+    for g in branch_groups:
+        member_ids = [bid for bid in g['branch_ids'] if bid in branch_revenue]
+        grouped_branch_ids.update(member_ids)
+        g_rev = sum(branch_revenue[bid]['revenue'] for bid in member_ids)
+        group_alloc_rows.append({
+            'name': g['name'],
+            'revenue': g_rev,
+            'pct': _pct(g_rev),
+            'alloc': _alloc(g_rev),
+            'branches': [
+                {
+                    'name': branch_revenue[bid]['name'],
+                    'revenue': branch_revenue[bid]['revenue'],
+                    'pct': _pct(branch_revenue[bid]['revenue']),
+                    'alloc': _alloc(branch_revenue[bid]['revenue']),
+                }
+                for bid in member_ids
+            ],
+        })
+
+    ungrouped_alloc_rows = sorted((
+        {
+            'name': v['name'],
+            'revenue': v['revenue'],
+            'pct': _pct(v['revenue']),
+            'alloc': _alloc(v['revenue']),
+        }
+        for bid, v in branch_revenue.items() if bid not in grouped_branch_ids
+    ), key=lambda x: x['name'])
+
     return render_template(
         'report_contact_center.html',
         months=months, month_labels=month_labels,
         op_rows=op_rows, ctr_rows=ctr_rows,
         fot_total_row=fot_total_row, exp_total_row=exp_total_row, grand_total_row=grand_total_row,
         date_from=date_from, date_to=date_to,
+        group_alloc_rows=group_alloc_rows, ungrouped_alloc_rows=ungrouped_alloc_rows,
+        total_revenue_all=total_revenue_all, cc_total=cc_total,
     )
 
 
