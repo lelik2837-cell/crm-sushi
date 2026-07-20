@@ -283,7 +283,7 @@
                 <tr>
                     <th class="text-start" style="width:90px">Дата</th>
                     {% for op in operators %}
-                    <th style="width:96px">
+                    <th style="width:192px">
                         {{ op.full_name }}
                         <div class="fw-bold text-primary" style="font-size:0.85rem">
                             {{ month_totals.get(op.id, {}).get('hours', 0)|moneyval }}ч · {{ month_totals.get(op.id, {}).get('pay', 0)|money }}₽
