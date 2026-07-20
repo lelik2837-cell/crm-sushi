@@ -9369,9 +9369,12 @@ def bank():
             FROM bank_statements bs JOIN bank_accounts ba ON ba.id=bs.bank_account_id
             ORDER BY bs.uploaded_at DESC
         ''').fetchall()
-        contractors = conn.execute(
-            'SELECT * FROM contractors WHERE is_active=1 ORDER BY name'
-        ).fetchall()
+        contractors = conn.execute('''
+            SELECT c.*, ec.label as category_label
+            FROM contractors c
+            LEFT JOIN expense_categories ec ON ec.code = c.category
+            WHERE c.is_active=1 ORDER BY c.name
+        ''').fetchall()
         terminals   = conn.execute(
             'SELECT t.*, b.name as branch_name FROM bank_terminals t LEFT JOIN branches b ON b.id=t.branch_id ORDER BY t.terminal_number'
         ).fetchall()

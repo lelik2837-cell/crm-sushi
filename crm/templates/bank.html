@@ -526,7 +526,7 @@
             <tr>
               <td class="fw-semibold">{{ c.name }}</td>
               <td class="text-muted small">{{ c.inn or '—' }}</td>
-              <td>{{ c.category or '—' }}</td>
+              <td>{{ c.category_label or c.category or '—' }}</td>
               <td class="text-muted small">{{ c.keywords or '—' }}</td>
               <td class="text-end">
                 <button class="btn btn-outline-secondary btn-sm me-1"
