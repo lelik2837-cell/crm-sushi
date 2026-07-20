@@ -1972,7 +1972,7 @@ def dashboard():
                 branches=branches, stats=stats, weekly=weekly,
                 open_shifts=open_shifts, kpi_blocks=kpi_blocks,
                 month_rev=month_rev, month_fot=month_fot['fot'] or 0,
-                branch_groups=branch_groups)
+                branch_groups=branch_groups, today=date.today().isoformat())
         else:
             if not item_visible('dashboard'):
                 # "dashboard" — единственная всегда-достижимая страница после логина,
@@ -3142,9 +3142,23 @@ def open_shift():
         flash('Филиал не определён', 'danger')
         return redirect(url_for('dashboard'))
     today = date.today().isoformat()
+    # Владелец может открыть смену задним числом (заполнить пропущенную смену),
+    # остальные роли — только на сегодня.
+    target_date = request.form.get('date', '').strip()
+    if role == 'owner' and target_date:
+        try:
+            date.fromisoformat(target_date)
+        except ValueError:
+            flash('Некорректная дата', 'danger')
+            return redirect(url_for('dashboard'))
+        if target_date > today:
+            flash('Нельзя открыть смену на будущую дату', 'danger')
+            return redirect(url_for('dashboard'))
+    else:
+        target_date = today
     with get_db() as conn:
         existing = conn.execute(
-            'SELECT id FROM shifts WHERE branch_id=? AND date=?', (branch_id, today)
+            'SELECT id FROM shifts WHERE branch_id=? AND date=?', (branch_id, target_date)
         ).fetchone()
         if existing:
             flash('Смена на этот день уже существует', 'warning')
@@ -3152,12 +3166,12 @@ def open_shift():
         try:
             conn.execute(
                 'INSERT INTO shifts (branch_id, date, opened_by) VALUES (?,?,?)',
-                (branch_id, today, session['user_id'])
+                (branch_id, target_date, session['user_id'])
             )
         except Exception:
             # Race condition: another request created the shift simultaneously
             existing2 = conn.execute(
-                'SELECT id FROM shifts WHERE branch_id=? AND date=?', (branch_id, today)
+                'SELECT id FROM shifts WHERE branch_id=? AND date=?', (branch_id, target_date)
             ).fetchone()
             if existing2:
                 flash('Смена на этот день уже существует', 'warning')
@@ -3173,12 +3187,12 @@ def open_shift():
             except ValueError:
                 prev_morning = 0.0
         else:
-            prev_morning = _calc_prev_kassa_nal(conn, int(branch_id), today)
+            prev_morning = _calc_prev_kassa_nal(conn, int(branch_id), target_date)
         conn.execute(
             'INSERT INTO shift_revenue (shift_id, morning_cash) VALUES (?, ?)',
             (shift_id, prev_morning)
         )
-        _apply_change_amount_to_shift(conn, shift_id, int(branch_id), today)
+        _apply_change_amount_to_shift(conn, shift_id, int(branch_id), target_date)
         conn.commit()
     return redirect(url_for('shift_view', shift_id=shift_id))
 

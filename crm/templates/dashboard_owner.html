@@ -232,7 +232,7 @@
 <!-- ══ OPEN SHIFT FORM ══ -->
 <div class="card mb-4">
     <div class="card-header bg-light">
-        <i class="bi bi-plus-circle"></i> Открыть смену сегодня
+        <i class="bi bi-plus-circle"></i> Открыть смену
     </div>
     <div class="card-body">
         <form method="POST" action="{{ url_for('open_shift') }}" class="row g-2 align-items-end">
@@ -243,6 +243,11 @@
                     <option value="{{ b.id }}">{{ b.name }}</option>
                     {% endfor %}
                 </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label fw-semibold small">Дата</label>
+                <input type="date" name="date" class="form-control" value="{{ today }}" max="{{ today }}" required>
+                <div class="form-text small">Можно указать прошедшую дату — заполнить пропущенную смену</div>
             </div>
             <div class="col-md-3">
                 <button type="submit" class="btn btn-primary w-100">
