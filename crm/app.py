@@ -6006,6 +6006,7 @@ def delete_expense_cat(cat_id):
 @menu_permission_required('settings_categories')
 def edit_expense_cat(cat_id):
     label = request.form.get('label', '').strip()
+    cat_type = request.form.get('type', '').strip()
     parent_id = request.form.get('parent_id') or None
     show_contractors = 1 if request.form.get('show_contractors') else 0
     show_shift = 1 if request.form.get('show_shift') else 0
@@ -6017,30 +6018,35 @@ def edit_expense_cat(cat_id):
         if not cat:
             flash('Категория не найдена', 'danger')
             return redirect(url_for('settings'))
+        if cat_type not in ('expense', 'income'):
+            cat_type = cat['type']
+        has_children = conn.execute(
+            'SELECT COUNT(*) FROM expense_categories WHERE parent_id=?', (cat_id,)
+        ).fetchone()[0]
         if parent_id:
             if int(parent_id) == cat_id:
                 flash('Категория не может быть группой сама для себя', 'danger')
                 return redirect(url_for('settings'))
-            parent_row = conn.execute(
-                'SELECT id FROM expense_categories WHERE id=? AND type=? AND parent_id IS NULL',
-                (parent_id, cat['type'])
-            ).fetchone()
-            if not parent_row:
-                flash('Группа не найдена', 'danger')
-                return redirect(url_for('settings'))
-            has_children = conn.execute(
-                'SELECT COUNT(*) FROM expense_categories WHERE parent_id=?', (cat_id,)
-            ).fetchone()[0]
             if has_children:
                 flash('У этой категории есть свои подкатегории — сначала перенесите их, группу нельзя вложить в другую группу', 'danger')
                 return redirect(url_for('settings'))
+            parent_row = conn.execute(
+                'SELECT id FROM expense_categories WHERE id=? AND type=? AND parent_id IS NULL',
+                (parent_id, cat_type)
+            ).fetchone()
+            if not parent_row:
+                flash('Группа не найдена (проверьте, что тип группы совпадает с типом категории)', 'danger')
+                return redirect(url_for('settings'))
             parent_id = parent_row['id']
         conn.execute(
-            'UPDATE expense_categories SET label=?, parent_id=?, show_contractors=?, show_shift=? WHERE id=?',
-            (label, parent_id, show_contractors, show_shift, cat_id)
+            'UPDATE expense_categories SET label=?, type=?, parent_id=?, show_contractors=?, show_shift=? WHERE id=?',
+            (label, cat_type, parent_id, show_contractors, show_shift, cat_id)
         )
+        # Подкатегории всегда наследуют тип группы — если тип группы сменили, тянем их за собой.
+        if has_children and cat_type != cat['type']:
+            conn.execute('UPDATE expense_categories SET type=? WHERE parent_id=?', (cat_type, cat_id))
         conn.commit()
-    flash('Категория обновлена', 'success')
+    flash('Категория обновлена' + (' (подкатегории тоже переключены на новый тип)' if has_children and cat_type != cat['type'] else ''), 'success')
     return redirect(url_for('settings'))
 
 
@@ -8178,8 +8184,16 @@ def expenses_report():
             conds.append(f's.branch_id IN ({ph})')
             params.extend(int(b) for b in branch_ids)
         if cat_filter:
-            conds.append('e.category = ?')
-            params.append(cat_filter)
+            # Если выбрана родительская группа — подтягиваем и все её подкатегории
+            # (напр. «Реклама» показывает «Реклама в лифтах», «Промоутеры» и т.д.)
+            cat_row = next((c for c in all_cats if c['code'] == cat_filter), None)
+            if cat_row and not cat_row['parent_id']:
+                cat_codes = [cat_filter] + [c['code'] for c in all_cats if c['parent_id'] == cat_row['id']]
+            else:
+                cat_codes = [cat_filter]
+            ph = ','.join('?' * len(cat_codes))
+            conds.append(f'e.category IN ({ph})')
+            params.extend(cat_codes)
         if pay_filter == 'cash':
             conds.append('e.amount_cash > 0')
         elif pay_filter == 'card':
