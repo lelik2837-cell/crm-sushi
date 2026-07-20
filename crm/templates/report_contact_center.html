@@ -1,0 +1,154 @@
+{% extends 'base.html' %}
+{% block title %}Отчёт — Контакт-центр{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="fw-bold mb-0"><i class="bi bi-telephone-inbound me-2"></i>Контакт-центр</h4>
+</div>
+
+<!-- Фильтры -->
+<div class="card mb-4">
+    <div class="card-body py-3">
+        <form method="GET" action="{{ url_for('contact_center_report') }}" class="row g-2 align-items-end">
+            <div class="col-sm-auto">
+                <label class="form-label small fw-semibold mb-1">С</label>
+                <input type="date" name="date_from" class="form-control form-control-sm" value="{{ date_from }}">
+            </div>
+            <div class="col-sm-auto">
+                <label class="form-label small fw-semibold mb-1">По</label>
+                <input type="date" name="date_to" class="form-control form-control-sm" value="{{ date_to }}">
+            </div>
+            <div class="col-sm-auto">
+                <button type="submit" class="btn btn-primary btn-sm px-3">
+                    <i class="bi bi-search me-1"></i>Показать
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Итоги -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-4">
+        <div class="card p-3" style="border-left:4px solid #0d6efd">
+            <div class="text-muted small">ФОТ колл-центра</div>
+            <div class="fw-bold fs-5">{{ fot_total_row.total|money }} ₽</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4">
+        <div class="card p-3" style="border-left:4px solid #fd7e14">
+            <div class="text-muted small">Расходы на контакт-центр</div>
+            <div class="fw-bold fs-5">{{ exp_total_row.total|money }} ₽</div>
+        </div>
+    </div>
+    <div class="col-12 col-md-4">
+        <div class="card p-3" style="border-left:4px solid #198754">
+            <div class="text-muted small">Итого контакт-центр</div>
+            <div class="fw-bold fs-5 text-success">{{ grand_total_row.total|money }} ₽</div>
+        </div>
+    </div>
+</div>
+
+{% if not months %}
+<div class="text-center text-muted py-5">
+    <i class="bi bi-inbox fs-1 d-block mb-3 opacity-25"></i>
+    <div>Выберите период</div>
+</div>
+{% else %}
+
+<div class="card">
+    <div class="card-header bg-light fw-semibold d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-table me-2"></i>По месяцам</span>
+        <span class="text-muted small">{{ date_from|datefmt }} — {{ date_to|datefmt }}</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-sm mb-0 align-middle" style="white-space:nowrap">
+            <thead class="table-light">
+                <tr>
+                    <th style="min-width:200px;">Контрагент / оператор</th>
+                    {% for mo in months %}
+                    <th class="text-end">{{ month_labels[mo] }}</th>
+                    {% endfor %}
+                    <th class="text-end fw-bold">Итого</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td colspan="{{ months|length + 2 }}" class="small fw-bold text-muted"
+                        style="background:#f0f2f7;text-transform:uppercase;letter-spacing:.5px;font-size:11px;">
+                        <i class="bi bi-headset me-1"></i>ФОТ операторов колл-центра
+                    </td>
+                </tr>
+                {% if op_rows %}
+                {% for row in op_rows %}
+                <tr>
+                    <td class="small {% if row.fired %}text-muted{% endif %}">
+                        {{ row.label }}{% if row.fired %} <span class="badge bg-secondary">уволен</span>{% endif %}
+                    </td>
+                    {% for mo in months %}
+                    <td class="text-end small">{% if row.amounts[mo] %}{{ row.amounts[mo]|money }} ₽{% else %}—{% endif %}</td>
+                    {% endfor %}
+                    <td class="text-end fw-semibold small">{{ row.total|money }} ₽</td>
+                </tr>
+                {% endfor %}
+                {% else %}
+                <tr>
+                    <td colspan="{{ months|length + 2 }}" class="text-muted small py-2">Нет операторов колл-центра</td>
+                </tr>
+                {% endif %}
+                <tr class="table-light">
+                    <td class="fw-bold small">{{ fot_total_row.label }}</td>
+                    {% for mo in months %}
+                    <td class="text-end fw-bold small">{% if fot_total_row.amounts[mo] %}{{ fot_total_row.amounts[mo]|money }} ₽{% else %}—{% endif %}</td>
+                    {% endfor %}
+                    <td class="text-end fw-bold small">{{ fot_total_row.total|money }} ₽</td>
+                </tr>
+
+                <tr>
+                    <td colspan="{{ months|length + 2 }}" class="small fw-bold text-muted"
+                        style="background:#f0f2f7;text-transform:uppercase;letter-spacing:.5px;font-size:11px;">
+                        <i class="bi bi-receipt me-1"></i>Расходы на контакт-центр
+                    </td>
+                </tr>
+                {% if ctr_rows %}
+                {% for row in ctr_rows %}
+                <tr>
+                    <td class="small">{{ row.label }}</td>
+                    {% for mo in months %}
+                    <td class="text-end small">{% if row.amounts[mo] %}{{ row.amounts[mo]|money }} ₽{% else %}—{% endif %}</td>
+                    {% endfor %}
+                    <td class="text-end fw-semibold small">{{ row.total|money }} ₽</td>
+                </tr>
+                {% endfor %}
+                {% else %}
+                <tr>
+                    <td colspan="{{ months|length + 2 }}" class="text-muted small py-2">
+                        Нет контрагентов в категории «Контакт-центр» — назначьте категорию контрагенту в
+                        <a href="{{ url_for('bank', tab='contractors') }}">Банк → Контрагенты</a>
+                    </td>
+                </tr>
+                {% endif %}
+                <tr class="table-light">
+                    <td class="fw-bold small">{{ exp_total_row.label }}</td>
+                    {% for mo in months %}
+                    <td class="text-end fw-bold small">{% if exp_total_row.amounts[mo] %}{{ exp_total_row.amounts[mo]|money }} ₽{% else %}—{% endif %}</td>
+                    {% endfor %}
+                    <td class="text-end fw-bold small">{{ exp_total_row.total|money }} ₽</td>
+                </tr>
+            </tbody>
+            <tfoot>
+                <tr style="background:#e7f5ec;">
+                    <td class="fw-bold">{{ grand_total_row.label }}</td>
+                    {% for mo in months %}
+                    <td class="text-end fw-bold">{{ grand_total_row.amounts[mo]|money }} ₽</td>
+                    {% endfor %}
+                    <td class="text-end fw-bold text-success">{{ grand_total_row.total|money }} ₽</td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+</div>
+
+{% endif %}
+
+{% endblock %}

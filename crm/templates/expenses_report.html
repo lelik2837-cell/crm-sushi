@@ -114,15 +114,15 @@
             <div class="card-body">
                 <div class="d-flex justify-content-between py-1 border-bottom">
                     <span class="text-muted small">Наличными</span>
-                    <span class="fw-semibold">{{ tot.cash|int|string|replace(',', ' ') }} ₽</span>
+                    <span class="fw-semibold">{{ tot.cash|money }} ₽</span>
                 </div>
                 <div class="d-flex justify-content-between py-1 border-bottom">
                     <span class="text-muted small">Картой</span>
-                    <span class="fw-semibold">{{ tot.card|int|string|replace(',', ' ') }} ₽</span>
+                    <span class="fw-semibold">{{ tot.card|money }} ₽</span>
                 </div>
                 <div class="d-flex justify-content-between py-2 mt-1">
                     <span class="fw-bold">Всего</span>
-                    <span class="fw-bold fs-5 text-danger">{{ tot.total|int|string|replace(',', ' ') }} ₽</span>
+                    <span class="fw-bold fs-5 text-danger">{{ tot.total|money }} ₽</span>
                 </div>
                 <div class="text-muted small">Записей: {{ rows|length }}</div>
             </div>
@@ -149,9 +149,9 @@
                     {% for c in by_cat %}
                     <tr>
                         <td class="small">{{ cat_map.get(c.category, c.category) }}</td>
-                        <td class="text-end small">{% if c.cash %}{{ c.cash|int }} ₽{% else %}—{% endif %}</td>
-                        <td class="text-end small">{% if c.card %}{{ c.card|int }} ₽{% else %}—{% endif %}</td>
-                        <td class="text-end fw-semibold">{{ c.total|int }} ₽</td>
+                        <td class="text-end small">{% if c.cash %}{{ c.cash|money }} ₽{% else %}—{% endif %}</td>
+                        <td class="text-end small">{% if c.card %}{{ c.card|money }} ₽{% else %}—{% endif %}</td>
+                        <td class="text-end fw-semibold">{{ c.total|money }} ₽</td>
                         <td class="text-end text-muted small">{{ c.cnt }}</td>
                     </tr>
                     {% endfor %}
@@ -202,9 +202,9 @@
                 <td class="small">{{ r.branch_name }}</td>
                 <td class="small fw-semibold">{{ cat_map.get(r.category, r.category) }}</td>
                 <td class="small text-muted" style="max-width:260px;white-space:pre-wrap;">{{ r.description or '' }}</td>
-                <td class="text-end small">{% if r.amount_cash %}{{ r.amount_cash|int }} ₽{% else %}—{% endif %}</td>
-                <td class="text-end small">{% if r.amount_card %}{{ r.amount_card|int }} ₽{% else %}—{% endif %}</td>
-                <td class="text-end fw-semibold">{{ r.total|int }} ₽</td>
+                <td class="text-end small">{% if r.amount_cash %}{{ r.amount_cash|money }} ₽{% else %}—{% endif %}</td>
+                <td class="text-end small">{% if r.amount_card %}{{ r.amount_card|money }} ₽{% else %}—{% endif %}</td>
+                <td class="text-end fw-semibold">{{ r.total|money }} ₽</td>
                 <td class="text-center">{% if r.is_gulash %}<span class="text-success small">✓</span>{% endif %}</td>
             </tr>
             {% endfor %}
@@ -212,9 +212,9 @@
             <tfoot class="table-light">
                 <tr>
                     <td colspan="4" class="fw-bold small text-muted">Итого</td>
-                    <td class="text-end fw-semibold">{{ tot.cash|int }} ₽</td>
-                    <td class="text-end fw-semibold">{{ tot.card|int }} ₽</td>
-                    <td class="text-end fw-bold text-danger">{{ tot.total|int }} ₽</td>
+                    <td class="text-end fw-semibold">{{ tot.cash|money }} ₽</td>
+                    <td class="text-end fw-semibold">{{ tot.card|money }} ₽</td>
+                    <td class="text-end fw-bold text-danger">{{ tot.total|money }} ₽</td>
                     <td></td>
                 </tr>
             </tfoot>

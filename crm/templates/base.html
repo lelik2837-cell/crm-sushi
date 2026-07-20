@@ -289,7 +289,7 @@
                 </li>
                 {% endif %}
                 {% if group_has_visible_item('reports') %}
-                {% set reports_active = request.endpoint in ('reports', 'shifts_archive', 'expenses_report', 'cash_flow_report', 'wait_time_report', 'purchases', 'report_reconciliation', 'pnl_report', 'pnl_settings_save', 'change_settings', 'call_center') or (request.endpoint and (request.endpoint.startswith('bank') or 'purchases_import' in (request.endpoint or ''))) %}
+                {% set reports_active = request.endpoint in ('reports', 'shifts_archive', 'expenses_report', 'cash_flow_report', 'wait_time_report', 'purchases', 'report_reconciliation', 'pnl_report', 'pnl_settings_save', 'change_settings', 'call_center', 'contact_center_report') or (request.endpoint and (request.endpoint.startswith('bank') or 'purchases_import' in (request.endpoint or ''))) %}
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle {% if reports_active %}active{% endif %}"
                        href="#" data-bs-toggle="dropdown" aria-expanded="false">
@@ -377,6 +377,13 @@
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='call_center' %}active{% endif %}" href="{{ url_for('call_center') }}">
                                 <i class="bi bi-headset me-2"></i>Колл-центр
+                            </a>
+                        </li>
+                        {% endif %}
+                        {% if item_visible('contact_center_report') %}
+                        <li>
+                            <a class="dropdown-item {% if request.endpoint=='contact_center_report' %}active{% endif %}" href="{{ url_for('contact_center_report') }}">
+                                <i class="bi bi-telephone-inbound me-2"></i>Контакт-центр
                             </a>
                         </li>
                         {% endif %}

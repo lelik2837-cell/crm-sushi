@@ -129,6 +129,7 @@ MENU_ITEMS = [
     ('purchases',             'Накладные',                'reports',  True),
     ('bank',                  'Банк',                     'reports',  True),
     ('call_center',           'Колл-центр',               'reports',  False),
+    ('contact_center_report', 'Контакт-центр',            'reports',  False),
     ('employees',             'Сотрудники',               'settings', True),
     ('history',               'История изменений',        'settings', True),
     ('import_shifts',         'Импорт смен',              'settings', False),
@@ -12416,6 +12417,133 @@ def call_center_schedule_save():
             ''', (eid, d, start, end))
         conn.commit()
     return jsonify({'ok': True})
+
+
+# ─── ОТЧЁТ «КОНТАКТ-ЦЕНТР» ─────────────────────────────────────────────────────
+# ФОТ операторов колл-центра (из call_center_schedule/rate_history) + расходы по
+# контрагентам, отнесённым к категории «Контакт-центр» в Банк → Контрагенты.
+# Одна общая таблица по месяцам: слева список (операторы + контрагенты), в
+# колонках суммы по месяцам, внизу — общий итог по контакт-центру.
+
+CONTACT_CENTER_CAT_CODE = 'contact_center'
+
+
+def _ensure_contact_center_category(conn):
+    row = conn.execute(
+        "SELECT id FROM expense_categories WHERE code=?", (CONTACT_CENTER_CAT_CODE,)
+    ).fetchone()
+    if row:
+        return
+    max_sort = conn.execute('SELECT COALESCE(MAX(sort_order),0) FROM expense_categories').fetchone()[0]
+    conn.execute(
+        'INSERT INTO expense_categories (code, label, type, sort_order, show_contractors, show_shift) '
+        'VALUES (?,?,?,?,?,?)',
+        (CONTACT_CENTER_CAT_CODE, 'Контакт-центр', 'expense', max_sort + 1, 1, 0)
+    )
+    conn.commit()
+
+
+def _month_range(date_from, date_to):
+    y, m = int(date_from[:4]), int(date_from[5:7])
+    y1, m1 = int(date_to[:4]), int(date_to[5:7])
+    months = []
+    while (y, m) <= (y1, m1):
+        months.append(f'{y:04d}-{m:02d}')
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return months
+
+
+@app.route('/report/contact-center')
+@login_required
+@menu_permission_required('contact_center_report')
+def contact_center_report():
+    today = date.today()
+    date_from = request.args.get('date_from', today.replace(month=1, day=1).isoformat())
+    date_to   = request.args.get('date_to', today.isoformat())
+    months = _month_range(date_from, date_to)
+
+    with get_db() as conn:
+        _ensure_contact_center_category(conn)
+
+        # ФОТ операторов колл-центра по месяцам (часы по графику × актуальная ставка,
+        # только за дни не позже сегодня — как в /call-center)
+        operators = conn.execute(
+            "SELECT id, full_name, rate, is_fired FROM call_center_employees ORDER BY is_fired, full_name"
+        ).fetchall()
+        rate_fallback = {op['id']: op['rate'] for op in operators}
+
+        op_pay = {}  # employee_id -> {month: pay}
+        sched_to = min(date_to, today.isoformat())
+        if date_from <= sched_to:
+            for r in conn.execute(
+                'SELECT employee_id, date, planned_start, planned_end FROM call_center_schedule '
+                'WHERE date BETWEEN ? AND ?',
+                (date_from, sched_to)
+            ).fetchall():
+                hours = _cc_duration_hours(r['planned_start'] or '10:00', r['planned_end'] or '22:00')
+                rate = _cc_effective_rate(conn, r['employee_id'], r['date'], rate_fallback.get(r['employee_id'], 0))
+                month = r['date'][:7]
+                by_month = op_pay.setdefault(r['employee_id'], {})
+                by_month[month] = by_month.get(month, 0.0) + round(hours * rate, 2)
+
+        # Расходы по контрагентам категории «Контакт-центр»
+        contractors = conn.execute(
+            "SELECT id, name FROM contractors WHERE category=? AND is_active=1 ORDER BY name",
+            (CONTACT_CENTER_CAT_CODE,)
+        ).fetchall()
+
+        ctr_pay = {}  # contractor_id -> {month: amount}
+        for r in conn.execute('''
+            SELECT bt.contractor_id AS cid, strftime('%Y-%m', bt.txn_date) AS month,
+                   SUM(-bt.amount) AS amt
+            FROM bank_transactions bt
+            JOIN contractors c ON c.id = bt.contractor_id
+            WHERE c.category=? AND bt.amount<0 AND bt.is_ignored=0
+              AND bt.txn_date BETWEEN ? AND ?
+            GROUP BY bt.contractor_id, month
+        ''', (CONTACT_CENTER_CAT_CODE, date_from, date_to)).fetchall():
+            ctr_pay.setdefault(r['cid'], {})[r['month']] = r['amt']
+
+    def _row(label, by_month, extra=None):
+        r = {'label': label, 'amounts': {}, 'total': 0.0}
+        if extra:
+            r.update(extra)
+        for mo in months:
+            v = by_month.get(mo, 0.0)
+            r['amounts'][mo] = v
+            r['total'] += v
+        return r
+
+    op_rows = [
+        _row(op['full_name'], op_pay.get(op['id'], {}), {'fired': bool(op['is_fired'])})
+        for op in operators
+        if not op['is_fired'] or op_pay.get(op['id'])
+    ]
+    ctr_rows = [_row(c['name'], ctr_pay.get(c['id'], {})) for c in contractors]
+
+    def _totals_row(label, rows):
+        by_month = {}
+        for row in rows:
+            for mo in months:
+                by_month[mo] = by_month.get(mo, 0.0) + row['amounts'].get(mo, 0.0)
+        return _row(label, by_month)
+
+    fot_total_row = _totals_row('Итого ФОТ колл-центра', op_rows)
+    exp_total_row = _totals_row('Итого расходы на контакт-центр', ctr_rows)
+    grand_total_row = _totals_row('ИТОГО КОНТАКТ-ЦЕНТР', [fot_total_row, exp_total_row])
+
+    month_labels = {mo: _pnl_period_label(mo) for mo in months}
+
+    return render_template(
+        'report_contact_center.html',
+        months=months, month_labels=month_labels,
+        op_rows=op_rows, ctr_rows=ctr_rows,
+        fot_total_row=fot_total_row, exp_total_row=exp_total_row, grand_total_row=grand_total_row,
+        date_from=date_from, date_to=date_to,
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
