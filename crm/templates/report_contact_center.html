@@ -69,12 +69,11 @@
                     {% for mo in months %}
                     <th class="text-end">{{ month_labels[mo] }}</th>
                     {% endfor %}
-                    <th class="text-end fw-bold">Итого</th>
                 </tr>
             </thead>
             <tbody>
                 <tr>
-                    <td colspan="{{ months|length + 2 }}" class="small fw-bold text-muted"
+                    <td colspan="{{ months|length + 1 }}" class="small fw-bold text-muted"
                         style="background:#f0f2f7;text-transform:uppercase;letter-spacing:.5px;font-size:11px;">
                         <i class="bi bi-headset me-1"></i>ФОТ операторов колл-центра
                     </td>
@@ -88,12 +87,11 @@
                     {% for mo in months %}
                     <td class="text-end small">{% if row.amounts[mo] %}{{ row.amounts[mo]|money }} ₽{% else %}—{% endif %}</td>
                     {% endfor %}
-                    <td class="text-end fw-semibold small">{{ row.total|money }} ₽</td>
                 </tr>
                 {% endfor %}
                 {% else %}
                 <tr>
-                    <td colspan="{{ months|length + 2 }}" class="text-muted small py-2">Нет операторов колл-центра</td>
+                    <td colspan="{{ months|length + 1 }}" class="text-muted small py-2">Нет операторов колл-центра</td>
                 </tr>
                 {% endif %}
                 <tr class="table-light">
@@ -101,11 +99,10 @@
                     {% for mo in months %}
                     <td class="text-end fw-bold small">{% if fot_total_row.amounts[mo] %}{{ fot_total_row.amounts[mo]|money }} ₽{% else %}—{% endif %}</td>
                     {% endfor %}
-                    <td class="text-end fw-bold small">{{ fot_total_row.total|money }} ₽</td>
                 </tr>
 
                 <tr>
-                    <td colspan="{{ months|length + 2 }}" class="small fw-bold text-muted"
+                    <td colspan="{{ months|length + 1 }}" class="small fw-bold text-muted"
                         style="background:#f0f2f7;text-transform:uppercase;letter-spacing:.5px;font-size:11px;">
                         <i class="bi bi-receipt me-1"></i>Расходы на контакт-центр
                     </td>
@@ -117,12 +114,11 @@
                     {% for mo in months %}
                     <td class="text-end small">{% if row.amounts[mo] %}{{ row.amounts[mo]|money }} ₽{% else %}—{% endif %}</td>
                     {% endfor %}
-                    <td class="text-end fw-semibold small">{{ row.total|money }} ₽</td>
                 </tr>
                 {% endfor %}
                 {% else %}
                 <tr>
-                    <td colspan="{{ months|length + 2 }}" class="text-muted small py-2">
+                    <td colspan="{{ months|length + 1 }}" class="text-muted small py-2">
                         Нет контрагентов в категории «Контакт-центр» — назначьте категорию контрагенту в
                         <a href="{{ url_for('bank', tab='contractors') }}">Банк → Контрагенты</a>
                     </td>
@@ -133,7 +129,6 @@
                     {% for mo in months %}
                     <td class="text-end fw-bold small">{% if exp_total_row.amounts[mo] %}{{ exp_total_row.amounts[mo]|money }} ₽{% else %}—{% endif %}</td>
                     {% endfor %}
-                    <td class="text-end fw-bold small">{{ exp_total_row.total|money }} ₽</td>
                 </tr>
             </tbody>
             <tfoot>
@@ -142,7 +137,6 @@
                     {% for mo in months %}
                     <td class="text-end fw-bold">{{ grand_total_row.amounts[mo]|money }} ₽</td>
                     {% endfor %}
-                    <td class="text-end fw-bold text-success">{{ grand_total_row.total|money }} ₽</td>
                 </tr>
             </tfoot>
         </table>

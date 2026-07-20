@@ -12426,21 +12426,41 @@ def call_center_schedule_save():
 # колонках суммы по месяцам, внизу — общий итог по контакт-центру.
 
 CONTACT_CENTER_CAT_CODE = 'contact_center'
+CONTACT_CENTER_CAT_LABEL = 'Контакт-центр'
 
 
 def _ensure_contact_center_category(conn):
-    row = conn.execute(
-        "SELECT id FROM expense_categories WHERE code=?", (CONTACT_CENTER_CAT_CODE,)
-    ).fetchone()
-    if row:
-        return
-    max_sort = conn.execute('SELECT COALESCE(MAX(sort_order),0) FROM expense_categories').fetchone()[0]
-    conn.execute(
-        'INSERT INTO expense_categories (code, label, type, sort_order, show_contractors, show_shift) '
-        'VALUES (?,?,?,?,?,?)',
-        (CONTACT_CENTER_CAT_CODE, 'Контакт-центр', 'expense', max_sort + 1, 1, 0)
-    )
+    """Находит категорию «Контакт-центр» по названию (код мог быть создан вручную
+    через Настройки → Категории расходов и не совпадать с CONTACT_CENTER_CAT_CODE).
+    Если найдено несколько одноимённых дублей — оставляет тот, на который уже
+    назначены контрагенты, остальные (пустые) удаляет. Возвращает актуальный code."""
+    rows = conn.execute(
+        "SELECT id, code FROM expense_categories WHERE LOWER(label)=LOWER(?) ORDER BY id",
+        (CONTACT_CENTER_CAT_LABEL,)
+    ).fetchall()
+    if not rows:
+        max_sort = conn.execute('SELECT COALESCE(MAX(sort_order),0) FROM expense_categories').fetchone()[0]
+        conn.execute(
+            'INSERT INTO expense_categories (code, label, type, sort_order, show_contractors, show_shift) '
+            'VALUES (?,?,?,?,?,?)',
+            (CONTACT_CENTER_CAT_CODE, CONTACT_CENTER_CAT_LABEL, 'expense', max_sort + 1, 1, 0)
+        )
+        conn.commit()
+        return CONTACT_CENTER_CAT_CODE
+    if len(rows) == 1:
+        return rows[0]['code']
+    keep_code = None
+    for r in rows:
+        cnt = conn.execute('SELECT COUNT(*) FROM contractors WHERE category=?', (r['code'],)).fetchone()[0]
+        if cnt > 0:
+            keep_code = r['code']
+            break
+    keep_code = keep_code or rows[0]['code']
+    for r in rows:
+        if r['code'] != keep_code:
+            conn.execute('DELETE FROM expense_categories WHERE id=?', (r['id'],))
     conn.commit()
+    return keep_code
 
 
 def _month_range(date_from, date_to):
@@ -12466,7 +12486,7 @@ def contact_center_report():
     months = _month_range(date_from, date_to)
 
     with get_db() as conn:
-        _ensure_contact_center_category(conn)
+        cc_cat_code = _ensure_contact_center_category(conn)
 
         # ФОТ операторов колл-центра по месяцам (часы по графику × актуальная ставка,
         # только за дни не позже сегодня — как в /call-center)
@@ -12492,7 +12512,7 @@ def contact_center_report():
         # Расходы по контрагентам категории «Контакт-центр»
         contractors = conn.execute(
             "SELECT id, name FROM contractors WHERE category=? AND is_active=1 ORDER BY name",
-            (CONTACT_CENTER_CAT_CODE,)
+            (cc_cat_code,)
         ).fetchall()
 
         ctr_pay = {}  # contractor_id -> {month: amount}
@@ -12504,7 +12524,7 @@ def contact_center_report():
             WHERE c.category=? AND bt.amount<0 AND bt.is_ignored=0
               AND bt.txn_date BETWEEN ? AND ?
             GROUP BY bt.contractor_id, month
-        ''', (CONTACT_CENTER_CAT_CODE, date_from, date_to)).fetchall():
+        ''', (cc_cat_code, date_from, date_to)).fetchall():
             ctr_pay.setdefault(r['cid'], {})[r['month']] = r['amt']
 
     def _row(label, by_month, extra=None):
