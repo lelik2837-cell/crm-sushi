@@ -105,9 +105,9 @@
               <td>
                 <a href="{{ url_for('bank_statement_view', stmt_id=s.id) }}">{{ s.filename }}</a>
               </td>
-              <td>{{ s.date_from }} — {{ s.date_to }}</td>
+              <td>{{ s.date_from|date_fmt }} — {{ s.date_to|date_fmt }}</td>
               <td>{{ s.row_count }}</td>
-              <td>{{ s.uploaded_at[:16] if s.uploaded_at else '—' }}</td>
+              <td>{{ (s.uploaded_at[:10]|date_fmt) + ' ' + s.uploaded_at[11:16] if s.uploaded_at else '—' }}</td>
               <td>
                 <form method="post" action="{{ url_for('bank_statement_delete', stmt_id=s.id) }}"
                       onsubmit="return confirm('Удалить выписку и все её транзакции?')">
@@ -293,7 +293,7 @@
           <tbody>
             {% for r in compare_rows %}
             <tr class="{% if r.crm_amount %}table-success{% endif %}">
-              <td>{{ r.dt }}</td>
+              <td>{{ r.dt|date_fmt }}</td>
               <td>{{ r.counterparty }}</td>
               <td>{{ r.bank_cat_label or r.bank_cat or '—' }}</td>
               <td class="text-end {% if r.bank_amount %}text-danger fw-semibold{% else %}text-muted{% endif %}">

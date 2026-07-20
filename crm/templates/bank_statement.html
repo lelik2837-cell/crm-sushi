@@ -10,7 +10,7 @@
     </a>
     <div class="flex-grow-1">
       <h5 class="mb-0 fw-bold">{{ stmt.filename }}</h5>
-      <small class="text-muted">{{ stmt.account_name }} · {{ stmt.date_from }} — {{ stmt.date_to }} · {{ stmt.row_count }} строк</small>
+      <small class="text-muted">{{ stmt.account_name }} · {{ stmt.date_from|date_fmt }} — {{ stmt.date_to|date_fmt }} · {{ stmt.row_count }} строк</small>
     </div>
     <a href="{{ url_for('bank', tab='contractors') }}" class="btn btn-outline-primary btn-sm">
       <i class="bi bi-people me-1"></i>Контрагенты
@@ -105,8 +105,8 @@
         <table class="table table-hover table-sm mb-0" id="txnTable">
           <thead class="table-light">
             <tr>
-              {% if show_bank_col %}<th>Банк</th>{% endif %}
               <th>Дата</th>
+              {% if show_bank_col %}<th>Банк</th>{% endif %}
               <th class="text-end">Сумма</th>
               <th>Контрагент</th>
               <th>Описание</th>
@@ -192,8 +192,8 @@
               data-optype="{{ t.op_type }}"
               data-category="{{ t.category or '' }}"
               data-contractor="{{ t.contractor_id or '' }}">
+              <td class="text-nowrap">{{ t.txn_date|date_fmt }}</td>
               {% if show_bank_col %}<td class="small text-nowrap text-muted">{{ t.account_name or '—' }}</td>{% endif %}
-              <td class="text-nowrap">{{ t.txn_date }}</td>
               <td class="text-end fw-semibold text-nowrap
                 {% if t.is_ignored %}text-muted{% elif t.amount > 0 %}text-success{% else %}text-danger{% endif %}">
                 {% if t.amount > 0 %}+{% endif %}{{ t.amount|money_cents }} ₽
