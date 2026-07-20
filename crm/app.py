@@ -1367,6 +1367,8 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 employee_id INTEGER NOT NULL REFERENCES call_center_employees(id) ON DELETE CASCADE,
                 date DATE NOT NULL,
+                planned_start TEXT DEFAULT '10:00',
+                planned_end TEXT DEFAULT '22:00',
                 UNIQUE(employee_id, date)
             );
             CREATE TABLE IF NOT EXISTS call_center_shifts (
@@ -1380,6 +1382,11 @@ def init_db():
                 UNIQUE(employee_id, date)
             );
         ''')
+        _ccs_cols = [r[1] for r in conn.execute("PRAGMA table_info(call_center_schedule)").fetchall()]
+        if 'planned_start' not in _ccs_cols:
+            conn.execute("ALTER TABLE call_center_schedule ADD COLUMN planned_start TEXT DEFAULT '10:00'")
+        if 'planned_end' not in _ccs_cols:
+            conn.execute("ALTER TABLE call_center_schedule ADD COLUMN planned_end TEXT DEFAULT '22:00'")
 
         # Per-account Sber auto-sync columns
         _ba_cols = [r[1] for r in conn.execute("PRAGMA table_info(bank_accounts)").fetchall()]
@@ -12217,9 +12224,11 @@ def call_center():
     days_list = []
     d_cur = month_start
     while d_cur <= month_end:
+        wd = d_cur.weekday()
         days_list.append({
             'iso': d_cur.isoformat(), 'day': d_cur.day,
-            'wd_label': WD_LABELS[d_cur.weekday()], 'is_weekend': d_cur.weekday() >= 5,
+            'wd_label': WD_LABELS[wd], 'is_weekend': wd >= 5,
+            'default_end': '23:00' if wd in (4, 5) else '22:00',  # Пт и Сб — до 23:00
         })
         d_cur += timedelta(days=1)
 
@@ -12244,10 +12253,12 @@ def call_center():
 
         if active_tab in ('schedule', 'shifts'):
             for r in conn.execute(
-                'SELECT employee_id, date FROM call_center_schedule WHERE date BETWEEN ? AND ?',
+                'SELECT employee_id, date, planned_start, planned_end FROM call_center_schedule WHERE date BETWEEN ? AND ?',
                 (month_start.isoformat(), month_end.isoformat())
             ).fetchall():
-                schedule_grid.setdefault(r['employee_id'], set()).add(r['date'])
+                schedule_grid.setdefault(r['employee_id'], {})[r['date']] = {
+                    'start': r['planned_start'] or '10:00', 'end': r['planned_end'] or '22:00',
+                }
 
         if active_tab == 'shifts':
             for r in conn.execute(
@@ -12269,7 +12280,7 @@ def call_center():
         rate_history=rate_history,
         month_str=month_str, prev_month=prev_month, next_month=next_month,
         days_list=days_list,
-        schedule_grid={eid: sorted(dates) for eid, dates in schedule_grid.items()},
+        schedule_grid=schedule_grid,
         shifts_grid=shifts_grid,
         month_totals=month_totals,
         grand_total_hours=grand_total_hours, grand_total_pay=grand_total_pay,
@@ -12371,6 +12382,7 @@ def call_center_schedule_save():
                 f'DELETE FROM call_center_schedule WHERE employee_id IN ({ids_str}) AND date BETWEEN ? AND ?',
                 (month_start.isoformat(), month_end.isoformat())
             )
+        _time_re = re.compile(r'^\d{2}:\d{2}$')
         for cell in cells:
             try:
                 eid = int(cell['employee_id'])
@@ -12379,7 +12391,16 @@ def call_center_schedule_save():
                 continue
             if eid not in op_ids or not (month_start.isoformat() <= d <= month_end.isoformat()):
                 continue
-            conn.execute('INSERT OR IGNORE INTO call_center_schedule (employee_id, date) VALUES (?,?)', (eid, d))
+            start = str(cell.get('start') or '10:00')
+            end = str(cell.get('end') or '22:00')
+            if not _time_re.match(start):
+                start = '10:00'
+            if not _time_re.match(end):
+                end = '22:00'
+            conn.execute(
+                'INSERT OR IGNORE INTO call_center_schedule (employee_id, date, planned_start, planned_end) VALUES (?,?,?,?)',
+                (eid, d, start, end)
+            )
         conn.commit()
     flash('График сохранён', 'success')
     return jsonify({'ok': True})

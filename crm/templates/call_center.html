@@ -210,7 +210,7 @@
                 <tr>
                     <th class="text-start" style="min-width:160px">Оператор</th>
                     {% for d in days_list %}
-                    <th class="{% if d.is_weekend %}table-warning{% endif %}" style="min-width:32px">{{ d.day }}<br><span class="text-muted fw-normal">{{ d.wd_label }}</span></th>
+                    <th class="{% if d.is_weekend %}table-warning{% endif %}" style="min-width:80px">{{ d.day }}<br><span class="text-muted fw-normal">{{ d.wd_label }}</span></th>
                     {% endfor %}
                 </tr>
             </thead>
@@ -219,9 +219,17 @@
             <tr>
                 <td class="text-start fw-semibold">{{ op.full_name }}</td>
                 {% for d in days_list %}
+                {% set cell = schedule_grid.get(op.id, {}).get(d.iso) %}
                 <td class="{% if d.is_weekend %}table-warning bg-opacity-25{% endif %}">
                     <input type="checkbox" class="form-check-input sched-cb" data-emp="{{ op.id }}" data-date="{{ d.iso }}"
-                           {% if d.iso in schedule_grid.get(op.id, []) %}checked{% endif %}>
+                           data-default-end="{{ d.default_end }}" onchange="toggleSchedTimes(this)"
+                           {% if cell %}checked{% endif %}>
+                    <div class="sched-times {% if not cell %}d-none{% endif %} mt-1">
+                        <input type="time" class="form-control form-control-sm sched-start" value="{{ cell.start if cell else '10:00' }}"
+                               style="width:70px;font-size:0.68rem;padding:1px 2px">
+                        <input type="time" class="form-control form-control-sm sched-end" value="{{ cell.end if cell else d.default_end }}"
+                               style="width:70px;font-size:0.68rem;padding:1px 2px">
+                    </div>
                 </td>
                 {% endfor %}
             </tr>
@@ -268,7 +276,7 @@
             </thead>
             <tbody>
             {% for op in operators %}
-            {% set sched_dates = schedule_grid.get(op.id, []) %}
+            {% set sched_dates = schedule_grid.get(op.id, {}) %}
             {% set op_shifts = shifts_grid.get(op.id, {}) %}
             <tr data-emp-row="{{ op.id }}">
                 <td class="text-start fw-semibold">{{ op.full_name }}</td>
@@ -277,6 +285,7 @@
                     {% if d.iso in sched_dates %}
                     <input type="number" step="0.25" min="0" max="24" class="form-control form-control-sm hours-input" style="width:48px;padding:2px"
                            data-emp="{{ op.id }}" data-date="{{ d.iso }}"
+                           title="По графику: {{ sched_dates[d.iso].start }}–{{ sched_dates[d.iso].end }}"
                            value="{{ op_shifts[d.iso].hours_worked|moneyval if d.iso in op_shifts else '' }}">
                     {% else %}
                     <span class="text-muted">—</span>
@@ -306,10 +315,29 @@
 
 {% block scripts %}
 <script>
+function toggleSchedTimes(cb) {
+    const wrap = cb.closest('td').querySelector('.sched-times');
+    if (cb.checked) {
+        wrap.classList.remove('d-none');
+        const startInp = wrap.querySelector('.sched-start');
+        const endInp = wrap.querySelector('.sched-end');
+        if (!startInp.value) startInp.value = '10:00';
+        if (!endInp.value) endInp.value = cb.dataset.defaultEnd || '22:00';
+    } else {
+        wrap.classList.add('d-none');
+    }
+}
+
 document.getElementById('saveScheduleBtn')?.addEventListener('click', function() {
-    const cells = Array.from(document.querySelectorAll('.sched-cb:checked')).map(cb => ({
-        employee_id: cb.dataset.emp, date: cb.dataset.date
-    }));
+    const cells = Array.from(document.querySelectorAll('.sched-cb:checked')).map(cb => {
+        const wrap = cb.closest('td').querySelector('.sched-times');
+        return {
+            employee_id: cb.dataset.emp,
+            date: cb.dataset.date,
+            start: wrap.querySelector('.sched-start').value || '10:00',
+            end: wrap.querySelector('.sched-end').value || cb.dataset.defaultEnd || '22:00',
+        };
+    });
     fetch('{{ url_for("call_center_schedule_save") }}', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
