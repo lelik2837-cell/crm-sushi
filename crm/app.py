@@ -12216,10 +12216,7 @@ def call_center():
     WD_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
     active_tab = request.args.get('tab', 'employees')
     today = date.today()
-    if active_tab == 'schedule':
-        default_month = (today.replace(day=1) + timedelta(days=32)).replace(day=1)
-    else:
-        default_month = today.replace(day=1)
+    default_month = today.replace(day=1)
     month_str = request.args.get('month', default_month.strftime('%Y-%m'))
     try:
         y, m = [int(x) for x in month_str.split('-')]

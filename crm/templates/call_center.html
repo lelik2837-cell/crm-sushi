@@ -1,6 +1,13 @@
 {% extends 'base.html' %}
 {% block title %}Колл-центр{% endblock %}
 {% block content %}
+<style>
+.mini-time-inp {
+    width: 42px; padding: 2px 3px; border: 1.5px solid #e5e7eb; border-radius: 6px;
+    font-size: 0.68rem; text-align: center; background: #fff; color: #374151;
+}
+.mini-time-inp:focus { outline: none; border-color: #e94560; }
+</style>
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="fw-bold mb-0"><i class="bi bi-headset"></i> Колл-центр</h4>
     {% if active_tab == 'employees' %}
@@ -222,6 +229,7 @@
             <tr>
                 <td class="text-start fw-semibold {% if d.is_weekend %}table-warning bg-opacity-25{% endif %}">
                     {{ d.day }} <span class="text-muted fw-normal">{{ d.wd_label }}</span>
+                    {% if d.iso == today %}<span class="text-primary fw-semibold">(Сегодня)</span>{% endif %}
                 </td>
                 {% for op in operators %}
                 {% set cell = schedule_grid.get(op.id, {}).get(d.iso) %}
@@ -232,10 +240,10 @@
                                style="width:24px;height:24px;cursor:pointer"
                                {% if cell %}checked{% endif %}>
                         <div class="sched-times d-flex gap-1 {% if not cell %}d-none{% endif %}">
-                            <input type="time" step="900" class="form-control form-control-sm sched-start" value="{{ cell.start if cell else '10:00' }}"
-                                   onchange="snapToQuarter(this)" style="width:62px;font-size:0.68rem;padding:1px 2px">
-                            <input type="time" step="900" class="form-control form-control-sm sched-end" value="{{ cell.end if cell else d.default_end }}"
-                                   onchange="snapToQuarter(this)" style="width:62px;font-size:0.68rem;padding:1px 2px">
+                            <input type="text" maxlength="5" placeholder="--:--" class="mini-time-inp sched-start" value="{{ cell.start if cell else '10:00' }}"
+                                   oninput="onTimeInput(this)">
+                            <input type="text" maxlength="5" placeholder="--:--" class="mini-time-inp sched-end" value="{{ cell.end if cell else d.default_end }}"
+                                   oninput="onTimeInput(this)">
                         </div>
                     </div>
                 </td>
@@ -289,6 +297,7 @@
             <tr>
                 <td class="text-start fw-semibold {% if d.is_weekend %}table-warning bg-opacity-25{% endif %}">
                     {{ d.day }} <span class="text-muted fw-normal">{{ d.wd_label }}</span>
+                    {% if d.iso == today %}<span class="text-primary fw-semibold">(Сегодня)</span>{% endif %}
                 </td>
                 {% for op in operators %}
                 {% set sched_dates = schedule_grid.get(op.id, {}) %}
@@ -298,18 +307,20 @@
                         {% set shift = op_shifts.get(d.iso) %}
                         {% if d.iso <= today %}
                         <div class="shift-cell" data-emp="{{ op.id }}" data-date="{{ d.iso }}">
-                            <div class="shift-view d-flex align-items-center justify-content-center gap-1">
-                                <span style="font-size:0.68rem">
-                                    {% if shift %}{{ shift.hours_worked|moneyval }}ч · {{ shift.base_pay|money }}₽{% else %}<span class="text-muted">—</span>{% endif %}
-                                </span>
-                                <button type="button" class="btn btn-link btn-sm p-0 shift-edit-btn" onclick="toggleShiftEdit(this)" title="Редактировать часы">
-                                    <i class="bi bi-pencil" style="font-size:0.7rem"></i>
-                                </button>
+                            <div class="shift-view" style="font-size:0.62rem;line-height:1.2">
+                                <div class="text-muted">{{ sched_dates[d.iso].start }}–{{ sched_dates[d.iso].end }}</div>
+                                <div class="d-flex align-items-center justify-content-center gap-1">
+                                    <span style="font-size:0.68rem">
+                                        {% if shift %}{{ shift.hours_worked|moneyval }}ч · {{ shift.base_pay|money }}₽{% else %}<span class="text-muted">—</span>{% endif %}
+                                    </span>
+                                    <button type="button" class="btn btn-link btn-sm p-0 shift-edit-btn" onclick="toggleShiftEdit(this)" title="Редактировать часы">
+                                        <i class="bi bi-pencil" style="font-size:0.7rem"></i>
+                                    </button>
+                                </div>
                             </div>
                             <div class="shift-edit d-none">
                                 <input type="number" step="0.25" min="0" max="24" class="form-control form-control-sm hours-input mx-auto" style="width:56px;padding:2px"
                                        data-emp="{{ op.id }}" data-date="{{ d.iso }}"
-                                       title="По графику: {{ sched_dates[d.iso].start }}–{{ sched_dates[d.iso].end }}"
                                        value="{{ shift.hours_worked|moneyval if shift else '' }}">
                             </div>
                         </div>
@@ -350,15 +361,31 @@
 
 {% block scripts %}
 <script>
-function snapToQuarter(input) {
-    if (!input.value) return;
-    const [h, m] = input.value.split(':').map(Number);
-    let total = Math.round((h * 60 + m) / 15) * 15;
-    total = Math.max(0, Math.min(23 * 60 + 45, total));
-    const hh = String(Math.floor(total / 60)).padStart(2, '0');
-    const mm = String(total % 60).padStart(2, '0');
-    input.value = `${hh}:${mm}`;
+function onTimeInput(el) {
+    const d = (el.value || '').replace(/\D/g, '').slice(0, 4);
+    let out = d.slice(0, 2);
+    if (d.length >= 2) out += ':' + d.slice(2, 4);
+    el.value = out;
 }
+
+// округляет ЧЧ:ММ до ближайших 15 минут; понимает и цифры без ':' (930 -> 09:30, 22 -> 22:00)
+function roundTime15(val) {
+    const digits = (val || '').replace(/\D/g, '');
+    if (!digits) return '';
+    let h, min;
+    if (digits.length <= 2)       { h = parseInt(digits);            min = 0; }
+    else if (digits.length === 3) { h = parseInt(digits.slice(0, 1)); min = parseInt(digits.slice(1)); }
+    else                          { h = parseInt(digits.slice(0, 2)); min = parseInt(digits.slice(2, 4)); }
+    if (isNaN(h) || isNaN(min) || h > 23 || min > 59) return val;
+    min = Math.round(min / 15) * 15;
+    if (min === 60) { min = 0; h += 1; }
+    if (h > 23) h = 23;
+    return (h < 10 ? '0' : '') + h + ':' + (min < 10 ? '0' : '') + min;
+}
+
+document.querySelectorAll('.sched-start, .sched-end').forEach(el => {
+    el.addEventListener('blur', () => { el.value = roundTime15(el.value); });
+});
 
 function toggleShiftEdit(btn) {
     const cell = btn.closest('.shift-cell');
