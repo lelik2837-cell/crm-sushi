@@ -12492,7 +12492,14 @@ def _month_range(date_from, date_to):
 @menu_permission_required('contact_center_report')
 def contact_center_report():
     today = date.today()
-    date_from = request.args.get('date_from', today.replace(month=1, day=1).isoformat())
+    # По умолчанию — последние 3 месяца, включая текущий
+    default_start_m = today.month - 2
+    default_start_y = today.year
+    if default_start_m <= 0:
+        default_start_m += 12
+        default_start_y -= 1
+    default_from = date(default_start_y, default_start_m, 1).isoformat()
+    date_from = request.args.get('date_from', default_from)
     date_to   = request.args.get('date_to', today.isoformat())
     months = _month_range(date_from, date_to)
 
