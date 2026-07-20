@@ -28,6 +28,9 @@
     </li>
 </ul>
 
+{% set _MONTHS_RU = ['','Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'] %}
+{% set month_label = _MONTHS_RU[month_str[5:7]|int] ~ ' ' ~ month_str[:4] %}
+
 {# ═══════════════════════════════════ ВКЛАДКА: СОТРУДНИКИ ═══════════════════════════════════ #}
 {% if active_tab == 'employees' %}
 <div class="card">
@@ -190,7 +193,7 @@
         <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('call_center') }}?tab=schedule&month={{ prev_month }}">
             <i class="bi bi-chevron-left"></i>
         </a>
-        <span class="fw-semibold">{{ month_str }}</span>
+        <span class="fw-semibold">{{ month_label }}</span>
         <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('call_center') }}?tab=schedule&month={{ next_month }}">
             <i class="bi bi-chevron-right"></i>
         </a>
@@ -205,12 +208,12 @@
 {% else %}
 <div class="card">
     <div class="table-responsive">
-        <table class="table table-bordered table-sm mb-0 text-center" id="scheduleTable" style="font-size:0.8rem">
+        <table class="table table-bordered table-sm mb-0 text-center" id="scheduleTable" style="font-size:0.8rem;table-layout:fixed;width:auto">
             <thead class="table-light">
                 <tr>
-                    <th class="text-start" style="min-width:90px">Дата</th>
+                    <th class="text-start" style="width:90px">Дата</th>
                     {% for op in operators %}
-                    <th style="min-width:90px">{{ op.full_name }}</th>
+                    <th style="width:180px">{{ op.full_name }}</th>
                     {% endfor %}
                 </tr>
             </thead>
@@ -223,14 +226,17 @@
                 {% for op in operators %}
                 {% set cell = schedule_grid.get(op.id, {}).get(d.iso) %}
                 <td class="{% if d.is_weekend %}table-warning bg-opacity-25{% endif %}">
-                    <input type="checkbox" class="form-check-input sched-cb" data-emp="{{ op.id }}" data-date="{{ d.iso }}"
-                           data-default-end="{{ d.default_end }}" onchange="toggleSchedTimes(this)"
-                           {% if cell %}checked{% endif %}>
-                    <div class="sched-times {% if not cell %}d-none{% endif %} mt-1">
-                        <input type="time" step="900" class="form-control form-control-sm sched-start" value="{{ cell.start if cell else '10:00' }}"
-                               style="width:70px;font-size:0.68rem;padding:1px 2px">
-                        <input type="time" step="900" class="form-control form-control-sm sched-end" value="{{ cell.end if cell else d.default_end }}"
-                               style="width:70px;font-size:0.68rem;padding:1px 2px">
+                    <div class="d-flex align-items-center justify-content-center gap-1 flex-nowrap">
+                        <input type="checkbox" class="form-check-input sched-cb flex-shrink-0" data-emp="{{ op.id }}" data-date="{{ d.iso }}"
+                               data-default-end="{{ d.default_end }}" onchange="toggleSchedTimes(this)"
+                               style="width:24px;height:24px;cursor:pointer"
+                               {% if cell %}checked{% endif %}>
+                        <div class="sched-times d-flex gap-1 {% if not cell %}d-none{% endif %}">
+                            <input type="time" step="900" class="form-control form-control-sm sched-start" value="{{ cell.start if cell else '10:00' }}"
+                                   style="width:62px;font-size:0.68rem;padding:1px 2px">
+                            <input type="time" step="900" class="form-control form-control-sm sched-end" value="{{ cell.end if cell else d.default_end }}"
+                                   style="width:62px;font-size:0.68rem;padding:1px 2px">
+                        </div>
                     </div>
                 </td>
                 {% endfor %}
@@ -250,7 +256,7 @@
         <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('call_center') }}?tab=shifts&month={{ prev_month }}">
             <i class="bi bi-chevron-left"></i>
         </a>
-        <span class="fw-semibold">{{ month_str }}</span>
+        <span class="fw-semibold">{{ month_label }}</span>
         <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('call_center') }}?tab=shifts&month={{ next_month }}">
             <i class="bi bi-chevron-right"></i>
         </a>
@@ -269,12 +275,12 @@
 </div>
 <div class="card mb-3">
     <div class="table-responsive">
-        <table class="table table-bordered table-sm mb-0 text-center" id="shiftsTable" style="font-size:0.8rem">
+        <table class="table table-bordered table-sm mb-0 text-center" id="shiftsTable" style="font-size:0.8rem;table-layout:fixed;width:auto">
             <thead class="table-light">
                 <tr>
-                    <th class="text-start" style="min-width:90px">Дата</th>
+                    <th class="text-start" style="width:90px">Дата</th>
                     {% for op in operators %}
-                    <th style="min-width:64px">{{ op.full_name }}</th>
+                    <th style="width:80px">{{ op.full_name }}</th>
                     {% endfor %}
                 </tr>
             </thead>
