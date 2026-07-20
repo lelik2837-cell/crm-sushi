@@ -9399,35 +9399,6 @@ def bank():
         branches    = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
         exp_cats    = [c for c in get_expense_categories(conn) if c['show_contractors']]
 
-        beznal_rows = []
-        beznal_branches = []
-        if tab == 'beznal':
-            beznal_branches = conn.execute('''
-                SELECT DISTINCT b.id, b.name FROM bank_terminals t
-                JOIN branches b ON b.id=t.branch_id WHERE t.is_active=1 ORDER BY b.name
-            ''').fetchall()
-            # Получаем каждую транзакцию отдельно, чтобы извлечь комиссию из описания
-            raw = conn.execute('''
-                SELECT bt.txn_date, t.branch_id, bt.amount, bt.description
-                FROM bank_transactions bt
-                JOIN bank_terminals t ON t.id=bt.terminal_id
-                WHERE bt.txn_date BETWEEN ? AND ? AND bt.amount > 0 AND bt.is_ignored=0
-                ORDER BY bt.txn_date DESC
-            ''', (date_from, date_to)).fetchall()
-            _comm_re = re.compile(r'[Кк]омисси[яи]\s+([\d]+[.,][\d]+)', re.IGNORECASE)
-            days = {}
-            for r in raw:
-                desc = r['description'] or ''
-                m = _comm_re.search(desc)
-                commission = float(m.group(1).replace(',', '.')) if m else 0.0
-                net = float(r['amount'])
-                gross = net + commission
-                cell = days.setdefault(r['txn_date'], {}).setdefault(r['branch_id'],
-                    {'gross': 0.0, 'commission': 0.0})
-                cell['gross'] += gross
-                cell['commission'] += commission
-            beznal_rows = sorted(days.items(), reverse=True)
-
         expense_rows = []
         expense_total = 0
         if tab == 'expenses':
@@ -9530,7 +9501,6 @@ def bank():
         accounts=accounts, acc_branches=acc_branches, statements=statements,
         contractors=contractors, terminals=terminals,
         branches=branches, exp_cats=exp_cats,
-        beznal_rows=beznal_rows, beznal_branches=beznal_branches,
         expense_rows=expense_rows, expense_total=expense_total,
         compare_rows=compare_rows, compare_bank=compare_bank, compare_crm=compare_crm,
         sber_auto_count=sber_auto_count,
@@ -10026,6 +9996,85 @@ def bank_parse_rule_delete(rule_id):
     return redirect(url_for('bank', tab='rules'))
 
 
+def _enrich_bank_txn(d):
+    """Определяет op_type/op_card4 и достраивает counterparty из описания для одной транзакции (dict)."""
+    desc  = d.get('description') or ''
+    desc_u = desc.upper()
+    desc_l = desc.lower()
+    amount = d.get('amount', 0)
+
+    if not d.get('counterparty'):
+        m = re.search(r'[Сс]бербанка\s+(.+?)\s+по\s+карте', desc)
+        if not m:
+            m = re.search(r'в\s+ТУ\s+(.+?)\s+по\s+(?:карте|к)', desc, re.IGNORECASE)
+        if m:
+            d['counterparty'] = m.group(1).strip()
+
+    if 'PURCHASE' in desc_u:
+        # Карточная покупка — извлекаем последние 4 цифры карты
+        cm = re.search(r'по\s+карте\s+(\S+)', desc, re.IGNORECASE)
+        if cm:
+            digits = re.sub(r'\D', '', cm.group(1))
+            d['op_card4'] = digits[-4:] if len(digits) >= 4 else digits
+        else:
+            d['op_card4'] = ''
+        d['op_type'] = 'card'
+    elif d.get('terminal_id') or 'эквайрин' in desc_l:
+        d['op_type'] = 'acquiring'
+        d['op_card4'] = ''
+    elif 'перераспредел' in desc_l or 'между счет' in desc_l:
+        d['op_type'] = 'transfer'
+        d['op_card4'] = ''
+    elif amount < 0:
+        d['op_type'] = 'contractor'
+        d['op_card4'] = ''
+    else:
+        d['op_type'] = 'transfer'
+        d['op_card4'] = ''
+    return d
+
+
+def _apply_bank_parse_rules(conn, txns):
+    """Применяет правила разбора (Альфа и др.) к списку транзакций (dict-ов с полями bt.*)."""
+    parse_rules = conn.execute(
+        'SELECT * FROM bank_parse_rules WHERE is_active=1 ORDER BY sort_order, id'
+    ).fetchall()
+    _rx_cache = {}
+    for d in txns:
+        d['parse_rule_name'] = ''
+        d['parse_rule_category'] = ''
+        d['commission_extracted'] = None
+        for rule in parse_rules:
+            if rule['bank_account_id'] and rule['bank_account_id'] != d.get('bank_account_id'):
+                continue
+            if rule['direction'] == 'income' and d['amount'] <= 0:
+                continue
+            if rule['direction'] == 'expense' and d['amount'] >= 0:
+                continue
+            kw = (rule['keyword'] or '').lower()
+            if not kw or kw not in (d.get('description') or '').lower():
+                continue
+            d['parse_rule_name'] = rule['name']
+            d['parse_rule_category'] = rule['category'] or ''
+            if not rule['commission_included'] and rule['commission_pattern']:
+                pat = rule['commission_pattern']
+                if pat not in _rx_cache:
+                    try:
+                        _rx_cache[pat] = re.compile(pat, re.IGNORECASE)
+                    except re.error:
+                        _rx_cache[pat] = None
+                rx = _rx_cache.get(pat)
+                if rx:
+                    m2 = rx.search(d.get('description') or '')
+                    if m2:
+                        try:
+                            d['commission_extracted'] = float(m2.group(1).replace(',', '.'))
+                        except (ValueError, IndexError):
+                            pass
+            break
+    return txns
+
+
 @app.route('/bank/statement/<int:stmt_id>')
 @login_required
 @menu_permission_required('bank')
@@ -10051,82 +10100,8 @@ def bank_statement_view(stmt_id):
         ''', (stmt_id,)).fetchall()
         # Для строк с пустым counterparty — извлекаем из описания
         # Определяем тип операции для каждой транзакции
-        txns = []
-        for row in txns_raw:
-            d = dict(row)
-            desc  = d.get('description') or ''
-            desc_u = desc.upper()
-            desc_l = desc.lower()
-            amount = d.get('amount', 0)
-
-            if not d.get('counterparty'):
-                m = re.search(r'[Сс]бербанка\s+(.+?)\s+по\s+карте', desc)
-                if not m:
-                    m = re.search(r'в\s+ТУ\s+(.+?)\s+по\s+(?:карте|к)', desc, re.IGNORECASE)
-                if m:
-                    d['counterparty'] = m.group(1).strip()
-
-            if 'PURCHASE' in desc_u:
-                # Карточная покупка — извлекаем последние 4 цифры карты
-                cm = re.search(r'по\s+карте\s+(\S+)', desc, re.IGNORECASE)
-                if cm:
-                    digits = re.sub(r'\D', '', cm.group(1))
-                    d['op_card4'] = digits[-4:] if len(digits) >= 4 else digits
-                else:
-                    d['op_card4'] = ''
-                d['op_type'] = 'card'
-            elif d.get('terminal_id') or 'эквайрин' in desc_l:
-                d['op_type'] = 'acquiring'
-                d['op_card4'] = ''
-            elif 'перераспредел' in desc_l or 'между счет' in desc_l:
-                d['op_type'] = 'transfer'
-                d['op_card4'] = ''
-            elif amount < 0:
-                d['op_type'] = 'contractor'
-                d['op_card4'] = ''
-            else:
-                d['op_type'] = 'transfer'
-                d['op_card4'] = ''
-
-            txns.append(d)
-
-        # Применяем правила разбора (Альфа и др.)
-        parse_rules = conn.execute(
-            'SELECT * FROM bank_parse_rules WHERE is_active=1 ORDER BY sort_order, id'
-        ).fetchall()
-        _rx_cache = {}
-        for d in txns:
-            d['parse_rule_name'] = ''
-            d['parse_rule_category'] = ''
-            d['commission_extracted'] = None
-            for rule in parse_rules:
-                if rule['bank_account_id'] and rule['bank_account_id'] != stmt['bank_account_id']:
-                    continue
-                if rule['direction'] == 'income' and d['amount'] <= 0:
-                    continue
-                if rule['direction'] == 'expense' and d['amount'] >= 0:
-                    continue
-                kw = (rule['keyword'] or '').lower()
-                if not kw or kw not in (d.get('description') or '').lower():
-                    continue
-                d['parse_rule_name'] = rule['name']
-                d['parse_rule_category'] = rule['category'] or ''
-                if not rule['commission_included'] and rule['commission_pattern']:
-                    pat = rule['commission_pattern']
-                    if pat not in _rx_cache:
-                        try:
-                            _rx_cache[pat] = re.compile(pat, re.IGNORECASE)
-                        except re.error:
-                            _rx_cache[pat] = None
-                    rx = _rx_cache.get(pat)
-                    if rx:
-                        m2 = rx.search(d.get('description') or '')
-                        if m2:
-                            try:
-                                d['commission_extracted'] = float(m2.group(1).replace(',', '.'))
-                            except (ValueError, IndexError):
-                                pass
-                break
+        txns = [_enrich_bank_txn(dict(row)) for row in txns_raw]
+        _apply_bank_parse_rules(conn, txns)
 
         contractors = conn.execute(
             'SELECT * FROM contractors WHERE is_active=1 AND COALESCE(is_card_merchant,0)=0 ORDER BY name'
@@ -10139,6 +10114,46 @@ def bank_statement_view(stmt_id):
         stmt=stmt, txns=txns, contractors=contractors,
         exp_cats_income=exp_cats_income, exp_cats_expense=exp_cats_expense,
         unique_cats=unique_cats)
+
+
+@app.route('/bank/statements/all')
+@login_required
+@menu_permission_required('bank')
+def bank_statements_all():
+    today = date.today()
+    date_from = request.args.get('date_from', today.replace(day=1).isoformat())
+    date_to   = request.args.get('date_to', today.isoformat())
+    with get_db() as conn:
+        txns_raw = conn.execute('''
+            SELECT bt.*, c.name as contractor_name,
+                   t.terminal_number, b.name as terminal_branch,
+                   ba.name as account_name
+            FROM bank_transactions bt
+            LEFT JOIN contractors c ON c.id=bt.contractor_id
+            LEFT JOIN bank_terminals t ON t.id=bt.terminal_id
+            LEFT JOIN branches b ON b.id=t.branch_id
+            JOIN bank_statements bs ON bs.id=bt.statement_id
+            JOIN bank_accounts ba ON ba.id=bt.bank_account_id
+            WHERE bt.txn_date BETWEEN ? AND ?
+            ORDER BY bt.txn_date DESC, bt.id DESC
+        ''', (date_from, date_to)).fetchall()
+        txns = [_enrich_bank_txn(dict(row)) for row in txns_raw]
+        _apply_bank_parse_rules(conn, txns)
+
+        contractors = conn.execute(
+            'SELECT * FROM contractors WHERE is_active=1 AND COALESCE(is_card_merchant,0)=0 ORDER BY name'
+        ).fetchall()
+        all_exp_cats     = [c for c in get_expense_categories(conn) if c['show_contractors']]
+        exp_cats_income  = [c for c in all_exp_cats if c['type'] == 'income']
+        exp_cats_expense = [c for c in all_exp_cats if c['type'] != 'income']
+    unique_cats = sorted(set(d['category'] for d in txns if d.get('category')))
+    stmt = {'filename': 'Выписка по всем', 'account_name': 'Все счета',
+            'date_from': date_from, 'date_to': date_to, 'row_count': len(txns)}
+    return render_template('bank_statement.html',
+        stmt=stmt, txns=txns, contractors=contractors,
+        exp_cats_income=exp_cats_income, exp_cats_expense=exp_cats_expense,
+        unique_cats=unique_cats, show_bank_col=True,
+        date_from=date_from, date_to=date_to)
 
 
 # ─── SBERBANK API SYNC ────────────────────────────────────────────────────────

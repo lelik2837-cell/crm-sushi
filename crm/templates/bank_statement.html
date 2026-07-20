@@ -17,6 +17,22 @@
     </a>
   </div>
 
+  {% if show_bank_col %}
+  <form method="get" class="row g-2 mb-3 align-items-end">
+    <div class="col-auto">
+      <label class="form-label mb-1 fw-semibold small">С</label>
+      <input type="date" name="date_from" class="form-control form-control-sm" value="{{ date_from }}">
+    </div>
+    <div class="col-auto">
+      <label class="form-label mb-1 fw-semibold small">По</label>
+      <input type="date" name="date_to" class="form-control form-control-sm" value="{{ date_to }}">
+    </div>
+    <div class="col-auto">
+      <button class="btn btn-primary btn-sm">Показать</button>
+    </div>
+  </form>
+  {% endif %}
+
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% for cat, msg in messages %}
       <div class="alert alert-{{ cat }} alert-dismissible fade show" role="alert">
@@ -89,6 +105,7 @@
         <table class="table table-hover table-sm mb-0" id="txnTable">
           <thead class="table-light">
             <tr>
+              {% if show_bank_col %}<th>Банк</th>{% endif %}
               <th>Дата</th>
               <th class="text-end">Сумма</th>
               <th>Контрагент</th>
@@ -175,6 +192,7 @@
               data-optype="{{ t.op_type }}"
               data-category="{{ t.category or '' }}"
               data-contractor="{{ t.contractor_id or '' }}">
+              {% if show_bank_col %}<td class="small text-nowrap text-muted">{{ t.account_name or '—' }}</td>{% endif %}
               <td class="text-nowrap">{{ t.txn_date }}</td>
               <td class="text-end fw-semibold text-nowrap
                 {% if t.is_ignored %}text-muted{% elif t.amount > 0 %}text-success{% else %}text-danger{% endif %}">
