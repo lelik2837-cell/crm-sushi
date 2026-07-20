@@ -285,7 +285,7 @@
                     {% for op in operators %}
                     <th style="width:96px">
                         {{ op.full_name }}
-                        <div class="text-muted fw-normal" style="font-size:0.7rem">
+                        <div class="fw-bold text-primary" style="font-size:0.85rem">
                             {{ month_totals.get(op.id, {}).get('hours', 0)|moneyval }}ч · {{ month_totals.get(op.id, {}).get('pay', 0)|money }}₽
                         </div>
                     </th>
@@ -305,10 +305,9 @@
                     {% if d.iso in sched_dates %}
                         {% set s = sched_dates[d.iso] %}
                         {% if d.iso <= today %}
-                        <div style="line-height:1.15">
+                        <div style="line-height:1.2">
                             <div class="text-muted" style="font-size:0.62rem">{{ s.start }}–{{ s.end }}</div>
-                            <div class="fw-bold" style="font-size:1.36rem">{{ s.hours|moneyval }}ч</div>
-                            <div class="fw-bold" style="font-size:1.36rem">{{ s.pay|money }}₽</div>
+                            <div class="fw-semibold" style="font-size:0.68rem">{{ s.hours|moneyval }}ч · {{ s.pay|money }}₽</div>
                         </div>
                         {% else %}
                         <span class="text-muted" style="opacity:0.55;font-size:0.68rem" title="Смена ещё не наступила">
