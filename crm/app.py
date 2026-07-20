@@ -12527,19 +12527,24 @@ def contact_center_report():
         ''', (cc_cat_code, date_from, date_to)).fetchall():
             ctr_pay.setdefault(r['cid'], {})[r['month']] = r['amt']
 
-        # Выручка по филиалам за период — база для распределения расходов на контакт-центр
+        # Выручка по филиалам ПО МЕСЯЦАМ за период — база для распределения расходов
+        # на контакт-центр (доля филиала в выручке месяца применяется к итогу
+        # контакт-центра за тот же месяц).
         branch_groups = get_branch_groups(conn)
-        branch_revenue = {}
+        branch_names = {
+            b['id']: b['name']
+            for b in conn.execute("SELECT id, name FROM branches WHERE is_active=1 ORDER BY name").fetchall()
+        }
+        branch_rev_by_month = {}  # branch_id -> {month: revenue}
         for r in conn.execute('''
-            SELECT b.id, b.name, COALESCE(SUM(sr.total_revenue),0) as revenue
-            FROM branches b
-            LEFT JOIN shifts s ON s.branch_id=b.id AND s.date BETWEEN ? AND ?
+            SELECT s.branch_id AS bid, strftime('%Y-%m', s.date) AS month,
+                   COALESCE(SUM(sr.total_revenue),0) as revenue
+            FROM shifts s
             LEFT JOIN shift_revenue sr ON sr.shift_id = s.id
-            WHERE b.is_active=1
-            GROUP BY b.id
-            ORDER BY b.name
+            WHERE s.date BETWEEN ? AND ?
+            GROUP BY s.branch_id, month
         ''', (date_from, date_to)).fetchall():
-            branch_revenue[r['id']] = {'name': r['name'], 'revenue': r['revenue']}
+            branch_rev_by_month.setdefault(r['bid'], {})[r['month']] = r['revenue']
 
     def _row(label, by_month, extra=None):
         r = {'label': label, 'amounts': {}, 'total': 0.0}
@@ -12571,50 +12576,43 @@ def contact_center_report():
 
     month_labels = {mo: _pnl_period_label(mo) for mo in months}
 
-    # Распределение итога контакт-центра по филиалам/группам пропорционально их
-    # выручке за период: доля_филиала = выручка_филиала / выручка_всех_филиалов.
-    cc_total = grand_total_row['total']
-    total_revenue_all = sum(v['revenue'] for v in branch_revenue.values())
+    # Распределение итога контакт-центра по филиалам/группам: для каждого месяца
+    # доля_филиала = выручка_филиала_за_месяц / выручка_всех_филиалов_за_месяц,
+    # сумма = доля × итог контакт-центра за тот же месяц. Строки — в том же
+    # формате {label, amounts{month:val}}, что и остальная таблица.
+    total_rev_by_month = {}
+    for mo in months:
+        total_rev_by_month[mo] = sum(by_m.get(mo, 0.0) for by_m in branch_rev_by_month.values())
 
-    def _alloc(revenue):
-        if not total_revenue_all:
-            return 0.0
-        return cc_total * (revenue / total_revenue_all)
-
-    def _pct(revenue):
-        return (revenue / total_revenue_all * 100) if total_revenue_all else 0.0
+    def _alloc_by_month(rev_by_month):
+        by_month = {}
+        for mo in months:
+            trm = total_rev_by_month.get(mo, 0.0)
+            if trm:
+                by_month[mo] = grand_total_row['amounts'].get(mo, 0.0) * (rev_by_month.get(mo, 0.0) / trm)
+        return by_month
 
     grouped_branch_ids = set()
     group_alloc_rows = []
     for g in branch_groups:
-        member_ids = [bid for bid in g['branch_ids'] if bid in branch_revenue]
+        member_ids = [bid for bid in g['branch_ids'] if bid in branch_names]
         grouped_branch_ids.update(member_ids)
-        g_rev = sum(branch_revenue[bid]['revenue'] for bid in member_ids)
-        group_alloc_rows.append({
-            'name': g['name'],
-            'revenue': g_rev,
-            'pct': _pct(g_rev),
-            'alloc': _alloc(g_rev),
-            'branches': [
-                {
-                    'name': branch_revenue[bid]['name'],
-                    'revenue': branch_revenue[bid]['revenue'],
-                    'pct': _pct(branch_revenue[bid]['revenue']),
-                    'alloc': _alloc(branch_revenue[bid]['revenue']),
-                }
-                for bid in member_ids
-            ],
-        })
+        g_rev_by_month = {
+            mo: sum(branch_rev_by_month.get(bid, {}).get(mo, 0.0) for bid in member_ids)
+            for mo in months
+        }
+        branch_rows = [
+            _row(branch_names[bid], _alloc_by_month(branch_rev_by_month.get(bid, {})))
+            for bid in member_ids
+        ]
+        group_row = _row(g['name'], _alloc_by_month(g_rev_by_month))
+        group_row['branches'] = branch_rows
+        group_alloc_rows.append(group_row)
 
     ungrouped_alloc_rows = sorted((
-        {
-            'name': v['name'],
-            'revenue': v['revenue'],
-            'pct': _pct(v['revenue']),
-            'alloc': _alloc(v['revenue']),
-        }
-        for bid, v in branch_revenue.items() if bid not in grouped_branch_ids
-    ), key=lambda x: x['name'])
+        _row(branch_names[bid], _alloc_by_month(branch_rev_by_month.get(bid, {})))
+        for bid in branch_names if bid not in grouped_branch_ids
+    ), key=lambda x: x['label'])
 
     return render_template(
         'report_contact_center.html',
@@ -12623,7 +12621,6 @@ def contact_center_report():
         fot_total_row=fot_total_row, exp_total_row=exp_total_row, grand_total_row=grand_total_row,
         date_from=date_from, date_to=date_to,
         group_alloc_rows=group_alloc_rows, ungrouped_alloc_rows=ungrouped_alloc_rows,
-        total_revenue_all=total_revenue_all, cc_total=cc_total,
     )
 
 
