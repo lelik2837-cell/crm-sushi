@@ -204,9 +204,7 @@
         <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('call_center') }}?tab=schedule&month={{ next_month }}">
             <i class="bi bi-chevron-right"></i>
         </a>
-        <button class="btn btn-sm btn-primary ms-auto" id="saveScheduleBtn">
-            <i class="bi bi-check2"></i> Сохранить график
-        </button>
+        <span class="text-muted small ms-auto">Изменения сохраняются автоматически</span>
     </div>
 </div>
 
@@ -285,7 +283,12 @@
                 <tr>
                     <th class="text-start" style="width:90px">Дата</th>
                     {% for op in operators %}
-                    <th style="width:96px">{{ op.full_name }}</th>
+                    <th style="width:96px">
+                        {{ op.full_name }}
+                        <div class="text-muted fw-normal" style="font-size:0.7rem">
+                            {{ month_totals.get(op.id, {}).get('hours', 0)|moneyval }}ч · {{ month_totals.get(op.id, {}).get('pay', 0)|money }}₽
+                        </div>
+                    </th>
                     {% endfor %}
                 </tr>
             </thead>
@@ -302,9 +305,10 @@
                     {% if d.iso in sched_dates %}
                         {% set s = sched_dates[d.iso] %}
                         {% if d.iso <= today %}
-                        <div style="font-size:0.62rem;line-height:1.2">
-                            <div class="text-muted">{{ s.start }}–{{ s.end }}</div>
-                            <div class="fw-semibold" style="font-size:0.68rem">{{ s.hours|moneyval }}ч · {{ s.pay|money }}₽</div>
+                        <div style="line-height:1.15">
+                            <div class="text-muted" style="font-size:0.62rem">{{ s.start }}–{{ s.end }}</div>
+                            <div class="fw-bold" style="font-size:1.36rem">{{ s.hours|moneyval }}ч</div>
+                            <div class="fw-bold" style="font-size:1.36rem">{{ s.pay|money }}₽</div>
                         </div>
                         {% else %}
                         <span class="text-muted" style="opacity:0.55;font-size:0.68rem" title="Смена ещё не наступила">
@@ -319,20 +323,6 @@
             </tr>
             {% endfor %}
             </tbody>
-            <tfoot class="table-light">
-                <tr>
-                    <th class="text-start">Часы</th>
-                    {% for op in operators %}
-                    <th>{{ month_totals.get(op.id, {}).get('hours', 0)|moneyval }}</th>
-                    {% endfor %}
-                </tr>
-                <tr>
-                    <th class="text-start">ЗП</th>
-                    {% for op in operators %}
-                    <th>{{ month_totals.get(op.id, {}).get('pay', 0)|money }} ₽</th>
-                    {% endfor %}
-                </tr>
-            </tfoot>
         </table>
     </div>
 </div>
@@ -365,8 +355,28 @@ function roundTime15(val) {
     return (h < 10 ? '0' : '') + h + ':' + (min < 10 ? '0' : '') + min;
 }
 
+function saveScheduleCell(cb) {
+    const wrap = cb.closest('td').querySelector('.sched-times');
+    const payload = { employee_id: cb.dataset.emp, date: cb.dataset.date, working: cb.checked };
+    if (cb.checked) {
+        payload.start = wrap.querySelector('.sched-start').value || '10:00';
+        payload.end = wrap.querySelector('.sched-end').value || cb.dataset.defaultEnd || '22:00';
+    }
+    fetch('{{ url_for("call_center_schedule_save") }}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+    }).then(r => r.json()).then(d => {
+        if (!d.ok) alert('Ошибка сохранения графика');
+    }).catch(() => alert('Ошибка сохранения графика'));
+}
+
 document.querySelectorAll('.sched-start, .sched-end').forEach(el => {
-    el.addEventListener('blur', () => { el.value = roundTime15(el.value); });
+    el.addEventListener('blur', () => {
+        el.value = roundTime15(el.value);
+        const cb = el.closest('td').querySelector('.sched-cb');
+        if (cb && cb.checked) saveScheduleCell(cb);
+    });
 });
 
 function toggleSchedTimes(cb) {
@@ -380,26 +390,7 @@ function toggleSchedTimes(cb) {
     } else {
         wrap.classList.add('d-none');
     }
+    saveScheduleCell(cb);
 }
-
-document.getElementById('saveScheduleBtn')?.addEventListener('click', function() {
-    const cells = Array.from(document.querySelectorAll('.sched-cb:checked')).map(cb => {
-        const wrap = cb.closest('td').querySelector('.sched-times');
-        return {
-            employee_id: cb.dataset.emp,
-            date: cb.dataset.date,
-            start: wrap.querySelector('.sched-start').value || '10:00',
-            end: wrap.querySelector('.sched-end').value || cb.dataset.defaultEnd || '22:00',
-        };
-    });
-    fetch('{{ url_for("call_center_schedule_save") }}', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({month: '{{ month_str }}', cells})
-    }).then(r => r.json()).then(d => {
-        if (d.ok) location.reload();
-        else alert('Ошибка сохранения графика');
-    }).catch(() => alert('Ошибка сохранения графика'));
-});
 </script>
 {% endblock %}

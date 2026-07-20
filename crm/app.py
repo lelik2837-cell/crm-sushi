@@ -12380,45 +12380,38 @@ def call_center_restore(emp_id):
     return redirect(url_for('call_center'))
 
 
+_CC_TIME_RE = re.compile(r'^\d{2}:\d{2}$')
+
+
 @app.route('/call-center/schedule/save', methods=['POST'])
 @login_required
 @menu_permission_required('call_center')
 def call_center_schedule_save():
+    """Автосохранение одной ячейки графика (день/оператор) — вызывается сразу
+    при изменении галочки или времени, без отдельной кнопки «Сохранить»."""
     data = request.json or {}
-    cells = data.get('cells', [])
     try:
-        y, m = [int(x) for x in str(data.get('month', '')).split('-')]
-        month_start = date(y, m, 1)
-    except Exception:
-        return jsonify({'ok': False, 'error': 'bad month'}), 400
-    month_end = month_start.replace(day=calendar.monthrange(month_start.year, month_start.month)[1])
+        eid = int(data['employee_id'])
+        d = str(data['date'])
+    except (KeyError, ValueError, TypeError):
+        return jsonify({'ok': False}), 400
+    working = bool(data.get('working', True))
     with get_db() as conn:
-        op_ids = {r['id'] for r in conn.execute('SELECT id FROM call_center_employees WHERE is_fired=0').fetchall()}
-        if op_ids:
-            ids_str = ','.join(str(i) for i in op_ids)
-            conn.execute(
-                f'DELETE FROM call_center_schedule WHERE employee_id IN ({ids_str}) AND date BETWEEN ? AND ?',
-                (month_start.isoformat(), month_end.isoformat())
-            )
-        _time_re = re.compile(r'^\d{2}:\d{2}$')
-        for cell in cells:
-            try:
-                eid = int(cell['employee_id'])
-                d = str(cell['date'])
-            except (KeyError, ValueError, TypeError):
-                continue
-            if eid not in op_ids or not (month_start.isoformat() <= d <= month_end.isoformat()):
-                continue
-            start = str(cell.get('start') or '10:00')
-            end = str(cell.get('end') or '22:00')
-            start = _cc_snap_quarter(start, '10:00') if _time_re.match(start) else '10:00'
-            end = _cc_snap_quarter(end, '22:00') if _time_re.match(end) else '22:00'
-            conn.execute(
-                'INSERT OR IGNORE INTO call_center_schedule (employee_id, date, planned_start, planned_end) VALUES (?,?,?,?)',
-                (eid, d, start, end)
-            )
+        op = conn.execute('SELECT id FROM call_center_employees WHERE id=? AND is_fired=0', (eid,)).fetchone()
+        if not op:
+            return jsonify({'ok': False}), 400
+        if not working:
+            conn.execute('DELETE FROM call_center_schedule WHERE employee_id=? AND date=?', (eid, d))
+        else:
+            start = str(data.get('start') or '10:00')
+            end = str(data.get('end') or '22:00')
+            start = _cc_snap_quarter(start, '10:00') if _CC_TIME_RE.match(start) else '10:00'
+            end = _cc_snap_quarter(end, '22:00') if _CC_TIME_RE.match(end) else '22:00'
+            conn.execute('''
+                INSERT INTO call_center_schedule (employee_id, date, planned_start, planned_end) VALUES (?,?,?,?)
+                ON CONFLICT(employee_id, date) DO UPDATE SET planned_start=excluded.planned_start, planned_end=excluded.planned_end
+            ''', (eid, d, start, end))
         conn.commit()
-    flash('График сохранён', 'success')
     return jsonify({'ok': True})
 
 
