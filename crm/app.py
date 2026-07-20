@@ -128,6 +128,7 @@ MENU_ITEMS = [
     ('change_settings',       'Размен',                   'reports',  True),
     ('purchases',             'Накладные',                'reports',  True),
     ('bank',                  'Банк',                     'reports',  True),
+    ('call_center',           'Колл-центр',               'reports',  False),
     ('employees',             'Сотрудники',               'settings', True),
     ('history',               'История изменений',        'settings', True),
     ('import_shifts',         'Импорт смен',              'settings', False),
@@ -1341,6 +1342,44 @@ def init_db():
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_shifts_branch_date ON shifts(branch_id, date)"
         )
+
+        # Колл-центр — полностью отдельный набор таблиц (операторы не привязаны
+        # к филиалу и не должны фигурировать в обычном отчёте по сотрудникам).
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS call_center_employees (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                full_name TEXT NOT NULL,
+                rate REAL DEFAULT 0,
+                is_active INTEGER DEFAULT 1,
+                is_fired INTEGER DEFAULT 0,
+                fired_at TIMESTAMP,
+                fired_comment TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS call_center_rate_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                employee_id INTEGER NOT NULL REFERENCES call_center_employees(id) ON DELETE CASCADE,
+                rate REAL NOT NULL,
+                effective_from DATE NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS call_center_schedule (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                employee_id INTEGER NOT NULL REFERENCES call_center_employees(id) ON DELETE CASCADE,
+                date DATE NOT NULL,
+                UNIQUE(employee_id, date)
+            );
+            CREATE TABLE IF NOT EXISTS call_center_shifts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                employee_id INTEGER NOT NULL REFERENCES call_center_employees(id) ON DELETE CASCADE,
+                date DATE NOT NULL,
+                hours_worked REAL DEFAULT 0,
+                rate_snapshot REAL DEFAULT 0,
+                base_pay REAL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(employee_id, date)
+            );
+        ''')
 
         # Per-account Sber auto-sync columns
         _ba_cols = [r[1] for r in conn.execute("PRAGMA table_info(bank_accounts)").fetchall()]
@@ -12136,6 +12175,245 @@ def flyer_promo_save():
         else:
             conn.execute('DELETE FROM flyer_promocodes WHERE branch_id=? AND date=?', (branch_id, date_str))
         conn.commit()
+    return jsonify({'ok': True})
+
+
+# ─── КОЛЛ-ЦЕНТР ───────────────────────────────────────────────────────────────
+# Полностью отдельный набор таблиц (call_center_*) — операторы не привязаны
+# к филиалу и намеренно не пересекаются с обычными сотрудниками/сменами.
+
+def _cc_effective_rate(conn, employee_id, on_date, fallback_rate=0):
+    row = conn.execute(
+        'SELECT rate FROM call_center_rate_history WHERE employee_id=? AND effective_from<=? '
+        'ORDER BY effective_from DESC, id DESC LIMIT 1',
+        (employee_id, on_date)
+    ).fetchone()
+    return float(row['rate']) if row else float(fallback_rate or 0)
+
+
+@app.route('/call-center')
+@login_required
+@menu_permission_required('call_center')
+def call_center():
+    WD_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+    active_tab = request.args.get('tab', 'employees')
+    today = date.today()
+    if active_tab == 'schedule':
+        default_month = (today.replace(day=1) + timedelta(days=32)).replace(day=1)
+    else:
+        default_month = today.replace(day=1)
+    month_str = request.args.get('month', default_month.strftime('%Y-%m'))
+    try:
+        y, m = [int(x) for x in month_str.split('-')]
+        month_start = date(y, m, 1)
+    except Exception:
+        month_start = default_month
+    month_str = month_start.strftime('%Y-%m')
+    days_in_month = calendar.monthrange(month_start.year, month_start.month)[1]
+    month_end = month_start.replace(day=days_in_month)
+    prev_month = (month_start - timedelta(days=1)).replace(day=1).strftime('%Y-%m')
+    next_month = (month_end + timedelta(days=1)).strftime('%Y-%m')
+
+    days_list = []
+    d_cur = month_start
+    while d_cur <= month_end:
+        days_list.append({
+            'iso': d_cur.isoformat(), 'day': d_cur.day,
+            'wd_label': WD_LABELS[d_cur.weekday()], 'is_weekend': d_cur.weekday() >= 5,
+        })
+        d_cur += timedelta(days=1)
+
+    with get_db() as conn:
+        operators = conn.execute(
+            'SELECT * FROM call_center_employees WHERE is_fired=0 ORDER BY full_name'
+        ).fetchall()
+        fired_operators = conn.execute(
+            'SELECT * FROM call_center_employees WHERE is_fired=1 ORDER BY fired_at DESC'
+        ).fetchall()
+
+        rate_history = {}
+        for op in list(operators) + list(fired_operators):
+            rate_history[op['id']] = conn.execute(
+                'SELECT * FROM call_center_rate_history WHERE employee_id=? ORDER BY effective_from DESC LIMIT 5',
+                (op['id'],)
+            ).fetchall()
+
+        schedule_grid = {}
+        shifts_grid = {}
+        month_totals = {}
+
+        if active_tab in ('schedule', 'shifts'):
+            for r in conn.execute(
+                'SELECT employee_id, date FROM call_center_schedule WHERE date BETWEEN ? AND ?',
+                (month_start.isoformat(), month_end.isoformat())
+            ).fetchall():
+                schedule_grid.setdefault(r['employee_id'], set()).add(r['date'])
+
+        if active_tab == 'shifts':
+            for r in conn.execute(
+                'SELECT * FROM call_center_shifts WHERE date BETWEEN ? AND ?',
+                (month_start.isoformat(), month_end.isoformat())
+            ).fetchall():
+                shifts_grid.setdefault(r['employee_id'], {})[r['date']] = dict(r)
+                t = month_totals.setdefault(r['employee_id'], {'hours': 0.0, 'pay': 0.0})
+                t['hours'] += float(r['hours_worked'] or 0)
+                t['pay'] += float(r['base_pay'] or 0)
+
+    grand_total_hours = sum(t['hours'] for t in month_totals.values())
+    grand_total_pay = sum(t['pay'] for t in month_totals.values())
+
+    return render_template(
+        'call_center.html',
+        active_tab=active_tab,
+        operators=operators, fired_operators=fired_operators,
+        rate_history=rate_history,
+        month_str=month_str, prev_month=prev_month, next_month=next_month,
+        days_list=days_list,
+        schedule_grid={eid: sorted(dates) for eid, dates in schedule_grid.items()},
+        shifts_grid=shifts_grid,
+        month_totals=month_totals,
+        grand_total_hours=grand_total_hours, grand_total_pay=grand_total_pay,
+        today=today.isoformat(),
+        is_owner=(session.get('role') == 'owner'),
+    )
+
+
+@app.route('/call-center/add', methods=['POST'])
+@login_required
+@menu_permission_required('call_center')
+def call_center_add():
+    full_name = request.form.get('full_name', '').strip()
+    rate = float(request.form.get('rate', 0) or 0)
+    effective_from = request.form.get('effective_from') or date.today().isoformat()
+    if not full_name:
+        flash('Введите имя оператора', 'danger')
+        return redirect(url_for('call_center'))
+    with get_db() as conn:
+        conn.execute('INSERT INTO call_center_employees (full_name, rate) VALUES (?,?)', (full_name, rate))
+        emp_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        conn.execute(
+            'INSERT INTO call_center_rate_history (employee_id, rate, effective_from) VALUES (?,?,?)',
+            (emp_id, rate, effective_from)
+        )
+        conn.commit()
+    flash(f'Оператор {full_name} добавлен', 'success')
+    return redirect(url_for('call_center'))
+
+
+@app.route('/call-center/<int:emp_id>/update-rate', methods=['POST'])
+@login_required
+@menu_permission_required('call_center')
+def call_center_update_rate(emp_id):
+    rate = float(request.form.get('rate', 0) or 0)
+    effective_from = request.form.get('effective_from') or date.today().isoformat()
+    with get_db() as conn:
+        emp = conn.execute('SELECT * FROM call_center_employees WHERE id=?', (emp_id,)).fetchone()
+        if not emp:
+            flash('Оператор не найден', 'danger')
+            return redirect(url_for('call_center'))
+        conn.execute(
+            'INSERT INTO call_center_rate_history (employee_id, rate, effective_from) VALUES (?,?,?)',
+            (emp_id, rate, effective_from)
+        )
+        if effective_from <= date.today().isoformat():
+            conn.execute('UPDATE call_center_employees SET rate=? WHERE id=?', (rate, emp_id))
+        conn.commit()
+    flash(f'Ставка сохранена (с {effective_from})', 'success')
+    return redirect(url_for('call_center'))
+
+
+@app.route('/call-center/<int:emp_id>/fire', methods=['POST'])
+@login_required
+@menu_permission_required('call_center')
+def call_center_fire(emp_id):
+    comment = request.form.get('comment', '').strip()
+    with get_db() as conn:
+        conn.execute(
+            'UPDATE call_center_employees SET is_fired=1, fired_at=CURRENT_TIMESTAMP, fired_comment=?, is_active=0 WHERE id=?',
+            (comment, emp_id)
+        )
+        conn.commit()
+    flash('Оператор уволен', 'warning')
+    return redirect(url_for('call_center'))
+
+
+@app.route('/call-center/<int:emp_id>/restore', methods=['POST'])
+@login_required
+@menu_permission_required('call_center')
+def call_center_restore(emp_id):
+    with get_db() as conn:
+        conn.execute(
+            'UPDATE call_center_employees SET is_fired=0, fired_at=NULL, fired_comment=NULL, is_active=1 WHERE id=?',
+            (emp_id,)
+        )
+        conn.commit()
+    flash('Оператор восстановлен', 'success')
+    return redirect(url_for('call_center'))
+
+
+@app.route('/call-center/schedule/save', methods=['POST'])
+@login_required
+@menu_permission_required('call_center')
+def call_center_schedule_save():
+    data = request.json or {}
+    cells = data.get('cells', [])
+    try:
+        y, m = [int(x) for x in str(data.get('month', '')).split('-')]
+        month_start = date(y, m, 1)
+    except Exception:
+        return jsonify({'ok': False, 'error': 'bad month'}), 400
+    month_end = month_start.replace(day=calendar.monthrange(month_start.year, month_start.month)[1])
+    with get_db() as conn:
+        op_ids = {r['id'] for r in conn.execute('SELECT id FROM call_center_employees WHERE is_fired=0').fetchall()}
+        if op_ids:
+            ids_str = ','.join(str(i) for i in op_ids)
+            conn.execute(
+                f'DELETE FROM call_center_schedule WHERE employee_id IN ({ids_str}) AND date BETWEEN ? AND ?',
+                (month_start.isoformat(), month_end.isoformat())
+            )
+        for cell in cells:
+            try:
+                eid = int(cell['employee_id'])
+                d = str(cell['date'])
+            except (KeyError, ValueError, TypeError):
+                continue
+            if eid not in op_ids or not (month_start.isoformat() <= d <= month_end.isoformat()):
+                continue
+            conn.execute('INSERT OR IGNORE INTO call_center_schedule (employee_id, date) VALUES (?,?)', (eid, d))
+        conn.commit()
+    flash('График сохранён', 'success')
+    return jsonify({'ok': True})
+
+
+@app.route('/call-center/shifts/save', methods=['POST'])
+@login_required
+@menu_permission_required('call_center')
+def call_center_shifts_save():
+    data = request.json or {}
+    cells = data.get('cells', [])
+    with get_db() as conn:
+        employees_map = {r['id']: r['rate'] for r in conn.execute('SELECT id, rate FROM call_center_employees').fetchall()}
+        for cell in cells:
+            try:
+                eid = int(cell['employee_id'])
+                d = str(cell['date'])
+                hours = float(str(cell.get('hours', 0)).replace(',', '.') or 0)
+            except (KeyError, ValueError, TypeError):
+                continue
+            if eid not in employees_map or hours < 0:
+                continue
+            if hours == 0:
+                conn.execute('DELETE FROM call_center_shifts WHERE employee_id=? AND date=?', (eid, d))
+                continue
+            rate = _cc_effective_rate(conn, eid, d, employees_map[eid])
+            base_pay = round(hours * rate, 2)
+            conn.execute(
+                'INSERT OR REPLACE INTO call_center_shifts (employee_id, date, hours_worked, rate_snapshot, base_pay) '
+                'VALUES (?,?,?,?,?)',
+                (eid, d, hours, rate, base_pay)
+            )
+        conn.commit()
+    flash('Смены сохранены', 'success')
     return jsonify({'ok': True})
 
 

@@ -1,0 +1,337 @@
+{% extends 'base.html' %}
+{% block title %}Колл-центр{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="fw-bold mb-0"><i class="bi bi-headset"></i> Колл-центр</h4>
+    {% if active_tab == 'employees' %}
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addOperatorModal">
+        <i class="bi bi-plus"></i> Добавить оператора
+    </button>
+    {% endif %}
+</div>
+
+<ul class="nav nav-tabs mb-4">
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'employees' %}active{% endif %}" href="{{ url_for('call_center') }}?tab=employees">
+            <i class="bi bi-person-badge"></i> Сотрудники колл-центра
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'schedule' %}active{% endif %}" href="{{ url_for('call_center') }}?tab=schedule">
+            <i class="bi bi-calendar-week"></i> График
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'shifts' %}active{% endif %}" href="{{ url_for('call_center') }}?tab=shifts">
+            <i class="bi bi-clock-history"></i> Смены
+        </a>
+    </li>
+</ul>
+
+{# ═══════════════════════════════════ ВКЛАДКА: СОТРУДНИКИ ═══════════════════════════════════ #}
+{% if active_tab == 'employees' %}
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th>ФИО</th>
+                    <th>Ставка</th>
+                    <th>История ставок</th>
+                    <th class="text-end">Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for op in operators %}
+            <tr>
+                <td class="fw-semibold">{{ op.full_name }}</td>
+                <td>{{ op.rate|money }} ₽/ч</td>
+                <td class="small text-muted">
+                    {% for h in rate_history.get(op.id, [])[:3] %}
+                    <div>{{ h.effective_from }} — {{ h.rate|money }} ₽/ч</div>
+                    {% endfor %}
+                </td>
+                <td class="text-end">
+                    <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#rateModal{{ op.id }}">
+                        <i class="bi bi-cash-coin"></i> Ставка
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger" type="button"
+                            data-bs-toggle="collapse" data-bs-target="#fireSection{{ op.id }}">
+                        <i class="bi bi-door-open"></i> Уволить
+                    </button>
+                </td>
+            </tr>
+            <tr class="collapse" id="fireSection{{ op.id }}">
+                <td colspan="4" class="bg-light">
+                    <form method="POST" action="{{ url_for('call_center_fire', emp_id=op.id) }}"
+                          class="d-flex gap-2 align-items-center"
+                          onsubmit="return confirm('Уволить {{ op.full_name }}?')">
+                        <input type="text" name="comment" class="form-control form-control-sm" style="max-width:320px"
+                               placeholder="Причина увольнения (необязательно)">
+                        <button type="submit" class="btn btn-sm btn-danger">
+                            <i class="bi bi-door-open me-1"></i>Подтвердить увольнение
+                        </button>
+                    </form>
+                </td>
+            </tr>
+
+            <!-- Модалка изменения ставки -->
+            <div class="modal fade" id="rateModal{{ op.id }}" tabindex="-1">
+                <div class="modal-dialog">
+                    <div class="modal-content">
+                        <form method="POST" action="{{ url_for('call_center_update_rate', emp_id=op.id) }}">
+                            <div class="modal-header">
+                                <h5 class="modal-title">Ставка — {{ op.full_name }}</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="mb-3">
+                                    <label class="form-label small fw-semibold">Ставка, ₽/ч</label>
+                                    <input type="number" step="0.01" name="rate" class="form-control" value="{{ op.rate|moneyval }}" required>
+                                </div>
+                                <div class="mb-1">
+                                    <label class="form-label small fw-semibold">Действует с</label>
+                                    <input type="date" name="effective_from" class="form-control" value="{{ today }}" required>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                                <button type="submit" class="btn btn-primary">Сохранить</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            {% else %}
+            <tr><td colspan="4" class="text-center text-muted py-4">Нет активных операторов колл-центра</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Уволенные операторы -->
+{% if fired_operators %}
+<div class="card mt-4 border-danger border-opacity-25">
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <span class="fw-bold text-danger"><i class="bi bi-door-open me-2"></i>Уволенные операторы</span>
+        <span class="badge bg-secondary">{{ fired_operators|length }}</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle" style="font-size:0.9rem">
+            <thead class="table-light">
+                <tr>
+                    <th>ФИО</th>
+                    <th>Ставка</th>
+                    <th>Дата увольнения</th>
+                    <th>Причина</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for op in fired_operators %}
+            <tr class="table-danger opacity-75">
+                <td class="fw-semibold">{{ op.full_name }}</td>
+                <td>{{ op.rate|money }} ₽/ч</td>
+                <td class="small text-muted">{{ op.fired_at[:10] if op.fired_at else '—' }}</td>
+                <td class="small text-muted">{{ op.fired_comment or '—' }}</td>
+                <td class="text-end">
+                    <form method="POST" action="{{ url_for('call_center_restore', emp_id=op.id) }}" class="d-inline">
+                        <button class="btn btn-sm btn-outline-success" title="Восстановить оператора">
+                            <i class="bi bi-arrow-counterclockwise"></i> Восстановить
+                        </button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Добавить оператора -->
+<div class="modal fade" id="addOperatorModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('call_center_add') }}">
+                <div class="modal-header">
+                    <h5 class="modal-title">Добавить оператора</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">ФИО</label>
+                        <input type="text" name="full_name" class="form-control" required autofocus>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Ставка, ₽/ч</label>
+                        <input type="number" step="0.01" name="rate" class="form-control" value="0" required>
+                    </div>
+                    <div class="mb-1">
+                        <label class="form-label small fw-semibold">Действует с</label>
+                        <input type="date" name="effective_from" class="form-control" value="{{ today }}" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Добавить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{# ═══════════════════════════════════ ВКЛАДКА: ГРАФИК ═══════════════════════════════════ #}
+{% if active_tab == 'schedule' %}
+<div class="card mb-3">
+    <div class="card-body py-2 d-flex align-items-center gap-2">
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('call_center') }}?tab=schedule&month={{ prev_month }}">
+            <i class="bi bi-chevron-left"></i>
+        </a>
+        <span class="fw-semibold">{{ month_str }}</span>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('call_center') }}?tab=schedule&month={{ next_month }}">
+            <i class="bi bi-chevron-right"></i>
+        </a>
+        <button class="btn btn-sm btn-primary ms-auto" id="saveScheduleBtn">
+            <i class="bi bi-check2"></i> Сохранить график
+        </button>
+    </div>
+</div>
+
+{% if not operators %}
+<div class="alert alert-info">Нет активных операторов — сначала добавьте их во вкладке «Сотрудники колл-центра».</div>
+{% else %}
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-bordered table-sm mb-0 text-center" id="scheduleTable" style="font-size:0.8rem">
+            <thead class="table-light">
+                <tr>
+                    <th class="text-start" style="min-width:160px">Оператор</th>
+                    {% for d in days_list %}
+                    <th class="{% if d.is_weekend %}table-warning{% endif %}" style="min-width:32px">{{ d.day }}<br><span class="text-muted fw-normal">{{ d.wd_label }}</span></th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+            {% for op in operators %}
+            <tr>
+                <td class="text-start fw-semibold">{{ op.full_name }}</td>
+                {% for d in days_list %}
+                <td class="{% if d.is_weekend %}table-warning bg-opacity-25{% endif %}">
+                    <input type="checkbox" class="form-check-input sched-cb" data-emp="{{ op.id }}" data-date="{{ d.iso }}"
+                           {% if d.iso in schedule_grid.get(op.id, []) %}checked{% endif %}>
+                </td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+{% endif %}
+
+{# ═══════════════════════════════════ ВКЛАДКА: СМЕНЫ ═══════════════════════════════════ #}
+{% if active_tab == 'shifts' %}
+<div class="card mb-3">
+    <div class="card-body py-2 d-flex align-items-center gap-2">
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('call_center') }}?tab=shifts&month={{ prev_month }}">
+            <i class="bi bi-chevron-left"></i>
+        </a>
+        <span class="fw-semibold">{{ month_str }}</span>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('call_center') }}?tab=shifts&month={{ next_month }}">
+            <i class="bi bi-chevron-right"></i>
+        </a>
+        <button class="btn btn-sm btn-primary ms-auto" id="saveShiftsBtn">
+            <i class="bi bi-check2"></i> Сохранить смены
+        </button>
+    </div>
+</div>
+
+{% if not operators %}
+<div class="alert alert-info">Нет активных операторов — сначала добавьте их во вкладке «Сотрудники колл-центра».</div>
+{% else %}
+<div class="card mb-3">
+    <div class="table-responsive">
+        <table class="table table-bordered table-sm mb-0 text-center" id="shiftsTable" style="font-size:0.8rem">
+            <thead class="table-light">
+                <tr>
+                    <th class="text-start" style="min-width:160px">Оператор</th>
+                    {% for d in days_list %}
+                    <th class="{% if d.is_weekend %}table-warning{% endif %}" style="min-width:44px">{{ d.day }}<br><span class="text-muted fw-normal">{{ d.wd_label }}</span></th>
+                    {% endfor %}
+                    <th style="min-width:70px">Часы</th>
+                    <th style="min-width:90px">ЗП</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for op in operators %}
+            {% set sched_dates = schedule_grid.get(op.id, []) %}
+            {% set op_shifts = shifts_grid.get(op.id, {}) %}
+            <tr data-emp-row="{{ op.id }}">
+                <td class="text-start fw-semibold">{{ op.full_name }}</td>
+                {% for d in days_list %}
+                <td class="{% if d.is_weekend %}table-warning bg-opacity-25{% endif %}">
+                    {% if d.iso in sched_dates %}
+                    <input type="number" step="0.25" min="0" max="24" class="form-control form-control-sm hours-input" style="width:48px;padding:2px"
+                           data-emp="{{ op.id }}" data-date="{{ d.iso }}"
+                           value="{{ op_shifts[d.iso].hours_worked|moneyval if d.iso in op_shifts else '' }}">
+                    {% else %}
+                    <span class="text-muted">—</span>
+                    {% endif %}
+                </td>
+                {% endfor %}
+                <td class="fw-semibold emp-total-hours">{{ month_totals.get(op.id, {}).get('hours', 0)|moneyval }}</td>
+                <td class="fw-semibold emp-total-pay">{{ month_totals.get(op.id, {}).get('pay', 0)|money }} ₽</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+            <tfoot class="table-light">
+                <tr>
+                    <th class="text-start">Итого</th>
+                    <th colspan="{{ days_list|length }}"></th>
+                    <th id="grandTotalHours">{{ grand_total_hours|moneyval }}</th>
+                    <th id="grandTotalPay">{{ grand_total_pay|money }} ₽</th>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+</div>
+{% endif %}
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('saveScheduleBtn')?.addEventListener('click', function() {
+    const cells = Array.from(document.querySelectorAll('.sched-cb:checked')).map(cb => ({
+        employee_id: cb.dataset.emp, date: cb.dataset.date
+    }));
+    fetch('{{ url_for("call_center_schedule_save") }}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({month: '{{ month_str }}', cells})
+    }).then(r => r.json()).then(d => {
+        if (d.ok) location.reload();
+        else alert('Ошибка сохранения графика');
+    }).catch(() => alert('Ошибка сохранения графика'));
+});
+
+document.getElementById('saveShiftsBtn')?.addEventListener('click', function() {
+    const cells = Array.from(document.querySelectorAll('.hours-input')).map(inp => ({
+        employee_id: inp.dataset.emp, date: inp.dataset.date, hours: inp.value || 0
+    }));
+    fetch('{{ url_for("call_center_shifts_save") }}', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({cells})
+    }).then(r => r.json()).then(d => {
+        if (d.ok) location.reload();
+        else alert('Ошибка сохранения смен');
+    }).catch(() => alert('Ошибка сохранения смен'));
+});
+</script>
+{% endblock %}
