@@ -478,7 +478,9 @@
               <td>{{ r.dt }}</td>
               <td>{{ r.counterparty }}</td>
               <td>{{ r.bank_cat_label or r.bank_cat or '—' }}</td>
-              <td class="text-end text-danger fw-semibold">{{ r.bank_amount|money }} ₽</td>
+              <td class="text-end {% if r.bank_amount %}text-danger fw-semibold{% else %}text-muted{% endif %}">
+                {% if r.bank_amount %}{{ r.bank_amount|money }} ₽{% else %}—{% endif %}
+              </td>
               <td class="text-end {% if r.crm_amount %}text-success fw-semibold{% else %}text-muted{% endif %}">
                 {% if r.crm_amount %}{{ r.crm_amount|money }} ₽{% else %}—{% endif %}
               </td>

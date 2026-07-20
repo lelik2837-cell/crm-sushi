@@ -9451,35 +9451,68 @@ def bank():
         compare_bank = 0
         compare_crm  = 0
         if tab == 'compare':
-            compare_rows = conn.execute('''
+            # Сверяем только операции по картам филиалов (настраиваются в Филиалы →
+            # карты) — остальные банковские платежи (контрагентам, налоги и т.д.)
+            # заведомо не имеют пары в расходах смены и только шумят в сверке.
+            bank_txn_rows = conn.execute('''
                 SELECT
-                    COALESCE(bt.txn_date, ewd.date) as dt,
+                    bt.description as bank_desc, bt.counterparty as bank_counterparty,
+                    bt.txn_date as dt,
                     COALESCE(c.name, bt.counterparty, bt.description, '—') as counterparty,
                     bt.category as bank_cat,
                     ec1.label as bank_cat_label,
-                    -bt.amount as bank_amount,
-                    ewd.amount_cash + ewd.amount_card as crm_amount,
-                    ewd.description as crm_desc
+                    -bt.amount as bank_amount
                 FROM bank_transactions bt
                 LEFT JOIN contractors c ON c.id=bt.contractor_id
                 LEFT JOIN expense_categories ec1 ON ec1.code=bt.category
-                LEFT JOIN (
-                    SELECT e.*, s.date as date
-                    FROM expenses e
-                    JOIN shifts s ON s.id = e.shift_id
-                ) ewd ON ewd.date = bt.txn_date
-                    AND ABS(ewd.amount_cash + ewd.amount_card - (-bt.amount)) < 1
                 WHERE bt.txn_date BETWEEN ? AND ? AND bt.amount < 0 AND bt.is_ignored=0
-                ORDER BY dt DESC
+                ORDER BY bt.txn_date DESC
             ''', (date_from, date_to)).fetchall()
-            compare_bank = conn.execute(
-                'SELECT COALESCE(SUM(-amount),0) FROM bank_transactions WHERE txn_date BETWEEN ? AND ? AND amount<0 AND is_ignored=0',
-                (date_from, date_to)
-            ).fetchone()[0]
-            compare_crm = conn.execute(
-                "SELECT COALESCE(SUM(amount_cash+amount_card),0) FROM expenses e JOIN shifts s ON s.id=e.shift_id WHERE s.date BETWEEN ? AND ?",
-                (date_from, date_to)
-            ).fetchone()[0]
+            bank_card_rows = [
+                r for r in bank_txn_rows
+                if _detect_branch_card(conn, {'description': r['bank_desc'], 'counterparty': r['bank_counterparty']})
+            ]
+
+            # CRM-сторона: обычные расходы смены + расходы на такси, отмеченные
+            # оплатой картой (payment_type != 'cash') — такси хранится отдельным
+            # блоком (taxi_trips), поэтому раньше сюда не попадали.
+            crm_card_rows = conn.execute('''
+                SELECT s.date as dt, e.amount_cash + e.amount_card as amount, e.description as description, 'expense' as src
+                FROM expenses e JOIN shifts s ON s.id = e.shift_id
+                WHERE s.date BETWEEN ? AND ?
+                UNION ALL
+                SELECT s.date as dt, t.amount as amount,
+                       ('Такси' || CASE WHEN t.note IS NOT NULL AND t.note != '' THEN ': ' || t.note ELSE '' END) as description,
+                       'taxi' as src
+                FROM taxi_trips t JOIN shifts s ON s.id = t.shift_id
+                WHERE t.payment_type != 'cash' AND s.date BETWEEN ? AND ?
+            ''', (date_from, date_to, date_from, date_to)).fetchall()
+
+            crm_pool = list(crm_card_rows)
+            for b in bank_card_rows:
+                match = None
+                for i, c in enumerate(crm_pool):
+                    if c['dt'] == b['dt'] and abs(c['amount'] - b['bank_amount']) < 1:
+                        match = crm_pool.pop(i)
+                        break
+                compare_rows.append({
+                    'dt': b['dt'], 'counterparty': b['counterparty'],
+                    'bank_cat': b['bank_cat'], 'bank_cat_label': b['bank_cat_label'],
+                    'bank_amount': b['bank_amount'],
+                    'crm_amount': match['amount'] if match else None,
+                    'crm_desc': match['description'] if match else None,
+                })
+            # Такси по карте без пары в банке — тоже показываем, чтобы расхождение было видно
+            for c in crm_pool:
+                if c['src'] == 'taxi':
+                    compare_rows.append({
+                        'dt': c['dt'], 'counterparty': c['description'],
+                        'bank_cat': None, 'bank_cat_label': None, 'bank_amount': None,
+                        'crm_amount': c['amount'], 'crm_desc': c['description'],
+                    })
+            compare_rows.sort(key=lambda r: r['dt'], reverse=True)
+            compare_bank = sum(r['bank_amount'] or 0 for r in compare_rows)
+            compare_crm  = sum(r['crm_amount'] or 0 for r in compare_rows)
 
         sber_auto_count = conn.execute(
             "SELECT COUNT(*) FROM bank_accounts WHERE is_active=1 AND sber_auto_sync=1 AND account_number != '' AND account_number IS NOT NULL"
