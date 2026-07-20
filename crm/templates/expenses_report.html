@@ -72,9 +72,9 @@
                 <label class="form-label small fw-semibold mb-1">Категория</label>
                 <select name="category" class="form-select form-select-sm" style="min-width:160px;">
                     <option value="">Все категории</option>
-                    {% for cat in all_cats %}{% if not cat.parent_id %}
+                    {% for cat in filter_cats %}{% if not cat.parent_id %}
                     <option value="{{ cat.code }}" {% if cat_filter == cat.code %}selected{% endif %}>{{ cat.label }}</option>
-                    {% for sub in all_cats %}{% if sub.parent_id == cat.id %}
+                    {% for sub in filter_cats %}{% if sub.parent_id == cat.id %}
                     <option value="{{ sub.code }}" {% if cat_filter == sub.code %}selected{% endif %}>&nbsp;&nbsp;↳ {{ sub.label }}</option>
                     {% endif %}{% endfor %}
                     {% endif %}{% endfor %}

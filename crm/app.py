@@ -8167,6 +8167,9 @@ def expenses_report():
     with get_db() as conn:
         branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
         all_cats = conn.execute('SELECT * FROM expense_categories ORDER BY sort_order, label').fetchall()
+        # Для фильтра показываем только категории расходов (не приход/любое) —
+        # напр. «Плюсы в кассу» отмечена как приход и не должна тут выбираться.
+        filter_cats = [c for c in all_cats if c['type'] == 'expense']
 
         conds  = ["s.date BETWEEN ? AND ?"]
         params = [date_from, date_to]
@@ -8224,7 +8227,7 @@ def expenses_report():
 
     return render_template('expenses_report.html',
         rows=rows, tot=tot, by_cat=by_cat,
-        branches=branches, all_cats=all_cats, cat_map=cat_map,
+        branches=branches, all_cats=all_cats, filter_cats=filter_cats, cat_map=cat_map,
         date_from=date_from, date_to=date_to,
         branch_ids=branch_ids, cat_filter=cat_filter, pay_filter=pay_filter,
         branch_groups=get_branch_groups(conn))
