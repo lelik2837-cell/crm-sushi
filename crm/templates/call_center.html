@@ -285,8 +285,9 @@
                     {% for op in operators %}
                     <th style="width:192px">
                         {{ op.full_name }}
-                        <div class="fw-bold text-primary" style="font-size:0.85rem">
-                            {{ month_totals.get(op.id, {}).get('hours', 0)|moneyval }}ч · {{ month_totals.get(op.id, {}).get('pay', 0)|money }}₽
+                        <div class="fw-bold" style="font-size:0.85rem">
+                            <span class="text-primary">{{ month_totals.get(op.id, {}).get('hours', 0)|moneyval }}ч</span> ·
+                            <span class="text-danger">{{ month_totals.get(op.id, {}).get('pay', 0)|money }}₽</span>
                         </div>
                     </th>
                     {% endfor %}
