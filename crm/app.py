@@ -1371,17 +1371,10 @@ def init_db():
                 planned_end TEXT DEFAULT '22:00',
                 UNIQUE(employee_id, date)
             );
-            CREATE TABLE IF NOT EXISTS call_center_shifts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                employee_id INTEGER NOT NULL REFERENCES call_center_employees(id) ON DELETE CASCADE,
-                date DATE NOT NULL,
-                hours_worked REAL DEFAULT 0,
-                rate_snapshot REAL DEFAULT 0,
-                base_pay REAL DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(employee_id, date)
-            );
         ''')
+        # Смены колл-центра теперь считаются автоматически из графика (часы = конец−начало,
+        # ставка — актуальная на дату), отдельная таблица с ручными часами больше не нужна.
+        conn.execute("DROP TABLE IF EXISTS call_center_shifts")
         _ccs_cols = [r[1] for r in conn.execute("PRAGMA table_info(call_center_schedule)").fetchall()]
         if 'planned_start' not in _ccs_cols:
             conn.execute("ALTER TABLE call_center_schedule ADD COLUMN planned_start TEXT DEFAULT '10:00'")
@@ -12198,6 +12191,19 @@ def _cc_effective_rate(conn, employee_id, on_date, fallback_rate=0):
     return float(row['rate']) if row else float(fallback_rate or 0)
 
 
+def _cc_duration_hours(start, end):
+    """Часы между plановыми start/end (HH:MM), напр. 10:00-22:00 -> 12.0."""
+    try:
+        sh, sm = [int(x) for x in str(start).split(':')]
+        eh, em = [int(x) for x in str(end).split(':')]
+        mins = (eh * 60 + em) - (sh * 60 + sm)
+        if mins < 0:
+            mins += 24 * 60
+        return round(mins / 60, 2)
+    except Exception:
+        return 0.0
+
+
 def _cc_snap_quarter(hhmm, fallback='10:00'):
     """Округляет время до ближайших 15 минут (00/15/30/45)."""
     try:
@@ -12256,7 +12262,6 @@ def call_center():
             ).fetchall()
 
         schedule_grid = {}
-        shifts_grid = {}
         month_totals = {}
 
         if active_tab in ('schedule', 'shifts'):
@@ -12269,14 +12274,20 @@ def call_center():
                 }
 
         if active_tab == 'shifts':
-            for r in conn.execute(
-                'SELECT * FROM call_center_shifts WHERE date BETWEEN ? AND ?',
-                (month_start.isoformat(), month_end.isoformat())
-            ).fetchall():
-                shifts_grid.setdefault(r['employee_id'], {})[r['date']] = dict(r)
-                t = month_totals.setdefault(r['employee_id'], {'hours': 0.0, 'pay': 0.0})
-                t['hours'] += float(r['hours_worked'] or 0)
-                t['pay'] += float(r['base_pay'] or 0)
+            today_str = today.isoformat()
+            rate_fallback = {op['id']: op['rate'] for op in operators}
+            for eid, dates in schedule_grid.items():
+                for diso, cell in dates.items():
+                    if diso > today_str:
+                        continue
+                    hours = _cc_duration_hours(cell['start'], cell['end'])
+                    rate = _cc_effective_rate(conn, eid, diso, rate_fallback.get(eid, 0))
+                    pay = round(hours * rate, 2)
+                    cell['hours'] = hours
+                    cell['pay'] = pay
+                    t = month_totals.setdefault(eid, {'hours': 0.0, 'pay': 0.0})
+                    t['hours'] += hours
+                    t['pay'] += pay
 
     grand_total_hours = sum(t['hours'] for t in month_totals.values())
     grand_total_pay = sum(t['pay'] for t in month_totals.values())
@@ -12289,7 +12300,6 @@ def call_center():
         month_str=month_str, prev_month=prev_month, next_month=next_month,
         days_list=days_list,
         schedule_grid=schedule_grid,
-        shifts_grid=shifts_grid,
         month_totals=month_totals,
         grand_total_hours=grand_total_hours, grand_total_pay=grand_total_pay,
         today=today.isoformat(),
@@ -12409,39 +12419,6 @@ def call_center_schedule_save():
             )
         conn.commit()
     flash('График сохранён', 'success')
-    return jsonify({'ok': True})
-
-
-@app.route('/call-center/shifts/save', methods=['POST'])
-@login_required
-@menu_permission_required('call_center')
-def call_center_shifts_save():
-    data = request.json or {}
-    cells = data.get('cells', [])
-    today_str = date.today().isoformat()
-    with get_db() as conn:
-        employees_map = {r['id']: r['rate'] for r in conn.execute('SELECT id, rate FROM call_center_employees').fetchall()}
-        for cell in cells:
-            try:
-                eid = int(cell['employee_id'])
-                d = str(cell['date'])
-                hours = float(str(cell.get('hours', 0)).replace(',', '.') or 0)
-            except (KeyError, ValueError, TypeError):
-                continue
-            if eid not in employees_map or hours < 0 or d > today_str:
-                continue
-            if hours == 0:
-                conn.execute('DELETE FROM call_center_shifts WHERE employee_id=? AND date=?', (eid, d))
-                continue
-            rate = _cc_effective_rate(conn, eid, d, employees_map[eid])
-            base_pay = round(hours * rate, 2)
-            conn.execute(
-                'INSERT OR REPLACE INTO call_center_shifts (employee_id, date, hours_worked, rate_snapshot, base_pay) '
-                'VALUES (?,?,?,?,?)',
-                (eid, d, hours, rate, base_pay)
-            )
-        conn.commit()
-    flash('Смены сохранены', 'success')
     return jsonify({'ok': True})
 
 

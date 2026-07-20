@@ -268,9 +268,6 @@
         <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('call_center') }}?tab=shifts&month={{ next_month }}">
             <i class="bi bi-chevron-right"></i>
         </a>
-        <button class="btn btn-sm btn-primary ms-auto" id="saveShiftsBtn">
-            <i class="bi bi-check2"></i> Сохранить смены
-        </button>
     </div>
 </div>
 
@@ -301,32 +298,17 @@
                 </td>
                 {% for op in operators %}
                 {% set sched_dates = schedule_grid.get(op.id, {}) %}
-                {% set op_shifts = shifts_grid.get(op.id, {}) %}
                 <td class="{% if d.is_weekend %}table-warning bg-opacity-25{% endif %}">
                     {% if d.iso in sched_dates %}
-                        {% set shift = op_shifts.get(d.iso) %}
+                        {% set s = sched_dates[d.iso] %}
                         {% if d.iso <= today %}
-                        <div class="shift-cell" data-emp="{{ op.id }}" data-date="{{ d.iso }}">
-                            <div class="shift-view" style="font-size:0.62rem;line-height:1.2">
-                                <div class="text-muted">{{ sched_dates[d.iso].start }}–{{ sched_dates[d.iso].end }}</div>
-                                <div class="d-flex align-items-center justify-content-center gap-1">
-                                    <span style="font-size:0.68rem">
-                                        {% if shift %}{{ shift.hours_worked|moneyval }}ч · {{ shift.base_pay|money }}₽{% else %}<span class="text-muted">—</span>{% endif %}
-                                    </span>
-                                    <button type="button" class="btn btn-link btn-sm p-0 shift-edit-btn" onclick="toggleShiftEdit(this)" title="Редактировать часы">
-                                        <i class="bi bi-pencil" style="font-size:0.7rem"></i>
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="shift-edit d-none">
-                                <input type="number" step="0.25" min="0" max="24" class="form-control form-control-sm hours-input mx-auto" style="width:56px;padding:2px"
-                                       data-emp="{{ op.id }}" data-date="{{ d.iso }}"
-                                       value="{{ shift.hours_worked|moneyval if shift else '' }}">
-                            </div>
+                        <div style="font-size:0.62rem;line-height:1.2">
+                            <div class="text-muted">{{ s.start }}–{{ s.end }}</div>
+                            <div class="fw-semibold" style="font-size:0.68rem">{{ s.hours|moneyval }}ч · {{ s.pay|money }}₽</div>
                         </div>
                         {% else %}
                         <span class="text-muted" style="opacity:0.55;font-size:0.68rem" title="Смена ещё не наступила">
-                            {{ sched_dates[d.iso].start }}–{{ sched_dates[d.iso].end }}
+                            {{ s.start }}–{{ s.end }}
                         </span>
                         {% endif %}
                     {% else %}
@@ -387,16 +369,6 @@ document.querySelectorAll('.sched-start, .sched-end').forEach(el => {
     el.addEventListener('blur', () => { el.value = roundTime15(el.value); });
 });
 
-function toggleShiftEdit(btn) {
-    const cell = btn.closest('.shift-cell');
-    cell.querySelector('.shift-view').classList.add('d-none');
-    const editWrap = cell.querySelector('.shift-edit');
-    editWrap.classList.remove('d-none');
-    const inp = editWrap.querySelector('.hours-input');
-    inp.focus();
-    inp.select();
-}
-
 function toggleSchedTimes(cb) {
     const wrap = cb.closest('td').querySelector('.sched-times');
     if (cb.checked) {
@@ -428,20 +400,6 @@ document.getElementById('saveScheduleBtn')?.addEventListener('click', function()
         if (d.ok) location.reload();
         else alert('Ошибка сохранения графика');
     }).catch(() => alert('Ошибка сохранения графика'));
-});
-
-document.getElementById('saveShiftsBtn')?.addEventListener('click', function() {
-    const cells = Array.from(document.querySelectorAll('.hours-input')).map(inp => ({
-        employee_id: inp.dataset.emp, date: inp.dataset.date, hours: inp.value || 0
-    }));
-    fetch('{{ url_for("call_center_shifts_save") }}', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({cells})
-    }).then(r => r.json()).then(d => {
-        if (d.ok) location.reload();
-        else alert('Ошибка сохранения смен');
-    }).catch(() => alert('Ошибка сохранения смен'));
 });
 </script>
 {% endblock %}
