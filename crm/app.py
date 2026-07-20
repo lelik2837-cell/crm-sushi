@@ -12198,6 +12198,17 @@ def _cc_effective_rate(conn, employee_id, on_date, fallback_rate=0):
     return float(row['rate']) if row else float(fallback_rate or 0)
 
 
+def _cc_snap_quarter(hhmm, fallback='10:00'):
+    """Округляет время до ближайших 15 минут (00/15/30/45)."""
+    try:
+        h, m = [int(x) for x in str(hhmm).split(':')]
+        total = round((h * 60 + m) / 15) * 15
+        total = max(0, min(23 * 60 + 45, total))
+        return f'{total // 60:02d}:{total % 60:02d}'
+    except Exception:
+        return fallback
+
+
 @app.route('/call-center')
 @login_required
 @menu_permission_required('call_center')
@@ -12393,10 +12404,8 @@ def call_center_schedule_save():
                 continue
             start = str(cell.get('start') or '10:00')
             end = str(cell.get('end') or '22:00')
-            if not _time_re.match(start):
-                start = '10:00'
-            if not _time_re.match(end):
-                end = '22:00'
+            start = _cc_snap_quarter(start, '10:00') if _time_re.match(start) else '10:00'
+            end = _cc_snap_quarter(end, '22:00') if _time_re.match(end) else '22:00'
             conn.execute(
                 'INSERT OR IGNORE INTO call_center_schedule (employee_id, date, planned_start, planned_end) VALUES (?,?,?,?)',
                 (eid, d, start, end)
@@ -12412,6 +12421,7 @@ def call_center_schedule_save():
 def call_center_shifts_save():
     data = request.json or {}
     cells = data.get('cells', [])
+    today_str = date.today().isoformat()
     with get_db() as conn:
         employees_map = {r['id']: r['rate'] for r in conn.execute('SELECT id, rate FROM call_center_employees').fetchall()}
         for cell in cells:
@@ -12421,7 +12431,7 @@ def call_center_shifts_save():
                 hours = float(str(cell.get('hours', 0)).replace(',', '.') or 0)
             except (KeyError, ValueError, TypeError):
                 continue
-            if eid not in employees_map or hours < 0:
+            if eid not in employees_map or hours < 0 or d > today_str:
                 continue
             if hours == 0:
                 conn.execute('DELETE FROM call_center_shifts WHERE employee_id=? AND date=?', (eid, d))

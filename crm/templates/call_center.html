@@ -213,7 +213,7 @@
                 <tr>
                     <th class="text-start" style="width:90px">Дата</th>
                     {% for op in operators %}
-                    <th style="width:180px">{{ op.full_name }}</th>
+                    <th style="width:216px">{{ op.full_name }}</th>
                     {% endfor %}
                 </tr>
             </thead>
@@ -233,9 +233,9 @@
                                {% if cell %}checked{% endif %}>
                         <div class="sched-times d-flex gap-1 {% if not cell %}d-none{% endif %}">
                             <input type="time" step="900" class="form-control form-control-sm sched-start" value="{{ cell.start if cell else '10:00' }}"
-                                   style="width:62px;font-size:0.68rem;padding:1px 2px">
+                                   onchange="snapToQuarter(this)" style="width:62px;font-size:0.68rem;padding:1px 2px">
                             <input type="time" step="900" class="form-control form-control-sm sched-end" value="{{ cell.end if cell else d.default_end }}"
-                                   style="width:62px;font-size:0.68rem;padding:1px 2px">
+                                   onchange="snapToQuarter(this)" style="width:62px;font-size:0.68rem;padding:1px 2px">
                         </div>
                     </div>
                 </td>
@@ -280,7 +280,7 @@
                 <tr>
                     <th class="text-start" style="width:90px">Дата</th>
                     {% for op in operators %}
-                    <th style="width:80px">{{ op.full_name }}</th>
+                    <th style="width:96px">{{ op.full_name }}</th>
                     {% endfor %}
                 </tr>
             </thead>
@@ -295,10 +295,29 @@
                 {% set op_shifts = shifts_grid.get(op.id, {}) %}
                 <td class="{% if d.is_weekend %}table-warning bg-opacity-25{% endif %}">
                     {% if d.iso in sched_dates %}
-                    <input type="number" step="0.25" min="0" max="24" class="form-control form-control-sm hours-input mx-auto" style="width:48px;padding:2px"
-                           data-emp="{{ op.id }}" data-date="{{ d.iso }}"
-                           title="По графику: {{ sched_dates[d.iso].start }}–{{ sched_dates[d.iso].end }}"
-                           value="{{ op_shifts[d.iso].hours_worked|moneyval if d.iso in op_shifts else '' }}">
+                        {% set shift = op_shifts.get(d.iso) %}
+                        {% if d.iso <= today %}
+                        <div class="shift-cell" data-emp="{{ op.id }}" data-date="{{ d.iso }}">
+                            <div class="shift-view d-flex align-items-center justify-content-center gap-1">
+                                <span style="font-size:0.68rem">
+                                    {% if shift %}{{ shift.hours_worked|moneyval }}ч · {{ shift.base_pay|money }}₽{% else %}<span class="text-muted">—</span>{% endif %}
+                                </span>
+                                <button type="button" class="btn btn-link btn-sm p-0 shift-edit-btn" onclick="toggleShiftEdit(this)" title="Редактировать часы">
+                                    <i class="bi bi-pencil" style="font-size:0.7rem"></i>
+                                </button>
+                            </div>
+                            <div class="shift-edit d-none">
+                                <input type="number" step="0.25" min="0" max="24" class="form-control form-control-sm hours-input mx-auto" style="width:56px;padding:2px"
+                                       data-emp="{{ op.id }}" data-date="{{ d.iso }}"
+                                       title="По графику: {{ sched_dates[d.iso].start }}–{{ sched_dates[d.iso].end }}"
+                                       value="{{ shift.hours_worked|moneyval if shift else '' }}">
+                            </div>
+                        </div>
+                        {% else %}
+                        <span class="text-muted" style="opacity:0.55;font-size:0.68rem" title="Смена ещё не наступила">
+                            {{ sched_dates[d.iso].start }}–{{ sched_dates[d.iso].end }}
+                        </span>
+                        {% endif %}
                     {% else %}
                     <span class="text-muted">—</span>
                     {% endif %}
@@ -331,6 +350,26 @@
 
 {% block scripts %}
 <script>
+function snapToQuarter(input) {
+    if (!input.value) return;
+    const [h, m] = input.value.split(':').map(Number);
+    let total = Math.round((h * 60 + m) / 15) * 15;
+    total = Math.max(0, Math.min(23 * 60 + 45, total));
+    const hh = String(Math.floor(total / 60)).padStart(2, '0');
+    const mm = String(total % 60).padStart(2, '0');
+    input.value = `${hh}:${mm}`;
+}
+
+function toggleShiftEdit(btn) {
+    const cell = btn.closest('.shift-cell');
+    cell.querySelector('.shift-view').classList.add('d-none');
+    const editWrap = cell.querySelector('.shift-edit');
+    editWrap.classList.remove('d-none');
+    const inp = editWrap.querySelector('.hours-input');
+    inp.focus();
+    inp.select();
+}
+
 function toggleSchedTimes(cb) {
     const wrap = cb.closest('td').querySelector('.sched-times');
     if (cb.checked) {
