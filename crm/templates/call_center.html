@@ -208,26 +208,28 @@
         <table class="table table-bordered table-sm mb-0 text-center" id="scheduleTable" style="font-size:0.8rem">
             <thead class="table-light">
                 <tr>
-                    <th class="text-start" style="min-width:160px">Оператор</th>
-                    {% for d in days_list %}
-                    <th class="{% if d.is_weekend %}table-warning{% endif %}" style="min-width:80px">{{ d.day }}<br><span class="text-muted fw-normal">{{ d.wd_label }}</span></th>
+                    <th class="text-start" style="min-width:90px">Дата</th>
+                    {% for op in operators %}
+                    <th style="min-width:90px">{{ op.full_name }}</th>
                     {% endfor %}
                 </tr>
             </thead>
             <tbody>
-            {% for op in operators %}
+            {% for d in days_list %}
             <tr>
-                <td class="text-start fw-semibold">{{ op.full_name }}</td>
-                {% for d in days_list %}
+                <td class="text-start fw-semibold {% if d.is_weekend %}table-warning bg-opacity-25{% endif %}">
+                    {{ d.day }} <span class="text-muted fw-normal">{{ d.wd_label }}</span>
+                </td>
+                {% for op in operators %}
                 {% set cell = schedule_grid.get(op.id, {}).get(d.iso) %}
                 <td class="{% if d.is_weekend %}table-warning bg-opacity-25{% endif %}">
                     <input type="checkbox" class="form-check-input sched-cb" data-emp="{{ op.id }}" data-date="{{ d.iso }}"
                            data-default-end="{{ d.default_end }}" onchange="toggleSchedTimes(this)"
                            {% if cell %}checked{% endif %}>
                     <div class="sched-times {% if not cell %}d-none{% endif %} mt-1">
-                        <input type="time" class="form-control form-control-sm sched-start" value="{{ cell.start if cell else '10:00' }}"
+                        <input type="time" step="900" class="form-control form-control-sm sched-start" value="{{ cell.start if cell else '10:00' }}"
                                style="width:70px;font-size:0.68rem;padding:1px 2px">
-                        <input type="time" class="form-control form-control-sm sched-end" value="{{ cell.end if cell else d.default_end }}"
+                        <input type="time" step="900" class="form-control form-control-sm sched-end" value="{{ cell.end if cell else d.default_end }}"
                                style="width:70px;font-size:0.68rem;padding:1px 2px">
                     </div>
                 </td>
@@ -261,29 +263,33 @@
 {% if not operators %}
 <div class="alert alert-info">Нет активных операторов — сначала добавьте их во вкладке «Сотрудники колл-центра».</div>
 {% else %}
+<div class="d-flex justify-content-end gap-3 mb-2 small">
+    <span class="text-muted">Итого часов: <strong id="grandTotalHours">{{ grand_total_hours|moneyval }}</strong></span>
+    <span class="text-muted">Итого ЗП: <strong id="grandTotalPay">{{ grand_total_pay|money }} ₽</strong></span>
+</div>
 <div class="card mb-3">
     <div class="table-responsive">
         <table class="table table-bordered table-sm mb-0 text-center" id="shiftsTable" style="font-size:0.8rem">
             <thead class="table-light">
                 <tr>
-                    <th class="text-start" style="min-width:160px">Оператор</th>
-                    {% for d in days_list %}
-                    <th class="{% if d.is_weekend %}table-warning{% endif %}" style="min-width:44px">{{ d.day }}<br><span class="text-muted fw-normal">{{ d.wd_label }}</span></th>
+                    <th class="text-start" style="min-width:90px">Дата</th>
+                    {% for op in operators %}
+                    <th style="min-width:64px">{{ op.full_name }}</th>
                     {% endfor %}
-                    <th style="min-width:70px">Часы</th>
-                    <th style="min-width:90px">ЗП</th>
                 </tr>
             </thead>
             <tbody>
-            {% for op in operators %}
-            {% set sched_dates = schedule_grid.get(op.id, {}) %}
-            {% set op_shifts = shifts_grid.get(op.id, {}) %}
-            <tr data-emp-row="{{ op.id }}">
-                <td class="text-start fw-semibold">{{ op.full_name }}</td>
-                {% for d in days_list %}
+            {% for d in days_list %}
+            <tr>
+                <td class="text-start fw-semibold {% if d.is_weekend %}table-warning bg-opacity-25{% endif %}">
+                    {{ d.day }} <span class="text-muted fw-normal">{{ d.wd_label }}</span>
+                </td>
+                {% for op in operators %}
+                {% set sched_dates = schedule_grid.get(op.id, {}) %}
+                {% set op_shifts = shifts_grid.get(op.id, {}) %}
                 <td class="{% if d.is_weekend %}table-warning bg-opacity-25{% endif %}">
                     {% if d.iso in sched_dates %}
-                    <input type="number" step="0.25" min="0" max="24" class="form-control form-control-sm hours-input" style="width:48px;padding:2px"
+                    <input type="number" step="0.25" min="0" max="24" class="form-control form-control-sm hours-input mx-auto" style="width:48px;padding:2px"
                            data-emp="{{ op.id }}" data-date="{{ d.iso }}"
                            title="По графику: {{ sched_dates[d.iso].start }}–{{ sched_dates[d.iso].end }}"
                            value="{{ op_shifts[d.iso].hours_worked|moneyval if d.iso in op_shifts else '' }}">
@@ -292,17 +298,21 @@
                     {% endif %}
                 </td>
                 {% endfor %}
-                <td class="fw-semibold emp-total-hours">{{ month_totals.get(op.id, {}).get('hours', 0)|moneyval }}</td>
-                <td class="fw-semibold emp-total-pay">{{ month_totals.get(op.id, {}).get('pay', 0)|money }} ₽</td>
             </tr>
             {% endfor %}
             </tbody>
             <tfoot class="table-light">
                 <tr>
-                    <th class="text-start">Итого</th>
-                    <th colspan="{{ days_list|length }}"></th>
-                    <th id="grandTotalHours">{{ grand_total_hours|moneyval }}</th>
-                    <th id="grandTotalPay">{{ grand_total_pay|money }} ₽</th>
+                    <th class="text-start">Часы</th>
+                    {% for op in operators %}
+                    <th>{{ month_totals.get(op.id, {}).get('hours', 0)|moneyval }}</th>
+                    {% endfor %}
+                </tr>
+                <tr>
+                    <th class="text-start">ЗП</th>
+                    {% for op in operators %}
+                    <th>{{ month_totals.get(op.id, {}).get('pay', 0)|money }} ₽</th>
+                    {% endfor %}
                 </tr>
             </tfoot>
         </table>
