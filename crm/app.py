@@ -8723,33 +8723,29 @@ def pnl_report():
 
         # Выписки банковские — весь приход/расход как есть, кроме исключённых
         # в настройках категорий (например «Перераспределение средств»).
-        simple_excl_cats = cfg['simple_pnl_excluded_cats']
-        simple_excl_filter = ''
-        simple_excl_args = []
-        if simple_excl_cats:
-            ph_e = ','.join('?' * len(simple_excl_cats))
-            simple_excl_filter = f"AND (bt.category IS NULL OR bt.category='' OR bt.category NOT IN ({ph_e}))"
-            simple_excl_args = simple_excl_cats
+        # Категория берётся эффективная (ручная ИЛИ подставленная правилом разбора
+        # банка — bt.category у таких транзакций пустой, сама категория есть только
+        # в parse_rule_category), иначе исключение не срабатывало бы для операций,
+        # категоризированных только правилом — тот же баг, что чинили в выписке (п.157).
+        simple_excl_cats = set(cfg['simple_pnl_excluded_cats'])
+        simple_bt_rows = conn.execute(f"""
+            SELECT {pe_bt} AS period, bt.amount, bt.category, bt.description, bt.bank_account_id
+            FROM bank_transactions bt
+            WHERE bt.txn_date BETWEEN ? AND ? AND bt.is_ignored=0 {bf_bt}
+        """, [date_from, date_to] + b_args).fetchall()
+        simple_bt_txns = [dict(row) for row in simple_bt_rows]
+        _apply_bank_parse_rules(conn, simple_bt_txns)
 
         simple_bank_income_by_p = {}
-        for r in conn.execute(f"""
-            SELECT {pe_bt} AS period, COALESCE(SUM(bt.amount),0) AS amount
-            FROM bank_transactions bt
-            WHERE bt.txn_date BETWEEN ? AND ? AND bt.amount>0 AND bt.is_ignored=0
-              {simple_excl_filter} {bf_bt}
-            GROUP BY period
-        """, [date_from, date_to] + simple_excl_args + b_args).fetchall():
-            simple_bank_income_by_p[r['period']] = r['amount']
-
         simple_bank_exp_by_cat = defaultdict(lambda: defaultdict(float))
-        for r in conn.execute(f"""
-            SELECT {pe_bt} AS period, COALESCE(bt.category,'') AS cat, COALESCE(SUM(-bt.amount),0) AS amount
-            FROM bank_transactions bt
-            WHERE bt.txn_date BETWEEN ? AND ? AND bt.amount<0 AND bt.is_ignored=0
-              {simple_excl_filter} {bf_bt}
-            GROUP BY period, cat
-        """, [date_from, date_to] + simple_excl_args + b_args).fetchall():
-            simple_bank_exp_by_cat[r['cat']][r['period']] += r['amount']
+        for d in simple_bt_txns:
+            eff_cat = d.get('category') or d.get('parse_rule_category') or ''
+            if eff_cat in simple_excl_cats:
+                continue
+            if d['amount'] > 0:
+                simple_bank_income_by_p[d['period']] = simple_bank_income_by_p.get(d['period'], 0.0) + d['amount']
+            elif d['amount'] < 0:
+                simple_bank_exp_by_cat[eff_cat][d['period']] += -d['amount']
 
     # Все периоды
     all_p = set(total_rev_by_p) | set(cash_rev_by_p)
