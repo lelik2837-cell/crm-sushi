@@ -7464,6 +7464,18 @@ def reconciliation_cashless():
             GROUP BY s.date, s.branch_id
         ''', [date_from, date_to] + b_args).fetchall()
 
+        # «Сверки» — факт безнал по терминалам, который вносится в смене (shift_terminals,
+        # сумма чеков терминала) — отдельный ручной ввод, независимый от card_amount
+        # из листа выручки, используется для внутренней сверки (не с банком, а с самой сменой).
+        fact_rows = conn.execute(f'''
+            SELECT s.date AS d, s.branch_id AS branch_id,
+                   COALESCE(SUM(st.amount), 0) AS fact_beznal
+            FROM shifts s
+            JOIN shift_terminals st ON st.shift_id = s.id
+            WHERE s.date BETWEEN ? AND ? {bf_shift}
+            GROUP BY s.date, s.branch_id
+        ''', [date_from, date_to] + b_args).fetchall()
+
         # Приход по банку выбранной(-ых) в настройках категории — категория и филиал
         # определяются ПРИОРИТЕТНО по правилу разбора операции (Банк → Правила): если
         # правило совпало, его категория (rule.category) и филиал/группа
@@ -7550,6 +7562,10 @@ def reconciliation_cashless():
         card_map[(r['d'], r['branch_id'])] = r['card_revenue']
         shift_id_map[(r['d'], r['branch_id'])] = r['shift_id']
 
+    fact_map = {}
+    for r in fact_rows:
+        fact_map[(r['d'], r['branch_id'])] = r['fact_beznal']
+
     # Объединяем оба источника по (дата, филиал) — попадают и дни, где есть
     # только выручка (банк ещё не зачислил), и дни, где есть только банк
     # (например запоздавшее зачисление) — в этом и смысл сверки.
@@ -7561,20 +7577,29 @@ def reconciliation_cashless():
             continue
         card = card_map.get((d, bid), 0.0)
         bank = bank_map.get((d, bid), 0.0)
+        fact = fact_map.get((d, bid), 0.0)
         # Разница = приход банка минус выручка безнал: банк меньше выручки — минус
         # (недостача), банк больше — плюс.
         diff = bank - card
+        # Сверки разн. = выручка безнал минус факт безнал (внутренняя сверка смены,
+        # не связана с банком) — нейтральная, без окраски по знаку.
+        recon_diff = card - fact
         if d not in days:
-            days[d] = {'date': d, 'branches': [], 'card_revenue': 0.0, 'bank_income': 0.0, 'diff': 0.0}
+            days[d] = {'date': d, 'branches': [], 'card_revenue': 0.0, 'bank_income': 0.0,
+                       'fact_beznal': 0.0, 'recon_diff': 0.0, 'diff': 0.0}
         days[d]['branches'].append({
             'branch_id':    bid,
             'branch_name':  branch_name_map[bid],
             'shift_id':     shift_id_map.get((d, bid)),
             'card_revenue': card,
+            'fact_beznal':  fact,
+            'recon_diff':   recon_diff,
             'bank_income':  bank,
             'diff':         diff,
         })
         days[d]['card_revenue'] += card
+        days[d]['fact_beznal']  += fact
+        days[d]['recon_diff']   += recon_diff
         days[d]['bank_income']  += bank
         days[d]['diff']         += diff
 
@@ -7586,6 +7611,8 @@ def reconciliation_cashless():
 
     totals = {
         'card_revenue': sum(d['card_revenue'] for d in sorted_days),
+        'fact_beznal':  sum(d['fact_beznal']  for d in sorted_days),
+        'recon_diff':   sum(d['recon_diff']   for d in sorted_days),
         'bank_income':  sum(d['bank_income']  for d in sorted_days),
         'diff':         sum(d['diff']         for d in sorted_days),
     }
