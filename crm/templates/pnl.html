@@ -12,6 +12,11 @@
 {% endmacro %}
 
 {% block content %}
+<style>
+.pnl-table td, .pnl-table th { border-right: 1px solid #dee2e6; }
+.pnl-table td:last-child, .pnl-table th:last-child { border-right: none; }
+.pnl-table td.text-end, .pnl-table th.text-end { text-align: center !important; }
+</style>
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="fw-bold mb-0"><i class="bi bi-calculator me-2"></i>P&amp;L Отчёт</h4>
     <button class="btn btn-outline-secondary btn-sm" type="button"
@@ -31,6 +36,7 @@
         <input type="hidden" name="date_from" value="{{ date_from }}">
         <input type="hidden" name="date_to"   value="{{ date_to }}">
         <input type="hidden" name="group_by"  value="{{ group_by }}">
+        <input type="hidden" name="pnl_tab" class="pnl-tab-field" value="{{ request.args.get('pnl_tab', 'full') }}">
         {% for bid in branch_ids %}<input type="hidden" name="branch_ids" value="{{ bid }}">{% endfor %}
 
         <div class="row g-4">
@@ -132,6 +138,7 @@
 <div class="card mb-4">
     <div class="card-body py-3">
         <form method="GET" action="{{ url_for('pnl_report') }}" class="row g-2 align-items-end">
+            <input type="hidden" name="pnl_tab" class="pnl-tab-field" value="{{ request.args.get('pnl_tab', 'full') }}">
             <div class="col-sm-auto">
                 <label class="form-label small fw-semibold mb-1">С</label>
                 <input type="date" name="date_from" class="form-control form-control-sm" value="{{ date_from }}">
@@ -267,7 +274,7 @@
         <span class="text-muted small">{{ date_from|datefmt }} — {{ date_to|datefmt }}</span>
     </div>
     <div class="table-responsive">
-    <table class="table table-sm mb-0 align-middle" style="white-space:nowrap">
+    <table class="table table-sm mb-0 align-middle pnl-table" style="white-space:nowrap">
         <thead class="table-light">
             <tr>
                 <th style="min-width:200px">Статья</th>
@@ -475,6 +482,7 @@
                 <input type="hidden" name="date_from" value="{{ date_from }}">
                 <input type="hidden" name="date_to"   value="{{ date_to }}">
                 <input type="hidden" name="group_by"  value="{{ group_by }}">
+                <input type="hidden" name="pnl_tab" class="pnl-tab-field" value="simple">
                 {% for bid in branch_ids %}<input type="hidden" name="branch_ids" value="{{ bid }}">{% endfor %}
                 <div class="text-muted small mb-2">
                     Выбранные категории не будут считаться ни в приходе, ни в расходе по выпискам
@@ -506,7 +514,7 @@
         <span class="text-muted small">{{ date_from|datefmt }} — {{ date_to|datefmt }}</span>
     </div>
     <div class="table-responsive">
-    <table class="table table-sm mb-0 align-middle" style="white-space:nowrap">
+    <table class="table table-sm mb-0 align-middle pnl-table" style="white-space:nowrap">
         <thead class="table-light">
             <tr>
                 <th style="min-width:220px">Статья</th>
@@ -683,6 +691,9 @@ function showPnlTab(tab) {
     document.querySelectorAll('#pnlTabs [data-pnl-tab]').forEach(function(a) {
         a.classList.toggle('active', a.dataset.pnlTab === tab);
     });
+    // Держим скрытые поля форм (фильтр + настройки) в курсе активной вкладки,
+    // чтобы она не сбрасывалась при отправке формы (фильтр/сохранение настроек).
+    document.querySelectorAll('.pnl-tab-field').forEach(function(f) { f.value = tab; });
 }
 document.querySelectorAll('#pnlTabs [data-pnl-tab]').forEach(function(a) {
     a.addEventListener('click', function(e) {
@@ -693,6 +704,34 @@ document.querySelectorAll('#pnlTabs [data-pnl-tab]').forEach(function(a) {
 (function() {
     var params = new URLSearchParams(window.location.search);
     showPnlTab(params.get('pnl_tab') === 'simple' ? 'simple' : 'full');
+})();
+
+// ── Сохранение позиции прокрутки и открытых панелей настроек при отправке форм ──
+var PNL_SCROLL_KEY   = 'pnlScrollPos';
+var PNL_OPEN_KEY      = 'pnlOpenPanels';
+document.querySelectorAll('form').forEach(function(f) {
+    f.addEventListener('submit', function() {
+        sessionStorage.setItem(PNL_SCROLL_KEY, window.scrollY);
+        var openIds = [...document.querySelectorAll('.collapse.show')].map(function(el) { return el.id; }).filter(Boolean);
+        sessionStorage.setItem(PNL_OPEN_KEY, JSON.stringify(openIds));
+    });
+});
+(function() {
+    var openIds = sessionStorage.getItem(PNL_OPEN_KEY);
+    if (openIds !== null) {
+        sessionStorage.removeItem(PNL_OPEN_KEY);
+        try {
+            JSON.parse(openIds).forEach(function(id) {
+                var el = document.getElementById(id);
+                if (el) el.classList.add('show');
+            });
+        } catch (e) {}
+    }
+    var saved = sessionStorage.getItem(PNL_SCROLL_KEY);
+    if (saved !== null) {
+        sessionStorage.removeItem(PNL_SCROLL_KEY);
+        window.scrollTo(0, parseInt(saved, 10) || 0);
+    }
 })();
 
 // ── Разворот расхода по выпискам по категориям ─────────────────────────────

@@ -8911,7 +8911,7 @@ def pnl_settings_save():
         conn.commit()
 
     flash('Настройки P&L сохранены', 'success')
-    params = {k: request.form.get(k) for k in ('date_from', 'date_to', 'group_by') if request.form.get(k)}
+    params = {k: request.form.get(k) for k in ('date_from', 'date_to', 'group_by', 'pnl_tab') if request.form.get(k)}
     bids = request.form.getlist('branch_ids')
     if bids:
         params['branch_ids'] = bids
