@@ -7405,10 +7405,9 @@ def reconciliation_cashless():
         if branch_ids:
             ph       = ','.join('?' * len(branch_ids))
             bf_shift = f'AND s.branch_id IN ({ph})'
-            bf_bank  = f'AND bab.branch_id IN ({ph})'
             b_args   = [int(b) for b in branch_ids]
         else:
-            bf_shift = bf_bank = ''
+            bf_shift = ''
             b_args   = []
 
         # Выручка безналом (без онлайна) по дням/филиалам — из листов смен.
@@ -7421,30 +7420,68 @@ def reconciliation_cashless():
             GROUP BY s.date, s.branch_id
         ''', [date_from, date_to] + b_args).fetchall()
 
-        # Приход по банку выбранной(-ых) в настройках категории — по счетам,
-        # привязанным к филиалу в Настройках банка (bank_account_branches).
-        bank_rows = []
+        # Приход по банку выбранной(-ых) в настройках категории — филиал определяется
+        # ПРИОРИТЕТНО по правилу разбора операции (Банк → Правила, «Филиалы»/«группа»,
+        # см. bank_parse_rule_branches), и только если ни одно правило с филиалом не
+        # совпало — по привязке самого банковского счёта к филиалу (bank_account_branches).
+        # Совпадение правила определяется в Python (поиск ключевого слова в описании),
+        # поэтому строим SQL-агрегацию нельзя — считаем построчно.
+        bank_map = defaultdict(float)
         if cfg['bank_income_categories']:
+            parse_rules = conn.execute(
+                'SELECT * FROM bank_parse_rules WHERE is_active=1 ORDER BY sort_order, id'
+            ).fetchall()
+            rule_branch_ids_map = {}
+            for row in conn.execute(
+                'SELECT rule_id, branch_id, branch_group_id FROM bank_parse_rule_branches'
+            ).fetchall():
+                ids = rule_branch_ids_map.setdefault(row['rule_id'], set())
+                if row['branch_id']:
+                    ids.add(row['branch_id'])
+                elif row['branch_group_id']:
+                    for m in conn.execute(
+                        'SELECT branch_id FROM branch_group_members WHERE group_id=?', (row['branch_group_id'],)
+                    ).fetchall():
+                        ids.add(m['branch_id'])
+            account_branch_ids_map = {}
+            for row in conn.execute('SELECT bank_account_id, branch_id FROM bank_account_branches').fetchall():
+                account_branch_ids_map.setdefault(row['bank_account_id'], set()).add(row['branch_id'])
+
             ph_cat = ','.join('?' * len(cfg['bank_income_categories']))
-            bank_rows = conn.execute(f'''
-                SELECT bt.txn_date AS d, bab.branch_id AS branch_id,
-                       COALESCE(SUM(bt.amount), 0) AS bank_income
+            bt_rows = conn.execute(f'''
+                SELECT bt.txn_date AS d, bt.amount, bt.description, bt.bank_account_id
                 FROM bank_transactions bt
-                JOIN bank_account_branches bab ON bab.bank_account_id = bt.bank_account_id
                 WHERE bt.txn_date BETWEEN ? AND ? AND bt.amount > 0 AND bt.is_ignored=0
-                  AND bt.category IN ({ph_cat}) {bf_bank}
-                GROUP BY bt.txn_date, bab.branch_id
-            ''', [date_from, date_to] + cfg['bank_income_categories'] + b_args).fetchall()
+                  AND bt.category IN ({ph_cat})
+            ''', [date_from, date_to] + cfg['bank_income_categories']).fetchall()
+
+            allowed_branch_ids = set(int(b) for b in branch_ids) if branch_ids else None
+            for r in bt_rows:
+                desc_l = (r['description'] or '').lower()
+                txn_branch_ids = None
+                for rule in parse_rules:
+                    if rule['bank_account_id'] and rule['bank_account_id'] != r['bank_account_id']:
+                        continue
+                    if rule['direction'] == 'expense':
+                        continue  # amount > 0 уже отфильтровано выше, это доход
+                    kw = (rule['keyword'] or '').lower()
+                    if not kw or kw not in desc_l:
+                        continue
+                    if rule['id'] in rule_branch_ids_map:
+                        txn_branch_ids = rule_branch_ids_map[rule['id']]
+                    break
+                if txn_branch_ids is None:
+                    txn_branch_ids = account_branch_ids_map.get(r['bank_account_id'], set())
+                for bid in txn_branch_ids:
+                    if allowed_branch_ids is not None and bid not in allowed_branch_ids:
+                        continue
+                    bank_map[(r['d'], bid)] += r['amount']
 
     branch_name_map = {b['id']: b['name'] for b in branches}
 
     card_map = {}
     for r in card_rows:
         card_map[(r['d'], r['branch_id'])] = r['card_revenue']
-
-    bank_map = defaultdict(float)
-    for r in bank_rows:
-        bank_map[(r['d'], r['branch_id'])] += r['bank_income']
 
     # Объединяем оба источника по (дата, филиал) — попадают и дни, где есть
     # только выручка (банк ещё не зачислил), и дни, где есть только банк
