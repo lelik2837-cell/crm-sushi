@@ -226,6 +226,9 @@
               <td class="small text-nowrap">
                 {% if t.parse_rule_name %}
                   <span class="badge bg-info text-dark">{{ t.parse_rule_name }}</span>
+                  {% if t.parse_rule_branch_label %}
+                    <br><span class="text-muted">{{ t.parse_rule_branch_label }}</span>
+                  {% endif %}
                 {% elif t.op_type == 'card' %}
                   <span class="badge bg-warning text-dark">Карта</span>{% if t.op_card4 %} {{ t.op_card4 }}{% endif %}
                   {% if t.terminal_branch %}

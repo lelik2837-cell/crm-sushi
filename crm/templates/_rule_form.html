@@ -36,6 +36,26 @@
   </select>
   <div class="form-text">Если задана — подставляется в выписке для совпавших транзакций без категории</div>
 </div>
+<div class="row g-2 mb-3">
+  <div class="col-6">
+    <label class="form-label small mb-1">Филиалы</label>
+    <select class="form-select form-select-sm" name="rule_branch_ids[]" multiple size="4">
+      {% for b in branches %}
+      <option value="{{ b.id }}" {% if b.id in (rule_sel_branch_ids or []) %}selected{% endif %}>{{ b.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-6">
+    <label class="form-label small mb-1">...или группа филиалов</label>
+    <select class="form-select form-select-sm" name="rule_branch_group_id">
+      <option value="">— не выбрана —</option>
+      {% for g in branch_groups %}
+      <option value="{{ g.id }}" {% if rule_sel_group_id == g.id %}selected{% endif %}>{{ g.name }}</option>
+      {% endfor %}
+    </select>
+    <div class="form-text">К какому филиалу(-ам) относится вся операция при совпадении правила. Оставьте пустым, если правило не привязано к конкретному филиалу</div>
+  </div>
+</div>
 <div class="mb-3">
   <label class="form-label fw-semibold">Порядок сортировки</label>
   <input type="number" name="sort_order" class="form-control" value="{{ rule.sort_order if rule else 0 }}" style="max-width:100px">

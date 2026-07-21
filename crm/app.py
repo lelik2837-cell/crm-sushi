@@ -1483,6 +1483,12 @@ def init_db():
                 branch_id INTEGER REFERENCES branches(id),
                 branch_group_id INTEGER REFERENCES branch_groups(id)
             );
+            CREATE TABLE IF NOT EXISTS bank_parse_rule_branches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_id INTEGER NOT NULL REFERENCES bank_parse_rules(id) ON DELETE CASCADE,
+                branch_id INTEGER REFERENCES branches(id),
+                branch_group_id INTEGER REFERENCES branch_groups(id)
+            );
             CREATE TABLE IF NOT EXISTS bank_parse_extracted_entries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 bank_transaction_id INTEGER NOT NULL REFERENCES bank_transactions(id) ON DELETE CASCADE,
@@ -10016,6 +10022,18 @@ def bank():
             elif row['branch_group_id']:
                 pattern_group_id[row['pattern_id']] = row['branch_group_id']
 
+        branch_groups_list = get_branch_groups(conn)
+        rule_branch_ids = {}
+        rule_branch_group_id = {}
+        for row in conn.execute(
+            'SELECT rule_id, branch_id, branch_group_id FROM bank_parse_rule_branches'
+        ).fetchall():
+            if row['branch_id']:
+                rule_branch_ids.setdefault(row['rule_id'], []).append(row['branch_id'])
+            elif row['branch_group_id']:
+                rule_branch_group_id[row['rule_id']] = row['branch_group_id']
+        rule_branch_label = _rule_branch_labels(conn)
+
     return render_template('bank.html',
         tab=tab, date_from=date_from, date_to=date_to,
         accounts=accounts, acc_branches=acc_branches, statements=statements,
@@ -10024,9 +10042,11 @@ def bank():
         expense_rows=expense_rows, expense_total=expense_total,
         compare_rows=compare_rows, compare_bank=compare_bank, compare_crm=compare_crm,
         sber_auto_count=sber_auto_count,
-        parse_rules=parse_rules, branch_groups=get_branch_groups(conn),
+        parse_rules=parse_rules, branch_groups=branch_groups_list,
         rule_patterns_map=rule_patterns_map,
         pattern_branch_ids=pattern_branch_ids, pattern_group_id=pattern_group_id,
+        rule_branch_ids=rule_branch_ids, rule_branch_group_id=rule_branch_group_id,
+        rule_branch_label=rule_branch_label,
     )
 
 
@@ -10511,6 +10531,46 @@ def _save_rule_patterns(conn, rule_id, form):
             )
 
 
+def _save_rule_branches(conn, rule_id, form):
+    """Филиал(ы)/группа, к которым относится вся операция при совпадении правила
+    (в отличие от bank_parse_rule_pattern_branches — те привязаны к отдельным
+    паттернам извлечения сумм, а не ко всему правилу)."""
+    conn.execute('DELETE FROM bank_parse_rule_branches WHERE rule_id=?', (rule_id,))
+    branch_ids = [b for b in form.getlist('rule_branch_ids[]') if b.isdigit()]
+    branch_group_id = form.get('rule_branch_group_id', '').strip() or None
+    if branch_group_id and branch_group_id.isdigit():
+        conn.execute(
+            'INSERT INTO bank_parse_rule_branches (rule_id, branch_group_id) VALUES (?,?)',
+            (rule_id, int(branch_group_id))
+        )
+    for bid in branch_ids:
+        conn.execute(
+            'INSERT INTO bank_parse_rule_branches (rule_id, branch_id) VALUES (?,?)',
+            (rule_id, int(bid))
+        )
+
+
+def _rule_branch_labels(conn):
+    """{rule_id: 'Название группы' | 'Филиал1, Филиал2'} для правил, где выбран
+    филиал/группа (к которому относится вся операция при совпадении правила).
+    Правила без записи в bank_parse_rule_branches просто отсутствуют в словаре
+    (в UI это читается как «Все филиалы»)."""
+    branch_name_map = {b['id']: b['name'] for b in conn.execute('SELECT id, name FROM branches').fetchall()}
+    group_name_map  = {g['id']: g['name'] for g in conn.execute('SELECT id, name FROM branch_groups').fetchall()}
+    group_by_rule = {}
+    ids_by_rule = {}
+    for row in conn.execute('SELECT rule_id, branch_id, branch_group_id FROM bank_parse_rule_branches').fetchall():
+        if row['branch_group_id']:
+            group_by_rule[row['rule_id']] = row['branch_group_id']
+        elif row['branch_id']:
+            ids_by_rule.setdefault(row['rule_id'], []).append(row['branch_id'])
+    labels = {rule_id: group_name_map.get(gid, '—') for rule_id, gid in group_by_rule.items()}
+    for rule_id, bids in ids_by_rule.items():
+        if rule_id not in labels:
+            labels[rule_id] = ', '.join(branch_name_map.get(bid, '?') for bid in bids)
+    return labels
+
+
 @app.route('/bank/parse-rules/add', methods=['POST'])
 @login_required
 @menu_permission_required('bank')
@@ -10532,6 +10592,7 @@ def bank_parse_rule_add():
         )
         rule_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
         _save_rule_patterns(conn, rule_id, request.form)
+        _save_rule_branches(conn, rule_id, request.form)
         _sync_parse_rule_extractions(conn)
         conn.commit()
     flash('Правило добавлено', 'success')
@@ -10557,6 +10618,7 @@ def bank_parse_rule_edit(rule_id):
             (account_id, name, direction, keyword, category, sort_order, rule_id)
         )
         _save_rule_patterns(conn, rule_id, request.form)
+        _save_rule_branches(conn, rule_id, request.form)
         _sync_parse_rule_extractions(conn)
         conn.commit()
     flash('Правило обновлено', 'success')
@@ -10650,9 +10712,11 @@ def _apply_bank_parse_rules(conn, txns):
     patterns_by_rule = {}
     for p in conn.execute('SELECT * FROM bank_parse_rule_patterns ORDER BY sort_order, id').fetchall():
         patterns_by_rule.setdefault(p['rule_id'], []).append(p)
+    rule_branch_label = _rule_branch_labels(conn)
     for d in txns:
         d['parse_rule_name'] = ''
         d['parse_rule_category'] = ''
+        d['parse_rule_branch_label'] = ''
         d['extracted_patterns'] = []
         for rule in parse_rules:
             if rule['bank_account_id'] and rule['bank_account_id'] != d.get('bank_account_id'):
@@ -10666,6 +10730,7 @@ def _apply_bank_parse_rules(conn, txns):
                 continue
             d['parse_rule_name'] = rule['name']
             d['parse_rule_category'] = rule['category'] or ''
+            d['parse_rule_branch_label'] = rule_branch_label.get(rule['id'], '')
             for pat in patterns_by_rule.get(rule['id'], []):
                 if not pat['regex_pattern']:
                     continue
