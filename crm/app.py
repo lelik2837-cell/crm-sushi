@@ -8894,31 +8894,6 @@ def pnl_report():
     )
 
 
-@app.route('/report/pnl/settings', methods=['POST'])
-@login_required
-@menu_permission_required('pnl_report')
-def pnl_settings_save():
-    bank_inc_all = request.form.get('bank_income_all')
-    bank_income_val = None if bank_inc_all else request.form.getlist('bank_income_ctr_cats')
-
-    with get_db() as conn:
-        for key, val in [
-            ('expense_cats',            _json.dumps(request.form.getlist('expense_cats'))),
-            ('bank_income_ctr_cats',    _json.dumps(bank_income_val)),
-            ('include_salary',          '1' if request.form.get('include_salary') else '0'),
-            ('include_salary_breakdown','1' if request.form.get('include_salary_breakdown') else '0'),
-        ]:
-            conn.execute('INSERT OR REPLACE INTO pnl_settings (key, value) VALUES (?, ?)', (key, val))
-        conn.commit()
-
-    flash('Настройки P&L сохранены', 'success')
-    params = {k: request.form.get(k) for k in ('date_from', 'date_to', 'group_by', 'pnl_tab') if request.form.get(k)}
-    bids = request.form.getlist('branch_ids')
-    if bids:
-        params['branch_ids'] = bids
-    return redirect(url_for('pnl_report', **params))
-
-
 @app.route('/report/pnl/settings/simple', methods=['POST'])
 @login_required
 @menu_permission_required('pnl_report')
@@ -8935,7 +8910,6 @@ def pnl_settings_simple_save():
     bids = request.form.getlist('branch_ids')
     if bids:
         params['branch_ids'] = bids
-    params['pnl_tab'] = 'simple'
     return redirect(url_for('pnl_report', **params))
 
 
