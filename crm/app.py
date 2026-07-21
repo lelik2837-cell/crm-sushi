@@ -4875,19 +4875,13 @@ def employees():
                 emps = []
                 branches = []
 
-        # Rate history per employee
-        rate_history = {}
+        # Текущий адрес развоза на каждого сотрудника (полная история — на странице «История изменений»)
         address_history = {}
         all_emps_for_hist = list(emps) + list(fired_emps)
         for emp in all_emps_for_hist:
-            hist = conn.execute('''
-                SELECT * FROM employee_rate_history WHERE employee_id=?
-                ORDER BY effective_from DESC LIMIT 5
-            ''', (emp['id'],)).fetchall()
-            rate_history[emp['id']] = hist
             addr_hist = conn.execute('''
                 SELECT * FROM employee_address_history WHERE employee_id=?
-                ORDER BY valid_from DESC LIMIT 5
+                ORDER BY valid_from DESC LIMIT 1
             ''', (emp['id'],)).fetchall()
             address_history[emp['id']] = addr_hist
 
@@ -4973,7 +4967,7 @@ def employees():
                            pm_role_branches_map=pm_role_branches_map,
                            pos_abbr_map=pos_abbr_map,
                            role_labels=ROLE_LABELS, is_owner=(role == 'owner'),
-                           rate_history=rate_history, address_history=address_history,
+                           address_history=address_history,
                            rate_templates=all_tmpls,
                            rate_templates_by_role=tmpls_by_role,
                            tmpl_branch_sets=tmpl_branch_sets,
@@ -7139,11 +7133,27 @@ def employee_change_history(emp_id):
             WHERE eb.employee_id=? ORDER BY b.name
         ''', (emp_id,)).fetchall()]
 
+        address_history = []
+        found_current_addr = False
+        for h in conn.execute(
+            'SELECT * FROM employee_address_history WHERE employee_id=? ORDER BY valid_from DESC, id DESC',
+            (emp_id,)
+        ).fetchall():
+            d = dict(h)
+            if d['valid_from'] > today:
+                d['status'] = 'scheduled'
+            elif not found_current_addr:
+                d['status'] = 'current'
+                found_current_addr = True
+            else:
+                d['status'] = 'past'
+            address_history.append(d)
+
     return render_template('employee_change_history.html',
         emp=emp, today=today,
         rate_history=rate_history, pm_history=pm_history,
         pm_branch_scope=pm_branch_scope, role_labels_map=role_labels_map,
-        cur_branches=cur_branches)
+        cur_branches=cur_branches, address_history=address_history)
 
 
 # ─── EXPENSES REPORT ──────────────────────────────────────────────────────────

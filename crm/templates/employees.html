@@ -377,14 +377,6 @@
                                     value="{{ today }}">
                             </div>
                         </div>
-                        {% if address_history[emp.id] %}
-                        <div class="mt-2">
-                            <div class="text-muted small fw-semibold mb-1">История:</div>
-                            {% for h in address_history[emp.id][:3] %}
-                            <div class="small text-muted">{{ h.valid_from }} — {{ h.address }}</div>
-                            {% endfor %}
-                        </div>
-                        {% endif %}
                     </div>
 
                     <!-- Должность + Ставка -->
@@ -421,14 +413,6 @@
                                 {{ emp.rate }}₽/ч{% if emp.rate_per_km %} · {{ emp.rate_per_km }}₽/км{% endif %}{% if emp.rate_per_order %} · {{ emp.rate_per_order }}₽/заказ{% endif %}
                             {% endif %}
                         </div>
-                        {% if rate_history[emp.id] %}
-                        <div class="mt-2 pt-2 border-top">
-                            <div class="text-muted small fw-semibold mb-1">История ставок:</div>
-                            {% for h in rate_history[emp.id][:3] %}
-                            <div class="small text-muted">{{ h.effective_from }} — {{ h.rate }}₽/ч</div>
-                            {% endfor %}
-                        </div>
-                        {% endif %}
                     </div>
 
                     <div class="form-check mt-3">
