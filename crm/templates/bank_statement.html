@@ -179,7 +179,6 @@
                   </ul>
                 </div>
               </th>
-              <th>Игнор</th>
             </tr>
           </thead>
           <tbody>
@@ -245,10 +244,6 @@
                 {% else %}
                   —
                 {% endif %}
-              </td>
-              <td>
-                <input type="checkbox" class="form-check-input txn-ignore" data-id="{{ t.id }}"
-                       {% if t.is_ignored %}checked{% endif %}>
               </td>
             </tr>
             {% endfor %}
@@ -367,25 +362,9 @@ document.querySelectorAll('.txn-category').forEach(sel => {
     const id = this.dataset.id;
     const row = document.querySelector(`.txn-row[data-id="${id}"]`);
     const ctr = row.dataset.contractor || '';
-    const ign = row.querySelector('.txn-ignore').checked ? '1' : '';
+    const ign = row.classList.contains('txn-ignored') ? '1' : '';
     row.dataset.category = this.value;
     saveRow(id, {contractor_id: ctr, category: this.value, is_ignored: ign});
-  });
-});
-
-document.querySelectorAll('.txn-ignore').forEach(chk => {
-  chk.addEventListener('change', function() {
-    const id = this.dataset.id;
-    const row = document.querySelector(`.txn-row[data-id="${id}"]`);
-    const ctr = row.dataset.contractor || '';
-    const cat = row.querySelector('.txn-category').value;
-    const ign = this.checked ? '1' : '';
-    saveRow(id, {contractor_id: ctr, category: cat, is_ignored: ign});
-    if (this.checked) {
-      row.classList.add('txn-ignored', 'table-secondary', 'text-muted');
-    } else {
-      row.classList.remove('txn-ignored', 'table-secondary', 'text-muted');
-    }
   });
 });
 </script>
