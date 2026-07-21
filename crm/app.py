@@ -3303,10 +3303,16 @@ def shift_view(shift_id):
             if d['employee_id']:
                 # Режим оплаты — действовавший на дату этой смены, а не текущий
                 # (иначе переключение сегодня задним числом меняло бы вид уже прошедших смен).
-                pm_on_date = _effective_pay_monthly(
-                    conn, d['employee_id'], d['role_snapshot'], shift['date'], d['pay_monthly_now']
-                )
-                d['pay_monthly'] = 1 if (pm_on_date and d['pay_monthly_branch_ok']) else 0
+                if shift['import_batch_id']:
+                    # Импортированные смены: показываем как обычно выплачено да/нет —
+                    # бейдж «Ежемес.» тут не нужен, статус в файле уже окончательный,
+                    # настройка сотрудника «ежемесячно» на импорт не влияет.
+                    d['pay_monthly'] = 0
+                else:
+                    pm_on_date = _effective_pay_monthly(
+                        conn, d['employee_id'], d['role_snapshot'], shift['date'], d['pay_monthly_now']
+                    )
+                    d['pay_monthly'] = 1 if (pm_on_date and d['pay_monthly_branch_ok']) else 0
             if d['role_snapshot'] == 'courier':
                 routes = courier_route_map.get(d['id'], [])
                 d['extra_routes'] = routes
