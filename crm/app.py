@@ -8502,6 +8502,9 @@ def _pnl_load_settings(conn):
         'bank_income_ctr_cats':  bi or None,   # пустой список [] → None (все)
         'include_salary':           int(cfg.get('include_salary', '1')),
         'include_salary_breakdown': int(cfg.get('include_salary_breakdown', '1')),
+        # Простой P&L: категории выписки, которые не считаются ни в приходе, ни в расходе
+        # (например «Перераспределение средств» — внутренние переводы между счетами).
+        'simple_pnl_excluded_cats': _lst('simple_pnl_excluded_cats', []),
     }
 
 
@@ -8681,11 +8684,76 @@ def pnl_report():
             """, [date_from, date_to] + b_args).fetchall():
                 sal_by_role[r['role']][r['period']] += r['amount']
 
+        # ── ПРОСТОЙ P&L ──────────────────────────────────────────────────────
+        # Наличные расходы в сменах — ВСЕ категории (в отличие от основного P&L,
+        # где считаются только выбранные в настройках).
+        simple_cash_exp_by_p = {}
+        for r in conn.execute(f"""
+            SELECT {pe} AS period, COALESCE(SUM(e.amount_cash),0) AS amount
+            FROM expenses e JOIN shifts s ON s.id=e.shift_id
+            WHERE s.date BETWEEN ? AND ? {bf}
+            GROUP BY period
+        """, [date_from, date_to] + b_args).fetchall():
+            simple_cash_exp_by_p[r['period']] = r['amount']
+
+        # ФОТ — всегда целиком, независимо от настройки include_salary основного P&L
+        simple_fot_by_p = {}
+        for r in conn.execute(f"""
+            SELECT {pe} AS period, COALESCE(SUM(es.total_amount),0) AS amount
+            FROM employee_shifts es JOIN shifts s ON s.id=es.shift_id
+            WHERE s.date BETWEEN ? AND ? {bf}
+            GROUP BY period
+        """, [date_from, date_to] + b_args).fetchall():
+            simple_fot_by_p[r['period']] = r['amount']
+
+        # Такси, оплаченное наличными
+        simple_taxi_cash_by_p = {}
+        for r in conn.execute(f"""
+            SELECT {pe} AS period, COALESCE(SUM(tt.amount),0) AS amount
+            FROM taxi_trips tt JOIN shifts s ON s.id=tt.shift_id
+            WHERE s.date BETWEEN ? AND ? AND tt.payment_type='cash' {bf}
+            GROUP BY period
+        """, [date_from, date_to] + b_args).fetchall():
+            simple_taxi_cash_by_p[r['period']] = r['amount']
+
+        # Выписки банковские — весь приход/расход как есть, кроме исключённых
+        # в настройках категорий (например «Перераспределение средств»).
+        simple_excl_cats = cfg['simple_pnl_excluded_cats']
+        simple_excl_filter = ''
+        simple_excl_args = []
+        if simple_excl_cats:
+            ph_e = ','.join('?' * len(simple_excl_cats))
+            simple_excl_filter = f"AND (bt.category IS NULL OR bt.category='' OR bt.category NOT IN ({ph_e}))"
+            simple_excl_args = simple_excl_cats
+
+        simple_bank_income_by_p = {}
+        for r in conn.execute(f"""
+            SELECT {pe_bt} AS period, COALESCE(SUM(bt.amount),0) AS amount
+            FROM bank_transactions bt
+            WHERE bt.txn_date BETWEEN ? AND ? AND bt.amount>0 AND bt.is_ignored=0
+              {simple_excl_filter} {bf_bt}
+            GROUP BY period
+        """, [date_from, date_to] + simple_excl_args + b_args).fetchall():
+            simple_bank_income_by_p[r['period']] = r['amount']
+
+        simple_bank_exp_by_cat = defaultdict(lambda: defaultdict(float))
+        for r in conn.execute(f"""
+            SELECT {pe_bt} AS period, COALESCE(bt.category,'') AS cat, COALESCE(SUM(-bt.amount),0) AS amount
+            FROM bank_transactions bt
+            WHERE bt.txn_date BETWEEN ? AND ? AND bt.amount<0 AND bt.is_ignored=0
+              {simple_excl_filter} {bf_bt}
+            GROUP BY period, cat
+        """, [date_from, date_to] + simple_excl_args + b_args).fetchall():
+            simple_bank_exp_by_cat[r['cat']][r['period']] += r['amount']
+
     # Все периоды
     all_p = set(total_rev_by_p) | set(cash_rev_by_p)
     for d in list(bank_inc_by.values()) + list(cash_exp_by.values()) + list(bank_exp_by.values()):
         all_p.update(d)
     for d in sal_by_role.values():
+        all_p.update(d)
+    all_p.update(simple_cash_exp_by_p, simple_fot_by_p, simple_taxi_cash_by_p, simple_bank_income_by_p)
+    for d in simple_bank_exp_by_cat.values():
         all_p.update(d)
     periods = sorted(all_p) if group_by == 'month' else ['total']
 
@@ -8769,6 +8837,39 @@ def pnl_report():
     total_rev_grand = sum(total_rev_by_p.get(p, 0) for p in periods)
     period_labels = {p: _pnl_period_label(p) for p in periods}
 
+    # ── ПРОСТОЙ P&L: строки для шаблона ──────────────────────────────────────
+    s_income_cash_row = _row('Наличные (выручка)', cash_rev_by_p)
+    s_exp_shift_row = _row('Расходы наличными в сменах', simple_cash_exp_by_p)
+    s_exp_fot_row   = _row('ФОТ', simple_fot_by_p)
+    s_exp_taxi_row  = _row('Такси наличными', simple_taxi_cash_by_p)
+    s_cash_exp_rows = [s_exp_shift_row, s_exp_fot_row, s_exp_taxi_row]
+    s_cash_exp_total_by_p = {}
+    for row in s_cash_exp_rows:
+        for p in periods:
+            s_cash_exp_total_by_p[p] = s_cash_exp_total_by_p.get(p, 0.0) + row['amounts'].get(p, 0.0)
+    s_cash_exp_total_row = _row('Итого расходы наличными', s_cash_exp_total_by_p)
+
+    s_bank_income_row = _row('Приход по выпискам', simple_bank_income_by_p)
+
+    s_bank_exp_rows = []
+    for cat_code, by_p in sorted(simple_bank_exp_by_cat.items(),
+                                  key=lambda kv: cat_map.get(kv[0], kv[0]) if kv[0] else 'яяя'):
+        label = cat_map.get(cat_code, cat_code) if cat_code else 'Без категории'
+        s_bank_exp_rows.append(_row(label, dict(by_p)))
+    s_bank_exp_total_by_p = {}
+    for row in s_bank_exp_rows:
+        for p in periods:
+            s_bank_exp_total_by_p[p] = s_bank_exp_total_by_p.get(p, 0.0) + row['amounts'].get(p, 0.0)
+    s_bank_exp_total_row = _row('Итого расход по выпискам', s_bank_exp_total_by_p)
+
+    s_total_income_by_p  = {p: s_income_cash_row['amounts'][p] + s_bank_income_row['amounts'][p] for p in periods}
+    s_total_expense_by_p = {p: s_cash_exp_total_row['amounts'][p] + s_bank_exp_total_row['amounts'][p] for p in periods}
+    s_total_income_row  = _row('ИТОГО ПРИХОД', s_total_income_by_p)
+    s_total_expense_row = _row('ИТОГО РАСХОД', s_total_expense_by_p)
+    s_profit_by_p = {p: s_total_income_by_p[p] - s_total_expense_by_p[p] for p in periods}
+    s_profit_row  = _row('ПРИБЫЛЬ', s_profit_by_p)
+    s_profit_grand = s_total_income_row['total'] - s_total_expense_row['total']
+
     return render_template('pnl.html',
         periods=periods, period_labels=period_labels,
         inc_rows=inc_rows, inc_totals=inc_totals, inc_grand=inc_grand,
@@ -8783,6 +8884,12 @@ def pnl_report():
         date_from=date_from, date_to=date_to,
         branch_ids=branch_ids, group_by=group_by,
         bt_debug=bt_debug,
+        s_income_cash_row=s_income_cash_row,
+        s_cash_exp_rows=s_cash_exp_rows, s_cash_exp_total_row=s_cash_exp_total_row,
+        s_bank_income_row=s_bank_income_row,
+        s_bank_exp_rows=s_bank_exp_rows, s_bank_exp_total_row=s_bank_exp_total_row,
+        s_total_income_row=s_total_income_row, s_total_expense_row=s_total_expense_row,
+        s_profit_row=s_profit_row, s_profit_grand=s_profit_grand,
     )
 
 
@@ -8808,6 +8915,26 @@ def pnl_settings_save():
     bids = request.form.getlist('branch_ids')
     if bids:
         params['branch_ids'] = bids
+    return redirect(url_for('pnl_report', **params))
+
+
+@app.route('/report/pnl/settings/simple', methods=['POST'])
+@login_required
+@menu_permission_required('pnl_report')
+def pnl_settings_simple_save():
+    excluded = request.form.getlist('simple_excluded_cats')
+    with get_db() as conn:
+        conn.execute(
+            'INSERT OR REPLACE INTO pnl_settings (key, value) VALUES (?, ?)',
+            ('simple_pnl_excluded_cats', _json.dumps(excluded))
+        )
+        conn.commit()
+    flash('Настройки простого P&L сохранены', 'success')
+    params = {k: request.form.get(k) for k in ('date_from', 'date_to', 'group_by') if request.form.get(k)}
+    bids = request.form.getlist('branch_ids')
+    if bids:
+        params['branch_ids'] = bids
+    params['pnl_tab'] = 'simple'
     return redirect(url_for('pnl_report', **params))
 
 

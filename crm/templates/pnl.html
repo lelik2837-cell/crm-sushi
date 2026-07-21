@@ -200,6 +200,17 @@
     </div>
 </div>
 
+{# ═══ ВКЛАДКИ ═══ #}
+<ul class="nav nav-tabs mb-3" id="pnlTabs">
+    <li class="nav-item">
+        <a class="nav-link" href="#" data-pnl-tab="full">P&amp;L</a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link" href="#" data-pnl-tab="simple">Простой P&amp;L</a>
+    </li>
+</ul>
+
+<div id="pnlPaneFull">
 {# ═══ КАРТОЧКИ ═══ #}
 {% set total_rev_grand_safe = total_rev_grand if total_rev_grand > 0 else 1 %}
 <div class="row g-3 mb-4">
@@ -424,6 +435,211 @@
     </table>
     </div>
 </div>
+</div>{# /pnlPaneFull #}
+
+<div id="pnlPaneSimple" style="display:none">
+{# ═══ ПРОСТОЙ P&L: КАРТОЧКИ ═══ #}
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-4">
+        <div class="card p-3" style="border-left:4px solid #198754">
+            <div class="text-muted small">Приход всего</div>
+            <div class="fw-bold fs-5 text-success">{{ '{:,.0f}'.format(s_total_income_row.total) }} ₽</div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4">
+        <div class="card p-3" style="border-left:4px solid #dc3545">
+            <div class="text-muted small">Расход всего</div>
+            <div class="fw-bold fs-5 text-danger">{{ '{:,.0f}'.format(s_total_expense_row.total) }} ₽</div>
+        </div>
+    </div>
+    <div class="col-12 col-md-4">
+        <div class="card p-3" style="border-left:4px solid {% if s_profit_grand>=0 %}#6f42c1{% else %}#dc3545{% endif %}">
+            <div class="text-muted small">Прибыль</div>
+            <div class="fw-bold fs-5 {% if s_profit_grand>=0 %}text-success{% else %}text-danger{% endif %}">
+                {{ '{:,.0f}'.format(s_profit_grand) }} ₽
+            </div>
+        </div>
+    </div>
+</div>
+
+{# ═══ ПРОСТОЙ P&L: НАСТРОЙКИ ═══ #}
+<div class="card mb-3">
+    <div class="card-header bg-light fw-semibold d-flex justify-content-between align-items-center" style="cursor:pointer"
+         data-bs-toggle="collapse" data-bs-target="#pnlSimpleSettings">
+        <span><i class="bi bi-gear me-2"></i>Не учитывать категорию из выписки</span>
+        <i class="bi bi-chevron-down small"></i>
+    </div>
+    <div class="collapse" id="pnlSimpleSettings">
+        <div class="card-body">
+            <form method="POST" action="{{ url_for('pnl_settings_simple_save') }}">
+                <input type="hidden" name="date_from" value="{{ date_from }}">
+                <input type="hidden" name="date_to"   value="{{ date_to }}">
+                <input type="hidden" name="group_by"  value="{{ group_by }}">
+                {% for bid in branch_ids %}<input type="hidden" name="branch_ids" value="{{ bid }}">{% endfor %}
+                <div class="text-muted small mb-2">
+                    Выбранные категории не будут считаться ни в приходе, ни в расходе по выпискам
+                    (например «Перераспределение средств» — внутренние переводы между своими счетами).
+                </div>
+                <div class="d-flex flex-wrap gap-2 mb-3">
+                    {% for cat in all_cats %}
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="simple_excluded_cats"
+                               value="{{ cat.code }}" id="sexcl_{{ cat.code }}"
+                               {% if cat.code in cfg.simple_pnl_excluded_cats %}checked{% endif %}>
+                        <label class="form-check-label small" for="sexcl_{{ cat.code }}">{{ cat.label }}</label>
+                    </div>
+                    {% endfor %}
+                </div>
+                <button type="submit" class="btn btn-primary btn-sm">
+                    <i class="bi bi-floppy me-1"></i>Сохранить
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+{# ═══ ПРОСТОЙ P&L: ТАБЛИЦА ═══ #}
+{% set sn_cols = periods|length + (2 if periods|length > 1 else 1) %}
+<div class="card">
+    <div class="card-header bg-light fw-semibold d-flex justify-content-between">
+        <span><i class="bi bi-table me-2"></i>Простой P&amp;L</span>
+        <span class="text-muted small">{{ date_from|datefmt }} — {{ date_to|datefmt }}</span>
+    </div>
+    <div class="table-responsive">
+    <table class="table table-sm mb-0 align-middle" style="white-space:nowrap">
+        <thead class="table-light">
+            <tr>
+                <th style="min-width:220px">Статья</th>
+                {% for p in periods %}
+                <th class="text-end" style="min-width:95px">{{ period_labels[p] }}</th>
+                {% endfor %}
+                {% if periods|length > 1 %}
+                <th class="text-end table-secondary fw-bold" style="min-width:95px">Итого</th>
+                {% endif %}
+            </tr>
+        </thead>
+        <tbody>
+
+        {# ── ПРИХОД ── #}
+        <tr>
+            <td colspan="{{ sn_cols }}" class="fw-bold py-2 px-3"
+                style="background:#d1e7dd;font-size:.78rem;letter-spacing:.5px;text-transform:uppercase">
+                <i class="bi bi-arrow-up-circle me-1"></i>ПРИХОД
+            </td>
+        </tr>
+        {% for row in [s_income_cash_row, s_bank_income_row] %}
+        <tr>
+            <td class="fw-semibold">{{ row.label }}</td>
+            {% for p in periods %}
+            {{ cell(row.amounts.get(p,0), none) }}
+            {% endfor %}
+            {% if periods|length > 1 %}
+            <td class="text-end table-secondary fw-bold">{{ '{:,.0f}'.format(row.total) }} ₽</td>
+            {% endif %}
+        </tr>
+        {% endfor %}
+        <tr style="background:#c3e6cb">
+            <td class="fw-bold text-success">{{ s_total_income_row.label }}</td>
+            {% for p in periods %}
+            <td class="text-end fw-bold text-success">{{ '{:,.0f}'.format(s_total_income_row.amounts.get(p,0)) }} ₽</td>
+            {% endfor %}
+            {% if periods|length > 1 %}
+            <td class="text-end fw-bold text-success table-secondary">{{ '{:,.0f}'.format(s_total_income_row.total) }} ₽</td>
+            {% endif %}
+        </tr>
+
+        {# ── РАСХОД НАЛИЧНЫМИ (в сменах) ── #}
+        <tr>
+            <td colspan="{{ sn_cols }}" class="fw-bold py-2 px-3"
+                style="background:#f8d7da;font-size:.78rem;letter-spacing:.5px;text-transform:uppercase">
+                <i class="bi bi-arrow-down-circle me-1"></i>РАСХОД НАЛИЧНЫМИ (В СМЕНАХ)
+            </td>
+        </tr>
+        {% for row in s_cash_exp_rows %}
+        <tr>
+            <td class="fw-semibold">{{ row.label }}</td>
+            {% for p in periods %}
+            {{ cell(row.amounts.get(p,0), none) }}
+            {% endfor %}
+            {% if periods|length > 1 %}
+            <td class="text-end table-secondary fw-bold">{{ '{:,.0f}'.format(row.total) }} ₽</td>
+            {% endif %}
+        </tr>
+        {% endfor %}
+        <tr style="background:#f5c6cb">
+            <td class="fw-bold text-danger">{{ s_cash_exp_total_row.label }}</td>
+            {% for p in periods %}
+            <td class="text-end fw-bold text-danger">{{ '{:,.0f}'.format(s_cash_exp_total_row.amounts.get(p,0)) }} ₽</td>
+            {% endfor %}
+            {% if periods|length > 1 %}
+            <td class="text-end fw-bold text-danger table-secondary">{{ '{:,.0f}'.format(s_cash_exp_total_row.total) }} ₽</td>
+            {% endif %}
+        </tr>
+
+        {# ── РАСХОД ПО ВЫПИСКАМ (разворачиваемый по категориям) ── #}
+        <tr>
+            <td colspan="{{ sn_cols }}" class="fw-bold py-2 px-3"
+                style="background:#f8d7da;font-size:.78rem;letter-spacing:.5px;text-transform:uppercase">
+                <i class="bi bi-arrow-down-circle me-1"></i>РАСХОД ПО ВЫПИСКАМ
+            </td>
+        </tr>
+        <tr style="cursor:pointer" onclick="toggleSimpleBankExp()">
+            <td class="fw-bold text-danger">
+                <i class="bi bi-chevron-right" id="simpleBankExpChevron" style="transition:transform .2s"></i>
+                {{ s_bank_exp_total_row.label }}
+            </td>
+            {% for p in periods %}
+            <td class="text-end fw-bold text-danger">{{ '{:,.0f}'.format(s_bank_exp_total_row.amounts.get(p,0)) }} ₽</td>
+            {% endfor %}
+            {% if periods|length > 1 %}
+            <td class="text-end fw-bold text-danger table-secondary">{{ '{:,.0f}'.format(s_bank_exp_total_row.total) }} ₽</td>
+            {% endif %}
+        </tr>
+        {% for row in s_bank_exp_rows %}
+        <tr class="simple-bank-exp-detail" style="display:none;background:#fafafa">
+            <td class="ps-4 small text-muted">
+                <i class="bi bi-arrow-return-right me-1" style="font-size:.7rem"></i>{{ row.label }}
+            </td>
+            {% for p in periods %}
+            <td class="text-end small text-muted">
+                {% set v = row.amounts.get(p,0) %}
+                {% if v %}{{ '{:,.0f}'.format(v) }} ₽{% else %}—{% endif %}
+            </td>
+            {% endfor %}
+            {% if periods|length > 1 %}
+            <td class="text-end small text-muted table-secondary">{{ '{:,.0f}'.format(row.total) }} ₽</td>
+            {% endif %}
+        </tr>
+        {% endfor %}
+
+        {# ── ИТОГО РАСХОД / ПРИБЫЛЬ ── #}
+        <tr style="background:#f5c6cb">
+            <td class="fw-bold text-danger">{{ s_total_expense_row.label }}</td>
+            {% for p in periods %}
+            <td class="text-end fw-bold text-danger">{{ '{:,.0f}'.format(s_total_expense_row.amounts.get(p,0)) }} ₽</td>
+            {% endfor %}
+            {% if periods|length > 1 %}
+            <td class="text-end fw-bold text-danger table-secondary">{{ '{:,.0f}'.format(s_total_expense_row.total) }} ₽</td>
+            {% endif %}
+        </tr>
+        <tr style="background:#cfe2ff">
+            <td class="fw-bold fs-6"><i class="bi bi-trophy me-1"></i>{{ s_profit_row.label }}</td>
+            {% for p in periods %}
+            {% set pr = s_profit_row.amounts.get(p,0) %}
+            <td class="text-end fw-bold {% if pr>=0 %}text-primary{% else %}text-danger{% endif %}">{{ '{:,.0f}'.format(pr) }} ₽</td>
+            {% endfor %}
+            {% if periods|length > 1 %}
+            <td class="text-end fw-bold table-secondary {% if s_profit_grand>=0 %}text-primary{% else %}text-danger{% endif %}">
+                {{ '{:,.0f}'.format(s_profit_grand) }} ₽
+            </td>
+            {% endif %}
+        </tr>
+
+        </tbody>
+    </table>
+    </div>
+</div>
+</div>{# /pnlPaneSimple #}
 
 {% endblock %}
 
@@ -458,6 +674,34 @@ function toggleCatGroup(allId, groupClass) {
 function uncheckAll(allId, groupClass) {
     var allCb = document.getElementById(allId);
     if (allCb) allCb.checked = false;
+}
+
+// ── Вкладки P&L / Простой P&L ──────────────────────────────────────────────
+function showPnlTab(tab) {
+    document.getElementById('pnlPaneFull').style.display   = (tab === 'simple') ? 'none' : '';
+    document.getElementById('pnlPaneSimple').style.display = (tab === 'simple') ? '' : 'none';
+    document.querySelectorAll('#pnlTabs [data-pnl-tab]').forEach(function(a) {
+        a.classList.toggle('active', a.dataset.pnlTab === tab);
+    });
+}
+document.querySelectorAll('#pnlTabs [data-pnl-tab]').forEach(function(a) {
+    a.addEventListener('click', function(e) {
+        e.preventDefault();
+        showPnlTab(this.dataset.pnlTab);
+    });
+});
+(function() {
+    var params = new URLSearchParams(window.location.search);
+    showPnlTab(params.get('pnl_tab') === 'simple' ? 'simple' : 'full');
+})();
+
+// ── Разворот расхода по выпискам по категориям ─────────────────────────────
+function toggleSimpleBankExp() {
+    var rows = document.querySelectorAll('.simple-bank-exp-detail');
+    var chv  = document.getElementById('simpleBankExpChevron');
+    var hidden = rows.length > 0 && rows[0].style.display === 'none';
+    rows.forEach(function(r) { r.style.display = hidden ? '' : 'none'; });
+    if (chv) chv.style.transform = hidden ? 'rotate(90deg)' : '';
 }
 </script>
 {% endblock %}
