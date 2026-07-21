@@ -488,16 +488,25 @@
                     Выбранные категории не будут считаться ни в приходе, ни в расходе по выпискам
                     (например «Перераспределение средств» — внутренние переводы между своими счетами).
                 </div>
-                <div class="d-flex flex-wrap gap-2 mb-3">
+                <select class="form-select form-select-sm mb-2" id="exclCatPicker" style="max-width:320px">
+                    <option value="">+ Добавить категорию…</option>
                     {% for cat in all_cats %}
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" name="simple_excluded_cats"
-                               value="{{ cat.code }}" id="sexcl_{{ cat.code }}"
-                               {% if cat.code in cfg.simple_pnl_excluded_cats %}checked{% endif %}>
-                        <label class="form-check-label small" for="sexcl_{{ cat.code }}">{{ cat.label }}</label>
-                    </div>
+                    <option value="{{ cat.code }}" data-label="{{ cat.label }}"
+                            {% if cat.code in cfg.simple_pnl_excluded_cats %}hidden{% endif %}>{{ cat.label }}</option>
+                    {% endfor %}
+                </select>
+                <div class="d-flex flex-wrap gap-2 mb-1" id="exclCatChips">
+                    {% for cat in all_cats %}
+                    {% if cat.code in cfg.simple_pnl_excluded_cats %}
+                    <span class="badge bg-secondary d-inline-flex align-items-center gap-1 py-2 px-2" data-code="{{ cat.code }}">
+                        {{ cat.label }}
+                        <input type="hidden" name="simple_excluded_cats" value="{{ cat.code }}">
+                        <i class="bi bi-x-lg excl-chip-remove" style="cursor:pointer;font-size:.7rem" role="button" title="Убрать"></i>
+                    </span>
+                    {% endif %}
                     {% endfor %}
                 </div>
+                <div class="text-muted small mb-3" id="exclCatEmpty" {% if cfg.simple_pnl_excluded_cats %}style="display:none"{% endif %}>Категории не исключены</div>
                 <button type="submit" class="btn btn-primary btn-sm">
                     <i class="bi bi-floppy me-1"></i>Сохранить
                 </button>
@@ -742,5 +751,59 @@ function toggleSimpleBankExp() {
     rows.forEach(function(r) { r.style.display = hidden ? '' : 'none'; });
     if (chv) chv.style.transform = hidden ? 'rotate(90deg)' : '';
 }
+
+// ── Простой P&L: выбор исключаемых категорий выпиской через выпадающий список ──
+function exclChipRemove(chip) {
+    var code = chip.dataset.code;
+    chip.remove();
+    var opt = document.querySelector('#exclCatPicker option[value="' + CSS.escape(code) + '"]');
+    if (opt) opt.hidden = false;
+    var container = document.getElementById('exclCatChips');
+    var empty = document.getElementById('exclCatEmpty');
+    if (empty) empty.style.display = container.querySelector('[data-code]') ? 'none' : '';
+}
+
+function exclChipAdd(code, label) {
+    var container = document.getElementById('exclCatChips');
+    if (container.querySelector('[data-code="' + CSS.escape(code) + '"]')) return;
+
+    var chip = document.createElement('span');
+    chip.className = 'badge bg-secondary d-inline-flex align-items-center gap-1 py-2 px-2';
+    chip.dataset.code = code;
+    chip.appendChild(document.createTextNode(label + ' '));
+
+    var hiddenInput = document.createElement('input');
+    hiddenInput.type = 'hidden';
+    hiddenInput.name = 'simple_excluded_cats';
+    hiddenInput.value = code;
+    chip.appendChild(hiddenInput);
+
+    var removeBtn = document.createElement('i');
+    removeBtn.className = 'bi bi-x-lg excl-chip-remove';
+    removeBtn.style.cursor = 'pointer';
+    removeBtn.style.fontSize = '.7rem';
+    removeBtn.setAttribute('role', 'button');
+    removeBtn.title = 'Убрать';
+    removeBtn.addEventListener('click', function() { exclChipRemove(chip); });
+    chip.appendChild(removeBtn);
+
+    container.appendChild(chip);
+    var empty = document.getElementById('exclCatEmpty');
+    if (empty) empty.style.display = 'none';
+}
+
+document.querySelectorAll('#exclCatChips [data-code]').forEach(function(chip) {
+    var btn = chip.querySelector('.excl-chip-remove');
+    if (btn) btn.addEventListener('click', function() { exclChipRemove(chip); });
+});
+
+document.getElementById('exclCatPicker')?.addEventListener('change', function() {
+    var code = this.value;
+    if (!code) return;
+    var label = this.options[this.selectedIndex].dataset.label;
+    exclChipAdd(code, label);
+    this.options[this.selectedIndex].hidden = true;
+    this.value = '';
+});
 </script>
 {% endblock %}
