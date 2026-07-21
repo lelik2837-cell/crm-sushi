@@ -10675,11 +10675,15 @@ def bank_statement_view(stmt_id):
         all_exp_cats     = [c for c in get_expense_categories(conn) if c['show_contractors']]
         exp_cats_income  = [c for c in all_exp_cats if c['type'] == 'income']
         exp_cats_expense = [c for c in all_exp_cats if c['type'] != 'income']
-    unique_cats = sorted(set(d['effective_category'] for d in txns if d['effective_category']))
+        cat_labels = {c['code']: c['label'] for c in get_expense_categories(conn)}
+    unique_cats = sorted(
+        set(d['effective_category'] for d in txns if d['effective_category']),
+        key=lambda code: cat_labels.get(code, code)
+    )
     return render_template('bank_statement.html',
         stmt=stmt, txns=txns, contractors=contractors,
         exp_cats_income=exp_cats_income, exp_cats_expense=exp_cats_expense,
-        unique_cats=unique_cats)
+        unique_cats=unique_cats, cat_labels=cat_labels)
 
 
 @app.route('/bank/statements/all')
@@ -10714,13 +10718,17 @@ def bank_statements_all():
         all_exp_cats     = [c for c in get_expense_categories(conn) if c['show_contractors']]
         exp_cats_income  = [c for c in all_exp_cats if c['type'] == 'income']
         exp_cats_expense = [c for c in all_exp_cats if c['type'] != 'income']
-    unique_cats = sorted(set(d['effective_category'] for d in txns if d['effective_category']))
+        cat_labels = {c['code']: c['label'] for c in get_expense_categories(conn)}
+    unique_cats = sorted(
+        set(d['effective_category'] for d in txns if d['effective_category']),
+        key=lambda code: cat_labels.get(code, code)
+    )
     stmt = {'filename': 'Выписка по всем', 'account_name': 'Все счета',
             'date_from': date_from, 'date_to': date_to, 'row_count': len(txns)}
     return render_template('bank_statement.html',
         stmt=stmt, txns=txns, contractors=contractors,
         exp_cats_income=exp_cats_income, exp_cats_expense=exp_cats_expense,
-        unique_cats=unique_cats, show_bank_col=True,
+        unique_cats=unique_cats, cat_labels=cat_labels, show_bank_col=True,
         date_from=date_from, date_to=date_to)
 
 

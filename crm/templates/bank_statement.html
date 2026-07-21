@@ -132,7 +132,7 @@
                     {% for cat in unique_cats %}
                     <li>
                       <label class="dropdown-item d-flex align-items-center gap-2 px-1 py-1 small">
-                        <input type="checkbox" class="cat-chk form-check-input mt-0" value="{{ cat }}" checked> {{ cat }}
+                        <input type="checkbox" class="cat-chk form-check-input mt-0" value="{{ cat }}" checked> {{ cat_labels.get(cat, cat) }}
                       </label>
                     </li>
                     {% endfor %}
@@ -256,7 +256,9 @@
     </div>
   </div>
 </div>
+{% endblock %}
 
+{% block scripts %}
 <script>
 // ── Общий фильтр ──────────────────────────────────────────────────────────────
 function applyFilters() {
@@ -403,5 +405,4 @@ document.querySelectorAll('.txn-category').forEach(sel => {
   });
 });
 </script>
-
 {% endblock %}
