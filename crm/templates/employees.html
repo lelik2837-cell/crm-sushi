@@ -421,6 +421,16 @@
                                {% if emp.pay_monthly %}checked{% endif %}>
                         <label class="form-check-label" for="editEmpPayMonthly{{ emp.id }}">Выплачивать ЗП ежемесячно</label>
                     </div>
+                    <div class="row g-2 align-items-center mt-1">
+                        <div class="col-auto">
+                            <label class="form-label small mb-0 text-muted">Действует с</label>
+                        </div>
+                        <div class="col">
+                            <input type="date" name="pay_monthly_from" class="form-control form-control-sm"
+                                   value="{{ today }}" min="{{ today }}">
+                        </div>
+                    </div>
+                    <div class="form-text">Дата, с которой включится или выключится ежемесячная оплата (не раньше сегодня)</div>
                     {% if is_owner %}
                     {% set pm_bids = pm_branches_map.get(emp.id, []) %}
                     <div class="mt-2">
@@ -495,6 +505,9 @@
                                        {% if er.pay_monthly %}checked{% endif %}>
                                 <label class="form-check-label small text-nowrap" for="erPayMonthly{{ er.id }}">Ежемес.</label>
                             </div>
+                            <input type="date" name="pay_monthly_from" class="form-control form-control-sm py-0"
+                                   style="width:130px;font-size:.78rem" value="{{ today }}" min="{{ today }}"
+                                   title="Действует с">
                             <div class="dropdown">
                                 <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2 dropdown-toggle"
                                         data-bs-toggle="dropdown" data-bs-auto-close="outside" style="font-size:.78rem">

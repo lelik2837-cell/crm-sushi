@@ -5133,6 +5133,9 @@ def edit_employee(emp_id):
     address_from = request.form.get('address_from') or date.today().isoformat()
     rate_from = request.form.get('rate_from') or date.today().isoformat()
     pay_monthly = 1 if request.form.get('pay_monthly') else 0
+    pay_monthly_from = request.form.get('pay_monthly_from') or date.today().isoformat()
+    if pay_monthly_from < date.today().isoformat():
+        pay_monthly_from = date.today().isoformat()  # нельзя назначить датой в прошлом
     phone = _format_phone(request.form.get('phone', ''))
     emp_role = request.form.get('role', '').strip() or None
     rate_template_id = request.form.get('rate_template_id', '').strip() or None
@@ -5170,7 +5173,7 @@ def edit_employee(emp_id):
         conn.execute(f'UPDATE employees SET {update_fields} WHERE id=?', update_vals)
         # Меняем режим оплаты только с текущей даты — история хранит момент смены,
         # чтобы уже прошедшие смены не блокировались задним числом (см. pay_staff).
-        _log_pay_monthly_change(conn, emp_id, final_role, emp['pay_monthly'], pay_monthly, date.today().isoformat())
+        _log_pay_monthly_change(conn, emp_id, final_role, emp['pay_monthly'], pay_monthly, pay_monthly_from)
         if session.get('role') == 'owner':
             branch_ids_form = [bid for bid in request.form.getlist('branch_ids') if bid.isdigit()]
             if branch_ids_form:
@@ -9204,12 +9207,15 @@ def update_employee_role_template(role_id):
 @menu_permission_required('employees')
 def update_employee_role_pay_monthly(role_id):
     pay_monthly = 1 if request.form.get('pay_monthly') else 0
+    pay_monthly_from = request.form.get('pay_monthly_from') or date.today().isoformat()
+    if pay_monthly_from < date.today().isoformat():
+        pay_monthly_from = date.today().isoformat()  # нельзя назначить датой в прошлом
     pm_branch_ids = [bid for bid in request.form.getlist('pm_branch_ids') if bid.isdigit()]
     with get_db() as conn:
         er = conn.execute('SELECT employee_id, role, pay_monthly FROM employee_roles WHERE id=?', (role_id,)).fetchone()
         conn.execute('UPDATE employee_roles SET pay_monthly=? WHERE id=?', (pay_monthly, role_id))
         if er:
-            _log_pay_monthly_change(conn, er['employee_id'], er['role'], er['pay_monthly'], pay_monthly, date.today().isoformat())
+            _log_pay_monthly_change(conn, er['employee_id'], er['role'], er['pay_monthly'], pay_monthly, pay_monthly_from)
             conn.execute(
                 'DELETE FROM employee_pay_monthly_branches WHERE employee_id=? AND role=?',
                 (er['employee_id'], er['role'])
