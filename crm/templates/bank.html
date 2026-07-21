@@ -868,25 +868,11 @@ document.querySelectorAll('[name=direction]').forEach(function(sel) {
   filterRuleCategories(form);
 });
 
-// ── Паттерны извлечения сумм: добавление/удаление строк, фильтр категории по направлению строки ──
+// ── Паттерны извлечения сумм: добавление/удаление строк (паттерн всегда расход,
+// категории в его выпадающем списке уже отфильтрованы на сервере) ──
 function wireRulePatternRow(row) {
   var removeBtn = row.querySelector('.rule-pattern-remove');
   if (removeBtn) removeBtn.addEventListener('click', function() { row.remove(); });
-  var dirSel = row.querySelector('select[name*="[direction]"]');
-  var catSel = row.querySelector('select[name*="[category]"]');
-  if (dirSel && catSel) {
-    var applyFilter = function() {
-      var dir = dirSel.value;
-      Array.from(catSel.options).forEach(function(opt) {
-        if (!opt.value) return;
-        opt.hidden = (opt.dataset.dir || 'any') !== dir;
-      });
-      var sel = catSel.querySelector('option[value="' + catSel.value + '"]');
-      if (sel && sel.hidden) catSel.value = '';
-    };
-    dirSel.addEventListener('change', applyFilter);
-    applyFilter();
-  }
 }
 
 document.querySelectorAll('.rule-pattern-row').forEach(wireRulePatternRow);

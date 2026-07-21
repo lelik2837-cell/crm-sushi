@@ -64,7 +64,7 @@
 
 <hr>
 
-{% macro pattern_row(idx, pat=none, sel_branch_ids=[], sel_group_id=none) %}
+{% macro pattern_row(idx, pat=none) %}
 <div class="border rounded p-2 mb-2 rule-pattern-row">
   <div class="row g-2">
     <div class="col-6">
@@ -77,40 +77,16 @@
       <input type="text" class="form-control form-control-sm" name="pattern[{{ idx }}][example_value]"
              placeholder="224.54" value="{{ pat.example_value if pat else '' }}">
     </div>
-    <div class="col-4">
-      <label class="form-label small mb-1">Направление</label>
-      <select class="form-select form-select-sm" name="pattern[{{ idx }}][direction]">
-        <option value="expense" {% if pat and pat.direction=='expense' %}selected{% endif %}>Расход</option>
-        <option value="income" {% if pat and pat.direction=='income' %}selected{% endif %}>Приход</option>
-      </select>
-    </div>
-    <div class="col-8">
+    <div class="col-12">
       <label class="form-label small mb-1">Категория</label>
       <select class="form-select form-select-sm" name="pattern[{{ idx }}][category]">
         <option value="">— не задана —</option>
         {% for cat in exp_cats %}
-        <option value="{{ cat.code }}" {% if pat and pat.category==cat.code %}selected{% endif %}
-                data-dir="{{ 'income' if cat.type == 'income' else 'expense' }}">{{ cat.label }}</option>
+        {% if cat.type != 'income' %}
+        <option value="{{ cat.code }}" {% if pat and pat.category==cat.code %}selected{% endif %}>{{ cat.label }}</option>
+        {% endif %}
         {% endfor %}
       </select>
-    </div>
-    <div class="col-6">
-      <label class="form-label small mb-1">Филиалы</label>
-      <select class="form-select form-select-sm" name="pattern[{{ idx }}][branch_ids][]" multiple size="4">
-        {% for b in branches %}
-        <option value="{{ b.id }}" {% if b.id in sel_branch_ids %}selected{% endif %}>{{ b.name }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="col-6">
-      <label class="form-label small mb-1">...или группа филиалов</label>
-      <select class="form-select form-select-sm" name="pattern[{{ idx }}][branch_group_id]">
-        <option value="">— не выбрана —</option>
-        {% for g in branch_groups %}
-        <option value="{{ g.id }}" {% if sel_group_id == g.id %}selected{% endif %}>{{ g.name }}</option>
-        {% endfor %}
-      </select>
-      <div class="form-text">Можно указать конкретные филиалы, группу, или и то и другое сразу</div>
     </div>
   </div>
   <button type="button" class="btn btn-sm btn-outline-danger mt-2 rule-pattern-remove">
@@ -128,12 +104,13 @@
 <div class="text-muted small mb-2">
   Введите пример текста из описания операции и число, которое из него нужно вытащить — система сама поймёт,
   что искать. Например: пример текста <code>К.224.54</code>, извлечь число <code>224.54</code>.
-  Можно добавить несколько паттернов с разными категориями и филиалами — каждый создаст свою отдельную
-  запись расхода/прихода при совпадении.
+  Паттерн всегда расход (например комиссия банка, удержанная из зачисления) и относится к тому же
+  филиалу/группе, что и само правило выше — можно добавить несколько паттернов с разными категориями,
+  каждый создаст свою отдельную запись расхода при совпадении.
 </div>
 <div class="rule-patterns-list" data-next-idx="{{ patterns|length if patterns else 0 }}">
   {% for pat in (patterns or []) %}
-  {{ pattern_row(loop.index0, pat, pattern_branch_ids.get(pat.id, []), pattern_group_id.get(pat.id)) }}
+  {{ pattern_row(loop.index0, pat) }}
   {% endfor %}
 </div>
 <template class="rule-pattern-tpl">{{ pattern_row('__IDX__') }}</template>
