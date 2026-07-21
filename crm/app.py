@@ -1291,6 +1291,18 @@ def init_db():
                 UNIQUE(employee_id, role, branch_id)
             )
         ''')
+        # История переключений «ежедневно/ежемесячно» по датам — чтобы смена режима
+        # сегодня не задним числом влияла на уже прошедшие смены (см. pay_staff/_effective_pay_monthly).
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS employee_pay_monthly_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+                role TEXT NOT NULL,
+                pay_monthly INTEGER NOT NULL DEFAULT 0,
+                effective_from DATE NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         _emp_tcols = [r[1] for r in conn.execute("PRAGMA table_info(employees)").fetchall()]
         if 'rate_template_id' not in _emp_tcols:
             conn.execute("ALTER TABLE employees ADD COLUMN rate_template_id INTEGER REFERENCES rate_templates(id)")
@@ -3259,17 +3271,16 @@ def shift_view(shift_id):
         plus_entries = conn.execute('SELECT * FROM cash_plus_entries WHERE shift_id=? ORDER BY id', (shift_id,)).fetchall()
         staff_rows = conn.execute(
             '''SELECT es.*,
-                      CASE WHEN
-                        (CASE WHEN es.role_snapshot = e.role THEN COALESCE(e.pay_monthly, 0)
-                              ELSE COALESCE(er.pay_monthly, 0) END) = 1
-                        AND (
+                      (CASE WHEN es.role_snapshot = e.role THEN COALESCE(e.pay_monthly, 0)
+                            ELSE COALESCE(er.pay_monthly, 0) END) as pay_monthly_now,
+                      CASE WHEN (
                           NOT EXISTS (SELECT 1 FROM employee_pay_monthly_branches pmb
                                       WHERE pmb.employee_id = es.employee_id AND pmb.role = es.role_snapshot)
                           OR EXISTS (SELECT 1 FROM employee_pay_monthly_branches pmb
                                      WHERE pmb.employee_id = es.employee_id AND pmb.role = es.role_snapshot
                                        AND pmb.branch_id = ?)
                         )
-                      THEN 1 ELSE 0 END as pay_monthly
+                      THEN 1 ELSE 0 END as pay_monthly_branch_ok
                FROM employee_shifts es
                LEFT JOIN employees e ON e.id = es.employee_id
                LEFT JOIN employee_roles er ON er.employee_id = es.employee_id AND er.role = es.role_snapshot
@@ -3289,6 +3300,13 @@ def shift_view(shift_id):
         staff = []
         for s in staff_rows:
             d = dict(s)
+            if d['employee_id']:
+                # Режим оплаты — действовавший на дату этой смены, а не текущий
+                # (иначе переключение сегодня задним числом меняло бы вид уже прошедших смен).
+                pm_on_date = _effective_pay_monthly(
+                    conn, d['employee_id'], d['role_snapshot'], shift['date'], d['pay_monthly_now']
+                )
+                d['pay_monthly'] = 1 if (pm_on_date and d['pay_monthly_branch_ok']) else 0
             if d['role_snapshot'] == 'courier':
                 routes = courier_route_map.get(d['id'], [])
                 d['extra_routes'] = routes
@@ -3954,6 +3972,51 @@ def delete_courier_route(shift_id, staff_id, route_id):
                     'total_amount': total_row['total_amount'], 'auto_bonuses': auto_bonuses})
 
 
+_PAY_MONTHLY_EPOCH = '2000-01-01'  # сентинел «действовало всегда до сих пор» для бэкофилла старого значения
+
+
+def _seed_pay_monthly_history(conn, employee_id, role, pay_monthly):
+    """Начальная запись при создании сотрудника/доп.должности — действует «всегда» (с сентинела),
+    чтобы у только что созданной записи сразу был определён режим на любую дату."""
+    conn.execute(
+        'INSERT INTO employee_pay_monthly_history (employee_id, role, pay_monthly, effective_from) VALUES (?,?,?,?)',
+        (employee_id, role, pay_monthly, _PAY_MONTHLY_EPOCH)
+    )
+
+
+def _log_pay_monthly_change(conn, employee_id, role, old_pay_monthly, new_pay_monthly, effective_from=None):
+    """Пишет в историю смену режима ежедневно/ежемесячно (если значение реально изменилось).
+    Если для этой должности ещё нет ни одной записи — сначала «подкладывает» старое значение
+    задним числом (с сентинела), иначе прошлые смены задним числом посчитались бы по новому режиму."""
+    if int(old_pay_monthly) == int(new_pay_monthly):
+        return
+    effective_from = effective_from or date.today().isoformat()
+    has_history = conn.execute(
+        'SELECT 1 FROM employee_pay_monthly_history WHERE employee_id=? AND role=? LIMIT 1',
+        (employee_id, role)
+    ).fetchone()
+    if not has_history:
+        conn.execute(
+            'INSERT INTO employee_pay_monthly_history (employee_id, role, pay_monthly, effective_from) VALUES (?,?,?,?)',
+            (employee_id, role, old_pay_monthly, _PAY_MONTHLY_EPOCH)
+        )
+    conn.execute(
+        'INSERT INTO employee_pay_monthly_history (employee_id, role, pay_monthly, effective_from) VALUES (?,?,?,?)',
+        (employee_id, role, new_pay_monthly, effective_from)
+    )
+
+
+def _effective_pay_monthly(conn, employee_id, role, on_date, fallback):
+    """Режим оплаты (0/1), действовавший на конкретную дату — а не текущий, чтобы смена режима
+    сегодня не влияла на уже прошедшие смены задним числом."""
+    row = conn.execute(
+        'SELECT pay_monthly FROM employee_pay_monthly_history WHERE employee_id=? AND role=? AND effective_from<=? '
+        'ORDER BY effective_from DESC, id DESC LIMIT 1',
+        (employee_id, role, on_date)
+    ).fetchone()
+    return row['pay_monthly'] if row is not None else fallback
+
+
 @app.route('/shift/<int:shift_id>/pay-staff/<int:staff_id>', methods=['POST'])
 @login_required
 def pay_staff(shift_id, staff_id):
@@ -3970,14 +4033,19 @@ def pay_staff(shift_id, staff_id):
         if row['employee_id']:
             emp = conn.execute('SELECT role, pay_monthly FROM employees WHERE id=?', (row['employee_id'],)).fetchone()
             if emp:
+                shift_row_dt = conn.execute('SELECT date FROM shifts WHERE id=?', (shift_id,)).fetchone()
+                shift_date = shift_row_dt['date'] if shift_row_dt else date.today().isoformat()
                 if row['role_snapshot'] == emp['role']:
-                    pm = emp['pay_monthly']
+                    fallback = emp['pay_monthly']
                 else:
                     er = conn.execute(
                         'SELECT pay_monthly FROM employee_roles WHERE employee_id=? AND role=?',
                         (row['employee_id'], row['role_snapshot'])
                     ).fetchone()
-                    pm = er['pay_monthly'] if er else 0
+                    fallback = er['pay_monthly'] if er else 0
+                # Смотрим режим, действовавший на дату самой смены — а не текущий,
+                # чтобы переключение сегодня не блокировало уже прошедшие смены.
+                pm = _effective_pay_monthly(conn, row['employee_id'], row['role_snapshot'], shift_date, fallback)
                 if pm:
                     # Правило ежемесячной оплаты может быть ограничено конкретными филиалами
                     # (employee_pay_monthly_branches). Если для этой должности ничего не выбрано —
@@ -4964,6 +5032,7 @@ def add_employee():
             'INSERT INTO employee_rate_history (employee_id, rate, rate_per_km, rate_per_order, effective_from) VALUES (?,?,?,?,?)',
             (emp_id, rate, rate_km, rate_ord, effective_from)
         )
+        _seed_pay_monthly_history(conn, emp_id, emp_role, pay_monthly)
         for bid in branch_ids_form:
             conn.execute('INSERT OR IGNORE INTO employee_branches (employee_id, branch_id) VALUES (?,?)', (emp_id, int(bid)))
         address = request.form.get('address', '').strip()
@@ -5095,6 +5164,7 @@ def edit_employee(emp_id):
             rate = float(request.form.get('rate', 0) or 0)
             rate_km = float(request.form.get('rate_per_km', 0) or 0)
             rate_ord = float(request.form.get('rate_per_order', 0) or 0)
+        final_role = emp_role if (emp_role and emp_role in ROLE_LABELS) else emp['role']
         update_fields = ('rate=?, rate_per_km=?, rate_per_order=?, rate_template_id=?, phone=?, '
                           'full_name=?, last_name=?, first_name=?, pay_monthly=?')
         update_vals = [rate, rate_km, rate_ord, rate_template_id, phone,
@@ -5104,6 +5174,9 @@ def edit_employee(emp_id):
             update_vals += [emp_role]
         update_vals.append(emp_id)
         conn.execute(f'UPDATE employees SET {update_fields} WHERE id=?', update_vals)
+        # Меняем режим оплаты только с текущей даты — история хранит момент смены,
+        # чтобы уже прошедшие смены не блокировались задним числом (см. pay_staff).
+        _log_pay_monthly_change(conn, emp_id, final_role, emp['pay_monthly'], pay_monthly, date.today().isoformat())
         if session.get('role') == 'owner':
             branch_ids_form = [bid for bid in request.form.getlist('branch_ids') if bid.isdigit()]
             if branch_ids_form:
@@ -5112,7 +5185,6 @@ def edit_employee(emp_id):
                 for bid in branch_ids_form:
                     conn.execute('INSERT OR IGNORE INTO employee_branches (employee_id, branch_id) VALUES (?,?)', (emp_id, int(bid)))
             # Филиалы, на которых действует ежемесячная оплата основной должности
-            final_role = emp_role if (emp_role and emp_role in ROLE_LABELS) else emp['role']
             pm_branch_ids = [bid for bid in request.form.getlist('pm_branch_ids') if bid.isdigit()]
             conn.execute('DELETE FROM employee_pay_monthly_branches WHERE employee_id=? AND role=?', (emp_id, final_role))
             for bid in pm_branch_ids:
@@ -6999,6 +7071,79 @@ def employee_salary_detail(emp_id):
         date_from=date_from, date_to=date_to,
         total_earned=total_earned, total_paid=total_paid, total_debt=total_debt,
         role_labels=ROLE_LABELS)
+
+
+@app.route('/employee/<int:emp_id>/change-history')
+@login_required
+def employee_change_history(emp_id):
+    with get_db() as conn:
+        emp = conn.execute('SELECT * FROM employees WHERE id=?', (emp_id,)).fetchone()
+        if not emp:
+            flash('Сотрудник не найден', 'danger')
+            return redirect(url_for('employees'))
+        sess_role = session.get('role')
+        if sess_role != 'owner' and emp['branch_id'] not in _session_branch_ids():
+            flash('Нет доступа', 'danger')
+            return redirect(url_for('employees'))
+
+        today = date.today().isoformat()
+
+        rate_history = []
+        found_current = False
+        for h in conn.execute(
+            'SELECT * FROM employee_rate_history WHERE employee_id=? ORDER BY effective_from DESC, id DESC',
+            (emp_id,)
+        ).fetchall():
+            d = dict(h)
+            if d['effective_from'] > today:
+                d['status'] = 'scheduled'
+            elif not found_current:
+                d['status'] = 'current'
+                found_current = True
+            else:
+                d['status'] = 'past'
+            rate_history.append(d)
+
+        pm_history = []
+        found_current_role = set()
+        for h in conn.execute(
+            'SELECT * FROM employee_pay_monthly_history WHERE employee_id=? ORDER BY effective_from DESC, id DESC',
+            (emp_id,)
+        ).fetchall():
+            d = dict(h)
+            if d['effective_from'] > today:
+                d['status'] = 'scheduled'
+            elif d['role'] not in found_current_role:
+                d['status'] = 'current'
+                found_current_role.add(d['role'])
+            else:
+                d['status'] = 'past'
+            pm_history.append(d)
+
+        pm_branch_scope = {}
+        for row in conn.execute('''
+            SELECT pmb.role, b.name as branch_name
+            FROM employee_pay_monthly_branches pmb JOIN branches b ON b.id=pmb.branch_id
+            WHERE pmb.employee_id=? ORDER BY b.name
+        ''', (emp_id,)).fetchall():
+            pm_branch_scope.setdefault(row['role'], []).append(row['branch_name'])
+
+        role_labels_map = {emp['role']: ROLE_LABELS.get(emp['role'], emp['role'])}
+        for r in conn.execute('SELECT DISTINCT role FROM employee_roles WHERE employee_id=?', (emp_id,)).fetchall():
+            role_labels_map[r['role']] = ROLE_LABELS.get(r['role'], r['role'])
+        for r in conn.execute('SELECT DISTINCT role FROM employee_pay_monthly_history WHERE employee_id=?', (emp_id,)).fetchall():
+            role_labels_map.setdefault(r['role'], ROLE_LABELS.get(r['role'], r['role']))
+
+        cur_branches = [r['name'] for r in conn.execute('''
+            SELECT b.name FROM employee_branches eb JOIN branches b ON b.id=eb.branch_id
+            WHERE eb.employee_id=? ORDER BY b.name
+        ''', (emp_id,)).fetchall()]
+
+    return render_template('employee_change_history.html',
+        emp=emp, today=today,
+        rate_history=rate_history, pm_history=pm_history,
+        pm_branch_scope=pm_branch_scope, role_labels_map=role_labels_map,
+        cur_branches=cur_branches)
 
 
 # ─── EXPENSES REPORT ──────────────────────────────────────────────────────────
@@ -8981,13 +9126,19 @@ def add_employee_role(emp_id):
                 'INSERT INTO employee_roles (employee_id, role, rate, rate_per_km, rate_per_order, rate_template_id, pay_monthly) VALUES (?,?,?,?,?,?,?)',
                 (emp_id, role, rate, rate_km, rate_ord, rate_template_id, pay_monthly)
             )
+            _seed_pay_monthly_history(conn, emp_id, role, pay_monthly)
             conn.commit()
             flash('Должность добавлена', 'success')
         except Exception:
+            old_row = conn.execute(
+                'SELECT pay_monthly FROM employee_roles WHERE employee_id=? AND role=?', (emp_id, role)
+            ).fetchone()
+            old_pm = old_row['pay_monthly'] if old_row else 0
             conn.execute(
                 'UPDATE employee_roles SET rate=?, rate_per_km=?, rate_per_order=?, rate_template_id=?, pay_monthly=? WHERE employee_id=? AND role=?',
                 (rate, rate_km, rate_ord, rate_template_id, pay_monthly, emp_id, role)
             )
+            _log_pay_monthly_change(conn, emp_id, role, old_pm, pay_monthly, date.today().isoformat())
             conn.commit()
             flash('Ставка по должности обновлена', 'success')
     return redirect(url_for('employees'))
@@ -9032,9 +9183,10 @@ def update_employee_role_pay_monthly(role_id):
     pay_monthly = 1 if request.form.get('pay_monthly') else 0
     pm_branch_ids = [bid for bid in request.form.getlist('pm_branch_ids') if bid.isdigit()]
     with get_db() as conn:
+        er = conn.execute('SELECT employee_id, role, pay_monthly FROM employee_roles WHERE id=?', (role_id,)).fetchone()
         conn.execute('UPDATE employee_roles SET pay_monthly=? WHERE id=?', (pay_monthly, role_id))
-        er = conn.execute('SELECT employee_id, role FROM employee_roles WHERE id=?', (role_id,)).fetchone()
         if er:
+            _log_pay_monthly_change(conn, er['employee_id'], er['role'], er['pay_monthly'], pay_monthly, date.today().isoformat())
             conn.execute(
                 'DELETE FROM employee_pay_monthly_branches WHERE employee_id=? AND role=?',
                 (er['employee_id'], er['role'])
