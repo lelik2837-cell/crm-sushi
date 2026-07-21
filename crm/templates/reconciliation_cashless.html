@@ -137,7 +137,7 @@
     <div class="col-auto">
         <div class="card border-0 bg-light px-3 py-2">
             <div class="text-muted small">Разница (итого)</div>
-            <div class="fw-bold {% if totals.diff > 0 %}text-danger{% elif totals.diff < 0 %}text-warning{% else %}text-muted{% endif %}">
+            <div class="fw-bold {% if totals.diff < 0 %}text-danger{% elif totals.diff > 0 %}text-warning{% else %}text-muted{% endif %}">
                 {% if totals.diff > 0 %}+{% endif %}{{ '{:,.0f}'.format(totals.diff) }} ₽
             </div>
         </div>
@@ -167,7 +167,7 @@
         <td class="text-muted small">{{ day.branches | length }} филиала</td>
         <td class="text-end text-primary fw-semibold">{{ '{:,.0f}'.format(day.card_revenue) }} ₽</td>
         <td class="text-end text-success fw-semibold">{{ '{:,.0f}'.format(day.bank_income) }} ₽</td>
-        <td class="text-end fw-bold {% if day.diff > 0 %}text-danger{% elif day.diff < 0 %}text-warning{% else %}text-muted{% endif %}">
+        <td class="text-end fw-bold {% if day.diff < 0 %}text-danger{% elif day.diff > 0 %}text-warning{% else %}text-muted{% endif %}">
             {% if day.diff > 0 %}+{% endif %}{{ '{:,.0f}'.format(day.diff) }} ₽
         </td>
         <td class="text-center">
@@ -182,10 +182,18 @@
         <td class="{% if day.branches | length == 1 %}fw-bold{% else %}text-muted ps-4 small{% endif %}">
             {% if loop.first %}{{ day.date | datefmt }}{% endif %}
         </td>
-        <td class="fw-semibold">{{ br.branch_name }}</td>
+        <td class="fw-semibold">
+            {% if br.shift_id %}
+            <a href="{{ url_for('shift_view', shift_id=br.shift_id) }}" target="_blank"
+               class="text-muted me-1" title="Открыть смену">
+                <i class="bi bi-box-arrow-up-right"></i>
+            </a>
+            {% endif %}
+            {{ br.branch_name }}
+        </td>
         <td class="text-end text-primary">{{ '{:,.0f}'.format(br.card_revenue) }} ₽</td>
         <td class="text-end text-success">{{ '{:,.0f}'.format(br.bank_income) }} ₽</td>
-        <td class="text-end fw-semibold {% if br.diff > 0 %}text-danger{% elif br.diff < 0 %}text-warning{% else %}text-muted{% endif %}">
+        <td class="text-end fw-semibold {% if br.diff < 0 %}text-danger{% elif br.diff > 0 %}text-warning{% else %}text-muted{% endif %}">
             {% if br.diff > 0 %}+{% endif %}{{ '{:,.0f}'.format(br.diff) }} ₽
         </td>
         <td></td>

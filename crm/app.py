@@ -7411,8 +7411,10 @@ def reconciliation_cashless():
             b_args   = []
 
         # Выручка безналом (без онлайна) по дням/филиалам — из листов смен.
+        # branch_id+date уникальны (UNIQUE(branch_id, date) у shifts), так что s.id
+        # однозначно определяет смену — используем для ссылки на неё в таблице.
         card_rows = conn.execute(f'''
-            SELECT s.date AS d, s.branch_id AS branch_id,
+            SELECT s.date AS d, s.branch_id AS branch_id, s.id AS shift_id,
                    COALESCE(SUM(r.card_amount), 0) AS card_revenue
             FROM shifts s
             LEFT JOIN shift_revenue r ON r.shift_id = s.id
@@ -7487,8 +7489,10 @@ def reconciliation_cashless():
     branch_name_map = {b['id']: b['name'] for b in branches}
 
     card_map = {}
+    shift_id_map = {}
     for r in card_rows:
         card_map[(r['d'], r['branch_id'])] = r['card_revenue']
+        shift_id_map[(r['d'], r['branch_id'])] = r['shift_id']
 
     # Объединяем оба источника по (дата, филиал) — попадают и дни, где есть
     # только выручка (банк ещё не зачислил), и дни, где есть только банк
@@ -7501,18 +7505,22 @@ def reconciliation_cashless():
             continue
         card = card_map.get((d, bid), 0.0)
         bank = bank_map.get((d, bid), 0.0)
+        # Разница = приход банка минус выручка безнал: банк меньше выручки — минус
+        # (недостача), банк больше — плюс.
+        diff = bank - card
         if d not in days:
             days[d] = {'date': d, 'branches': [], 'card_revenue': 0.0, 'bank_income': 0.0, 'diff': 0.0}
         days[d]['branches'].append({
             'branch_id':    bid,
             'branch_name':  branch_name_map[bid],
+            'shift_id':     shift_id_map.get((d, bid)),
             'card_revenue': card,
             'bank_income':  bank,
-            'diff':         card - bank,
+            'diff':         diff,
         })
         days[d]['card_revenue'] += card
         days[d]['bank_income']  += bank
-        days[d]['diff']         += (card - bank)
+        days[d]['diff']         += diff
 
     for d in days:
         days[d]['branches'].sort(key=lambda x: x['branch_name'])
