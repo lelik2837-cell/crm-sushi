@@ -124,6 +124,7 @@ MENU_ITEMS = [
     ('cash_flow_report',      'Движение наличных',        'reports',  True),
     ('wait_time_report',      'Время ожидания',           'reports',  True),
     ('report_reconciliation', 'Сверка итогов',            'reports',  True),
+    ('reconciliation_cashless', 'Сверка безнала',         'reports',  True),
     ('pnl_report',            'P&L отчёт',                'reports',  True),
     ('change_settings',       'Размен',                   'reports',  True),
     ('purchases',             'Накладные',                'reports',  True),
@@ -1546,6 +1547,14 @@ def init_db():
         # PnL report settings storage
         conn.executescript('''
             CREATE TABLE IF NOT EXISTS pnl_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
+        ''')
+
+        # Настройки отчёта «Сверка безнала»
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS reconciliation_cashless_settings (
                 key TEXT PRIMARY KEY,
                 value TEXT
             );
@@ -7354,6 +7363,146 @@ def cash_flow_report():
         branch_groups=branch_groups,
         branch_ids=[str(b) for b in branch_ids],
         date_from=date_from, date_to=date_to)
+
+
+def _reconciliation_cashless_load_settings(conn):
+    row = conn.execute(
+        "SELECT value FROM reconciliation_cashless_settings WHERE key='bank_income_categories'"
+    ).fetchone()
+    cats = []
+    if row and row['value']:
+        try:
+            cats = _json_lib.loads(row['value'])
+        except Exception:
+            cats = []
+    return {'bank_income_categories': cats}
+
+
+@app.route('/report/reconciliation-cashless')
+@login_required
+@menu_permission_required('reconciliation_cashless')
+def reconciliation_cashless():
+    from collections import defaultdict
+    today       = date.today().isoformat()
+    month_start = date.today().replace(day=1).isoformat()
+    date_from   = request.args.get('date_from', month_start)
+    date_to     = request.args.get('date_to', today)
+    branch_ids  = [b for b in request.args.getlist('branch_ids') if b.isdigit()]
+    branch_ids  = get_effective_branch_ids('reconciliation_cashless', branch_ids) or []
+
+    with get_db() as conn:
+        branches      = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        branch_groups = get_branch_groups(conn)
+        all_cats      = get_expense_categories(conn)
+        cfg           = _reconciliation_cashless_load_settings(conn)
+
+        if branch_ids:
+            ph       = ','.join('?' * len(branch_ids))
+            bf_shift = f'AND s.branch_id IN ({ph})'
+            bf_bank  = f'AND bab.branch_id IN ({ph})'
+            b_args   = [int(b) for b in branch_ids]
+        else:
+            bf_shift = bf_bank = ''
+            b_args   = []
+
+        # Выручка безналом (без онлайна) по дням/филиалам — из листов смен.
+        card_rows = conn.execute(f'''
+            SELECT s.date AS d, s.branch_id AS branch_id,
+                   COALESCE(SUM(r.card_amount), 0) AS card_revenue
+            FROM shifts s
+            LEFT JOIN shift_revenue r ON r.shift_id = s.id
+            WHERE s.date BETWEEN ? AND ? {bf_shift}
+            GROUP BY s.date, s.branch_id
+        ''', [date_from, date_to] + b_args).fetchall()
+
+        # Приход по банку выбранной(-ых) в настройках категории — по счетам,
+        # привязанным к филиалу в Настройках банка (bank_account_branches).
+        bank_rows = []
+        if cfg['bank_income_categories']:
+            ph_cat = ','.join('?' * len(cfg['bank_income_categories']))
+            bank_rows = conn.execute(f'''
+                SELECT bt.txn_date AS d, bab.branch_id AS branch_id,
+                       COALESCE(SUM(bt.amount), 0) AS bank_income
+                FROM bank_transactions bt
+                JOIN bank_account_branches bab ON bab.bank_account_id = bt.bank_account_id
+                WHERE bt.txn_date BETWEEN ? AND ? AND bt.amount > 0 AND bt.is_ignored=0
+                  AND bt.category IN ({ph_cat}) {bf_bank}
+                GROUP BY bt.txn_date, bab.branch_id
+            ''', [date_from, date_to] + cfg['bank_income_categories'] + b_args).fetchall()
+
+    branch_name_map = {b['id']: b['name'] for b in branches}
+
+    card_map = {}
+    for r in card_rows:
+        card_map[(r['d'], r['branch_id'])] = r['card_revenue']
+
+    bank_map = defaultdict(float)
+    for r in bank_rows:
+        bank_map[(r['d'], r['branch_id'])] += r['bank_income']
+
+    # Объединяем оба источника по (дата, филиал) — попадают и дни, где есть
+    # только выручка (банк ещё не зачислил), и дни, где есть только банк
+    # (например запоздавшее зачисление) — в этом и смысл сверки.
+    all_keys = set(card_map.keys()) | set(bank_map.keys())
+
+    days = {}
+    for (d, bid) in all_keys:
+        if bid not in branch_name_map:
+            continue
+        card = card_map.get((d, bid), 0.0)
+        bank = bank_map.get((d, bid), 0.0)
+        if d not in days:
+            days[d] = {'date': d, 'branches': [], 'card_revenue': 0.0, 'bank_income': 0.0, 'diff': 0.0}
+        days[d]['branches'].append({
+            'branch_id':    bid,
+            'branch_name':  branch_name_map[bid],
+            'card_revenue': card,
+            'bank_income':  bank,
+            'diff':         card - bank,
+        })
+        days[d]['card_revenue'] += card
+        days[d]['bank_income']  += bank
+        days[d]['diff']         += (card - bank)
+
+    for d in days:
+        days[d]['branches'].sort(key=lambda x: x['branch_name'])
+
+    all_dates   = sorted(days.keys())
+    sorted_days = [days[d] for d in reversed(all_dates)]
+
+    totals = {
+        'card_revenue': sum(d['card_revenue'] for d in sorted_days),
+        'bank_income':  sum(d['bank_income']  for d in sorted_days),
+        'diff':         sum(d['diff']         for d in sorted_days),
+    }
+
+    return render_template('reconciliation_cashless.html',
+        days=sorted_days,
+        totals=totals,
+        branches=branches,
+        branch_groups=branch_groups,
+        branch_ids=[str(b) for b in branch_ids],
+        date_from=date_from, date_to=date_to,
+        all_cats=all_cats, cfg=cfg)
+
+
+@app.route('/report/reconciliation-cashless/settings', methods=['POST'])
+@login_required
+@menu_permission_required('reconciliation_cashless')
+def reconciliation_cashless_settings_save():
+    cats = request.form.getlist('bank_income_categories')
+    with get_db() as conn:
+        conn.execute(
+            'INSERT OR REPLACE INTO reconciliation_cashless_settings (key, value) VALUES (?, ?)',
+            ('bank_income_categories', _json_lib.dumps(cats))
+        )
+        conn.commit()
+    flash('Настройки сверки безнала сохранены', 'success')
+    params = {k: request.form.get(k) for k in ('date_from', 'date_to') if request.form.get(k)}
+    bids = request.form.getlist('branch_ids')
+    if bids:
+        params['branch_ids'] = bids
+    return redirect(url_for('reconciliation_cashless', **params))
 
 
 @app.route('/report/wait-time')

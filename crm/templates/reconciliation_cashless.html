@@ -1,0 +1,298 @@
+{% extends 'base.html' %}
+{% block title %}Сверка безнала{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="fw-bold mb-0"><i class="bi bi-credit-card-2-front me-2"></i>Сверка безнала</h4>
+</div>
+
+<!-- Фильтры -->
+<div class="card mb-4">
+    <div class="card-body py-2">
+        <form method="GET" class="d-flex align-items-center gap-2 flex-wrap" id="rc-form">
+            <span class="small fw-semibold text-muted">Период:</span>
+            <input type="date" name="date_from" value="{{ date_from }}" class="form-control form-control-sm" style="width:150px">
+            <span class="text-muted">—</span>
+            <input type="date" name="date_to" value="{{ date_to }}" class="form-control form-control-sm" style="width:150px">
+
+            <!-- Мультивыбор филиалов -->
+            {% if session.get('role') == 'owner' or can_pick_other_branches('reconciliation_cashless') %}
+            <div class="dropdown" id="branch-dropdown">
+                <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle"
+                    data-bs-toggle="dropdown" data-bs-auto-close="outside"
+                    style="min-width:160px; text-align:left;" id="branch-btn">
+                    <span id="branch-btn-label">{% if branch_ids %}Выбрано: {{ branch_ids|length }}{% else %}Все филиалы{% endif %}</span>
+                </button>
+                <ul class="dropdown-menu p-2" style="min-width:220px;">
+                    {% if branch_groups %}
+                    <li><div class="text-muted px-1 mb-1" style="font-size:0.75rem">ГРУППЫ</div></li>
+                    {% for g in branch_groups %}
+                    <li class="mb-1">
+                        <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1"
+                                onclick="selectBranchGroup({{ g.branch_ids | tojson }})">
+                            <i class="bi bi-collection me-1"></i>{{ g.name }}
+                            <span class="text-muted small">({{ g.branch_ids | length }})</span>
+                        </button>
+                    </li>
+                    {% endfor %}
+                    <li><hr class="dropdown-divider my-1"></li>
+                    {% endif %}
+                    <li class="mb-1">
+                        <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                            <input type="checkbox" id="branch-all-cb" onchange="toggleAllBranches(this)"
+                                {% if not branch_ids %}checked{% endif %}>
+                            <span class="fw-semibold small">Все филиалы</span>
+                        </label>
+                    </li>
+                    <li><hr class="dropdown-divider my-1"></li>
+                    {% for b in branches %}
+                    <li>
+                        <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                            <input type="checkbox" class="branch-cb" name="branch_ids" value="{{ b.id }}"
+                                {% if b.id|string in branch_ids %}checked{% endif %}
+                                onchange="onBranchCbChange()">
+                            <span class="small">{{ b.name }}</span>
+                        </label>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+
+            <button class="btn btn-primary btn-sm">Показать</button>
+        </form>
+    </div>
+</div>
+
+<!-- Настройки: категория банковского прихода -->
+<div class="card mb-3">
+    <div class="card-header bg-light fw-semibold d-flex justify-content-between align-items-center" style="cursor:pointer"
+         data-bs-toggle="collapse" data-bs-target="#rcSettings">
+        <span><i class="bi bi-gear me-2"></i>Категория банковского прихода</span>
+        <i class="bi bi-chevron-down small"></i>
+    </div>
+    <div class="collapse" id="rcSettings">
+        <div class="card-body">
+            <form method="POST" action="{{ url_for('reconciliation_cashless_settings_save') }}">
+                <input type="hidden" name="date_from" value="{{ date_from }}">
+                <input type="hidden" name="date_to"   value="{{ date_to }}">
+                {% for bid in branch_ids %}<input type="hidden" name="branch_ids" value="{{ bid }}">{% endfor %}
+                <div class="text-muted small mb-2">
+                    Категория(-и) банковских транзакций, которые считаются приходом безнала в колонке «Приход банк»
+                    (например «Эквайринг» — зачисления от банка-эквайера).
+                </div>
+                <select class="form-select form-select-sm mb-2" id="rcCatPicker" style="max-width:320px">
+                    <option value="">+ Добавить категорию…</option>
+                    {% for cat in all_cats %}
+                    <option value="{{ cat.code }}" data-label="{{ cat.label }}"
+                            {% if cat.code in cfg.bank_income_categories %}hidden{% endif %}>{{ cat.label }}</option>
+                    {% endfor %}
+                </select>
+                <div class="d-flex flex-wrap gap-2 mb-1" id="rcCatChips">
+                    {% for cat in all_cats %}
+                    {% if cat.code in cfg.bank_income_categories %}
+                    <span class="badge bg-secondary d-inline-flex align-items-center gap-1 py-2 px-2" data-code="{{ cat.code }}">
+                        {{ cat.label }}
+                        <input type="hidden" name="bank_income_categories" value="{{ cat.code }}">
+                        <i class="bi bi-x-lg rc-chip-remove" style="cursor:pointer;font-size:.7rem" role="button" title="Убрать"></i>
+                    </span>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+                <div class="text-muted small mb-3" id="rcCatEmpty" {% if cfg.bank_income_categories %}style="display:none"{% endif %}>
+                    Категория не выбрана — «Приход банк» будет показывать 0.
+                </div>
+                <button type="submit" class="btn btn-primary btn-sm">
+                    <i class="bi bi-floppy me-1"></i>Сохранить
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% if not cfg.bank_income_categories %}
+<div class="alert alert-warning py-2 small mb-3">
+    <i class="bi bi-exclamation-triangle me-1"></i>
+    Не выбрана категория банковского прихода — откройте «Категория банковского прихода» выше и выберите категорию,
+    иначе колонка «Приход банк» всегда будет нулевой.
+</div>
+{% endif %}
+
+{% if days %}
+
+<!-- Итоги за период -->
+<div class="row g-2 mb-3">
+    <div class="col-auto">
+        <div class="card border-0 bg-light px-3 py-2">
+            <div class="text-muted small">Выручка безнал (итого)</div>
+            <div class="fw-bold text-primary">{{ '{:,.0f}'.format(totals.card_revenue) }} ₽</div>
+        </div>
+    </div>
+    <div class="col-auto">
+        <div class="card border-0 bg-light px-3 py-2">
+            <div class="text-muted small">Приход банк (итого)</div>
+            <div class="fw-bold text-success">{{ '{:,.0f}'.format(totals.bank_income) }} ₽</div>
+        </div>
+    </div>
+    <div class="col-auto">
+        <div class="card border-0 bg-light px-3 py-2">
+            <div class="text-muted small">Разница (итого)</div>
+            <div class="fw-bold {% if totals.diff > 0 %}text-danger{% elif totals.diff < 0 %}text-warning{% else %}text-muted{% endif %}">
+                {% if totals.diff > 0 %}+{% endif %}{{ '{:,.0f}'.format(totals.diff) }} ₽
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="table-responsive">
+<table class="table table-hover align-middle mb-0" id="rcTable">
+    <thead class="table-light">
+        <tr>
+            <th style="min-width:130px">Дата</th>
+            <th style="min-width:160px">Филиал</th>
+            <th class="text-end" style="min-width:140px">Выручка безнал</th>
+            <th class="text-end" style="min-width:140px">Приход банк</th>
+            <th class="text-end fw-bold" style="min-width:120px">Разница</th>
+            <th style="width:36px"></th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for day in days %}
+    {% set di = loop.index %}
+
+    {% if day.branches | length > 1 %}
+    <!-- Строка-итог дня -->
+    <tr class="table-secondary" style="cursor:pointer" onclick="toggleDay({{ di }})">
+        <td class="fw-bold">{{ day.date | datefmt }}</td>
+        <td class="text-muted small">{{ day.branches | length }} филиала</td>
+        <td class="text-end text-primary fw-semibold">{{ '{:,.0f}'.format(day.card_revenue) }} ₽</td>
+        <td class="text-end text-success fw-semibold">{{ '{:,.0f}'.format(day.bank_income) }} ₽</td>
+        <td class="text-end fw-bold {% if day.diff > 0 %}text-danger{% elif day.diff < 0 %}text-warning{% else %}text-muted{% endif %}">
+            {% if day.diff > 0 %}+{% endif %}{{ '{:,.0f}'.format(day.diff) }} ₽
+        </td>
+        <td class="text-center">
+            <i class="bi bi-chevron-down" id="chv{{ di }}" style="transition:transform .2s"></i>
+        </td>
+    </tr>
+    {% endif %}
+
+    <!-- Строки по каждому филиалу -->
+    {% for br in day.branches %}
+    <tr class="day-detail-{{ di }}" {% if day.branches | length > 1 %}style="display:none"{% endif %}>
+        <td class="{% if day.branches | length == 1 %}fw-bold{% else %}text-muted ps-4 small{% endif %}">
+            {% if loop.first %}{{ day.date | datefmt }}{% endif %}
+        </td>
+        <td class="fw-semibold">{{ br.branch_name }}</td>
+        <td class="text-end text-primary">{{ '{:,.0f}'.format(br.card_revenue) }} ₽</td>
+        <td class="text-end text-success">{{ '{:,.0f}'.format(br.bank_income) }} ₽</td>
+        <td class="text-end fw-semibold {% if br.diff > 0 %}text-danger{% elif br.diff < 0 %}text-warning{% else %}text-muted{% endif %}">
+            {% if br.diff > 0 %}+{% endif %}{{ '{:,.0f}'.format(br.diff) }} ₽
+        </td>
+        <td></td>
+    </tr>
+    {% endfor %}
+
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<div class="card">
+    <div class="card-body text-center text-muted py-5">
+        <i class="bi bi-credit-card-2-front fs-1 d-block mb-2 opacity-25"></i>
+        <div class="fw-semibold">Нет данных за выбранный период</div>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleDay(di) {
+    const rows = document.querySelectorAll('.day-detail-' + di);
+    const chv  = document.getElementById('chv' + di);
+    const hidden = rows.length > 0 && rows[0].style.display === 'none';
+    rows.forEach(r => r.style.display = hidden ? '' : 'none');
+    if (chv) chv.style.transform = hidden ? 'rotate(180deg)' : '';
+}
+
+function onBranchCbChange() {
+    const cbs     = document.querySelectorAll('.branch-cb');
+    const checked = [...cbs].filter(c => c.checked);
+    const allCb   = document.getElementById('branch-all-cb');
+    allCb.checked = checked.length === 0;
+    document.getElementById('branch-btn-label').textContent =
+        checked.length === 0 ? 'Все филиалы' : 'Выбрано: ' + checked.length;
+}
+
+function toggleAllBranches(cb) {
+    if (cb.checked) {
+        document.querySelectorAll('.branch-cb').forEach(c => c.checked = false);
+        document.getElementById('branch-btn-label').textContent = 'Все филиалы';
+    }
+}
+
+function selectBranchGroup(ids) {
+    document.getElementById('branch-all-cb').checked = false;
+    document.querySelectorAll('.branch-cb').forEach(function(cb) {
+        cb.checked = ids.indexOf(parseInt(cb.value)) >= 0;
+    });
+    onBranchCbChange();
+}
+
+// ── Настройки: выбор категории банковского прихода через выпадающий список ──
+function rcChipRemove(chip) {
+    var code = chip.dataset.code;
+    chip.remove();
+    var opt = document.querySelector('#rcCatPicker option[value="' + CSS.escape(code) + '"]');
+    if (opt) opt.hidden = false;
+    var container = document.getElementById('rcCatChips');
+    var empty = document.getElementById('rcCatEmpty');
+    if (empty) empty.style.display = container.querySelector('[data-code]') ? 'none' : '';
+}
+
+function rcChipAdd(code, label) {
+    var container = document.getElementById('rcCatChips');
+    if (container.querySelector('[data-code="' + CSS.escape(code) + '"]')) return;
+
+    var chip = document.createElement('span');
+    chip.className = 'badge bg-secondary d-inline-flex align-items-center gap-1 py-2 px-2';
+    chip.dataset.code = code;
+    chip.appendChild(document.createTextNode(label + ' '));
+
+    var hiddenInput = document.createElement('input');
+    hiddenInput.type = 'hidden';
+    hiddenInput.name = 'bank_income_categories';
+    hiddenInput.value = code;
+    chip.appendChild(hiddenInput);
+
+    var removeBtn = document.createElement('i');
+    removeBtn.className = 'bi bi-x-lg rc-chip-remove';
+    removeBtn.style.cursor = 'pointer';
+    removeBtn.style.fontSize = '.7rem';
+    removeBtn.setAttribute('role', 'button');
+    removeBtn.title = 'Убрать';
+    removeBtn.addEventListener('click', function() { rcChipRemove(chip); });
+    chip.appendChild(removeBtn);
+
+    container.appendChild(chip);
+    var empty = document.getElementById('rcCatEmpty');
+    if (empty) empty.style.display = 'none';
+}
+
+document.querySelectorAll('#rcCatChips [data-code]').forEach(function(chip) {
+    var btn = chip.querySelector('.rc-chip-remove');
+    if (btn) btn.addEventListener('click', function() { rcChipRemove(chip); });
+});
+
+document.getElementById('rcCatPicker')?.addEventListener('change', function() {
+    var code = this.value;
+    if (!code) return;
+    var label = this.options[this.selectedIndex].dataset.label;
+    rcChipAdd(code, label);
+    this.options[this.selectedIndex].hidden = true;
+    this.value = '';
+});
+</script>
+{% endblock %}
