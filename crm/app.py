@@ -7420,14 +7420,18 @@ def reconciliation_cashless():
             GROUP BY s.date, s.branch_id
         ''', [date_from, date_to] + b_args).fetchall()
 
-        # Приход по банку выбранной(-ых) в настройках категории — филиал определяется
-        # ПРИОРИТЕТНО по правилу разбора операции (Банк → Правила, «Филиалы»/«группа»,
-        # см. bank_parse_rule_branches), и только если ни одно правило с филиалом не
-        # совпало — по привязке самого банковского счёта к филиалу (bank_account_branches).
-        # Совпадение правила определяется в Python (поиск ключевого слова в описании),
-        # поэтому строим SQL-агрегацию нельзя — считаем построчно.
+        # Приход по банку выбранной(-ых) в настройках категории — категория и филиал
+        # определяются ПРИОРИТЕТНО по правилу разбора операции (Банк → Правила): если
+        # правило совпало, его категория (rule.category) и филиал/группа
+        # (bank_parse_rule_branches) перекрывают ручную category/отсутствие привязки
+        # счёта — та же логика «эффективной категории», что и в выписке и в простом
+        # P&L (bt.category у операций, категоризированных только правилом, пустой —
+        # см. п.157/161). Совпадение правила определяется в Python (поиск ключевого
+        # слова в описании), поэтому фильтр по категории и филиалу тоже считаем в
+        # Python, а не в SQL WHERE.
         bank_map = defaultdict(float)
         if cfg['bank_income_categories']:
+            allowed_cats = set(cfg['bank_income_categories'])
             parse_rules = conn.execute(
                 'SELECT * FROM bank_parse_rules WHERE is_active=1 ORDER BY sort_order, id'
             ).fetchall()
@@ -7447,18 +7451,17 @@ def reconciliation_cashless():
             for row in conn.execute('SELECT bank_account_id, branch_id FROM bank_account_branches').fetchall():
                 account_branch_ids_map.setdefault(row['bank_account_id'], set()).add(row['branch_id'])
 
-            ph_cat = ','.join('?' * len(cfg['bank_income_categories']))
-            bt_rows = conn.execute(f'''
-                SELECT bt.txn_date AS d, bt.amount, bt.description, bt.bank_account_id
+            bt_rows = conn.execute('''
+                SELECT bt.txn_date AS d, bt.amount, bt.description, bt.bank_account_id, bt.category
                 FROM bank_transactions bt
                 WHERE bt.txn_date BETWEEN ? AND ? AND bt.amount > 0 AND bt.is_ignored=0
-                  AND bt.category IN ({ph_cat})
-            ''', [date_from, date_to] + cfg['bank_income_categories']).fetchall()
+            ''', [date_from, date_to]).fetchall()
 
             allowed_branch_ids = set(int(b) for b in branch_ids) if branch_ids else None
             for r in bt_rows:
                 desc_l = (r['description'] or '').lower()
                 txn_branch_ids = None
+                matched_rule_category = ''
                 for rule in parse_rules:
                     if rule['bank_account_id'] and rule['bank_account_id'] != r['bank_account_id']:
                         continue
@@ -7467,9 +7470,13 @@ def reconciliation_cashless():
                     kw = (rule['keyword'] or '').lower()
                     if not kw or kw not in desc_l:
                         continue
+                    matched_rule_category = rule['category'] or ''
                     if rule['id'] in rule_branch_ids_map:
                         txn_branch_ids = rule_branch_ids_map[rule['id']]
                     break
+                effective_category = r['category'] or matched_rule_category
+                if effective_category not in allowed_cats:
+                    continue
                 if txn_branch_ids is None:
                     txn_branch_ids = account_branch_ids_map.get(r['bank_account_id'], set())
                 for bid in txn_branch_ids:
