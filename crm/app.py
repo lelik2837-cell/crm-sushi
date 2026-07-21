@@ -1537,6 +1537,11 @@ def init_db():
                 for _r in _rows:
                     if (_r['category'] or '').lower() in old_names:
                         conn.execute(f"UPDATE {_table} SET category='' WHERE category=?", (_r['category'],))
+        # Источник смержен — очищаем, иначе при каждом рестарте сервера этот блок
+        # находит те же старые записи и заново создаёт удалённые пользователем
+        # expense_categories (баг: категория "воскресала" после каждого деплоя).
+        if ctr_cats_rows:
+            conn.execute('DELETE FROM contractor_categories')
 
         # PnL report settings storage
         conn.executescript('''
