@@ -5186,15 +5186,28 @@ def edit_employee(emp_id):
                     'INSERT OR IGNORE INTO employee_pay_monthly_branches (employee_id, role, branch_id) VALUES (?,?,?)',
                     (emp_id, final_role, int(bid))
                 )
-        conn.execute(
-            'INSERT INTO employee_rate_history (employee_id, rate, rate_per_km, rate_per_order, effective_from) VALUES (?,?,?,?,?)',
-            (emp_id, rate, rate_km, rate_ord, rate_from)
+        # В историю пишем только если значение реально изменилось — иначе любое
+        # сохранение карточки (например, смена телефона) плодило бы дубли записей.
+        rate_changed = (
+            rate != float(emp['rate'] or 0)
+            or rate_km != float(emp['rate_per_km'] or 0)
+            or rate_ord != float(emp['rate_per_order'] or 0)
         )
-        if address:
+        if rate_changed:
             conn.execute(
-                'INSERT INTO employee_address_history (employee_id, address, valid_from) VALUES (?,?,?)',
-                (emp_id, address, address_from)
+                'INSERT INTO employee_rate_history (employee_id, rate, rate_per_km, rate_per_order, effective_from) VALUES (?,?,?,?,?)',
+                (emp_id, rate, rate_km, rate_ord, rate_from)
             )
+        if address:
+            last_addr = conn.execute(
+                'SELECT address FROM employee_address_history WHERE employee_id=? ORDER BY valid_from DESC, id DESC LIMIT 1',
+                (emp_id,)
+            ).fetchone()
+            if not last_addr or last_addr['address'] != address:
+                conn.execute(
+                    'INSERT INTO employee_address_history (employee_id, address, valid_from) VALUES (?,?,?)',
+                    (emp_id, address, address_from)
+                )
         conn.commit()
     flash('Данные сотрудника сохранены', 'success')
     return redirect(url_for('employees'))
