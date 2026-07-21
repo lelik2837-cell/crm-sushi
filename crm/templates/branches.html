@@ -105,7 +105,6 @@
                     <th>Название</th>
                     <th>Сокр.</th>
                     <th>IP-адрес</th>
-                    <th>Мерчант / терминал</th>
                     <th>Карты</th>
                     <th class="text-center">Статус</th>
                     <th>Добавлен</th>
@@ -126,13 +125,6 @@
                     <code class="text-success">{{ b.allowed_ip }}</code>
                     {% else %}
                     <span class="text-muted small">—</span>
-                    {% endif %}
-                </td>
-                <td class="small">
-                    {% if b.merchant_numbers %}
-                    <code class="text-primary">{{ b.merchant_numbers }}</code>
-                    {% else %}
-                    <span class="text-muted">—</span>
                     {% endif %}
                 </td>
                 <td class="small">
@@ -326,12 +318,6 @@
                             Сотрудники с этого IP будут ограничены только этим филиалом.
                             <a href="#" class="fill-my-ip" data-ip="{{ my_ip }}">Вставить мой IP ({{ my_ip }})</a>
                         </div>
-                    </div>
-                    <div class="mb-0">
-                        <label class="form-label fw-semibold mb-1">Номера мерчанта / терминала (Сбербанк)</label>
-                        <input type="text" name="merchant_numbers" class="form-control font-monospace"
-                               placeholder="Например: КА_116223, КА_116224" value="{{ b.merchant_numbers or '' }}">
-                        <div class="form-text">Номера из описания выписки, через запятую.</div>
                     </div>
                 </form>
 

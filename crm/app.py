@@ -5573,12 +5573,11 @@ def add_branch():
 @menu_permission_required('branches')
 def edit_branch(branch_id):
     allowed_ip = request.form.get('allowed_ip', '').strip() or None
-    merchant_numbers = request.form.get('merchant_numbers', '').strip()
     abbr = request.form.get('abbr', '').strip().upper()[:3]
     with get_db() as conn:
         conn.execute(
-            'UPDATE branches SET allowed_ip=?, merchant_numbers=?, abbr=? WHERE id=?',
-            (allowed_ip, merchant_numbers, abbr, branch_id)
+            'UPDATE branches SET allowed_ip=?, abbr=? WHERE id=?',
+            (allowed_ip, abbr, branch_id)
         )
         conn.commit()
     flash('Настройки филиала сохранены', 'success')
