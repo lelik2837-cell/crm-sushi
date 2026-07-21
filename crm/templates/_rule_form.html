@@ -69,7 +69,8 @@
       <select class="form-select form-select-sm" name="pattern[{{ idx }}][category]">
         <option value="">— не задана —</option>
         {% for cat in exp_cats %}
-        <option value="{{ cat.code }}" {% if pat and pat.category==cat.code %}selected{% endif %}>{{ cat.label }}</option>
+        <option value="{{ cat.code }}" {% if pat and pat.category==cat.code %}selected{% endif %}
+                data-dir="{{ 'income' if cat.type == 'income' else 'expense' }}">{{ cat.label }}</option>
         {% endfor %}
       </select>
     </div>
