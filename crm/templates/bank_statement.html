@@ -196,10 +196,11 @@
               <td class="text-end fw-semibold text-nowrap
                 {% if t.is_ignored %}text-muted{% elif t.amount > 0 %}text-success{% else %}text-danger{% endif %}">
                 {% if t.amount > 0 %}+{% endif %}{{ t.amount|money_cents }} ₽
-                {% if t.commission_extracted %}
-                  <br><span class="text-muted fw-normal" style="font-size:0.72rem">ком. {{ t.commission_extracted|money_cents }} ₽</span>
-                  <br><span class="text-success fw-normal" style="font-size:0.72rem">брутто {{ (t.amount + t.commission_extracted)|money_cents }} ₽</span>
-                {% endif %}
+                {% for ep in (t.extracted_patterns or []) %}
+                  <br><span class="fw-normal {% if ep.direction=='income' %}text-success{% else %}text-muted{% endif %}" style="font-size:0.72rem">
+                    {{ '+' if ep.direction=='income' else '−' }}{{ ep.value|money_cents }} ₽{% if ep.category %} ({{ ep.category }}){% endif %}
+                  </span>
+                {% endfor %}
               </td>
               <td class="small" title="{{ t.counterparty or '' }}">{{ t.counterparty[:50] if t.counterparty else '—' }}</td>
               <td class="small text-muted" title="{{ t.description or '' }}">{{ t.description[:100] if t.description else '—' }}</td>

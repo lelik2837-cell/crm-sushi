@@ -744,8 +744,7 @@
             <th>Счёт</th>
             <th>Направление</th>
             <th>Ключевое слово</th>
-            <th>Комиссия</th>
-            <th>Паттерн комиссии</th>
+            <th>Паттерны</th>
             <th>Категория</th>
             <th></th>
           </tr>
@@ -763,23 +762,14 @@
             </td>
             <td><code>{{ r.keyword }}</code></td>
             <td>
-              {% if r.commission_included %}<span class="text-muted small">Включена</span>
-              {% else %}<span class="badge bg-warning text-dark">Извлечь из текста</span>{% endif %}
+              {% set pats = rule_patterns_map.get(r.id, []) %}
+              {% if pats %}<span class="badge bg-info text-dark">{{ pats|length }}</span>
+              {% else %}<span class="text-muted small">—</span>{% endif %}
             </td>
-            <td><code class="small">{{ r.commission_pattern or '—' }}</code></td>
             <td class="small text-muted">{{ r.category or '—' }}</td>
             <td class="text-end text-nowrap">
               <button class="btn btn-sm btn-outline-secondary py-0"
-                      data-bs-toggle="modal" data-bs-target="#editRuleModal"
-                      data-id="{{ r.id }}"
-                      data-name="{{ r.name }}"
-                      data-account="{{ r.bank_account_id or '' }}"
-                      data-direction="{{ r.direction }}"
-                      data-keyword="{{ r.keyword }}"
-                      data-comm-incl="{{ r.commission_included }}"
-                      data-comm-pat="{{ r.commission_pattern or '' }}"
-                      data-category="{{ r.category or '' }}"
-                      data-sort="{{ r.sort_order }}">
+                      data-bs-toggle="modal" data-bs-target="#editRuleModal{{ r.id }}">
                 <i class="bi bi-pencil"></i>
               </button>
               <form method="POST" action="{{ url_for('bank_parse_rule_delete', rule_id=r.id) }}" class="d-inline"
@@ -800,13 +790,13 @@
   <i class="bi bi-info-circle me-1"></i>
   <strong>Как работает:</strong> при просмотре выписки каждая транзакция проверяется по правилам сверху вниз.
   Если ключевое слово найдено в описании и направление совпадает — транзакция помечается именем правила.
-  Если <em>«Комиссия: извлечь из текста»</em> — паттерн (регулярное выражение) ищет сумму комиссии в описании
-  (первая группа захвата, пример: <code>К\.(\d+[\.,]\d+)</code> находит <em>К.257.52</em>).
+  Каждый добавленный паттерн ищет своё число в описании (по примеру, который вы ввели) — при совпадении
+  создаётся отдельная расходная/приходная запись с своей категорией и филиалом, видимая в P&amp;L и в разделе «Расходы».
 </div>
 
 <!-- Modal: добавить правило -->
 <div class="modal fade" id="addRuleModal" tabindex="-1">
-  <div class="modal-dialog">
+  <div class="modal-dialog modal-lg">
     <form method="POST" action="{{ url_for('bank_parse_rule_add') }}">
       <div class="modal-content">
         <div class="modal-header">
@@ -825,17 +815,20 @@
   </div>
 </div>
 
-<!-- Modal: редактировать правило -->
-<div class="modal fade" id="editRuleModal" tabindex="-1">
-  <div class="modal-dialog">
-    <form method="POST" id="editRuleForm" action="">
+<!-- Modals: редактировать правило (по одной на правило) -->
+{% for r in parse_rules %}
+<div class="modal fade" id="editRuleModal{{ r.id }}" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <form method="POST" action="{{ url_for('bank_parse_rule_edit', rule_id=r.id) }}">
       <div class="modal-content">
         <div class="modal-header">
           <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>Редактировать правило</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
+          {% with rule=r, patterns=rule_patterns_map.get(r.id, []) %}
           {% include '_rule_form.html' %}
+          {% endwith %}
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
@@ -845,9 +838,10 @@
     </form>
   </div>
 </div>
+{% endfor %}
 
 <script>
-// Фильтр категорий по направлению правила
+// Фильтр категорий по направлению правила (основная категория правила)
 function filterRuleCategories(form) {
   var dir = (form.querySelector('[name=direction]') || {}).value || 'any';
   var catSel = form.querySelector('.rule-cat-select');
@@ -858,44 +852,55 @@ function filterRuleCategories(form) {
     var d = opt.dataset.dir || 'any';
     opt.hidden = !(dir === 'any' || d === dir);
   });
-  // если текущее значение скрылось — сбрасываем
   var selected = catSel.querySelector('option[value="' + current + '"]');
   if (selected && selected.hidden) catSel.value = '';
 }
 
-document.getElementById('editRuleModal').addEventListener('show.bs.modal', function(e) {
-  var btn = e.relatedTarget;
-  var form = document.getElementById('editRuleForm');
-  form.action = '/bank/parse-rules/' + btn.dataset.id + '/edit';
-  form.querySelector('[name=name]').value          = btn.dataset.name;
-  form.querySelector('[name=bank_account_id]').value = btn.dataset.account;
-  form.querySelector('[name=direction]').value     = btn.dataset.direction;
-  form.querySelector('[name=keyword]').value       = btn.dataset.keyword;
-  form.querySelector('[name=commission_included]').value = btn.dataset.commIncl;
-  form.querySelector('[name=commission_pattern]').value  = btn.dataset.commPat;
-  form.querySelector('[name=sort_order]').value    = btn.dataset.sort;
+document.querySelectorAll('[name=direction]').forEach(function(sel) {
+  var form = sel.closest('form');
+  if (!form || !form.action || form.action.indexOf('parse-rules') === -1) return;
+  sel.addEventListener('change', function() { filterRuleCategories(form); });
   filterRuleCategories(form);
-  form.querySelector('[name=category]').value      = btn.dataset.category || '';
-  toggleCommPattern(form);
 });
 
-function toggleCommPattern(form) {
-  var sel = form.querySelector('[name=commission_included]');
-  var row = form.querySelector('.comm-pattern-row');
-  if (!sel || !row) return;
-  row.style.display = sel.value === '0' ? '' : 'none';
+// ── Паттерны извлечения сумм: добавление/удаление строк, фильтр категории по направлению строки ──
+function wireRulePatternRow(row) {
+  var removeBtn = row.querySelector('.rule-pattern-remove');
+  if (removeBtn) removeBtn.addEventListener('click', function() { row.remove(); });
+  var dirSel = row.querySelector('select[name*="[direction]"]');
+  var catSel = row.querySelector('select[name*="[category]"]');
+  if (dirSel && catSel) {
+    var applyFilter = function() {
+      var dir = dirSel.value;
+      Array.from(catSel.options).forEach(function(opt) {
+        if (!opt.value) return;
+        opt.hidden = (opt.dataset.dir || 'any') !== dir;
+      });
+      var sel = catSel.querySelector('option[value="' + catSel.value + '"]');
+      if (sel && sel.hidden) catSel.value = '';
+    };
+    dirSel.addEventListener('change', applyFilter);
+    applyFilter();
+  }
 }
 
-document.querySelectorAll('[name=commission_included]').forEach(function(sel) {
-  sel.addEventListener('change', function() { toggleCommPattern(this.closest('form')); });
-  toggleCommPattern(sel.closest('form'));
-});
+document.querySelectorAll('.rule-pattern-row').forEach(wireRulePatternRow);
 
-document.querySelectorAll('[name=direction]').forEach(function(sel) {
-  // только в формах правил (не в форме добавления категории)
-  if (!sel.closest('form[action*="parse-rules"]') && !sel.closest('#addRuleModal') && !sel.closest('#editRuleModal')) return;
-  sel.addEventListener('change', function() { filterRuleCategories(this.closest('form')); });
-  filterRuleCategories(sel.closest('form'));
+document.querySelectorAll('.rule-pattern-add').forEach(function(btn) {
+  btn.addEventListener('click', function() {
+    var body = btn.closest('.modal-body');
+    var list = body.querySelector('.rule-patterns-list');
+    var tpl  = body.querySelector('.rule-pattern-tpl');
+    if (!list || !tpl) return;
+    var idx = parseInt(list.dataset.nextIdx || '0', 10);
+    var html = tpl.innerHTML.split('__IDX__').join(idx);
+    var wrapper = document.createElement('div');
+    wrapper.innerHTML = html;
+    var row = wrapper.firstElementChild;
+    list.appendChild(row);
+    list.dataset.nextIdx = idx + 1;
+    wireRulePatternRow(row);
+  });
 });
 </script>
 {% endif %}

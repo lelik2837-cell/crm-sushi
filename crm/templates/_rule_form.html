@@ -1,13 +1,13 @@
 <div class="mb-3">
   <label class="form-label fw-semibold">Название <span class="text-danger">*</span></label>
-  <input type="text" name="name" class="form-control" required placeholder="Например: СБП оплата">
+  <input type="text" name="name" class="form-control" required placeholder="Например: СБП оплата" value="{{ rule.name if rule else '' }}">
 </div>
 <div class="mb-3">
   <label class="form-label fw-semibold">Счёт</label>
   <select name="bank_account_id" class="form-select">
     <option value="">— Все счета —</option>
     {% for a in accounts %}
-    <option value="{{ a.id }}">{{ a.name }}</option>
+    <option value="{{ a.id }}" {% if rule and rule.bank_account_id==a.id %}selected{% endif %}>{{ a.name }}</option>
     {% endfor %}
   </select>
   <div class="form-text">Оставьте пустым если правило применяется ко всем счетам</div>
@@ -15,44 +15,104 @@
 <div class="mb-3">
   <label class="form-label fw-semibold">Направление</label>
   <select name="direction" class="form-select">
-    <option value="any">Любое</option>
-    <option value="income">Приход</option>
-    <option value="expense">Расход</option>
+    <option value="any" {% if rule and rule.direction=='any' %}selected{% endif %}>Любое</option>
+    <option value="income" {% if rule and rule.direction=='income' %}selected{% endif %}>Приход</option>
+    <option value="expense" {% if rule and rule.direction=='expense' %}selected{% endif %}>Расход</option>
   </select>
 </div>
 <div class="mb-3">
   <label class="form-label fw-semibold">Ключевое слово в описании <span class="text-danger">*</span></label>
-  <input type="text" name="keyword" class="form-control" required placeholder="Возм. по согл. в СБП">
+  <input type="text" name="keyword" class="form-control" required placeholder="Возм. по согл. в СБП" value="{{ rule.keyword if rule else '' }}">
   <div class="form-text">Текст ищется в поле «Описание» транзакции (без учёта регистра)</div>
-</div>
-<div class="mb-3">
-  <label class="form-label fw-semibold">Комиссия</label>
-  <select name="commission_included" class="form-select">
-    <option value="1">Включена в сумму (или отдельная транзакция)</option>
-    <option value="0">Извлечь из текста описания</option>
-  </select>
-</div>
-<div class="mb-3 comm-pattern-row" style="display:none">
-  <label class="form-label fw-semibold">Паттерн комиссии (регулярное выражение)</label>
-  <input type="text" name="commission_pattern" class="form-control font-monospace" placeholder="К\.(\d+[\.,]\d+)">
-  <div class="form-text">
-    Первая группа захвата <code>(...)</code> должна содержать число.
-    Пример: <code>К\.(\d+[\.,]\d+)</code> найдёт <strong>257.52</strong> из текста <em>К.257.52</em>
-  </div>
 </div>
 <div class="mb-3">
   <label class="form-label fw-semibold">Категория</label>
   <select name="category" class="form-select rule-cat-select">
     <option value="">— не задана —</option>
     {% for cat in exp_cats %}
-    <option value="{{ cat.code }}"
+    <option value="{{ cat.code }}" {% if rule and rule.category==cat.code %}selected{% endif %}
             data-dir="{{ 'income' if cat.type == 'income' else 'expense' }}">{{ cat.label }}</option>
     {% endfor %}
   </select>
   <div class="form-text">Если задана — подставляется в выписке для совпавших транзакций без категории</div>
 </div>
-<div class="mb-0">
+<div class="mb-3">
   <label class="form-label fw-semibold">Порядок сортировки</label>
-  <input type="number" name="sort_order" class="form-control" value="0" style="max-width:100px">
+  <input type="number" name="sort_order" class="form-control" value="{{ rule.sort_order if rule else 0 }}" style="max-width:100px">
   <div class="form-text">Правила проверяются по возрастанию. Первое совпадение применяется.</div>
 </div>
+
+<hr>
+
+{% macro pattern_row(idx, pat=none, sel_branch_ids=[], sel_group_id=none) %}
+<div class="border rounded p-2 mb-2 rule-pattern-row">
+  <div class="row g-2">
+    <div class="col-6">
+      <label class="form-label small mb-1">Пример текста из описания</label>
+      <input type="text" class="form-control form-control-sm" name="pattern[{{ idx }}][example_text]"
+             placeholder="К.224.54" value="{{ pat.example_text if pat else '' }}">
+    </div>
+    <div class="col-6">
+      <label class="form-label small mb-1">Извлечь число</label>
+      <input type="text" class="form-control form-control-sm" name="pattern[{{ idx }}][example_value]"
+             placeholder="224.54" value="{{ pat.example_value if pat else '' }}">
+    </div>
+    <div class="col-4">
+      <label class="form-label small mb-1">Направление</label>
+      <select class="form-select form-select-sm" name="pattern[{{ idx }}][direction]">
+        <option value="expense" {% if pat and pat.direction=='expense' %}selected{% endif %}>Расход</option>
+        <option value="income" {% if pat and pat.direction=='income' %}selected{% endif %}>Приход</option>
+      </select>
+    </div>
+    <div class="col-8">
+      <label class="form-label small mb-1">Категория</label>
+      <select class="form-select form-select-sm" name="pattern[{{ idx }}][category]">
+        <option value="">— не задана —</option>
+        {% for cat in exp_cats %}
+        <option value="{{ cat.code }}" {% if pat and pat.category==cat.code %}selected{% endif %}>{{ cat.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-6">
+      <label class="form-label small mb-1">Филиалы</label>
+      <select class="form-select form-select-sm" name="pattern[{{ idx }}][branch_ids][]" multiple size="4">
+        {% for b in branches %}
+        <option value="{{ b.id }}" {% if b.id in sel_branch_ids %}selected{% endif %}>{{ b.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-6">
+      <label class="form-label small mb-1">...или группа филиалов</label>
+      <select class="form-select form-select-sm" name="pattern[{{ idx }}][branch_group_id]">
+        <option value="">— не выбрана —</option>
+        {% for g in branch_groups %}
+        <option value="{{ g.id }}" {% if sel_group_id == g.id %}selected{% endif %}>{{ g.name }}</option>
+        {% endfor %}
+      </select>
+      <div class="form-text">Можно указать конкретные филиалы, группу, или и то и другое сразу</div>
+    </div>
+  </div>
+  <button type="button" class="btn btn-sm btn-outline-danger mt-2 rule-pattern-remove">
+    <i class="bi bi-trash me-1"></i>Удалить паттерн
+  </button>
+</div>
+{% endmacro %}
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+  <label class="form-label fw-semibold mb-0">Суммы, извлекаемые из описания</label>
+  <button type="button" class="btn btn-sm btn-outline-primary rule-pattern-add">
+    <i class="bi bi-plus-lg me-1"></i>Добавить паттерн
+  </button>
+</div>
+<div class="text-muted small mb-2">
+  Введите пример текста из описания операции и число, которое из него нужно вытащить — система сама поймёт,
+  что искать. Например: пример текста <code>К.224.54</code>, извлечь число <code>224.54</code>.
+  Можно добавить несколько паттернов с разными категориями и филиалами — каждый создаст свою отдельную
+  запись расхода/прихода при совпадении.
+</div>
+<div class="rule-patterns-list" data-next-idx="{{ patterns|length if patterns else 0 }}">
+  {% for pat in (patterns or []) %}
+  {{ pattern_row(loop.index0, pat, pattern_branch_ids.get(pat.id, []), pattern_group_id.get(pat.id)) }}
+  {% endfor %}
+</div>
+<template class="rule-pattern-tpl">{{ pattern_row('__IDX__') }}</template>

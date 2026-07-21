@@ -1463,6 +1463,38 @@ def init_db():
                 is_active INTEGER DEFAULT 1
             );
         ''')
+        # Паттерны извлечения сумм из описания операции (замена одиночной «комиссии» —
+        # теперь можно вытащить несколько сумм с разными категориями/филиалами из одного текста).
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS bank_parse_rule_patterns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_id INTEGER NOT NULL REFERENCES bank_parse_rules(id) ON DELETE CASCADE,
+                example_text TEXT NOT NULL,
+                example_value TEXT NOT NULL,
+                regex_pattern TEXT NOT NULL,
+                direction TEXT NOT NULL DEFAULT 'expense',
+                category TEXT DEFAULT '',
+                sort_order INTEGER DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS bank_parse_rule_pattern_branches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pattern_id INTEGER NOT NULL REFERENCES bank_parse_rule_patterns(id) ON DELETE CASCADE,
+                branch_id INTEGER REFERENCES branches(id),
+                branch_group_id INTEGER REFERENCES branch_groups(id)
+            );
+            CREATE TABLE IF NOT EXISTS bank_parse_extracted_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bank_transaction_id INTEGER NOT NULL REFERENCES bank_transactions(id) ON DELETE CASCADE,
+                pattern_id INTEGER NOT NULL REFERENCES bank_parse_rule_patterns(id) ON DELETE CASCADE,
+                branch_id INTEGER NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                amount REAL NOT NULL,
+                direction TEXT NOT NULL,
+                category TEXT DEFAULT '',
+                txn_date DATE NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(bank_transaction_id, pattern_id, branch_id)
+            );
+        ''')
         try:
             conn.execute("ALTER TABLE bank_parse_rules ADD COLUMN category TEXT DEFAULT ''")
         except Exception:
@@ -8556,6 +8588,20 @@ def pnl_report():
         """, [date_from, date_to] + _bi_args + b_args).fetchall():
             bank_inc_by[r['cat_name']][r['period']] += r['amount']
 
+        # Приход из сумм, извлечённых по паттернам правил разбора (Банк → Правила) —
+        # у них branch_id указан напрямую, фильтр по филиалу проще, чем у bank_transactions.
+        pe_pat = "strftime('%Y-%m', pe.txn_date)" if group_by == 'month' else "'total'"
+        bf_pe = f"AND pe.branch_id IN ({','.join('?' * len(branch_ids))})" if branch_ids else ''
+        for r in conn.execute(f"""
+            SELECT {pe_pat} AS period, pe.category AS cat_name, SUM(pe.amount) AS amount
+            FROM bank_parse_extracted_entries pe
+            WHERE pe.txn_date BETWEEN ? AND ? AND pe.direction='income'
+              AND pe.category IS NOT NULL AND pe.category != '' {_bi_filter.replace('bt.', 'pe.')} {bf_pe}
+            GROUP BY period, pe.category
+            HAVING SUM(pe.amount) > 0
+        """, [date_from, date_to] + _bi_args + b_args).fetchall():
+            bank_inc_by[r['cat_name']][r['period']] += r['amount']
+
         # Расходы по категориям — расходы теперь в одном месте: для каждой
         # выбранной категории суммируем и наличные/карту из смен, и банк.
         cash_exp_by = defaultdict(lambda: defaultdict(float))
@@ -8581,6 +8627,17 @@ def pnl_report():
                   AND bt.category IN ({ph_c}) {bf_bt}
                 GROUP BY period, bt.category
                 HAVING SUM(-bt.amount) > 0
+            """, [date_from, date_to] + cfg['expense_cats'] + b_args).fetchall():
+                bank_exp_by[r['cat_name']][r['period']] += r['amount']
+
+            # Расход из сумм, извлечённых по паттернам правил разбора
+            for r in conn.execute(f"""
+                SELECT {pe_pat} AS period, pe.category AS cat_name, SUM(pe.amount) AS amount
+                FROM bank_parse_extracted_entries pe
+                WHERE pe.txn_date BETWEEN ? AND ? AND pe.direction='expense'
+                  AND pe.category IN ({ph_c}) {bf_pe}
+                GROUP BY period, pe.category
+                HAVING SUM(pe.amount) > 0
             """, [date_from, date_to] + cfg['expense_cats'] + b_args).fetchall():
                 bank_exp_by[r['cat_name']][r['period']] += r['amount']
 
@@ -9600,8 +9657,21 @@ def bank():
                 LEFT JOIN expense_categories ec ON ec.code=bt.category
                 WHERE bt.txn_date BETWEEN ? AND ? AND bt.amount < 0 AND bt.is_ignored=0
                 GROUP BY bt.contractor_id, bt.category, COALESCE(c.name, bt.counterparty, bt.description)
+                UNION ALL
+                SELECT
+                    pr.name as name,
+                    pe.category,
+                    ec2.label as cat_label,
+                    SUM(pe.amount) as total,
+                    COUNT(*) as cnt
+                FROM bank_parse_extracted_entries pe
+                JOIN bank_parse_rule_patterns prp ON prp.id = pe.pattern_id
+                JOIN bank_parse_rules pr ON pr.id = prp.rule_id
+                LEFT JOIN expense_categories ec2 ON ec2.code = pe.category
+                WHERE pe.txn_date BETWEEN ? AND ? AND pe.direction='expense'
+                GROUP BY pr.name, pe.category
                 ORDER BY total DESC
-            ''', (date_from, date_to)).fetchall()
+            ''', (date_from, date_to, date_from, date_to)).fetchall()
             expense_total = sum(r['total'] for r in expense_rows)
 
         compare_rows = []
@@ -9682,6 +9752,19 @@ def bank():
             ORDER BY pr.sort_order, pr.id
         ''').fetchall()
 
+        rule_patterns_map = {}
+        for p in conn.execute('SELECT * FROM bank_parse_rule_patterns ORDER BY sort_order, id').fetchall():
+            rule_patterns_map.setdefault(p['rule_id'], []).append(p)
+        pattern_branch_ids = {}
+        pattern_group_id = {}
+        for row in conn.execute(
+            'SELECT pattern_id, branch_id, branch_group_id FROM bank_parse_rule_pattern_branches'
+        ).fetchall():
+            if row['branch_id']:
+                pattern_branch_ids.setdefault(row['pattern_id'], []).append(row['branch_id'])
+            elif row['branch_group_id']:
+                pattern_group_id[row['pattern_id']] = row['branch_group_id']
+
     return render_template('bank.html',
         tab=tab, date_from=date_from, date_to=date_to,
         accounts=accounts, acc_branches=acc_branches, statements=statements,
@@ -9690,7 +9773,9 @@ def bank():
         expense_rows=expense_rows, expense_total=expense_total,
         compare_rows=compare_rows, compare_bank=compare_bank, compare_crm=compare_crm,
         sber_auto_count=sber_auto_count,
-        parse_rules=parse_rules,
+        parse_rules=parse_rules, branch_groups=get_branch_groups(conn),
+        rule_patterns_map=rule_patterns_map,
+        pattern_branch_ids=pattern_branch_ids, pattern_group_id=pattern_group_id,
     )
 
 
@@ -9724,13 +9809,16 @@ def bank_upload():
             'INSERT INTO bank_statements (bank_account_id, filename, uploaded_by, date_from, date_to, row_count) VALUES (?,?,?,?,?,?)',
             (int(account_id), f.filename, session['user_id'], min(dates), max(dates), len(txns))
         ).lastrowid
+        new_txn_ids = []
         for t in txns:
             tid = _match_terminal(conn, t)
-            conn.execute(
+            bt_id = conn.execute(
                 'INSERT INTO bank_transactions (statement_id, bank_account_id, txn_date, amount, description, counterparty, contractor_id, category, terminal_id) VALUES (?,?,?,?,?,?,?,?,?)',
                 (stmt_id, int(account_id), t['date'], t['amount'], t['description'], t['counterparty'],
                  t.get('contractor_id'), t.get('category', ''), tid)
-            )
+            ).lastrowid
+            new_txn_ids.append(bt_id)
+        _sync_parse_rule_extractions(conn, new_txn_ids)
         conn.commit()
     flash(f'Загружено {len(txns)} транзакций.', 'success')
     return redirect(url_for('bank_statement_view', stmt_id=stmt_id))
@@ -10121,6 +10209,57 @@ def bank_terminal_delete(tid):
     return redirect(url_for('bank', tab='terminals'))
 
 
+def _parse_pattern_rows(form):
+    """Собирает динамические строки паттернов из форм-данных: pattern[N][поле]."""
+    indices = set()
+    for key in form.keys():
+        m = re.match(r'pattern\[(\d+)\]\[', key)
+        if m:
+            indices.add(int(m.group(1)))
+    rows = []
+    for i in sorted(indices):
+        example_text  = form.get(f'pattern[{i}][example_text]', '').strip()
+        example_value = form.get(f'pattern[{i}][example_value]', '').strip()
+        direction     = form.get(f'pattern[{i}][direction]', 'expense').strip() or 'expense'
+        category      = form.get(f'pattern[{i}][category]', '').strip()
+        branch_ids    = [b for b in form.getlist(f'pattern[{i}][branch_ids][]') if b.isdigit()]
+        branch_group_id = form.get(f'pattern[{i}][branch_group_id]', '').strip() or None
+        if not example_text or not example_value:
+            continue
+        rows.append({
+            'example_text': example_text, 'example_value': example_value,
+            'direction': direction, 'category': category,
+            'branch_ids': branch_ids, 'branch_group_id': branch_group_id,
+        })
+    return rows
+
+
+def _save_rule_patterns(conn, rule_id, form):
+    conn.execute('DELETE FROM bank_parse_rule_patterns WHERE rule_id=?', (rule_id,))
+    for i, row in enumerate(_parse_pattern_rows(form)):
+        regex = _build_pattern_regex(row['example_text'], row['example_value'])
+        if not regex:
+            continue
+        conn.execute(
+            'INSERT INTO bank_parse_rule_patterns '
+            '(rule_id, example_text, example_value, regex_pattern, direction, category, sort_order) '
+            'VALUES (?,?,?,?,?,?,?)',
+            (rule_id, row['example_text'], row['example_value'], regex,
+             row['direction'], row['category'], i)
+        )
+        pattern_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        if row['branch_group_id'] and row['branch_group_id'].isdigit():
+            conn.execute(
+                'INSERT INTO bank_parse_rule_pattern_branches (pattern_id, branch_group_id) VALUES (?,?)',
+                (pattern_id, int(row['branch_group_id']))
+            )
+        for bid in row['branch_ids']:
+            conn.execute(
+                'INSERT INTO bank_parse_rule_pattern_branches (pattern_id, branch_id) VALUES (?,?)',
+                (pattern_id, int(bid))
+            )
+
+
 @app.route('/bank/parse-rules/add', methods=['POST'])
 @login_required
 @menu_permission_required('bank')
@@ -10129,8 +10268,6 @@ def bank_parse_rule_add():
     keyword    = request.form.get('keyword', '').strip()
     direction  = request.form.get('direction', 'any')
     account_id = request.form.get('bank_account_id', '').strip() or None
-    comm_incl  = 1 if request.form.get('commission_included') == '1' else 0
-    comm_pat   = request.form.get('commission_pattern', '').strip()
     category   = request.form.get('category', '').strip()
     sort_order = int(request.form.get('sort_order', 0) or 0)
     if not name or not keyword:
@@ -10138,9 +10275,13 @@ def bank_parse_rule_add():
         return redirect(url_for('bank', tab='rules'))
     with get_db() as conn:
         conn.execute(
-            'INSERT INTO bank_parse_rules (bank_account_id, name, direction, keyword, commission_included, commission_pattern, category, sort_order) VALUES (?,?,?,?,?,?,?,?)',
-            (account_id, name, direction, keyword, comm_incl, comm_pat, category, sort_order)
+            'INSERT INTO bank_parse_rules (bank_account_id, name, direction, keyword, category, sort_order) '
+            'VALUES (?,?,?,?,?,?)',
+            (account_id, name, direction, keyword, category, sort_order)
         )
+        rule_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        _save_rule_patterns(conn, rule_id, request.form)
+        _sync_parse_rule_extractions(conn)
         conn.commit()
     flash('Правило добавлено', 'success')
     return redirect(url_for('bank', tab='rules'))
@@ -10154,8 +10295,6 @@ def bank_parse_rule_edit(rule_id):
     keyword    = request.form.get('keyword', '').strip()
     direction  = request.form.get('direction', 'any')
     account_id = request.form.get('bank_account_id', '').strip() or None
-    comm_incl  = 1 if request.form.get('commission_included') == '1' else 0
-    comm_pat   = request.form.get('commission_pattern', '').strip()
     category   = request.form.get('category', '').strip()
     sort_order = int(request.form.get('sort_order', 0) or 0)
     if not name or not keyword:
@@ -10163,9 +10302,11 @@ def bank_parse_rule_edit(rule_id):
         return redirect(url_for('bank', tab='rules'))
     with get_db() as conn:
         conn.execute(
-            'UPDATE bank_parse_rules SET bank_account_id=?, name=?, direction=?, keyword=?, commission_included=?, commission_pattern=?, category=?, sort_order=? WHERE id=?',
-            (account_id, name, direction, keyword, comm_incl, comm_pat, category, sort_order, rule_id)
+            'UPDATE bank_parse_rules SET bank_account_id=?, name=?, direction=?, keyword=?, category=?, sort_order=? WHERE id=?',
+            (account_id, name, direction, keyword, category, sort_order, rule_id)
         )
+        _save_rule_patterns(conn, rule_id, request.form)
+        _sync_parse_rule_extractions(conn)
         conn.commit()
     flash('Правило обновлено', 'success')
     return redirect(url_for('bank', tab='rules'))
@@ -10177,6 +10318,7 @@ def bank_parse_rule_edit(rule_id):
 def bank_parse_rule_delete(rule_id):
     with get_db() as conn:
         conn.execute('DELETE FROM bank_parse_rules WHERE id=?', (rule_id,))
+        _sync_parse_rule_extractions(conn)
         conn.commit()
     flash('Правило удалено', 'success')
     return redirect(url_for('bank', tab='rules'))
@@ -10220,16 +10362,47 @@ def _enrich_bank_txn(d):
     return d
 
 
+def _build_pattern_regex(example_text, example_value):
+    """Строит регулярное выражение для извлечения числа по примеру, который ввёл владелец:
+    example_text='К.224.54', example_value='224.54' -> re.escape('К.') + число-группа.
+    Возвращает None, если пример числа не найден внутри примера текста."""
+    example_text = (example_text or '').strip()
+    example_value = (example_value or '').strip()
+    if not example_text or not example_value:
+        return None
+    candidates = [example_value]
+    if '.' in example_value:
+        candidates.append(example_value.replace('.', ','))
+    elif ',' in example_value:
+        candidates.append(example_value.replace(',', '.'))
+    idx = -1
+    used = None
+    for cand in candidates:
+        idx = example_text.find(cand)
+        if idx != -1:
+            used = cand
+            break
+    if idx == -1:
+        return None
+    prefix = example_text[:idx]
+    has_decimals = '.' in used or ',' in used
+    num_pattern = r'(\d+[.,]\d+)' if has_decimals else r'(\d+(?:[.,]\d+)?)'
+    return re.escape(prefix) + num_pattern
+
+
 def _apply_bank_parse_rules(conn, txns):
-    """Применяет правила разбора (Альфа и др.) к списку транзакций (dict-ов с полями bt.*)."""
+    """Применяет правила разбора к списку транзакций (dict-ов с полями bt.*): подставляет
+    имя/категорию правила и список сумм, извлечённых по паттернам (для показа в выписке)."""
     parse_rules = conn.execute(
         'SELECT * FROM bank_parse_rules WHERE is_active=1 ORDER BY sort_order, id'
     ).fetchall()
-    _rx_cache = {}
+    patterns_by_rule = {}
+    for p in conn.execute('SELECT * FROM bank_parse_rule_patterns ORDER BY sort_order, id').fetchall():
+        patterns_by_rule.setdefault(p['rule_id'], []).append(p)
     for d in txns:
         d['parse_rule_name'] = ''
         d['parse_rule_category'] = ''
-        d['commission_extracted'] = None
+        d['extracted_patterns'] = []
         for rule in parse_rules:
             if rule['bank_account_id'] and rule['bank_account_id'] != d.get('bank_account_id'):
                 continue
@@ -10242,23 +10415,101 @@ def _apply_bank_parse_rules(conn, txns):
                 continue
             d['parse_rule_name'] = rule['name']
             d['parse_rule_category'] = rule['category'] or ''
-            if not rule['commission_included'] and rule['commission_pattern']:
-                pat = rule['commission_pattern']
-                if pat not in _rx_cache:
+            for pat in patterns_by_rule.get(rule['id'], []):
+                if not pat['regex_pattern']:
+                    continue
+                try:
+                    m = re.search(pat['regex_pattern'], d.get('description') or '', re.IGNORECASE)
+                except re.error:
+                    m = None
+                if m:
                     try:
-                        _rx_cache[pat] = re.compile(pat, re.IGNORECASE)
-                    except re.error:
-                        _rx_cache[pat] = None
-                rx = _rx_cache.get(pat)
-                if rx:
-                    m2 = rx.search(d.get('description') or '')
-                    if m2:
-                        try:
-                            d['commission_extracted'] = float(m2.group(1).replace(',', '.'))
-                        except (ValueError, IndexError):
-                            pass
+                        val = float(m.group(1).replace(',', '.'))
+                        d['extracted_patterns'].append(
+                            {'value': val, 'direction': pat['direction'], 'category': pat['category']}
+                        )
+                    except (ValueError, IndexError):
+                        pass
             break
     return txns
+
+
+def _sync_parse_rule_extractions(conn, txn_ids=None):
+    """(Пере)строит bank_parse_extracted_entries — реальные категоризированные записи по
+    филиалам, извлечённые из описаний операций по паттернам правил. Вызывается при импорте
+    новых транзакций (txn_ids) и при любом изменении правил/паттернов (txn_ids=None — все)."""
+    rules = conn.execute(
+        'SELECT * FROM bank_parse_rules WHERE is_active=1 ORDER BY sort_order, id'
+    ).fetchall()
+
+    patterns_by_rule = {}
+    for p in conn.execute('SELECT * FROM bank_parse_rule_patterns ORDER BY sort_order, id').fetchall():
+        patterns_by_rule.setdefault(p['rule_id'], []).append(dict(p))
+
+    pattern_branches = {}
+    for row in conn.execute(
+        'SELECT pattern_id, branch_id, branch_group_id FROM bank_parse_rule_pattern_branches'
+    ).fetchall():
+        ids = pattern_branches.setdefault(row['pattern_id'], set())
+        if row['branch_id']:
+            ids.add(row['branch_id'])
+        elif row['branch_group_id']:
+            for m in conn.execute(
+                'SELECT branch_id FROM branch_group_members WHERE group_id=?', (row['branch_group_id'],)
+            ).fetchall():
+                ids.add(m['branch_id'])
+
+    if txn_ids is not None and not txn_ids:
+        return
+    if txn_ids:
+        ph = ','.join('?' * len(txn_ids))
+        conn.execute(f'DELETE FROM bank_parse_extracted_entries WHERE bank_transaction_id IN ({ph})', txn_ids)
+        txns = conn.execute(
+            f'SELECT id, bank_account_id, txn_date, amount, description FROM bank_transactions WHERE id IN ({ph})',
+            txn_ids
+        ).fetchall()
+    else:
+        conn.execute('DELETE FROM bank_parse_extracted_entries')
+        txns = conn.execute(
+            'SELECT id, bank_account_id, txn_date, amount, description FROM bank_transactions'
+        ).fetchall()
+
+    if not rules:
+        return
+
+    for t in txns:
+        desc = t['description'] or ''
+        for rule in rules:
+            if rule['bank_account_id'] and rule['bank_account_id'] != t['bank_account_id']:
+                continue
+            if rule['direction'] == 'income' and t['amount'] <= 0:
+                continue
+            if rule['direction'] == 'expense' and t['amount'] >= 0:
+                continue
+            kw = (rule['keyword'] or '').lower()
+            if not kw or kw not in desc.lower():
+                continue
+            for pat in patterns_by_rule.get(rule['id'], []):
+                if not pat['regex_pattern']:
+                    continue
+                try:
+                    m = re.search(pat['regex_pattern'], desc, re.IGNORECASE)
+                except re.error:
+                    continue
+                if not m:
+                    continue
+                try:
+                    val = float(m.group(1).replace(',', '.'))
+                except (ValueError, IndexError):
+                    continue
+                bids = pattern_branches.get(pat['id']) or set()
+                for bid in bids:
+                    conn.execute('''
+                        INSERT OR REPLACE INTO bank_parse_extracted_entries
+                        (bank_transaction_id, pattern_id, branch_id, amount, direction, category, txn_date)
+                        VALUES (?,?,?,?,?,?,?)
+                    ''', (t['id'], pat['id'], bid, val, pat['direction'], pat['category'], t['txn_date']))
+            break
 
 
 @app.route('/bank/statement/<int:stmt_id>')
@@ -10549,6 +10800,7 @@ def _sber_do_sync(conn, access_token, client_id, bank_account_id, account_number
             txn['terminal_id'] = _match_terminal(conn, txn)
 
     added = 0
+    new_txn_ids = []
     for txn in txns:
         dup = conn.execute('''
             SELECT id FROM bank_transactions
@@ -10556,7 +10808,7 @@ def _sber_do_sync(conn, access_token, client_id, bank_account_id, account_number
         ''', (bank_account_id, txn['date'], txn['amount'], txn.get('description', ''))).fetchone()
         if dup:
             continue
-        conn.execute('''
+        bt_id = conn.execute('''
             INSERT INTO bank_transactions
             (statement_id, bank_account_id, txn_date, amount,
              description, counterparty, contractor_id, category, terminal_id)
@@ -10566,8 +10818,10 @@ def _sber_do_sync(conn, access_token, client_id, bank_account_id, account_number
             txn.get('description', ''), txn.get('counterparty', ''),
             txn.get('contractor_id'), txn.get('category', ''),
             txn.get('terminal_id')
-        ))
+        )).lastrowid
+        new_txn_ids.append(bt_id)
         added += 1
+    _sync_parse_rule_extractions(conn, new_txn_ids)
 
     result_str = f'+{added} новых из {len(txns)}'
     conn.execute(
