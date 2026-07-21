@@ -44,12 +44,12 @@
   <!-- Summary cards -->
   {% set total_credit = namespace(val=0) %}
   {% set total_debit = namespace(val=0) %}
-  {% set cnt_terminal = namespace(val=0) %}
+  {% set cnt_no_cat = namespace(val=0) %}
   {% for t in txns %}
     {% if not t.is_ignored %}
       {% if t.amount > 0 %}{% set total_credit.val = total_credit.val + t.amount %}{% endif %}
       {% if t.amount < 0 %}{% set total_debit.val = total_debit.val + t.amount %}{% endif %}
-      {% if t.terminal_id %}{% set cnt_terminal.val = cnt_terminal.val + 1 %}{% endif %}
+      {% if not t.effective_category %}{% set cnt_no_cat.val = cnt_no_cat.val + 1 %}{% endif %}
     {% endif %}
   {% endfor %}
 
@@ -58,7 +58,7 @@
       <div class="card metric-card" style="border-left-color:#198754">
         <div class="card-body py-2">
           <div class="text-muted small">Поступления</div>
-          <div class="fs-5 fw-bold text-success">{{ total_credit.val|money_cents }} ₽</div>
+          <div class="fs-5 fw-bold text-success" id="sumCredit">{{ total_credit.val|money_cents }} ₽</div>
         </div>
       </div>
     </div>
@@ -66,7 +66,7 @@
       <div class="card metric-card">
         <div class="card-body py-2">
           <div class="text-muted small">Списания</div>
-          <div class="fs-5 fw-bold text-danger">{{ (total_debit.val|abs)|money_cents }} ₽</div>
+          <div class="fs-5 fw-bold text-danger" id="sumDebit">{{ (total_debit.val|abs)|money_cents }} ₽</div>
         </div>
       </div>
     </div>
@@ -74,15 +74,15 @@
       <div class="card metric-card" style="border-left-color:#0d6efd">
         <div class="card-body py-2">
           <div class="text-muted small">Транзакций</div>
-          <div class="fs-5 fw-bold">{{ txns|length }}</div>
+          <div class="fs-5 fw-bold" id="cntTotal">{{ txns|length }}</div>
         </div>
       </div>
     </div>
     <div class="col-md-3">
       <div class="card metric-card" style="border-left-color:#fd7e14">
         <div class="card-body py-2">
-          <div class="text-muted small">С терминалом</div>
-          <div class="fs-5 fw-bold text-warning">{{ cnt_terminal.val }}</div>
+          <div class="text-muted small">Без категории</div>
+          <div class="fs-5 fw-bold text-warning" id="cntNoCat">{{ cnt_no_cat.val }}</div>
         </div>
       </div>
     </div>
@@ -189,7 +189,9 @@
               {% if t.is_ignored %}txn-ignored table-secondary text-muted{% endif %}"
               data-id="{{ t.id }}"
               data-optype="{{ t.op_type }}"
-              data-category="{{ t.category or '' }}"
+              data-category="{{ t.effective_category }}"
+              data-parse-cat="{{ t.parse_rule_category or '' }}"
+              data-amount="{{ t.amount }}"
               data-contractor="{{ t.contractor_id or '' }}">
               <td class="text-nowrap">{{ t.txn_date|date_fmt }}</td>
               {% if show_bank_col %}<td class="small text-nowrap text-muted">{{ t.account_name or '—' }}</td>{% endif %}
@@ -299,6 +301,37 @@ function applyFilters() {
   const catActive = checkedCats.size < allCatCount;
   document.getElementById('catFilterIcon').classList.toggle('text-primary', catActive);
   document.getElementById('catFilterIcon').classList.toggle('text-muted', !catActive);
+
+  updateSummary();
+}
+
+// ── Пересчёт сумм в шапке под текущий фильтр ────────────────────────────────
+function formatMoney(v) {
+  v = Number(v) || 0;
+  const neg = v < 0;
+  const abs = Math.abs(v);
+  const frac = Math.round((abs % 1) * 100);
+  const whole = Math.floor(abs);
+  const wholeStr = String(whole).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  const sign = neg ? '-' : '';
+  return frac > 0 ? `${sign}${wholeStr},${String(frac).padStart(2, '0')}` : `${sign}${wholeStr}`;
+}
+
+function updateSummary() {
+  let credit = 0, debit = 0, noCat = 0, total = 0;
+  document.querySelectorAll('.txn-row').forEach(row => {
+    if (row.style.display === 'none') return;
+    total++;
+    if (row.classList.contains('txn-ignored')) return;
+    const amount = parseFloat(row.dataset.amount || '0');
+    if (amount > 0) credit += amount;
+    if (amount < 0) debit += amount;
+    if (!row.dataset.category) noCat++;
+  });
+  document.getElementById('sumCredit').textContent = formatMoney(credit) + ' ₽';
+  document.getElementById('sumDebit').textContent = formatMoney(Math.abs(debit)) + ' ₽';
+  document.getElementById('cntTotal').textContent = total;
+  document.getElementById('cntNoCat').textContent = noCat;
 }
 
 // Кнопки верхнего фильтра
@@ -364,8 +397,9 @@ document.querySelectorAll('.txn-category').forEach(sel => {
     const row = document.querySelector(`.txn-row[data-id="${id}"]`);
     const ctr = row.dataset.contractor || '';
     const ign = row.classList.contains('txn-ignored') ? '1' : '';
-    row.dataset.category = this.value;
+    row.dataset.category = this.value || row.dataset.parseCat || '';
     saveRow(id, {contractor_id: ctr, category: this.value, is_ignored: ign});
+    updateSummary();
   });
 });
 </script>

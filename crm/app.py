@@ -10666,6 +10666,8 @@ def bank_statement_view(stmt_id):
         # Определяем тип операции для каждой транзакции
         txns = [_enrich_bank_txn(dict(row)) for row in txns_raw]
         _apply_bank_parse_rules(conn, txns)
+        for d in txns:
+            d['effective_category'] = d.get('category') or d.get('parse_rule_category') or ''
 
         contractors = conn.execute(
             'SELECT * FROM contractors WHERE is_active=1 AND COALESCE(is_card_merchant,0)=0 ORDER BY name'
@@ -10673,7 +10675,7 @@ def bank_statement_view(stmt_id):
         all_exp_cats     = [c for c in get_expense_categories(conn) if c['show_contractors']]
         exp_cats_income  = [c for c in all_exp_cats if c['type'] == 'income']
         exp_cats_expense = [c for c in all_exp_cats if c['type'] != 'income']
-    unique_cats = sorted(set(d['category'] for d in txns if d.get('category')))
+    unique_cats = sorted(set(d['effective_category'] for d in txns if d['effective_category']))
     return render_template('bank_statement.html',
         stmt=stmt, txns=txns, contractors=contractors,
         exp_cats_income=exp_cats_income, exp_cats_expense=exp_cats_expense,
@@ -10703,6 +10705,8 @@ def bank_statements_all():
         ''', (date_from, date_to)).fetchall()
         txns = [_enrich_bank_txn(dict(row)) for row in txns_raw]
         _apply_bank_parse_rules(conn, txns)
+        for d in txns:
+            d['effective_category'] = d.get('category') or d.get('parse_rule_category') or ''
 
         contractors = conn.execute(
             'SELECT * FROM contractors WHERE is_active=1 AND COALESCE(is_card_merchant,0)=0 ORDER BY name'
@@ -10710,7 +10714,7 @@ def bank_statements_all():
         all_exp_cats     = [c for c in get_expense_categories(conn) if c['show_contractors']]
         exp_cats_income  = [c for c in all_exp_cats if c['type'] == 'income']
         exp_cats_expense = [c for c in all_exp_cats if c['type'] != 'income']
-    unique_cats = sorted(set(d['category'] for d in txns if d.get('category')))
+    unique_cats = sorted(set(d['effective_category'] for d in txns if d['effective_category']))
     stmt = {'filename': 'Выписка по всем', 'account_name': 'Все счета',
             'date_from': date_from, 'date_to': date_to, 'row_count': len(txns)}
     return render_template('bank_statement.html',
