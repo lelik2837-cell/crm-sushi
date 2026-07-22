@@ -513,6 +513,11 @@
                                 <i class="bi bi-shield-lock me-2"></i>Роли и доступ
                             </a>
                         </li>
+                        <li>
+                            <a class="dropdown-item {% if request.endpoint=='settings' and request.args.get('tab')=='salary_payouts' %}active{% endif %}" href="{{ url_for('settings') }}?tab=salary_payouts">
+                                <i class="bi bi-cash-coin me-2"></i>Выплатные дни
+                            </a>
+                        </li>
                         {% endif %}
                     </ul>
                 </li>

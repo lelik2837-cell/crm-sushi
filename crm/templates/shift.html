@@ -457,6 +457,48 @@
     </div>
   </div>
 
+  <!-- BLOCK: ЗАДОЛЖЕННОСТЬ ПО ЗП -->
+  {% if debt_payments or payout_eligible %}
+  <div class="s-card">
+    <div class="s-card-header">
+      <div class="s-card-title">
+        <div class="s-card-icon icon-purple">💰</div>
+        Задолженность по ЗП
+      </div>
+    </div>
+    <div class="s-card-body">
+      {% if can_edit and payout_eligible %}
+      <div style="display:flex; gap:6px; align-items:center; margin-bottom:10px;">
+        <select id="debt-payout-select" class="field-select" style="flex:1; font-size:12px;" onchange="onDebtPayoutSelect()">
+          <option value="">— выбрать сотрудника к выплате —</option>
+          {% for it in payout_eligible %}
+          <option value="{{ it.employee_id }}:{{ it.rule_id }}">{{ it.name }} — {{ it.rule_name }} ({{ it.month_label }}): {{ it.remaining|int }} ₽</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div id="debt-payout-add-row" style="display:none; align-items:center; gap:8px; padding:8px; background:#f9fafb; border-radius:8px; margin-bottom:10px;">
+        <span id="debt-payout-add-name" style="font-size:12px; font-weight:600; flex:1;"></span>
+        <input type="text" id="debt-payout-add-amount" class="mini-input decimal-field" inputmode="decimal" style="width:100px; text-align:right;">
+        <button type="button" class="ph-btn ph-btn-primary" style="font-size:12px;padding:5px 10px;white-space:nowrap;" onclick="submitDebtPayout()">Выплатить</button>
+        <button type="button" class="btn-add" style="width:auto;margin:0;padding:5px 10px;background:#f3f4f6;color:#6b7280;" onclick="cancelDebtPayoutAdd()">Отмена</button>
+      </div>
+      {% endif %}
+      <div id="debt-payout-body">
+      {% for p in debt_payments %}
+      <div class="expense-row" data-employee-id="{{ p.employee_id }}" data-rule-id="{{ p.payout_rule_id }}">
+        <div class="expense-row-main" style="grid-template-columns: 1fr 90px 24px;">
+          <span style="font-size:13px;"><strong>{{ p.emp_name }}</strong> <span style="color:#6b7280;">— {{ p.rule_name }}</span></span>
+          <span style="font-size:13px; text-align:right; font-weight:700;">{{ p.total_amount|int }} ₽</span>
+          {% if can_edit %}<button class="row-del" onclick="deleteDebtPayment(this)">✕</button>{% else %}<div></div>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+      </div>
+      {% if not debt_payments %}<div id="no-debt-payments" style="text-align:center; color:#9ca3af; padding:8px 0; font-size:13px;">Выплат пока нет</div>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+
   <!-- BLOCK: ПЛЮСЫ В КАССУ -->
   <div class="s-card">
     <div class="s-card-header">
@@ -927,6 +969,8 @@
 <script>
 const SHIFT_ID = {{ shift.id }};
 const CAN_EDIT = {{ 'true' if can_edit else 'false' }};
+const PAYOUT_ELIGIBLE = {{ payout_eligible | tojson }};
+let debtPayoutTotal = {{ debt_payout_total|default(0) }};
 const SHIFT_IS_CLOSED = {{ 'true' if shift.status == 'closed' else 'false' }};
 const IS_OWNER = {{ 'true' if is_owner else 'false' }};
 const SHIFT_WEEKDAY = {{ shift_weekday }};  // 0=Пн, 4=Пт, 5=Сб
@@ -1110,9 +1154,9 @@ function updateKassa() {
     if (pay === 'cash') taxiCash += readNum(block.querySelector('.taxi-amount-input'));
   });
 
-  // Итого нал = утром в кассе + выручка нал + размен + плюсы − такси нал − расходы нал − ФОТ
+  // Итого нал = утром в кассе + выручка нал + размен + плюсы − такси нал − расходы нал − ФОТ − выплаты долга по ЗП
   const changeAmt   = parseFloat(document.getElementById('change-amount-val')?.value || 0) || 0;
-  const kassaNal    = morningCash + cashIn + changeAmt + plusCash - taxiCash - expCash - paidSalary;
+  const kassaNal    = morningCash + cashIn + changeAmt + plusCash - taxiCash - expCash - paidSalary - debtPayoutTotal;
   const kassaBeznal = cardIn; // только карта, без онлайн
   const fmt = n => Math.round(n).toLocaleString('ru-RU') + ' ₽';
   document.getElementById('kassa-nал').textContent = fmt(kassaNal);
@@ -1304,6 +1348,55 @@ function deletePlus(btn, id) {
   if (!confirm('Удалить запись?')) return;
   fetch(`/shift/${SHIFT_ID}/delete-plus/${realId}`, {method:'POST'})
     .then(r => r.json()).then(d => { if (d.ok) { row.remove(); updateKassa(); } });
+}
+
+// ── Задолженность по ЗП ──────────────────────────────────────────────────────
+function onDebtPayoutSelect() {
+  const sel = document.getElementById('debt-payout-select');
+  const row = document.getElementById('debt-payout-add-row');
+  const val = sel.value;
+  if (!val) { row.style.display = 'none'; return; }
+  const [empId, ruleId] = val.split(':');
+  const item = PAYOUT_ELIGIBLE.find(it => String(it.employee_id) === empId && String(it.rule_id) === ruleId);
+  if (!item) return;
+  document.getElementById('debt-payout-add-name').textContent = item.name + ' — ' + item.rule_name + ' (' + item.month_label + ')';
+  const amtInput = document.getElementById('debt-payout-add-amount');
+  amtInput.value = Math.round(item.due);
+  amtInput.dataset.empId = empId;
+  amtInput.dataset.ruleId = ruleId;
+  row.style.display = 'flex';
+}
+
+function cancelDebtPayoutAdd() {
+  document.getElementById('debt-payout-select').value = '';
+  document.getElementById('debt-payout-add-row').style.display = 'none';
+}
+
+function submitDebtPayout() {
+  const amtInput = document.getElementById('debt-payout-add-amount');
+  const empId = amtInput.dataset.empId;
+  const ruleId = amtInput.dataset.ruleId;
+  const amount = readDecimal(amtInput);
+  if (!empId || !ruleId || !(amount > 0)) return;
+  fetch(`/shift/${SHIFT_ID}/pay-debt`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({employee_id: parseInt(empId), rule_id: parseInt(ruleId), amount: amount})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) { location.reload(); } else { alert(d.error || 'Не удалось выплатить'); }
+  });
+}
+
+function deleteDebtPayment(btn) {
+  if (!confirm('Отменить эту выплату?')) return;
+  const row = btn.closest('[data-employee-id]');
+  const empId = row.dataset.employeeId;
+  const ruleId = row.dataset.ruleId;
+  fetch(`/shift/${SHIFT_ID}/delete-debt-payment`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({employee_id: parseInt(empId), rule_id: parseInt(ruleId)})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) { location.reload(); } else { alert(d.error || 'Не удалось отменить выплату'); }
+  });
 }
 
 document.querySelectorAll('#plus-body [data-id]').forEach(row => {

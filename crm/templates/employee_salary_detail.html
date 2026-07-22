@@ -117,10 +117,12 @@
                     {% if r.penalty_amount %}−{{ '{:,.0f}'.format(r.penalty_amount) }} ₽{% else %}—{% endif %}
                 </td>
                 <td class="text-end fw-bold">{{ '{:,.0f}'.format(r.total_amount or 0) }} ₽</td>
-                <td class="text-end text-success">{{ '{:,.0f}'.format(r.total_amount if r.is_paid else 0) }} ₽</td>
+                <td class="text-end text-success">{{ '{:,.0f}'.format(r.row_paid) }} ₽</td>
                 <td class="text-center">
-                    {% if r.is_paid %}
+                    {% if r.row_paid >= (r.total_amount or 0) - 0.5 %}
                         <span class="badge bg-success">Выплачено</span>
+                    {% elif r.row_paid > 0 %}
+                        <span class="badge bg-warning text-dark">Частично</span>
                     {% else %}
                         <span class="badge bg-danger">Не выплачено</span>
                     {% endif %}

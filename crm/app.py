@@ -1884,6 +1884,26 @@ def init_db():
         if 'updated_count' not in _oib_cols:
             conn.execute("ALTER TABLE orders_import_batches ADD COLUMN updated_count INTEGER DEFAULT 0")
 
+        # Выплата задолженности по ЗП («выплатные дни») — правила настроек
+        # (дата/период/лимит) + доработка журнала выплат под погашение долга
+        # из другой (обычно давно закрытой) смены наличными текущей смены.
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS salary_payout_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                day_of_month INTEGER NOT NULL,
+                period TEXT NOT NULL DEFAULT 'previous_month' CHECK(period IN ('current_month','previous_month')),
+                limit_amount REAL DEFAULT NULL,
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        ''')
+        _sp_cols = [r[1] for r in conn.execute("PRAGMA table_info(salary_payments)").fetchall()]
+        if 'paid_from_shift_id' not in _sp_cols:
+            conn.execute("ALTER TABLE salary_payments ADD COLUMN paid_from_shift_id INTEGER REFERENCES shifts(id)")
+        if 'payout_rule_id' not in _sp_cols:
+            conn.execute("ALTER TABLE salary_payments ADD COLUMN payout_rule_id INTEGER REFERENCES salary_payout_rules(id)")
+
         conn.commit()
 
 
@@ -2043,12 +2063,131 @@ def _calc_prev_kassa_nal(conn, branch_id, before_date):
                             WHERE t.shift_id=s.id AND t.payment_type='cash'), 0)
                - COALESCE((SELECT SUM(es.total_amount) FROM employee_shifts es
                             WHERE es.shift_id=s.id AND es.is_paid=1), 0)
+               - COALESCE((SELECT SUM(sp.amount) FROM salary_payments sp
+                            WHERE sp.paid_from_shift_id=s.id), 0)
                AS kassa_nal
         FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id
         WHERE s.branch_id=? AND s.date<?
         ORDER BY s.date DESC LIMIT 1
     ''', (branch_id, before_date)).fetchone()
     return (row['kassa_nal'] or 0) if row else 0
+
+
+def _calc_shift_kassa_nal(conn, shift_id):
+    """Живой пересчёт «Итого нал» для конкретной (обычно текущей) смены — та же формула,
+    что и в _calc_prev_kassa_nal/JS updateKassa(), с учётом выплат задолженности по ЗП,
+    сделанных из кассы именно этой смены. Используется, чтобы после выплаты долга сохранённое
+    значение shift_revenue.kassa_nal сразу было верным (для завтрашней утренней кассы и архива)."""
+    row = conn.execute('''
+        SELECT COALESCE(r.morning_cash, 0)
+               + COALESCE(r.cash_amount, 0)
+               + COALESCE(r.change_amount, 0)
+               + COALESCE((SELECT SUM(cp.amount_cash) FROM cash_plus_entries cp WHERE cp.shift_id=s.id), 0)
+               - COALESCE((SELECT SUM(e.amount_cash) FROM expenses e WHERE e.shift_id=s.id), 0)
+               - COALESCE((SELECT SUM(t.amount) FROM taxi_trips t
+                            WHERE t.shift_id=s.id AND t.payment_type='cash'), 0)
+               - COALESCE((SELECT SUM(es.total_amount) FROM employee_shifts es
+                            WHERE es.shift_id=s.id AND es.is_paid=1), 0)
+               - COALESCE((SELECT SUM(sp.amount) FROM salary_payments sp
+                            WHERE sp.paid_from_shift_id=s.id), 0)
+               AS kassa_nal
+        FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id
+        WHERE s.id=?
+    ''', (shift_id,)).fetchone()
+    return (row['kassa_nal'] or 0) if row else 0
+
+
+def _payout_period_bounds(rule_period, ref_date):
+    """Границы (первый/последний день, подпись) месяца, за который правило выплаты
+    ('current_month'/'previous_month') считает задолженность, относительно даты смены."""
+    y, m = ref_date.year, ref_date.month
+    if rule_period == 'previous_month':
+        m -= 1
+        if m == 0:
+            m = 12
+            y -= 1
+    start = date(y, m, 1)
+    end = date(y, m, calendar.monthrange(y, m)[1])
+    months_ru = ['', 'январь', 'февраль', 'март', 'апрель', 'май', 'июнь',
+                 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь']
+    label = f"{months_ru[m]} {y}"
+    return start.isoformat(), end.isoformat(), label
+
+
+def _active_payout_rules(conn, ref_date):
+    """Правила выплат, у которых уже наступила дата в месяце ref_date (действуют
+    с этого числа и по каждый следующий день, пока не будет погашена вся задолженность)."""
+    d = date.fromisoformat(ref_date) if isinstance(ref_date, str) else ref_date
+    rules = conn.execute(
+        'SELECT * FROM salary_payout_rules WHERE is_active=1 AND day_of_month<=? ORDER BY day_of_month, id',
+        (d.day,)
+    ).fetchall()
+    result = []
+    for r in rules:
+        month_start, month_end, label = _payout_period_bounds(r['period'], d)
+        result.append({
+            'id': r['id'], 'name': r['name'], 'period': r['period'],
+            'limit_amount': r['limit_amount'],
+            'month_start': month_start, 'month_end': month_end, 'month_label': label,
+        })
+    return result
+
+
+def _payout_eligible_employees(conn, branch_id, ref_date):
+    """Для блока «Задолженность по ЗП» в смене филиала branch_id: по каждому активному
+    на дату ref_date правилу — сотрудники, привязанные к этому филиалу (employee_branches),
+    у которых есть непогашенный остаток ЗП за период правила (сумма — по всем филиалам,
+    где сотрудник работал; уже сделанные выплаты и старые «оплачено на смене» учтены)."""
+    rules = _active_payout_rules(conn, ref_date)
+    items = []
+    for rule in rules:
+        rows = conn.execute('''
+            SELECT es.employee_id AS employee_id,
+                   COALESCE(e.full_name, es.full_name_snapshot) AS name,
+                   SUM(es.total_amount
+                       - CASE WHEN es.is_paid=1 THEN es.total_amount ELSE 0 END
+                       - COALESCE((SELECT SUM(sp.amount) FROM salary_payments sp
+                                    WHERE sp.employee_shift_id=es.id), 0)
+                   ) AS remaining
+            FROM employee_shifts es
+            JOIN shifts s ON s.id = es.shift_id
+            LEFT JOIN employees e ON e.id = es.employee_id
+            WHERE s.date BETWEEN ? AND ?
+              AND es.employee_id IN (SELECT employee_id FROM employee_branches WHERE branch_id=?)
+            GROUP BY es.employee_id
+            HAVING remaining > 0.01
+            ORDER BY name
+        ''', (rule['month_start'], rule['month_end'], branch_id)).fetchall()
+        for r in rows:
+            remaining = float(r['remaining'])
+            limit_amount = rule['limit_amount']
+            if limit_amount:
+                # Лимит — это потолок на ВЕСЬ период по этому правилу (например «аванс
+                # не больше 10000»), а не разрешение заново на каждую выплату — поэтому
+                # учитываем уже выплаченное этим правилом за этот период у этого сотрудника.
+                already = conn.execute('''
+                    SELECT COALESCE(SUM(sp.amount), 0) AS s
+                    FROM salary_payments sp
+                    WHERE sp.employee_id=? AND sp.payout_rule_id=?
+                      AND sp.employee_shift_id IN (
+                        SELECT es2.id FROM employee_shifts es2 JOIN shifts s2 ON s2.id=es2.shift_id
+                        WHERE s2.date BETWEEN ? AND ?
+                      )
+                ''', (r['employee_id'], rule['id'], rule['month_start'], rule['month_end'])).fetchone()
+                left_under_limit = max(0.0, limit_amount - float(already['s'] or 0))
+                due = min(remaining, left_under_limit)
+            else:
+                due = remaining
+            if due <= 0.01:
+                continue
+            items.append({
+                'employee_id': r['employee_id'], 'name': r['name'],
+                'rule_id': rule['id'], 'rule_name': rule['name'],
+                'month_label': rule['month_label'],
+                'remaining': round(remaining, 2), 'due': round(due, 2),
+                'limit_amount': limit_amount,
+            })
+    return items
 
 
 def _apply_change_amount_to_shift(conn, shift_id, branch_id, shift_date):
@@ -3634,6 +3773,25 @@ def shift_view(shift_id):
             if key not in _seen_br:
                 _seen_br[key] = {'role': r['role'], 'threshold_pct': float(r['threshold_pct']), 'bonus_pct': float(r['bonus_pct'])}
         bonus_rules_list = list(_seen_br.values())
+
+        # Задолженность по ЗП: сотрудники, доступные к выплате сегодня (по правилам
+        # из настроек), плюс уже сделанные из этой смены выплаты (остаются в смене).
+        payout_eligible = _payout_eligible_employees(conn, shift['branch_id'], shift['date'])
+        debt_payments_rows = conn.execute('''
+            SELECT dp.employee_id, COALESCE(e.full_name, '') AS emp_name,
+                   dp.payout_rule_id, COALESCE(r.name, '') AS rule_name,
+                   SUM(dp.amount) AS total_amount, MAX(dp.created_at) AS created_at,
+                   MAX(dp.paid_by_name) AS paid_by_name
+            FROM salary_payments dp
+            LEFT JOIN employees e ON e.id = dp.employee_id
+            LEFT JOIN salary_payout_rules r ON r.id = dp.payout_rule_id
+            WHERE dp.paid_from_shift_id = ?
+            GROUP BY dp.employee_id, dp.payout_rule_id
+            ORDER BY created_at DESC
+        ''', (shift_id,)).fetchall()
+        debt_payments = [dict(r) for r in debt_payments_rows]
+        debt_payout_total = sum(float(r['total_amount'] or 0) for r in debt_payments)
+
         return render_template('shift.html',
             shift=shift, revenue=revenue, expenses=expenses, plus_entries=plus_entries,
             staff=staff, employees=employees, taxi_staff=taxi_staff,
@@ -3651,6 +3809,9 @@ def shift_view(shift_id):
             prev_actual_cash=prev_actual_cash,
             promokod=promokod,
             bonus_rules_list=bonus_rules_list,
+            payout_eligible=payout_eligible,
+            debt_payments=debt_payments,
+            debt_payout_total=debt_payout_total,
             shift_terminals=[{'terminal_number': r['terminal_number'], 'amount': r['amount']}
                              for r in shift_terminals_rows])
 
@@ -4277,6 +4438,135 @@ def pay_staff(shift_id, staff_id):
         log_action(conn, 'salary_paid',
             f"Выплата ЗП: {name} ({role_lbl}), {_fmt_money(amount)}",
             shift_id=shift_id, entity_id=staff_id)
+        conn.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/shift/<int:shift_id>/pay-debt', methods=['POST'])
+@login_required
+def pay_salary_debt(shift_id):
+    """Погашение задолженности по ЗП за прошлые смены наличными текущей смены
+    (блок «Задолженность по ЗП» в смене, см. настройки → «Выплатные дни»)."""
+    if not _can_edit_shift(shift_id):
+        return jsonify({'error': 'Нет доступа'}), 403
+    data = request.json or {}
+    employee_id = data.get('employee_id')
+    rule_id = data.get('rule_id')
+    amount = _f(data, 'amount')
+    comment = (data.get('comment') or '').strip()
+    if not employee_id or not rule_id or amount <= 0:
+        return jsonify({'error': 'Некорректные данные'}), 400
+    with get_db() as conn:
+        shift = conn.execute('SELECT * FROM shifts WHERE id=?', (shift_id,)).fetchone()
+        if not shift:
+            return jsonify({'error': 'Смена не найдена'}), 404
+        rule = conn.execute('SELECT * FROM salary_payout_rules WHERE id=? AND is_active=1', (rule_id,)).fetchone()
+        if not rule:
+            return jsonify({'error': 'Правило выплаты не найдено или отключено'}), 404
+        linked = conn.execute(
+            'SELECT 1 FROM employee_branches WHERE employee_id=? AND branch_id=?',
+            (employee_id, shift['branch_id'])
+        ).fetchone()
+        if not linked:
+            return jsonify({'error': 'Сотрудник не привязан к этому филиалу'}), 400
+        month_start, month_end, _ = _payout_period_bounds(rule['period'], date.fromisoformat(shift['date']))
+        # Пересчитываем остаток долга и лимит на сервере — сумме с клиента не доверяем
+        remaining_row = conn.execute('''
+            SELECT COALESCE(SUM(es.total_amount
+                - CASE WHEN es.is_paid=1 THEN es.total_amount ELSE 0 END
+                - COALESCE((SELECT SUM(sp.amount) FROM salary_payments sp WHERE sp.employee_shift_id=es.id), 0)
+            ), 0) AS remaining
+            FROM employee_shifts es JOIN shifts s ON s.id=es.shift_id
+            WHERE es.employee_id=? AND s.date BETWEEN ? AND ?
+        ''', (employee_id, month_start, month_end)).fetchone()
+        remaining = float(remaining_row['remaining'] or 0)
+        if rule['limit_amount']:
+            # Лимит — потолок на весь период по этому правилу, а не на одну выплату:
+            # учитываем уже выплаченное этим же правилом за этот период этому сотруднику.
+            already_row = conn.execute('''
+                SELECT COALESCE(SUM(sp.amount), 0) AS s
+                FROM salary_payments sp
+                WHERE sp.employee_id=? AND sp.payout_rule_id=?
+                  AND sp.employee_shift_id IN (
+                    SELECT es2.id FROM employee_shifts es2 JOIN shifts s2 ON s2.id=es2.shift_id
+                    WHERE s2.date BETWEEN ? AND ?
+                  )
+            ''', (employee_id, rule_id, month_start, month_end)).fetchone()
+            left_under_limit = max(0.0, float(rule['limit_amount']) - float(already_row['s'] or 0))
+            max_allowed = min(remaining, left_under_limit)
+        else:
+            max_allowed = remaining
+        if amount > max_allowed + 0.01:
+            amount = max_allowed
+        if amount <= 0.01:
+            return jsonify({'error': 'Нет задолженности к выплате по этому правилу'}), 400
+        # FIFO: гасим самые старые непогашенные смены сотрудника за период правила
+        rows = conn.execute('''
+            SELECT es.id, es.total_amount,
+                   COALESCE((SELECT SUM(sp.amount) FROM salary_payments sp WHERE sp.employee_shift_id=es.id), 0) AS already_paid
+            FROM employee_shifts es JOIN shifts s ON s.id=es.shift_id
+            WHERE es.employee_id=? AND s.date BETWEEN ? AND ? AND es.is_paid=0
+            ORDER BY s.date ASC, es.id ASC
+        ''', (employee_id, month_start, month_end)).fetchall()
+        to_pay = amount
+        for r in rows:
+            if to_pay <= 0.005:
+                break
+            row_remaining = float(r['total_amount'] or 0) - float(r['already_paid'] or 0)
+            if row_remaining <= 0.005:
+                continue
+            portion = min(row_remaining, to_pay)
+            conn.execute('''
+                INSERT INTO salary_payments
+                (employee_id, employee_shift_id, amount, payment_date, comment,
+                 paid_by, paid_by_name, paid_from_shift_id, payout_rule_id)
+                VALUES (?,?,?,?,?,?,?,?,?)
+            ''', (employee_id, r['id'], portion, shift['date'], comment,
+                  session['user_id'], session.get('full_name', ''), shift_id, rule_id))
+            to_pay -= portion
+        paid_amount = round(amount - to_pay, 2)
+        emp = conn.execute('SELECT full_name FROM employees WHERE id=?', (employee_id,)).fetchone()
+        emp_name = emp['full_name'] if emp else ''
+        log_action(conn, 'salary_debt_paid',
+            f"Погашена задолженность по ЗП: {emp_name}, {_fmt_money(paid_amount)} "
+            f"(правило «{rule['name']}», {_payout_period_bounds(rule['period'], date.fromisoformat(shift['date']))[2]})",
+            shift_id=shift_id)
+        conn.execute('UPDATE shift_revenue SET kassa_nal=? WHERE shift_id=?',
+                     (_calc_shift_kassa_nal(conn, shift_id), shift_id))
+        conn.commit()
+    return jsonify({'ok': True, 'paid_amount': paid_amount})
+
+
+@app.route('/shift/<int:shift_id>/delete-debt-payment', methods=['POST'])
+@login_required
+def delete_debt_payment(shift_id):
+    """Отмена ошибочной выплаты задолженности (по сотруднику+правилу в этой смене) —
+    деньги «возвращаются» в долг и в кассу этой смены."""
+    if not _can_edit_shift(shift_id):
+        return jsonify({'error': 'Нет доступа'}), 403
+    data = request.json or {}
+    employee_id = data.get('employee_id')
+    rule_id = data.get('rule_id')
+    if not employee_id or not rule_id:
+        return jsonify({'error': 'Некорректные данные'}), 400
+    with get_db() as conn:
+        rows = conn.execute(
+            'SELECT * FROM salary_payments WHERE paid_from_shift_id=? AND employee_id=? AND payout_rule_id=?',
+            (shift_id, employee_id, rule_id)
+        ).fetchall()
+        if not rows:
+            return jsonify({'error': 'Не найдено'}), 404
+        total = sum(float(r['amount'] or 0) for r in rows)
+        conn.execute(
+            'DELETE FROM salary_payments WHERE paid_from_shift_id=? AND employee_id=? AND payout_rule_id=?',
+            (shift_id, employee_id, rule_id)
+        )
+        emp = conn.execute('SELECT full_name FROM employees WHERE id=?', (employee_id,)).fetchone()
+        log_action(conn, 'salary_debt_payment_deleted',
+            f"Удалена выплата задолженности по ЗП: {emp['full_name'] if emp else ''}, {_fmt_money(total)}",
+            shift_id=shift_id)
+        conn.execute('UPDATE shift_revenue SET kassa_nal=? WHERE shift_id=?',
+                     (_calc_shift_kassa_nal(conn, shift_id), shift_id))
         conn.commit()
     return jsonify({'ok': True})
 
@@ -6200,6 +6490,9 @@ def settings():
             'SELECT * FROM api_orders_log ORDER BY created_at DESC LIMIT 50'
         ).fetchall()
         role_perms = {r: get_role_permissions(conn, r) for r in ROLE_CONFIGURABLE}
+        salary_payout_rules = conn.execute(
+            'SELECT * FROM salary_payout_rules ORDER BY day_of_month, id'
+        ).fetchall()
     return render_template('settings.html',
         exp_cats=exp_cats, exp_cats_parents=exp_cats_parents,
         cat_branches=cat_branches,
@@ -6217,7 +6510,8 @@ def settings():
         positions=positions, branch_groups_for_rates=branch_groups_for_rates,
         role_perms=role_perms, menu_items=MENU_ITEMS, menu_group_labels=MENU_GROUP_LABELS,
         menu_subitems=MENU_SUBITEMS,
-        role_configurable=ROLE_CONFIGURABLE, login_role_labels=LOGIN_ROLE_LABELS)
+        role_configurable=ROLE_CONFIGURABLE, login_role_labels=LOGIN_ROLE_LABELS,
+        salary_payout_rules=salary_payout_rules)
 
 
 @app.route('/settings/role-permissions/save', methods=['POST'])
@@ -6501,6 +6795,85 @@ def edit_bonus_rule(rule_id):
         conn.commit()
     flash('Правило обновлено', 'success')
     return redirect(url_for('settings') + '?tab=bonuses')
+
+
+# ─── ВЫПЛАТНЫЕ ДНИ (задолженность по ЗП) ──────────────────────────────────────
+
+@app.route('/settings/salary-payout-rules/add', methods=['POST'])
+@login_required
+@owner_required
+def add_salary_payout_rule():
+    name = request.form.get('name', '').strip()
+    day_raw = request.form.get('day_of_month', '').strip()
+    period = request.form.get('period', 'previous_month')
+    limit_raw = request.form.get('limit_amount', '').strip().replace(',', '.')
+    if not name or not day_raw.isdigit() or not (1 <= int(day_raw) <= 31) or period not in ('current_month', 'previous_month'):
+        flash('Заполните все поля корректно', 'danger')
+        return redirect(url_for('settings') + '?tab=salary_payouts')
+    limit_amount = None
+    if limit_raw:
+        try:
+            limit_amount = float(limit_raw)
+        except ValueError:
+            flash('Некорректный лимит', 'danger')
+            return redirect(url_for('settings') + '?tab=salary_payouts')
+    with get_db() as conn:
+        conn.execute(
+            'INSERT INTO salary_payout_rules (name, day_of_month, period, limit_amount) VALUES (?,?,?,?)',
+            (name, int(day_raw), period, limit_amount)
+        )
+        conn.commit()
+    flash('Правило выплаты добавлено', 'success')
+    return redirect(url_for('settings') + '?tab=salary_payouts')
+
+
+@app.route('/settings/salary-payout-rules/<int:rule_id>/edit', methods=['POST'])
+@login_required
+@owner_required
+def edit_salary_payout_rule(rule_id):
+    name = request.form.get('name', '').strip()
+    day_raw = request.form.get('day_of_month', '').strip()
+    period = request.form.get('period', 'previous_month')
+    limit_raw = request.form.get('limit_amount', '').strip().replace(',', '.')
+    if not name or not day_raw.isdigit() or not (1 <= int(day_raw) <= 31) or period not in ('current_month', 'previous_month'):
+        flash('Заполните все поля корректно', 'danger')
+        return redirect(url_for('settings') + '?tab=salary_payouts')
+    limit_amount = None
+    if limit_raw:
+        try:
+            limit_amount = float(limit_raw)
+        except ValueError:
+            flash('Некорректный лимит', 'danger')
+            return redirect(url_for('settings') + '?tab=salary_payouts')
+    with get_db() as conn:
+        conn.execute(
+            'UPDATE salary_payout_rules SET name=?, day_of_month=?, period=?, limit_amount=? WHERE id=?',
+            (name, int(day_raw), period, limit_amount, rule_id)
+        )
+        conn.commit()
+    flash('Правило выплаты обновлено', 'success')
+    return redirect(url_for('settings') + '?tab=salary_payouts')
+
+
+@app.route('/settings/salary-payout-rules/<int:rule_id>/delete', methods=['POST'])
+@login_required
+@owner_required
+def delete_salary_payout_rule(rule_id):
+    with get_db() as conn:
+        conn.execute('DELETE FROM salary_payout_rules WHERE id=?', (rule_id,))
+        conn.commit()
+    flash('Правило выплаты удалено', 'success')
+    return redirect(url_for('settings') + '?tab=salary_payouts')
+
+
+@app.route('/settings/salary-payout-rules/<int:rule_id>/toggle', methods=['POST'])
+@login_required
+@owner_required
+def toggle_salary_payout_rule(rule_id):
+    with get_db() as conn:
+        conn.execute('UPDATE salary_payout_rules SET is_active=1-is_active WHERE id=?', (rule_id,))
+        conn.commit()
+    return redirect(url_for('settings') + '?tab=salary_payouts')
 
 
 # ─── POSITIONS (ДОЛЖНОСТИ) ────────────────────────────────────────────────────
@@ -6800,11 +7173,16 @@ def reports():
             rev_pivot[d][b['id']]['plan'] for d in rev_dates for b in rev_branch_list
         )
 
+        # «Выплачено» = отмечено оплаченным на самой смене, либо (если нет) погашено
+        # позже выплатой задолженности по ЗП (см. настройки → «Выплатные дни»).
+        _paid_expr = ("CASE WHEN es.is_paid=1 THEN es.total_amount ELSE "
+                       "COALESCE((SELECT SUM(sp.amount) FROM salary_payments sp "
+                       "WHERE sp.employee_shift_id=es.id), 0) END")
         salary_data = conn.execute(f'''
             SELECT es.full_name_snapshot, es.role_snapshot,
                    SUM(es.total_amount) as earned,
-                   SUM(CASE WHEN es.is_paid=1 THEN es.total_amount ELSE 0 END) as paid,
-                   SUM(CASE WHEN es.is_paid=0 THEN es.total_amount ELSE 0 END) as debt,
+                   SUM({_paid_expr}) as paid,
+                   SUM(es.total_amount - ({_paid_expr})) as debt,
                    COUNT(*) as shifts_count
             FROM employee_shifts es
             JOIN shifts s ON s.id=es.shift_id
@@ -6838,8 +7216,8 @@ def reports():
                    b.name                                        AS branch_name,
                    COUNT(*)                                      AS shifts_count,
                    COALESCE(SUM(es.total_amount), 0)             AS earned,
-                   COALESCE(SUM(CASE WHEN es.is_paid=1 THEN es.total_amount ELSE 0 END), 0) AS paid,
-                   COALESCE(SUM(CASE WHEN es.is_paid=0 THEN es.total_amount ELSE 0 END), 0) AS debt
+                   COALESCE(SUM({_paid_expr}), 0) AS paid,
+                   COALESCE(SUM(es.total_amount - ({_paid_expr})), 0) AS debt
             FROM employee_shifts es
             JOIN shifts    s ON s.id    = es.shift_id
             JOIN branches  b ON b.id    = s.branch_id
@@ -6906,7 +7284,7 @@ def reports():
                 SELECT s.date,
                        COALESCE(e2.full_name, es.full_name_snapshot) AS name,
                        COALESCE(es.total_amount, 0) AS earned,
-                       CASE WHEN es.is_paid=1 THEN COALESCE(es.total_amount, 0) ELSE 0 END AS paid
+                       COALESCE({_paid_expr}, 0) AS paid
                 FROM employee_shifts es
                 JOIN shifts s ON s.id = es.shift_id
                 LEFT JOIN employees e2 ON e2.id = es.employee_id
@@ -7271,7 +7649,7 @@ def employee_salary_detail(emp_id):
             flash('Сотрудник не найден', 'danger')
             return redirect(url_for('reports') + '?tab=salary')
 
-        shifts_data = conn.execute('''
+        shifts_data_rows = conn.execute('''
             SELECT es.id AS es_id,
                    s.id  AS shift_id,
                    s.date,
@@ -7289,7 +7667,9 @@ def employee_salary_detail(emp_id):
                    es.total_amount,
                    es.paid_amount,
                    es.is_paid,
-                   es.bonus_comment
+                   es.bonus_comment,
+                   COALESCE((SELECT SUM(sp.amount) FROM salary_payments sp
+                              WHERE sp.employee_shift_id=es.id), 0) AS debt_paid_via
             FROM employee_shifts es
             JOIN shifts s ON s.id = es.shift_id
             JOIN branches b ON b.id = s.branch_id
@@ -7297,8 +7677,16 @@ def employee_salary_detail(emp_id):
             ORDER BY s.date DESC, b.name
         ''', (emp_id, date_from, date_to)).fetchall()
 
+        # «Выплачено» по строке = отмечено на смене, либо (если нет) погашено позже
+        # выплатой задолженности по ЗП — может быть и частичным.
+        shifts_data = []
+        for r in shifts_data_rows:
+            d = dict(r)
+            d['row_paid'] = float(d['total_amount'] or 0) if d['is_paid'] else float(d['debt_paid_via'] or 0)
+            shifts_data.append(d)
+
         total_earned = sum(float(r['total_amount'] or 0) for r in shifts_data)
-        total_paid   = sum(float(r['total_amount'] if r['is_paid'] else 0) for r in shifts_data)
+        total_paid   = sum(r['row_paid'] for r in shifts_data)
         total_debt   = total_earned - total_paid
 
     return render_template('employee_salary_detail.html',
@@ -10161,6 +10549,8 @@ def shifts_archive():
                                         WHERE t2.shift_id=s2.id AND t2.payment_type='cash'),0)
                              -COALESCE((SELECT SUM(es2.total_amount) FROM employee_shifts es2
                                         WHERE es2.shift_id=s2.id AND es2.is_paid=1),0)
+                             -COALESCE((SELECT SUM(sp2.amount) FROM salary_payments sp2
+                                        WHERE sp2.paid_from_shift_id=s2.id),0)
                       FROM shifts s2 JOIN shift_revenue r2 ON r2.shift_id=s2.id
                       WHERE s2.branch_id=s.branch_id AND s2.date<s.date
                       ORDER BY s2.date DESC LIMIT 1),

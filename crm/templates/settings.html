@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% set active_tab = request.args.get('tab', 'categories') %}
-{% set tab_titles = {'categories': 'Категории расходов / доходов', 'bonuses': 'Премии', 'rates': 'Ставки сотрудников', 'api': 'Интеграции (1С, выручка)', 'roles': 'Роли и доступ'} %}
+{% set tab_titles = {'categories': 'Категории расходов / доходов', 'bonuses': 'Премии', 'rates': 'Ставки сотрудников', 'api': 'Интеграции (1С, выручка)', 'roles': 'Роли и доступ', 'salary_payouts': 'Выплатные дни'} %}
 {% block title %}Настройки — {{ tab_titles.get(active_tab, '') }}{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
@@ -916,6 +916,161 @@
             document.getElementById('editPositionAbbr').value = abbr || '';
             document.getElementById('editPositionForm').action = '/settings/positions/' + id + '/edit';
             new bootstrap.Modal(document.getElementById('editPositionModal')).show();
+        }
+        </script>
+    </div>{% endif %}
+
+    <!-- ══ ВЫПЛАТНЫЕ ДНИ (задолженность по ЗП) ══ -->
+    {% if active_tab == 'salary_payouts' %}<div>
+        <div class="alert alert-info mb-4">
+            <i class="bi bi-info-circle me-1"></i>
+            <strong>Как работает:</strong> начиная с указанного числа месяца в смене на всех филиалах,
+            где может работать сотрудник, появляется блок «Задолженность по ЗП» — из него можно выплатить
+            невыплаченную зарплату сотрудника за текущий или предыдущий месяц (по выбору), наличными из кассы
+            этой смены. Блок показывается каждый день, пока не выплачено всем; на ФОТ выплата не влияет,
+            но уменьшает «Итого нал» в кассе смены, из которой сделана.
+        </div>
+        <div class="row g-4">
+            <div class="col-md-5">
+                <div class="card">
+                    <div class="card-header bg-light fw-bold">
+                        <i class="bi bi-plus-circle"></i> Добавить правило
+                    </div>
+                    <div class="card-body">
+                        <form method="POST" action="{{ url_for('add_salary_payout_rule') }}">
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Название</label>
+                                <input type="text" name="name" class="form-control" placeholder="Например: Аванс" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Число месяца</label>
+                                <input type="number" name="day_of_month" class="form-control" min="1" max="31" placeholder="20" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">За какой период</label>
+                                <select name="period" class="form-select">
+                                    <option value="previous_month">Предыдущий месяц</option>
+                                    <option value="current_month">Текущий месяц</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Лимит на сотрудника</label>
+                                <input type="text" name="limit_amount" class="form-control" placeholder="Без ограничения — вся задолженность">
+                                <div class="form-text">Например 10000 для аванса. Оставьте пустым — выплачивается вся задолженность за период.</div>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">
+                                <i class="bi bi-plus"></i> Добавить правило
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-7">
+                <div class="card">
+                    <div class="card-header bg-light fw-bold">
+                        <i class="bi bi-list-check"></i> Правила выплат
+                    </div>
+                    {% if salary_payout_rules %}
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Название</th>
+                                    <th>Дата</th>
+                                    <th>Период</th>
+                                    <th>Лимит</th>
+                                    <th class="text-center">Статус</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            {% for r in salary_payout_rules %}
+                            <tr class="{% if not r.is_active %}opacity-50{% endif %}">
+                                <td class="fw-semibold">{{ r.name }}</td>
+                                <td>{{ r.day_of_month }} число</td>
+                                <td>{% if r.period == 'current_month' %}Текущий месяц{% else %}Предыдущий месяц{% endif %}</td>
+                                <td>{% if r.limit_amount %}{{ r.limit_amount|int }} ₽{% else %}Без ограничения{% endif %}</td>
+                                <td class="text-center">
+                                    {% if r.is_active %}<span class="badge bg-success">Активно</span>
+                                    {% else %}<span class="badge bg-secondary">Отключено</span>{% endif %}
+                                </td>
+                                <td class="text-end">
+                                    <button class="btn btn-sm btn-outline-primary" title="Редактировать"
+                                        onclick="openEditPayoutRule({{ r.id }}, {{ r.name|tojson }}, {{ r.day_of_month }}, {{ r.period|tojson }}, {{ r.limit_amount if r.limit_amount else 'null' }})">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
+                                    <form method="POST" action="{{ url_for('toggle_salary_payout_rule', rule_id=r.id) }}" class="d-inline">
+                                        <button class="btn btn-sm btn-outline-secondary" title="Вкл/Выкл">
+                                            <i class="bi bi-{% if r.is_active %}eye-slash{% else %}eye{% endif %}"></i>
+                                        </button>
+                                    </form>
+                                    <form method="POST" action="{{ url_for('delete_salary_payout_rule', rule_id=r.id) }}" class="d-inline"
+                                          onsubmit="return confirm('Удалить правило?')">
+                                        <button class="btn btn-sm btn-outline-danger">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <div class="card-body text-center text-muted py-4">
+                        <i class="bi bi-inbox fs-2 d-block mb-2 opacity-25"></i>
+                        Правил нет. Добавьте первое правило слева.
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="modal fade" id="editPayoutRuleModal" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <form method="POST" id="editPayoutRuleForm">
+                        <div class="modal-header">
+                            <h5 class="modal-title">Редактировать правило</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Название</label>
+                                <input type="text" name="name" id="editPayoutName" class="form-control" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Число месяца</label>
+                                <input type="number" name="day_of_month" id="editPayoutDay" class="form-control" min="1" max="31" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">За какой период</label>
+                                <select name="period" id="editPayoutPeriod" class="form-select">
+                                    <option value="previous_month">Предыдущий месяц</option>
+                                    <option value="current_month">Текущий месяц</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Лимит на сотрудника</label>
+                                <input type="text" name="limit_amount" id="editPayoutLimit" class="form-control" placeholder="Без ограничения — вся задолженность">
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                            <button type="submit" class="btn btn-primary">Сохранить</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+        <script>
+        function openEditPayoutRule(id, name, day, period, limitAmount) {
+            document.getElementById('editPayoutName').value = name;
+            document.getElementById('editPayoutDay').value = day;
+            document.getElementById('editPayoutPeriod').value = period;
+            document.getElementById('editPayoutLimit').value = limitAmount || '';
+            document.getElementById('editPayoutRuleForm').action = '/settings/salary-payout-rules/' + id + '/edit';
+            new bootstrap.Modal(document.getElementById('editPayoutRuleModal')).show();
         }
         </script>
     </div>{% endif %}
