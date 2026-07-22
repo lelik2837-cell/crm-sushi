@@ -1144,6 +1144,24 @@ def init_db():
             ''')
             logging.info('Migrated users table: added callcenter role, migrated employee -> callcenter')
 
+        # Add first_name / last_name to users if missing (та же схема, что у employees)
+        user_cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
+        if 'last_name' not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN last_name TEXT DEFAULT ''")
+        if 'first_name' not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN first_name TEXT DEFAULT ''")
+        # Migrate existing full_name → last_name + first_name
+        conn.execute("""
+            UPDATE users SET
+                last_name = CASE WHEN INSTR(full_name,' ')>0
+                    THEN TRIM(SUBSTR(full_name,1,INSTR(full_name,' ')-1))
+                    ELSE full_name END,
+                first_name = CASE WHEN INSTR(full_name,' ')>0
+                    THEN TRIM(SUBSTR(full_name,INSTR(full_name,' ')+1))
+                    ELSE '' END
+            WHERE last_name = '' OR last_name IS NULL
+        """)
+
         conn.executescript('''
             CREATE TABLE IF NOT EXISTS password_reset_tokens (
                 id      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -5832,22 +5850,30 @@ def edit_user_branches(user_id):
 def add_user():
     username = request.form.get('username', '').strip()
     password = request.form.get('password', '')
-    full_name = request.form.get('full_name', '').strip()
+    password_confirm = request.form.get('password_confirm', '')
+    last_name = request.form.get('last_name', '').strip()
+    first_name = request.form.get('first_name', '').strip()
+    full_name = (last_name + (' ' + first_name if first_name else '')).strip()
+    email = request.form.get('email', '').strip().lower()
     role = request.form.get('role', 'admin')
     branch_ids = [bid for bid in request.form.getlist('branch_ids') if bid.isdigit()]
     primary_branch_id = int(branch_ids[0]) if branch_ids else None
-    if not username or not password or not full_name:
+    if not username or not password or not last_name or not first_name or not email:
         flash('Заполните все поля', 'danger')
+        return redirect(url_for('users'))
+    if password != password_confirm:
+        flash('Пароли не совпадают', 'danger')
         return redirect(url_for('users'))
     with get_db() as conn:
         existing = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()
         if existing:
             flash('Логин уже занят', 'danger')
             return redirect(url_for('users'))
-        email = request.form.get('email', '').strip().lower()
         conn.execute(
-            'INSERT INTO users (username, password_hash, role, full_name, branch_id, email) VALUES (?,?,?,?,?,?)',
-            (username, generate_password_hash(password, method='pbkdf2:sha256'), role, full_name, primary_branch_id, email)
+            'INSERT INTO users (username, password_hash, role, full_name, last_name, first_name, branch_id, email) '
+            'VALUES (?,?,?,?,?,?,?,?)',
+            (username, generate_password_hash(password, method='pbkdf2:sha256'), role, full_name,
+             last_name, first_name, primary_branch_id, email)
         )
         user_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
         for bid in branch_ids:
@@ -5964,12 +5990,14 @@ def reset_password_token(token):
 @login_required
 @menu_permission_required('users')
 def edit_user(user_id):
-    full_name = request.form.get('full_name', '').strip()
+    last_name = request.form.get('last_name', '').strip()
+    first_name = request.form.get('first_name', '').strip()
+    full_name = (last_name + (' ' + first_name if first_name else '')).strip()
     username = request.form.get('username', '').strip()
     role = request.form.get('role', 'admin')
     password = request.form.get('password', '').strip()
     branch_ids = [int(bid) for bid in request.form.getlist('branch_ids') if bid.isdigit()]
-    if not full_name or not username:
+    if not last_name or not first_name or not username:
         flash('Заполните все обязательные поля', 'danger')
         return redirect(url_for('users'))
     with get_db() as conn:
@@ -5982,8 +6010,8 @@ def edit_user(user_id):
             flash('Логин уже занят', 'danger')
             return redirect(url_for('users'))
         email = request.form.get('email', '').strip().lower()
-        conn.execute('UPDATE users SET full_name=?, username=?, role=?, email=? WHERE id=?',
-                     (full_name, username, role, email, user_id))
+        conn.execute('UPDATE users SET full_name=?, last_name=?, first_name=?, username=?, role=?, email=? WHERE id=?',
+                     (full_name, last_name, first_name, username, role, email, user_id))
         if password:
             conn.execute('UPDATE users SET password_hash=? WHERE id=?',
                          (generate_password_hash(password, method='pbkdf2:sha256'), user_id))
@@ -6031,11 +6059,15 @@ def accept_invite(token):
             username  = request.form.get('username', '').strip()
             email     = request.form.get('email', '').strip().lower()
             password  = request.form.get('password', '').strip()
-            if not full_name or not username or not password:
+            password_confirm = request.form.get('password_confirm', '').strip()
+            if not full_name or not username or not email or not password:
                 flash('Заполните все обязательные поля', 'danger')
                 return render_template('accept_invite.html', token=token, inv=inv)
             if len(password) < 4:
                 flash('Пароль должен быть не короче 4 символов', 'danger')
+                return render_template('accept_invite.html', token=token, inv=inv)
+            if password != password_confirm:
+                flash('Пароли не совпадают', 'danger')
                 return render_template('accept_invite.html', token=token, inv=inv)
             existing = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()
             if existing:

@@ -147,9 +147,15 @@
             </div>
             <form method="POST" action="{{ url_for('add_user') }}">
                 <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label">Имя *</label>
-                        <input type="text" name="full_name" class="form-control" required>
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label">Фамилия *</label>
+                            <input type="text" name="last_name" class="form-control" placeholder="Иванов" required>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">Имя *</label>
+                            <input type="text" name="first_name" class="form-control" placeholder="Иван" required>
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Логин *</label>
@@ -157,11 +163,16 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Пароль *</label>
-                        <input type="text" name="password" class="form-control" required>
+                        <input type="text" name="password" id="addPassword" class="form-control" required>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Email <span class="text-muted fw-normal">(для восстановления пароля)</span></label>
-                        <input type="email" name="email" class="form-control" placeholder="example@gmail.com">
+                        <label class="form-label">Повторите пароль *</label>
+                        <input type="text" name="password_confirm" id="addPasswordConfirm" class="form-control" required>
+                        <div id="addPwMatchMsg" class="small mt-1"></div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Email * <span class="text-muted fw-normal">(для восстановления пароля)</span></label>
+                        <input type="email" name="email" class="form-control" placeholder="example@gmail.com" required>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Роль</label>
@@ -198,9 +209,15 @@
             </div>
             <form method="POST" action="{{ url_for('edit_user', user_id=u.id) }}">
                 <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label">Имя *</label>
-                        <input type="text" name="full_name" class="form-control" value="{{ u.full_name }}" required>
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label">Фамилия *</label>
+                            <input type="text" name="last_name" class="form-control" value="{{ u.last_name }}" required>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label">Имя *</label>
+                            <input type="text" name="first_name" class="form-control" value="{{ u.first_name }}" required>
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Логин *</label>
@@ -283,5 +300,31 @@ initBranchPicker('inv');
 {% for u in users %}
 initBranchPicker('e{{ u.id }}');
 {% endfor %}
+
+function wirePasswordMatch(pwId, confirmId, msgId) {
+    var pw = document.getElementById(pwId);
+    var cf = document.getElementById(confirmId);
+    var msg = document.getElementById(msgId);
+    if (!pw || !cf || !msg) return;
+    function check() {
+        if (!cf.value) {
+            msg.textContent = '';
+            cf.setCustomValidity('');
+            return;
+        }
+        if (pw.value === cf.value) {
+            msg.textContent = 'Пароли совпадают';
+            msg.className = 'small mt-1 text-success';
+            cf.setCustomValidity('');
+        } else {
+            msg.textContent = 'Пароли не совпадают!';
+            msg.className = 'small mt-1 text-danger';
+            cf.setCustomValidity('Пароли не совпадают');
+        }
+    }
+    pw.addEventListener('input', check);
+    cf.addEventListener('input', check);
+}
+wirePasswordMatch('addPassword', 'addPasswordConfirm', 'addPwMatchMsg');
 </script>
 {% endblock %}

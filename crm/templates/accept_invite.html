@@ -62,17 +62,49 @@
                 <input type="text" name="username" class="form-control" placeholder="Будет использоваться для входа" required>
             </div>
             <div class="mb-3">
-                <label class="form-label">Email <span class="text-muted fw-normal">(для восстановления пароля)</span></label>
-                <input type="email" name="email" class="form-control" placeholder="example@gmail.com">
+                <label class="form-label">Email * <span class="text-muted fw-normal">(для восстановления пароля)</span></label>
+                <input type="email" name="email" class="form-control" placeholder="example@gmail.com" required>
             </div>
             <div class="mb-3">
                 <label class="form-label">Пароль *</label>
-                <input type="password" name="password" class="form-control" placeholder="Минимум 4 символа" required minlength="4">
+                <input type="password" name="password" id="password" class="form-control" placeholder="Минимум 4 символа" required minlength="4">
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Повторите пароль *</label>
+                <input type="password" name="password_confirm" id="password_confirm" class="form-control" placeholder="Ещё раз пароль" required minlength="4">
+                <div id="pwMatchMsg" class="small mt-1"></div>
             </div>
             <button type="submit" class="btn btn-main w-100 text-white">Создать аккаунт</button>
         </form>
     </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+function wirePasswordMatch(pwId, confirmId, msgId) {
+    var pw = document.getElementById(pwId);
+    var cf = document.getElementById(confirmId);
+    var msg = document.getElementById(msgId);
+    if (!pw || !cf || !msg) return;
+    function check() {
+        if (!cf.value) {
+            msg.textContent = '';
+            cf.setCustomValidity('');
+            return;
+        }
+        if (pw.value === cf.value) {
+            msg.textContent = 'Пароли совпадают';
+            msg.className = 'small mt-1 text-success';
+            cf.setCustomValidity('');
+        } else {
+            msg.textContent = 'Пароли не совпадают!';
+            msg.className = 'small mt-1 text-danger';
+            cf.setCustomValidity('Пароли не совпадают');
+        }
+    }
+    pw.addEventListener('input', check);
+    cf.addEventListener('input', check);
+}
+wirePasswordMatch('password', 'password_confirm', 'pwMatchMsg');
+</script>
 </body>
 </html>
