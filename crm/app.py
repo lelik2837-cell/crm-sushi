@@ -1903,6 +1903,10 @@ def init_db():
             conn.execute("ALTER TABLE salary_payments ADD COLUMN paid_from_shift_id INTEGER REFERENCES shifts(id)")
         if 'payout_rule_id' not in _sp_cols:
             conn.execute("ALTER TABLE salary_payments ADD COLUMN payout_rule_id INTEGER REFERENCES salary_payout_rules(id)")
+        _spr_cols = [r[1] for r in conn.execute("PRAGMA table_info(salary_payout_rules)").fetchall()]
+        if 'branch_group_id' not in _spr_cols:
+            # NULL = правило действует на все филиалы; иначе — только на группу (branch_groups)
+            conn.execute("ALTER TABLE salary_payout_rules ADD COLUMN branch_group_id INTEGER REFERENCES branch_groups(id)")
 
         conn.commit()
 
@@ -2114,20 +2118,26 @@ def _payout_period_bounds(rule_period, ref_date):
     return start.isoformat(), end.isoformat(), label
 
 
-def _active_payout_rules(conn, ref_date):
+def _active_payout_rules(conn, branch_id, ref_date):
     """Правила выплат, у которых уже наступила дата в месяце ref_date (действуют
-    с этого числа и по каждый следующий день, пока не будет погашена вся задолженность)."""
+    с этого числа и по каждый следующий день, пока не будет погашена вся задолженность)
+    и которые действуют на филиал branch_id — либо правило без группы (действует везде),
+    либо branch_id входит в указанную у правила группу филиалов (branch_groups)."""
     d = date.fromisoformat(ref_date) if isinstance(ref_date, str) else ref_date
-    rules = conn.execute(
-        'SELECT * FROM salary_payout_rules WHERE is_active=1 AND day_of_month<=? ORDER BY day_of_month, id',
-        (d.day,)
-    ).fetchall()
+    rules = conn.execute('''
+        SELECT * FROM salary_payout_rules
+        WHERE is_active=1 AND day_of_month<=?
+          AND (branch_group_id IS NULL OR branch_group_id IN (
+                SELECT group_id FROM branch_group_members WHERE branch_id=?
+              ))
+        ORDER BY day_of_month, id
+    ''', (d.day, branch_id)).fetchall()
     result = []
     for r in rules:
         month_start, month_end, label = _payout_period_bounds(r['period'], d)
         result.append({
             'id': r['id'], 'name': r['name'], 'period': r['period'],
-            'limit_amount': r['limit_amount'],
+            'limit_amount': r['limit_amount'], 'branch_group_id': r['branch_group_id'],
             'month_start': month_start, 'month_end': month_end, 'month_label': label,
         })
     return result
@@ -2135,10 +2145,11 @@ def _active_payout_rules(conn, ref_date):
 
 def _payout_eligible_employees(conn, branch_id, ref_date):
     """Для блока «Задолженность по ЗП» в смене филиала branch_id: по каждому активному
-    на дату ref_date правилу — сотрудники, привязанные к этому филиалу (employee_branches),
-    у которых есть непогашенный остаток ЗП за период правила (сумма — по всем филиалам,
-    где сотрудник работал; уже сделанные выплаты и старые «оплачено на смене» учтены)."""
-    rules = _active_payout_rules(conn, ref_date)
+    на дату ref_date и действующему на этот филиал правилу — сотрудники, привязанные
+    к этому филиалу (employee_branches), у которых есть непогашенный остаток ЗП за период
+    правила (сумма — по всем филиалам, где сотрудник работал; уже сделанные выплаты
+    и старые «оплачено на смене» учтены)."""
+    rules = _active_payout_rules(conn, branch_id, ref_date)
     items = []
     for rule in rules:
         rows = conn.execute('''
@@ -4463,6 +4474,13 @@ def pay_salary_debt(shift_id):
         rule = conn.execute('SELECT * FROM salary_payout_rules WHERE id=? AND is_active=1', (rule_id,)).fetchone()
         if not rule:
             return jsonify({'error': 'Правило выплаты не найдено или отключено'}), 404
+        if rule['branch_group_id']:
+            in_group = conn.execute(
+                'SELECT 1 FROM branch_group_members WHERE group_id=? AND branch_id=?',
+                (rule['branch_group_id'], shift['branch_id'])
+            ).fetchone()
+            if not in_group:
+                return jsonify({'error': 'Это правило не действует на данный филиал'}), 400
         linked = conn.execute(
             'SELECT 1 FROM employee_branches WHERE employee_id=? AND branch_id=?',
             (employee_id, shift['branch_id'])
@@ -6490,9 +6508,12 @@ def settings():
             'SELECT * FROM api_orders_log ORDER BY created_at DESC LIMIT 50'
         ).fetchall()
         role_perms = {r: get_role_permissions(conn, r) for r in ROLE_CONFIGURABLE}
-        salary_payout_rules = conn.execute(
-            'SELECT * FROM salary_payout_rules ORDER BY day_of_month, id'
-        ).fetchall()
+        salary_payout_rules = conn.execute('''
+            SELECT spr.*, bg.name AS branch_group_name
+            FROM salary_payout_rules spr
+            LEFT JOIN branch_groups bg ON bg.id = spr.branch_group_id
+            ORDER BY spr.day_of_month, spr.id
+        ''').fetchall()
     return render_template('settings.html',
         exp_cats=exp_cats, exp_cats_parents=exp_cats_parents,
         cat_branches=cat_branches,
@@ -6817,10 +6838,16 @@ def add_salary_payout_rule():
         except ValueError:
             flash('Некорректный лимит', 'danger')
             return redirect(url_for('settings') + '?tab=salary_payouts')
+    branch_group_id = request.form.get('branch_group_id') or None
+    if branch_group_id:
+        try:
+            branch_group_id = int(branch_group_id)
+        except ValueError:
+            branch_group_id = None
     with get_db() as conn:
         conn.execute(
-            'INSERT INTO salary_payout_rules (name, day_of_month, period, limit_amount) VALUES (?,?,?,?)',
-            (name, int(day_raw), period, limit_amount)
+            'INSERT INTO salary_payout_rules (name, day_of_month, period, limit_amount, branch_group_id) VALUES (?,?,?,?,?)',
+            (name, int(day_raw), period, limit_amount, branch_group_id)
         )
         conn.commit()
     flash('Правило выплаты добавлено', 'success')
@@ -6845,10 +6872,16 @@ def edit_salary_payout_rule(rule_id):
         except ValueError:
             flash('Некорректный лимит', 'danger')
             return redirect(url_for('settings') + '?tab=salary_payouts')
+    branch_group_id = request.form.get('branch_group_id') or None
+    if branch_group_id:
+        try:
+            branch_group_id = int(branch_group_id)
+        except ValueError:
+            branch_group_id = None
     with get_db() as conn:
         conn.execute(
-            'UPDATE salary_payout_rules SET name=?, day_of_month=?, period=?, limit_amount=? WHERE id=?',
-            (name, int(day_raw), period, limit_amount, rule_id)
+            'UPDATE salary_payout_rules SET name=?, day_of_month=?, period=?, limit_amount=?, branch_group_id=? WHERE id=?',
+            (name, int(day_raw), period, limit_amount, branch_group_id, rule_id)
         )
         conn.commit()
     flash('Правило выплаты обновлено', 'success')

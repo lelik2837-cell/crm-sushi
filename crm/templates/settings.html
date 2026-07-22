@@ -928,7 +928,9 @@
             где может работать сотрудник, появляется блок «Задолженность по ЗП» — из него можно выплатить
             невыплаченную зарплату сотрудника за текущий или предыдущий месяц (по выбору), наличными из кассы
             этой смены. Блок показывается каждый день, пока не выплачено всем; на ФОТ выплата не влияет,
-            но уменьшает «Итого нал» в кассе смены, из которой сделана.
+            но уменьшает «Итого нал» в кассе смены, из которой сделана. Правило можно ограничить одной
+            группой филиалов (см. страницу «Филиалы») — тогда оно будет действовать только в сменах
+            филиалов этой группы, а не везде.
         </div>
         <div class="row g-4">
             <div class="col-md-5">
@@ -958,6 +960,16 @@
                                 <input type="text" name="limit_amount" class="form-control" placeholder="Без ограничения — вся задолженность">
                                 <div class="form-text">Например 10000 для аванса. Оставьте пустым — выплачивается вся задолженность за период.</div>
                             </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Группа филиалов</label>
+                                <select name="branch_group_id" class="form-select">
+                                    <option value="">Все филиалы</option>
+                                    {% for g in branch_groups_for_rates %}
+                                    <option value="{{ g.id }}">{{ g.name }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="form-text">Оставьте «Все филиалы» — правило будет действовать везде.</div>
+                            </div>
                             <button type="submit" class="btn btn-primary w-100">
                                 <i class="bi bi-plus"></i> Добавить правило
                             </button>
@@ -979,6 +991,7 @@
                                     <th>Дата</th>
                                     <th>Период</th>
                                     <th>Лимит</th>
+                                    <th>Филиалы</th>
                                     <th class="text-center">Статус</th>
                                     <th></th>
                                 </tr>
@@ -990,13 +1003,14 @@
                                 <td>{{ r.day_of_month }} число</td>
                                 <td>{% if r.period == 'current_month' %}Текущий месяц{% else %}Предыдущий месяц{% endif %}</td>
                                 <td>{% if r.limit_amount %}{{ r.limit_amount|int }} ₽{% else %}Без ограничения{% endif %}</td>
+                                <td>{{ r.branch_group_name or 'Все филиалы' }}</td>
                                 <td class="text-center">
                                     {% if r.is_active %}<span class="badge bg-success">Активно</span>
                                     {% else %}<span class="badge bg-secondary">Отключено</span>{% endif %}
                                 </td>
                                 <td class="text-end">
                                     <button class="btn btn-sm btn-outline-primary" title="Редактировать"
-                                        onclick="openEditPayoutRule({{ r.id }}, {{ r.name|tojson }}, {{ r.day_of_month }}, {{ r.period|tojson }}, {{ r.limit_amount if r.limit_amount else 'null' }})">
+                                        onclick="openEditPayoutRule({{ r.id }}, {{ r.name|tojson }}, {{ r.day_of_month }}, {{ r.period|tojson }}, {{ r.limit_amount if r.limit_amount else 'null' }}, {{ r.branch_group_id if r.branch_group_id else 'null' }})">
                                         <i class="bi bi-pencil"></i>
                                     </button>
                                     <form method="POST" action="{{ url_for('toggle_salary_payout_rule', rule_id=r.id) }}" class="d-inline">
@@ -1054,6 +1068,15 @@
                                 <label class="form-label fw-semibold">Лимит на сотрудника</label>
                                 <input type="text" name="limit_amount" id="editPayoutLimit" class="form-control" placeholder="Без ограничения — вся задолженность">
                             </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Группа филиалов</label>
+                                <select name="branch_group_id" id="editPayoutBranchGroup" class="form-select">
+                                    <option value="">Все филиалы</option>
+                                    {% for g in branch_groups_for_rates %}
+                                    <option value="{{ g.id }}">{{ g.name }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
                         </div>
                         <div class="modal-footer">
                             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
@@ -1064,11 +1087,12 @@
             </div>
         </div>
         <script>
-        function openEditPayoutRule(id, name, day, period, limitAmount) {
+        function openEditPayoutRule(id, name, day, period, limitAmount, branchGroupId) {
             document.getElementById('editPayoutName').value = name;
             document.getElementById('editPayoutDay').value = day;
             document.getElementById('editPayoutPeriod').value = period;
             document.getElementById('editPayoutLimit').value = limitAmount || '';
+            document.getElementById('editPayoutBranchGroup').value = branchGroupId || '';
             document.getElementById('editPayoutRuleForm').action = '/settings/salary-payout-rules/' + id + '/edit';
             new bootstrap.Modal(document.getElementById('editPayoutRuleModal')).show();
         }
