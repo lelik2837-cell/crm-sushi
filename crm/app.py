@@ -14322,6 +14322,21 @@ def _scheduled_backup():
 # ─── АВТОЗАГРУЗКА ВЫПИСОК СБЕРБАНКА РАЗ В ЧАС ───────────────────────────────
 def _scheduled_sber_sync():
     try:
+        # Job запускается и по расписанию (раз в час), и сразу при каждом старте
+        # приложения (next_run_time=datetime.now() ниже — чтобы не ждать час после
+        # деплоя). При частых деплоях/рестартах контейнера это давало синхронизацию
+        # чаще раза в час — поэтому дополнительно пропускаем запуск, если последняя
+        # синхронизация была меньше часа назад (независимо от того, чем она вызвана).
+        with get_db() as _conn:
+            _last_str = _sber_get(_conn, 'sber_last_sync')
+        if _last_str:
+            try:
+                _last_dt = datetime.strptime(_last_str, '%d.%m.%Y %H:%M')
+                if datetime.now() - _last_dt < timedelta(minutes=55):
+                    print(f'[Сбербанк] авто-синхронизация: пропущена — последняя была {_last_str} (меньше часа назад)')
+                    return
+            except ValueError:
+                pass
         date_from = (date.today() - timedelta(days=7)).isoformat()
         date_to   = date.today().isoformat()
         r = _sber_sync_all_accounts(date_from, date_to)
