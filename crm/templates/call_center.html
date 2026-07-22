@@ -19,11 +19,6 @@
 
 <ul class="nav nav-tabs mb-4">
     <li class="nav-item">
-        <a class="nav-link {% if active_tab == 'employees' %}active{% endif %}" href="{{ url_for('call_center') }}?tab=employees">
-            <i class="bi bi-person-badge"></i> Сотрудники колл-центра
-        </a>
-    </li>
-    <li class="nav-item">
         <a class="nav-link {% if active_tab == 'schedule' %}active{% endif %}" href="{{ url_for('call_center') }}?tab=schedule">
             <i class="bi bi-calendar-week"></i> График
         </a>
@@ -31,6 +26,11 @@
     <li class="nav-item">
         <a class="nav-link {% if active_tab == 'shifts' %}active{% endif %}" href="{{ url_for('call_center') }}?tab=shifts">
             <i class="bi bi-clock-history"></i> Смены
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'employees' %}active{% endif %}" href="{{ url_for('call_center') }}?tab=employees">
+            <i class="bi bi-person-badge"></i> Сотрудники колл-центра
         </a>
     </li>
 </ul>

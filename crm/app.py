@@ -13210,7 +13210,7 @@ def _cc_snap_quarter(hhmm, fallback='10:00'):
 @menu_permission_required('call_center')
 def call_center():
     WD_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
-    active_tab = request.args.get('tab', 'employees')
+    active_tab = request.args.get('tab', 'schedule')
     today = date.today()
     default_month = today.replace(day=1)
     month_str = request.args.get('month', default_month.strftime('%Y-%m'))
