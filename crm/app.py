@@ -147,19 +147,21 @@ MENU_ITEMS = [
 ]
 MENU_ITEMS_BY_CODE = {m[0]: {'label': m[1], 'group': m[2], 'branch_scoped': m[3]} for m in MENU_ITEMS}
 MENU_GROUP_LABELS = {'dash': 'Дашборд', 'reports': 'Отчёты', 'settings': 'Настройки'}
-ROLE_CONFIGURABLE = ('admin', 'director', 'employee')
-LOGIN_ROLE_LABELS = {'admin': 'Администратор', 'director': 'Управляющий', 'employee': 'Сотрудник'}
+ROLE_CONFIGURABLE = ('admin', 'director', 'callcenter')
+LOGIN_ROLE_LABELS = {'admin': 'Администратор', 'director': 'Управляющий', 'callcenter': 'Оператор колл-центра'}
 
 # Дефолтная матрица прав — воспроизводит СЕГОДНЯШНЕЕ поведение 1-в-1,
 # чтобы включение фичи ничего не сломало на существующих базах.
 # dashboard/employees/purchases/history/shifts_archive и раньше не были защищены
 # @owner_required — их роут пускал любую залогиненную роль (просто без ссылки в меню),
-# поэтому все 3 настраиваемые роли должны по умолчанию видеть именно их, а не только director->employees.
+# поэтому admin/director по умолчанию должны видеть именно их, а не только director->employees.
 _ALWAYS_ACCESSIBLE_BEFORE = {'dashboard', 'employees', 'purchases', 'history', 'shifts_archive'}
 _DEFAULT_ROLE_VISIBLE = {
     'director': set(_ALWAYS_ACCESSIBLE_BEFORE),
     'admin': set(_ALWAYS_ACCESSIBLE_BEFORE),
-    'employee': set(_ALWAYS_ACCESSIBLE_BEFORE),
+    # callcenter — новая роль без унаследованного поведения, доступ настраивается
+    # владельцем с нуля через Настройки → Роли и доступ.
+    'callcenter': set(),
 }
 
 FORMULA_VARS = {
@@ -1100,6 +1102,34 @@ def init_db():
                 PRAGMA foreign_keys = ON;
             ''')
             logging.info('Migrated users table: added director role')
+
+        # Expand role CHECK constraint to include 'callcenter' (замена роли 'employee')
+        schema_row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='users'"
+        ).fetchone()
+        if schema_row and 'callcenter' not in schema_row['sql']:
+            conn.executescript('''
+                PRAGMA foreign_keys = OFF;
+                CREATE TABLE IF NOT EXISTS users_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK(role IN ('owner','admin','callcenter','director')),
+                    full_name TEXT NOT NULL,
+                    branch_id INTEGER REFERENCES branches(id),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    email TEXT DEFAULT ''
+                );
+                INSERT OR IGNORE INTO users_new
+                    SELECT id, username, password_hash,
+                           CASE WHEN role='employee' THEN 'callcenter' ELSE role END,
+                           full_name, branch_id, created_at, COALESCE(email,'')
+                    FROM users;
+                DROP TABLE users;
+                ALTER TABLE users_new RENAME TO users;
+                PRAGMA foreign_keys = ON;
+            ''')
+            logging.info('Migrated users table: added callcenter role, migrated employee -> callcenter')
 
         conn.executescript('''
             CREATE TABLE IF NOT EXISTS password_reset_tokens (
