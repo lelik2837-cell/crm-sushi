@@ -31,11 +31,13 @@ department_info.messages с записью {"name": "Обещаем гостю",
   вариантов и пишет предупреждение в лог, если формат окажется другим, вместо того чтобы
   падать. Если в логах видно предупреждение "не удалось разобрать" — пришлите пример JSON,
   поправим разбор под реальный формат.
-- Так же и с заказами: не подтверждено на реальном запросе, что URL страницы отчёта при
-  таких параметрах отдаёт именно CSV-файл, а не HTML-страницу — fetch_orders_csv() это
-  проверяет и пишет понятную ошибку в лог вместо падения, если это не так. Если увидите
-  такую ошибку — пришлите начало ответа из лога, поправим (скорее всего, понадобится
-  отдельная ссылка на экспорт/скачивание вместо этого же URL).
+- Заказы: страница receipts/receipts/index при обычном GET отдаёт HTML саму страницу
+  отчёта, а не файл — реальный файл отдаётся только с доп. параметром `is_excel=true`
+  (найдено разбором JS кнопки «Выгрузить в Excel» на самой странице; проверено на
+  реальном запросе — content-disposition и содержимое совпадают с тем, что выгружает
+  кнопка вручную). fetch_orders_csv() всё равно проверяет ответ (_looks_like_orders_csv)
+  и пишет понятную ошибку в лог вместо падения, если сайт когда-нибудь поменяет этот
+  механизм — на случай, если вёрстка/JS страницы изменятся.
 """
 
 from __future__ import annotations
@@ -264,11 +266,17 @@ def _looks_like_orders_csv(content: bytes) -> bool:
 
 
 def fetch_orders_csv(session: requests.Session, date_from: str, date_to: str) -> bytes:
-    """date_from/date_to — строки в формате ДД.ММ.ГГГГ (как в фильтре страницы)."""
+    """date_from/date_to — строки в формате ДД.ММ.ГГГГ (как в фильтре страницы).
+
+    Обычный GET на receipts/receipts/index с этими же параметрами отдаёт HTML-страницу
+    отчёта (саму таблицу), а не файл — нужный CSV отдаётся только с дополнительным
+    параметром is_excel=true. Найдено разбором JS на самой странице: кнопка «Выгрузить
+    в Excel» (id="excel") берёт текущий фильтр, добавляет в него is_excel=true и делает
+    обычный переход по тому же URL с этим параметром — так же делаем и мы."""
     if not ORDERS_QUERY_TEMPLATE:
         raise RuntimeError("Не задан GOULASH_ORDERS_QUERY_TEMPLATE")
     query = ORDERS_QUERY_TEMPLATE.format(date_from=date_from, date_to=date_to)
-    url = f"{BASE_URL}{RECEIPTS_PATH}?{query}"
+    url = f"{BASE_URL}{RECEIPTS_PATH}?{query}&is_excel=true"
     resp = session.get(url, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
 
