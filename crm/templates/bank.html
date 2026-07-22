@@ -680,44 +680,6 @@
 
 </div>
 
-{% if sber_auto_count and sber_auto_count > 0 %}
-<div id="sberAutoBar" class="position-fixed bottom-0 start-50 translate-middle-x mb-3"
-     style="z-index:1055;min-width:260px;display:none">
-  <div class="alert alert-info py-2 px-3 shadow-sm d-flex align-items-center gap-2 mb-0">
-    <span class="spinner-border spinner-border-sm flex-shrink-0"></span>
-    <span id="sberAutoMsg">Загружаю выписки Сбербанка...</span>
-  </div>
-</div>
-<script>
-(function() {
-  var bar = document.getElementById('sberAutoBar');
-  var msg = document.getElementById('sberAutoMsg');
-  bar.style.display = '';
-  fetch('/bank/sber/sync-all', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({})
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(j) {
-    if (j.ok) {
-      var added = j.total_added || 0;
-      bar.querySelector('.alert').className = 'alert alert-success py-2 px-3 shadow-sm d-flex align-items-center gap-2 mb-0';
-      bar.querySelector('.spinner-border').style.display = 'none';
-      msg.textContent = added > 0
-        ? ('✓ Сбербанк: загружено +' + added + ' новых транзакций')
-        : '✓ Сбербанк: нет новых транзакций';
-    } else {
-      bar.querySelector('.alert').className = 'alert alert-warning py-2 px-3 shadow-sm d-flex align-items-center gap-2 mb-0';
-      bar.querySelector('.spinner-border').style.display = 'none';
-      msg.textContent = 'Сбербанк: ' + (j.error || 'ошибка синхронизации');
-    }
-    setTimeout(function() { bar.style.display = 'none'; }, 4000);
-  })
-  .catch(function() { bar.style.display = 'none'; });
-})();
-</script>
-{% endif %}
 
 <!-- ══════════════════════ ПРАВИЛА РАЗБОРА ══════════════════════ -->
 {% if tab == 'rules' %}

@@ -10348,10 +10348,6 @@ def bank():
             compare_bank = sum(r['bank_amount'] or 0 for r in compare_rows)
             compare_crm  = sum(r['crm_amount'] or 0 for r in compare_rows)
 
-        sber_auto_count = conn.execute(
-            "SELECT COUNT(*) FROM bank_accounts WHERE is_active=1 AND sber_auto_sync=1 AND account_number != '' AND account_number IS NOT NULL"
-        ).fetchone()[0]
-
         parse_rules = conn.execute('''
             SELECT pr.*, ba.name as account_name
             FROM bank_parse_rules pr
@@ -10382,7 +10378,6 @@ def bank():
         branches=branches, exp_cats=exp_cats,
         expense_rows=expense_rows, expense_total=expense_total,
         compare_rows=compare_rows, compare_bank=compare_bank, compare_crm=compare_crm,
-        sber_auto_count=sber_auto_count,
         parse_rules=parse_rules, branch_groups=branch_groups_list,
         rule_patterns_map=rule_patterns_map,
         rule_branch_ids=rule_branch_ids, rule_branch_group_id=rule_branch_group_id,
@@ -11561,15 +11556,9 @@ def sber_sync():
             return jsonify({'ok': False, 'error': err})
 
 
-@app.route('/bank/sber/sync-all', methods=['POST'])
-@login_required
-@menu_permission_required('bank')
-def sber_sync_all():
-    """Синхронизировать все счета с включённой авто-загрузкой."""
-    data = request.get_json(silent=True) or {}
-    date_from = data.get('date_from') or (date.today() - timedelta(days=7)).isoformat()
-    date_to   = data.get('date_to')   or date.today().isoformat()
-
+def _sber_sync_all_accounts(date_from, date_to):
+    """Синхронизировать все счета с включённой авто-загрузкой. Общая логика для
+    ручной кнопки (/bank/sber/sync-all) и часового фонового задания планировщика."""
     with get_db() as conn:
         accounts = conn.execute(
             "SELECT id, name, account_number FROM bank_accounts "
@@ -11577,15 +11566,15 @@ def sber_sync_all():
         ).fetchall()
 
         if not accounts:
-            return jsonify({'ok': True, 'results': [], 'total_added': 0,
-                            'message': 'Нет счетов с включённой автозагрузкой'})
+            return {'ok': True, 'results': [], 'total_added': 0,
+                    'message': 'Нет счетов с включённой автозагрузкой'}
 
         try:
             access_token, client_id = _sber_get_token(conn)
             if not access_token:
-                return jsonify({'ok': False, 'error': 'Нет токена авторизации. Откройте «Сбербанк авто-импорт» и переподключите.'})
+                return {'ok': False, 'error': 'Нет токена авторизации. Откройте «Сбербанк авто-импорт» и переподключите.'}
         except Exception as e:
-            return jsonify({'ok': False, 'error': f'Ошибка получения токена: {e}'})
+            return {'ok': False, 'error': f'Ошибка получения токена: {e}'}
 
         results = []
         total_added = 0
@@ -11605,7 +11594,18 @@ def sber_sync_all():
                 conn.commit()
                 results.append({'id': acc['id'], 'name': acc['name'], 'ok': False, 'error': err})
 
-        return jsonify({'ok': True, 'results': results, 'total_added': total_added})
+        return {'ok': True, 'results': results, 'total_added': total_added}
+
+
+@app.route('/bank/sber/sync-all', methods=['POST'])
+@login_required
+@menu_permission_required('bank')
+def sber_sync_all():
+    """Синхронизировать все счета с включённой авто-загрузкой (кнопка «Синхронизировать сейчас»)."""
+    data = request.get_json(silent=True) or {}
+    date_from = data.get('date_from') or (date.today() - timedelta(days=7)).isoformat()
+    date_to   = data.get('date_to')   or date.today().isoformat()
+    return jsonify(_sber_sync_all_accounts(date_from, date_to))
 
 
 @app.route('/bank/accounts/<int:acc_id>/sber-toggle', methods=['POST'])
@@ -13896,12 +13896,27 @@ def _scheduled_backup():
     except Exception as e:
         print(f'[Backup] exception: {e}')
 
+# ─── АВТОЗАГРУЗКА ВЫПИСОК СБЕРБАНКА РАЗ В ЧАС ───────────────────────────────
+def _scheduled_sber_sync():
+    try:
+        date_from = (date.today() - timedelta(days=7)).isoformat()
+        date_to   = date.today().isoformat()
+        r = _sber_sync_all_accounts(date_from, date_to)
+        if r.get('ok'):
+            print(f"[Сбербанк] авто-синхронизация: +{r.get('total_added', 0)} транзакций")
+        else:
+            print(f"[Сбербанк] авто-синхронизация: {r.get('error')}")
+    except Exception as e:
+        print(f'[Сбербанк] авто-синхронизация exception: {e}')
+
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
     _scheduler = BackgroundScheduler(timezone='Asia/Novosibirsk')
     _scheduler.add_job(_scheduled_backup, 'cron', hour=3, minute=0)
+    _scheduler.add_job(_scheduled_sber_sync, 'interval', hours=1,
+                        next_run_time=datetime.now())
     _scheduler.start()
-    print('[Backup] Планировщик запущен — бэкап каждый день в 03:00 НСК')
+    print('[Backup] Планировщик запущен — бэкап каждый день в 03:00 НСК, Сбербанк — раз в час')
 except Exception as _e:
     print(f'[Backup] Планировщик не запустился: {_e}')
 
