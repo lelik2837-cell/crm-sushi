@@ -364,7 +364,11 @@ def sync_orders(session: requests.Session) -> None:
     if not ORDERS_QUERY_TEMPLATE or not ORDERS_WEBHOOK_URL:
         return  # заказы не настроены — молча пропускаем, остальная синхронизация не страдает
 
-    today = datetime.now(timezone.utc).date()
+    # Локальная дата (TZ=Asia/Novosibirsk задан в контейнере), а не UTC: date_s/date_do
+    # на гуляше — это календарный день ресторана. С UTC начало суток в Новосибирске
+    # (UTC+7) на несколько часов "отставало" бы от локальной даты и не захватывало
+    # свежий день примерно 7 часов в сутки (с полуночи по 7 утра по Новосибирску).
+    today = datetime.now().date()
     date_from = (today - timedelta(days=ORDERS_LOOKBACK_DAYS)).strftime("%d.%m.%Y")
     date_to = today.strftime("%d.%m.%Y")
 
