@@ -15,6 +15,11 @@ department_info.messages с записью {"name": "Обещаем гостю",
 затем по кругу — каждый department_id со своим webhook-URL на crmpapa.ru
 (см. GOULASH_SYNC_MAP).
 
+Дополнительно (если настроено — см. GOULASH_ORDERS_QUERY_TEMPLATE) тем же логином
+забирает CSV-выгрузку «Отчёт по заказам» (страница receipts/receipts/index — та же,
+что раньше скачивали вручную и загружали в CRM) и пересылает её как есть на отдельный
+вебхук заказов; разбор файла целиком на стороне crmpapa.ru (см. sync_orders()).
+
 ВАЖНО:
 - Логин/пароль и URL вебхуков не хранятся в коде — задаются через переменные окружения.
   Формат тела запроса на crmpapa.ru уже согласован (см. send_to_crmpapa()
@@ -26,6 +31,11 @@ department_info.messages с записью {"name": "Обещаем гостю",
   вариантов и пишет предупреждение в лог, если формат окажется другим, вместо того чтобы
   падать. Если в логах видно предупреждение "не удалось разобрать" — пришлите пример JSON,
   поправим разбор под реальный формат.
+- Так же и с заказами: не подтверждено на реальном запросе, что URL страницы отчёта при
+  таких параметрах отдаёт именно CSV-файл, а не HTML-страницу — fetch_orders_csv() это
+  проверяет и пишет понятную ошибку в лог вместо падения, если это не так. Если увидите
+  такую ошибку — пришлите начало ответа из лога, поправим (скорее всего, понадобится
+  отдельная ссылка на экспорт/скачивание вместо этого же URL).
 """
 
 from __future__ import annotations
@@ -35,7 +45,7 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import requests
@@ -75,6 +85,30 @@ HEADER_API_PATH = "/dashboad/api/header"
 # Названия сообщений в department_info["messages"], откуда берём время ожидания
 PROMISE_MESSAGE_NAME = "Обещаем гостю"
 ESTIMATED_MESSAGE_NAME = "Расчетное время"
+
+# ---------------------------------------------------------------------------
+# Заказы («Отчёт по заказам» — та же CSV-выгрузка, что раньше скачивали и
+# загружали в CRM вручную, см. README, раздел «Заказы»)
+# ---------------------------------------------------------------------------
+
+RECEIPTS_PATH = "/receipts/receipts/index"
+
+# Полная строка запроса страницы отчёта — всё, что после "?" в её адресе в браузере,
+# скопированное как есть (агенты/филиалы, статус заказа, набор колонок и т.д.),
+# но с {date_from}/{date_to} вместо конкретных чисел в датах — их подставляет сам
+# скрипт перед каждым запросом. См. .env.example и README.
+ORDERS_QUERY_TEMPLATE = os.environ.get("GOULASH_ORDERS_QUERY_TEMPLATE", "")
+
+# Один вебхук сразу на все филиалы — Настройки → API → «Синхронизация заказов»
+# на crmpapa.ru. В отличие от выручки/времени ожидания разбор по филиалам не нужен
+# на этом уровне: каждый заказ сам несёт своё подразделение (колонка в выгрузке).
+ORDERS_WEBHOOK_URL = os.environ.get("CRMPAPA_ORDERS_WEBHOOK_URL", "")
+
+# За сколько последних дней запрашивать заказы при каждом запуске. Специально шире,
+# чем интервал опроса, — чтобы подхватывать заказы, которые "дозрели" (сменили сумму
+# или статус) уже после первой загрузки. Это безопасно: повторная загрузка уже
+# известного заказа не создаёт дубль на crmpapa.ru, а обновляет его строку.
+ORDERS_LOOKBACK_DAYS = int(os.environ.get("ORDERS_LOOKBACK_DAYS", "3"))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -208,6 +242,48 @@ def fetch_department_data(session: requests.Session, department_id: str) -> dict
 
 
 # ---------------------------------------------------------------------------
+# Заказы («Отчёт по заказам»)
+# ---------------------------------------------------------------------------
+
+def _looks_like_orders_csv(content: bytes) -> bool:
+    """Грубая проверка, что goulash вернул именно CSV-выгрузку «Отчёт по заказам»,
+    а не HTML (например форму логина, если сессия истекла, или саму страницу отчёта
+    как есть — вдруг для CSV нужен отдельный запрос/ссылка «Экспорт», а не этот же
+    URL). Ищем характерный заголовок колонки — он есть в выгрузке в любой кодировке
+    из тех, что понимает разбор на стороне crmpapa.ru (см. _parse_orders_csv)."""
+    text = None
+    for enc in ("utf-8-sig", "cp1251", "utf-8"):
+        try:
+            text = content[:4000].decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        return False
+    return "Номер заказа" in text
+
+
+def fetch_orders_csv(session: requests.Session, date_from: str, date_to: str) -> bytes:
+    """date_from/date_to — строки в формате ДД.ММ.ГГГГ (как в фильтре страницы)."""
+    if not ORDERS_QUERY_TEMPLATE:
+        raise RuntimeError("Не задан GOULASH_ORDERS_QUERY_TEMPLATE")
+    query = ORDERS_QUERY_TEMPLATE.format(date_from=date_from, date_to=date_to)
+    url = f"{BASE_URL}{RECEIPTS_PATH}?{query}"
+    resp = session.get(url, timeout=REQUEST_TIMEOUT)
+    resp.raise_for_status()
+
+    if not _looks_like_orders_csv(resp.content):
+        raise RuntimeError(
+            "Ответ не похож на CSV-выгрузку «Отчёт по заказам» (нет колонки "
+            "«Номер заказа» в начале ответа) — либо истекла сессия и сайт вернул "
+            "страницу логина, либо этот URL при таких параметрах отдаёт HTML-страницу "
+            "отчёта, а не файл, и нужна отдельная ссылка на экспорт/скачивание. "
+            f"Начало ответа: {resp.content[:300]!r}"
+        )
+    return resp.content
+
+
+# ---------------------------------------------------------------------------
 # Отправка на crmpapa.ru
 # ---------------------------------------------------------------------------
 
@@ -263,6 +339,39 @@ def send_waittime_to_crmpapa(payload: dict, webhook_url: str) -> None:
     log.info("Время ожидания отправлено на crmpapa.ru (филиал %s): %s", payload.get("department_id"), body)
 
 
+def send_orders_to_crmpapa(csv_bytes: bytes, webhook_url: str) -> dict:
+    """Пересылает CSV как есть (тем же байтами, что получены от goulash) — разбор
+    формата целиком на стороне crmpapa.ru, тот же самый, что и при ручной загрузке
+    файла в «Отчёт по заказам» (см. _parse_orders_csv в app.py)."""
+    resp = requests.post(
+        webhook_url, data=csv_bytes,
+        headers={"Content-Type": "text/csv; charset=utf-8"},
+        timeout=60,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def sync_orders(session: requests.Session) -> None:
+    if not ORDERS_QUERY_TEMPLATE or not ORDERS_WEBHOOK_URL:
+        return  # заказы не настроены — молча пропускаем, остальная синхронизация не страдает
+
+    today = datetime.now(timezone.utc).date()
+    date_from = (today - timedelta(days=ORDERS_LOOKBACK_DAYS)).strftime("%d.%m.%Y")
+    date_to = today.strftime("%d.%m.%Y")
+
+    csv_bytes = fetch_orders_csv(session, date_from, date_to)
+    result = send_orders_to_crmpapa(csv_bytes, ORDERS_WEBHOOK_URL)
+
+    if result.get("ok"):
+        log.info(
+            "Заказы %s–%s: импортировано %s, обновлено %s (всего строк %s)",
+            date_from, date_to, result.get("imported"), result.get("updated"), result.get("rows"),
+        )
+    else:
+        log.error("Заказы %s–%s: вебхук вернул ошибку: %s", date_from, date_to, result)
+
+
 # ---------------------------------------------------------------------------
 # Карта "department_id -> webhook_url" для нескольких филиалов
 # ---------------------------------------------------------------------------
@@ -302,11 +411,13 @@ def get_sync_targets() -> dict:
 
 def run_once() -> None:
     targets = get_sync_targets()
-    if not targets:
+    orders_enabled = bool(ORDERS_QUERY_TEMPLATE and ORDERS_WEBHOOK_URL)
+
+    if not targets and not orders_enabled:
         log.error(
-            "Не заданы филиалы для синхронизации. Укажите GOULASH_SYNC_MAP "
-            "(department_id=webhook_url;...) либо GOULASH_DEPARTMENT_ID + CRMPAPA_WEBHOOK_URL "
-            "для одного филиала."
+            "Не задано ни одной синхронизации. Укажите GOULASH_SYNC_MAP "
+            "(department_id=webhook_url;...) для выручки, либо GOULASH_ORDERS_QUERY_TEMPLATE "
+            "+ CRMPAPA_ORDERS_WEBHOOK_URL для заказов (см. README, раздел «Заказы»)."
         )
         return
 
@@ -325,6 +436,12 @@ def run_once() -> None:
                 send_waittime_to_crmpapa(payload, waittime_webhook_url)
         except Exception as exc:
             log.error("Ошибка синхронизации филиала %s: %s", department_id, exc)
+
+    if orders_enabled:
+        try:
+            sync_orders(session)
+        except Exception as exc:
+            log.error("Ошибка синхронизации заказов: %s", exc)
 
 
 def main() -> None:

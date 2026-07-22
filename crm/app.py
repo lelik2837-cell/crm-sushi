@@ -1,6 +1,7 @@
 import ast
 import calendar
 import csv
+import hashlib
 import io
 import operator as _op
 import os
@@ -1299,6 +1300,27 @@ def init_db():
                 status      TEXT DEFAULT 'received',
                 parsed_ok   INTEGER DEFAULT 0,
                 created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            -- Вебхук «Заказы» (см. api_orders_webhook) — в отличие от выручки/времени
+            -- ожидания не привязан к одному филиалу: один запрос разом привозит заказы
+            -- нескольких подразделений, каждое из которых определяется по строке (branch_raw).
+            CREATE TABLE IF NOT EXISTS api_orders_tokens (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                token       TEXT    NOT NULL UNIQUE,
+                description TEXT,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS api_orders_log (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                token           TEXT,
+                method          TEXT,
+                path            TEXT,
+                body            TEXT,
+                status          TEXT DEFAULT 'received',
+                parsed_ok       INTEGER DEFAULT 0,
+                imported_count  INTEGER DEFAULT 0,
+                updated_count   INTEGER DEFAULT 0,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS wait_time_log (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -6171,6 +6193,12 @@ def settings():
             'LEFT JOIN branches b ON b.id=l.branch_id '
             'ORDER BY l.created_at DESC LIMIT 50'
         ).fetchall()
+        api_orders_tokens = conn.execute(
+            'SELECT * FROM api_orders_tokens ORDER BY created_at DESC'
+        ).fetchall()
+        api_orders_log = conn.execute(
+            'SELECT * FROM api_orders_log ORDER BY created_at DESC LIMIT 50'
+        ).fetchall()
         role_perms = {r: get_role_permissions(conn, r) for r in ROLE_CONFIGURABLE}
     return render_template('settings.html',
         exp_cats=exp_cats, exp_cats_parents=exp_cats_parents,
@@ -6182,6 +6210,7 @@ def settings():
         api_tokens=api_tokens, api_log=api_log,
         api_revenue_tokens=api_revenue_tokens, api_revenue_log=api_revenue_log,
         api_waittime_tokens=api_waittime_tokens, api_waittime_log=api_waittime_log,
+        api_orders_tokens=api_orders_tokens, api_orders_log=api_orders_log,
         base_url=request.host_url.rstrip('/'),
         today=date.today().isoformat(),
         formula_vars=FORMULA_VARS, role_labels=ROLE_LABELS,
@@ -8106,6 +8135,95 @@ def api_waittime_token_delete(tid):
 def api_waittime_log_clear():
     with get_db() as conn:
         conn.execute('DELETE FROM api_waittime_log')
+        conn.commit()
+    flash('Лог очищен', 'success')
+    return redirect(url_for('settings') + '?tab=api')
+
+
+# ─── Вебхук «Заказы» (внешний скрипт из Гуляша — та же CSV-выгрузка, что и при ручной
+# загрузке в «Отчёт по заказам», просто в теле POST-запроса вместо файла из формы) ────
+
+@app.route('/api/orders-webhook/<token>', methods=['POST'])
+def api_orders_webhook(token):
+    body_bytes = request.get_data()
+    body_preview = body_bytes[:20000].decode('utf-8', errors='replace')
+    with get_db() as conn:
+        rec = conn.execute('SELECT * FROM api_orders_tokens WHERE token=?', (token,)).fetchone()
+
+        conn.execute(
+            'INSERT INTO api_orders_log (token, method, path, body) VALUES (?,?,?,?)',
+            (token, request.method, request.full_path, body_preview)
+        )
+        log_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+
+        if not rec:
+            conn.commit()
+            return jsonify({'ok': False, 'error': 'invalid token'}), 401
+
+        try:
+            frows = _parse_orders_csv(body_bytes)
+            if not frows:
+                conn.execute('UPDATE api_orders_log SET status=? WHERE id=?',
+                             ('строк с заказами не найдено (пустой период?)', log_id))
+                conn.commit()
+                return jsonify({'ok': True, 'imported': 0, 'updated': 0, 'rows': 0})
+
+            branch_map = get_branch_raw_map(conn)
+            existing_keys = set(
+                (er['order_number'], er['received_at'][:10])
+                for er in conn.execute('SELECT order_number, received_at FROM orders_report').fetchall()
+            )
+            filename = f'webhook_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+            imported, updated = _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename)
+
+            unmapped = sorted(set(r['branch_raw'] for r in frows) - set(branch_map))
+            status = f'импортировано {imported}, обновлено {updated} из {len(frows)} строк'
+            if unmapped:
+                status += f' (не сопоставлены филиалы: {", ".join(unmapped)} — см. Филиалы)'
+            conn.execute('UPDATE api_orders_log SET parsed_ok=1, status=?, imported_count=?, updated_count=? WHERE id=?',
+                         (status, imported, updated, log_id))
+            conn.commit()
+            return jsonify({'ok': True, 'imported': imported, 'updated': updated, 'rows': len(frows)})
+        except Exception as e:
+            conn.execute('UPDATE api_orders_log SET status=? WHERE id=?',
+                         (f'ошибка: {str(e)[:200]}', log_id))
+            conn.commit()
+            return jsonify({'ok': False, 'error': str(e)}), 400
+
+
+@app.route('/settings/api/orders-tokens/add', methods=['POST'])
+@login_required
+@menu_permission_required('settings_api')
+def api_orders_token_add():
+    description = request.form.get('description', '').strip()
+    token = secrets.token_urlsafe(24)
+    with get_db() as conn:
+        conn.execute(
+            'INSERT INTO api_orders_tokens (token, description) VALUES (?,?)',
+            (token, description or None)
+        )
+        conn.commit()
+    flash('Токен создан', 'success')
+    return redirect(url_for('settings') + '?tab=api')
+
+
+@app.route('/settings/api/orders-tokens/<int:tid>/delete', methods=['POST'])
+@login_required
+@menu_permission_required('settings_api')
+def api_orders_token_delete(tid):
+    with get_db() as conn:
+        conn.execute('DELETE FROM api_orders_tokens WHERE id=?', (tid,))
+        conn.commit()
+    flash('Токен удалён', 'success')
+    return redirect(url_for('settings') + '?tab=api')
+
+
+@app.route('/settings/api/orders-log/clear', methods=['POST'])
+@login_required
+@menu_permission_required('settings_api')
+def api_orders_log_clear():
+    with get_db() as conn:
+        conn.execute('DELETE FROM api_orders_log')
         conn.commit()
     flash('Лог очищен', 'success')
     return redirect(url_for('settings') + '?tab=api')
@@ -12733,6 +12851,65 @@ def _parse_orders_csv(file_bytes):
     return rows
 
 
+def _orders_row_hash(r):
+    # Идентификатор заказа для повторной загрузки — дата приёма + номер заказа.
+    # Совпадение по этому ключу не создаёт дубль, а обновляет уже загруженную строку.
+    key = f"{r['order_number']}|{r['received_at'][:10]}"
+    return hashlib.md5(key.encode('utf-8')).hexdigest()
+
+
+def _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename, created_by=None):
+    """Загружает уже разобранные строки заказов (формат _parse_orders_csv) в orders_report.
+    Общая логика для ручной загрузки файла (orders_report_import) и вебхука (api_orders_webhook) —
+    один и тот же upsert по import_hash, одна и та же запись в orders_import_batches.
+    branch_map — {branch_raw: branch_id} (get_branch_raw_map); строки с ещё не сопоставленным
+    branch_raw импортируются с branch_id=NULL (сопоставить можно позже на странице «Филиалы»).
+    existing_keys — множество уже известных (order_number, date), мутируется на месте для
+    подсчёта новых/обновлённых при загрузке сразу нескольких файлов/батчей подряд.
+    Возвращает (imported, updated)."""
+    cur = conn.execute(
+        'INSERT INTO orders_import_batches (filename, created_by) VALUES (?,?)',
+        (filename, created_by)
+    )
+    batch_id = cur.lastrowid
+
+    imported = updated = 0
+    for r in frows:
+        key = (r['order_number'], r['received_at'][:10])
+        is_new = key not in existing_keys
+        existing_keys.add(key)
+        h = _orders_row_hash(r)
+        conn.execute('''
+            INSERT INTO orders_report
+                (order_number, branch_raw, branch_id, received_at, promised_minutes,
+                 order_type_raw, order_type, ready_minutes, delivery_minutes,
+                 promo_code, amount, new_client, import_batch_id, import_hash)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(import_hash) DO UPDATE SET
+                branch_raw=excluded.branch_raw, branch_id=excluded.branch_id,
+                received_at=excluded.received_at, promised_minutes=excluded.promised_minutes,
+                order_type_raw=excluded.order_type_raw, order_type=excluded.order_type,
+                ready_minutes=excluded.ready_minutes, delivery_minutes=excluded.delivery_minutes,
+                promo_code=excluded.promo_code, amount=excluded.amount,
+                new_client=excluded.new_client, import_batch_id=excluded.import_batch_id
+        ''', (
+            r['order_number'], r['branch_raw'], branch_map.get(r['branch_raw']),
+            r['received_at'], r['promised_minutes'], r['order_type_raw'], r['order_type'],
+            r['ready_minutes'], r['delivery_minutes'], r['promo_code'], r['amount'],
+            r['new_client'], batch_id, h
+        ))
+        if is_new:
+            imported += 1
+        else:
+            updated += 1
+
+    conn.execute(
+        'UPDATE orders_import_batches SET imported_count=?, updated_count=? WHERE id=?',
+        (imported, updated, batch_id)
+    )
+    return imported, updated
+
+
 @app.route('/orders-report')
 @login_required
 @menu_permission_required('orders_report')
@@ -12818,13 +12995,7 @@ def orders_report():
 @login_required
 @menu_permission_required('orders_report')
 def orders_report_import():
-    import base64, hashlib
-
-    def _row_hash(r):
-        # Идентификатор заказа для повторной загрузки — дата приёма + номер заказа.
-        # Совпадение по этому ключу не создаёт дубль, а обновляет уже загруженную строку.
-        key = f"{r['order_number']}|{r['received_at'][:10]}"
-        return hashlib.md5(key.encode('utf-8')).hexdigest()
+    import base64
 
     def _batches():
         with get_db() as conn:
@@ -12897,45 +13068,8 @@ def orders_report_import():
 
         total_imported = total_updated = total_rows = 0
         for fname, frows in parsed:
-            cur = conn.execute(
-                'INSERT INTO orders_import_batches (filename, created_by) VALUES (?,?)',
-                (fname, session.get('user_id'))
-            )
-            batch_id = cur.lastrowid
-
-            imported = updated = 0
-            for r in frows:
-                key = (r['order_number'], r['received_at'][:10])
-                is_new = key not in existing_keys
-                existing_keys.add(key)
-                h = _row_hash(r)
-                conn.execute('''
-                    INSERT INTO orders_report
-                        (order_number, branch_raw, branch_id, received_at, promised_minutes,
-                         order_type_raw, order_type, ready_minutes, delivery_minutes,
-                         promo_code, amount, new_client, import_batch_id, import_hash)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                    ON CONFLICT(import_hash) DO UPDATE SET
-                        branch_raw=excluded.branch_raw, branch_id=excluded.branch_id,
-                        received_at=excluded.received_at, promised_minutes=excluded.promised_minutes,
-                        order_type_raw=excluded.order_type_raw, order_type=excluded.order_type,
-                        ready_minutes=excluded.ready_minutes, delivery_minutes=excluded.delivery_minutes,
-                        promo_code=excluded.promo_code, amount=excluded.amount,
-                        new_client=excluded.new_client, import_batch_id=excluded.import_batch_id
-                ''', (
-                    r['order_number'], r['branch_raw'], branch_map.get(r['branch_raw']),
-                    r['received_at'], r['promised_minutes'], r['order_type_raw'], r['order_type'],
-                    r['ready_minutes'], r['delivery_minutes'], r['promo_code'], r['amount'],
-                    r['new_client'], batch_id, h
-                ))
-                if is_new:
-                    imported += 1
-                else:
-                    updated += 1
-
-            conn.execute(
-                'UPDATE orders_import_batches SET imported_count=?, updated_count=? WHERE id=?',
-                (imported, updated, batch_id)
+            imported, updated = _ingest_orders_rows(
+                conn, frows, branch_map, existing_keys, fname, created_by=session.get('user_id')
             )
             total_imported += imported
             total_updated  += updated

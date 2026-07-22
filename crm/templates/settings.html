@@ -1351,6 +1351,140 @@
         {% endif %}
     </div>
 
+    <!-- ══ ВЕБХУК ЗАКАЗОВ (Гуляш: «Отчёт по заказам») ══ -->
+    <hr class="my-4">
+    <h5 class="fw-bold mb-3"><i class="bi bi-receipt me-2"></i>Синхронизация заказов (вебхук)</h5>
+    <div class="row g-4">
+
+        <!-- Создать токен -->
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-header bg-light fw-semibold"><i class="bi bi-key me-1"></i>Добавить токен</div>
+                <div class="card-body">
+                    <p class="text-muted small">Один токен обслуживает сразу все филиалы — какой именно филиал у заказа,
+                        определяется по строке «Подразделение» внутри самой выгрузки (как и при ручной загрузке файла).</p>
+                    <form method="POST" action="{{ url_for('api_orders_token_add') }}">
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Описание</label>
+                            <input type="text" name="description" class="form-control" placeholder="напр. papasushi.goulash.tech">
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">Создать токен</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Активные токены -->
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header bg-light fw-semibold"><i class="bi bi-link-45deg me-1"></i>Активные токены и URL для внешнего скрипта</div>
+                {% if api_orders_tokens %}
+                <div class="table-responsive">
+                    <table class="table mb-0 align-middle">
+                        <thead class="table-light">
+                            <tr><th>Описание</th><th>URL для вебхука</th><th></th></tr>
+                        </thead>
+                        <tbody>
+                        {% for t in api_orders_tokens %}
+                        <tr>
+                            <td class="text-muted small">{{ t.description or '—' }}</td>
+                            <td>
+                                <div class="input-group input-group-sm">
+                                    <input type="text" class="form-control form-control-sm font-monospace"
+                                           value="{{ base_url }}/api/orders-webhook/{{ t.token }}" readonly
+                                           id="ord_url_{{ t.id }}">
+                                    <button class="btn btn-outline-secondary" type="button"
+                                            onclick="copyUrl('ord_url_{{ t.id }}')">
+                                        <i class="bi bi-copy"></i>
+                                    </button>
+                                </div>
+                            </td>
+                            <td>
+                                <form method="POST" action="{{ url_for('api_orders_token_delete', tid=t.id) }}"
+                                      onsubmit="return confirm('Удалить токен?')">
+                                    <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="card-body pt-2 pb-3">
+                    <div class="alert alert-info py-2 mb-0 small">
+                        <i class="bi bi-info-circle me-1"></i>
+                        Внешний скрипт делает <strong>POST</strong> на этот URL, в теле запроса — тот же CSV-файл
+                        «Отчёт по заказам», что и при ручной загрузке (Настройки → раздел «Отчёт по заказам» → «Импорт»).
+                        Заказы попадают в «Отчёт по заказам» тем же способом (повторная загрузка обновляет уже
+                        загруженный заказ, а не создаёт дубль); филиалы, встреченные впервые, можно сопоставить
+                        на странице «Филиалы».
+                    </div>
+                </div>
+                {% else %}
+                <div class="card-body text-center text-muted py-4">
+                    <i class="bi bi-key fs-2 d-block mb-2 opacity-25"></i>
+                    Создайте токен, чтобы получать заказы по вебхуку
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Лог запросов -->
+    <div class="card mt-4">
+        <div class="card-header bg-light fw-semibold d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-terminal me-1"></i>Лог входящих запросов вебхука заказов (последние 50)</span>
+            {% if api_orders_log %}
+            <form method="POST" action="{{ url_for('api_orders_log_clear') }}"
+                  onsubmit="return confirm('Очистить лог?')">
+                <button class="btn btn-sm btn-outline-danger">Очистить</button>
+            </form>
+            {% endif %}
+        </div>
+        {% if api_orders_log %}
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 align-middle" style="font-size:0.82rem">
+                <thead class="table-light">
+                    <tr>
+                        <th>Время</th><th>Статус</th><th>Тело запроса</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for l in api_orders_log %}
+                <tr class="{{ 'table-success' if l.parsed_ok else '' }}">
+                    <td style="white-space:nowrap">{{ l.created_at[:16] }}</td>
+                    <td>
+                        {% if l.parsed_ok %}
+                        <span class="badge bg-success">{{ l.status }}</span>
+                        {% else %}
+                        <span class="badge bg-{{ 'danger' if l.status and 'ошибка' in l.status else 'secondary' }}">
+                            {{ l.status or 'получено' }}
+                        </span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if l.body %}
+                        <details>
+                            <summary class="text-muted" style="cursor:pointer">показать ({{ l.body|length }} байт)</summary>
+                            <pre class="mt-1 p-2 bg-light rounded" style="max-height:200px;overflow:auto;font-size:0.75rem;white-space:pre-wrap">{{ l.body[:3000] }}</pre>
+                        </details>
+                        {% else %}
+                        <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="card-body text-center text-muted py-4">
+            <i class="bi bi-inbox fs-2 d-block mb-2 opacity-25"></i>
+            Запросов пока не было.
+        </div>
+        {% endif %}
+    </div>
+
     </div>{% endif %}
 
     {% if active_tab == 'roles' %}<div>
