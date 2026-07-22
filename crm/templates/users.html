@@ -56,12 +56,10 @@
                     {% else %}<span class="text-muted">—</span>{% endif %}
                 </td>
                 <td class="text-end">
-                    {% if u.role != 'owner' %}
                     <button class="btn btn-sm btn-outline-primary"
                             data-bs-toggle="modal" data-bs-target="#editModal{{ u.id }}">
                         <i class="bi bi-pencil"></i> Редактировать
                     </button>
-                    {% endif %}
                 </td>
             </tr>
             {% endfor %}
@@ -122,6 +120,7 @@
                             <option value="admin">Администратор</option>
                             <option value="director">Управляющий</option>
                             <option value="employee">Сотрудник</option>
+                            <option value="owner">Владелец (полный доступ)</option>
                         </select>
                     </div>
                     <div class="mb-3">
@@ -170,6 +169,7 @@
                             <option value="admin">Администратор</option>
                             <option value="director">Управляющий</option>
                             <option value="employee">Сотрудник</option>
+                            <option value="owner">Владелец (полный доступ)</option>
                         </select>
                     </div>
                     <div class="mb-3">
@@ -188,7 +188,6 @@
 
 <!-- ══ Edit User Modals ══ -->
 {% for u in users %}
-{% if u.role != 'owner' %}
 {% set cur_ids = user_branches_map.get(u.id, []) | map(attribute='id') | list %}
 <div class="modal fade" id="editModal{{ u.id }}" tabindex="-1">
     <div class="modal-dialog">
@@ -217,6 +216,7 @@
                             <option value="admin" {% if u.role == 'admin' %}selected{% endif %}>Администратор</option>
                             <option value="director" {% if u.role == 'director' %}selected{% endif %}>Управляющий</option>
                             <option value="employee" {% if u.role == 'employee' %}selected{% endif %}>Сотрудник</option>
+                            <option value="owner" {% if u.role == 'owner' %}selected{% endif %}>Владелец (полный доступ)</option>
                         </select>
                     </div>
                     <div class="mb-3">
@@ -237,7 +237,6 @@
         </div>
     </div>
 </div>
-{% endif %}
 {% endfor %}
 
 {% endblock %}
@@ -281,8 +280,8 @@ function initBranchPicker(prefix) {
 
 initBranchPicker('add');
 initBranchPicker('inv');
-{% for u in users %}{% if u.role != 'owner' %}
+{% for u in users %}
 initBranchPicker('e{{ u.id }}');
-{% endif %}{% endfor %}
+{% endfor %}
 </script>
 {% endblock %}
