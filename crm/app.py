@@ -12957,6 +12957,23 @@ def orders_report():
 
         sql_where = ' AND '.join(where) if where else '1=1'
 
+        stats = conn.execute(f'''
+            SELECT COUNT(*), COALESCE(SUM(amount),0),
+                   SUM(CASE WHEN order_type = 'Общий - самовывоз' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN order_type LIKE 'Доставка%' THEN 1 ELSE 0 END)
+            FROM orders_report
+            WHERE {sql_where}
+        ''', params).fetchone()
+
+        total_count = stats[0] or 0
+        page_size = 300
+        total_pages = max(1, (total_count + page_size - 1) // page_size)
+        try:
+            page = int(request.args.get('page', 1))
+        except (TypeError, ValueError):
+            page = 1
+        page = max(1, min(page, total_pages))
+
         rows = conn.execute(f'''
             SELECT *,
                 CASE
@@ -12968,16 +12985,14 @@ def orders_report():
             FROM orders_report
             WHERE {sql_where}
             ORDER BY received_at DESC
-            LIMIT 20000
-        ''', params).fetchall()
+            LIMIT ? OFFSET ?
+        ''', params + [page_size, (page - 1) * page_size]).fetchall()
 
-        stats = conn.execute(f'''
-            SELECT COUNT(*), COALESCE(SUM(amount),0),
-                   SUM(CASE WHEN order_type = 'Общий - самовывоз' THEN 1 ELSE 0 END),
-                   SUM(CASE WHEN order_type LIKE 'Доставка%' THEN 1 ELSE 0 END)
-            FROM orders_report
-            WHERE {sql_where}
-        ''', params).fetchone()
+    def _page_url(n):
+        import urllib.parse as _up
+        args = request.args.to_dict(flat=False)
+        args['page'] = [str(n)]
+        return url_for('orders_report') + '?' + _up.urlencode(args, doseq=True)
 
     return render_template('orders_report.html',
         rows=rows,
@@ -12985,10 +13000,11 @@ def orders_report():
         branch_groups=branch_groups,
         date_from=date_from, date_to=date_to,
         branch_flt=branch_flt, type_flt=type_flt, q=q,
-        total_count=stats[0] or 0, total_amount=stats[1] or 0,
+        total_count=total_count, total_amount=stats[1] or 0,
         pickup_count=stats[2] or 0, delivery_count=stats[3] or 0,
         data_min=data_min, data_max=data_max,
-        row_limit_hit=(len(rows) >= 20000))
+        page=page, page_size=page_size, total_pages=total_pages,
+        page_url=_page_url)
 
 
 @app.route('/orders-report/import', methods=['GET', 'POST'])
