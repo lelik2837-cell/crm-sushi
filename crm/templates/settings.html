@@ -1010,7 +1010,10 @@
                                 </td>
                                 <td class="text-end">
                                     <button class="btn btn-sm btn-outline-primary" title="Редактировать"
-                                        onclick="openEditPayoutRule({{ r.id }}, {{ r.name|tojson }}, {{ r.day_of_month }}, {{ r.period|tojson }}, {{ r.limit_amount if r.limit_amount else 'null' }}, {{ r.branch_group_id if r.branch_group_id else 'null' }})">
+                                        data-id="{{ r.id }}" data-name="{{ r.name }}" data-day="{{ r.day_of_month }}"
+                                        data-period="{{ r.period }}" data-limit="{{ r.limit_amount or '' }}"
+                                        data-group="{{ r.branch_group_id or '' }}"
+                                        onclick="openEditPayoutRule(this)">
                                         <i class="bi bi-pencil"></i>
                                     </button>
                                     <form method="POST" action="{{ url_for('toggle_salary_payout_rule', rule_id=r.id) }}" class="d-inline">
@@ -1087,13 +1090,14 @@
             </div>
         </div>
         <script>
-        function openEditPayoutRule(id, name, day, period, limitAmount, branchGroupId) {
-            document.getElementById('editPayoutName').value = name;
-            document.getElementById('editPayoutDay').value = day;
-            document.getElementById('editPayoutPeriod').value = period;
-            document.getElementById('editPayoutLimit').value = limitAmount || '';
-            document.getElementById('editPayoutBranchGroup').value = branchGroupId || '';
-            document.getElementById('editPayoutRuleForm').action = '/settings/salary-payout-rules/' + id + '/edit';
+        function openEditPayoutRule(btn) {
+            const d = btn.dataset;
+            document.getElementById('editPayoutName').value = d.name;
+            document.getElementById('editPayoutDay').value = d.day;
+            document.getElementById('editPayoutPeriod').value = d.period;
+            document.getElementById('editPayoutLimit').value = d.limit || '';
+            document.getElementById('editPayoutBranchGroup').value = d.group || '';
+            document.getElementById('editPayoutRuleForm').action = '/settings/salary-payout-rules/' + d.id + '/edit';
             new bootstrap.Modal(document.getElementById('editPayoutRuleModal')).show();
         }
         </script>
