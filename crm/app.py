@@ -147,6 +147,19 @@ MENU_ITEMS = [
 ]
 MENU_ITEMS_BY_CODE = {m[0]: {'label': m[1], 'group': m[2], 'branch_scoped': m[3]} for m in MENU_ITEMS}
 MENU_GROUP_LABELS = {'dash': 'Дашборд', 'reports': 'Отчёты', 'settings': 'Настройки'}
+
+# Подпункты (вкладки) внутри некоторых пунктов меню — на «Роли и доступ» можно
+# либо отметить весь раздел целиком (галочка у самого пункта в MENU_ITEMS —
+# тогда доступны все вкладки), либо точечно выдать доступ на отдельные вкладки.
+# (parent_code -> [(subitem_code, label, branch_scoped), ...])
+MENU_SUBITEMS = {
+    'call_center': [
+        ('call_center_schedule',  'График',                 False),
+        ('call_center_shifts',    'Смены',                  False),
+        ('call_center_employees', 'Сотрудники колл-центра', False),
+    ],
+}
+MENU_SUBITEMS_FLAT = [code for _subs in MENU_SUBITEMS.values() for code, _label, _bs in _subs]
 ROLE_CONFIGURABLE = ('admin', 'director', 'callcenter')
 LOGIN_ROLE_LABELS = {'admin': 'Администратор', 'director': 'Управляющий', 'callcenter': 'Оператор колл-центра'}
 
@@ -1705,7 +1718,7 @@ def init_db():
             );
         ''')
         for _role in ROLE_CONFIGURABLE:
-            for _code, _meta in MENU_ITEMS_BY_CODE.items():
+            for _code in list(MENU_ITEMS_BY_CODE.keys()) + MENU_SUBITEMS_FLAT:
                 if conn.execute(
                     'SELECT 1 FROM role_menu_permissions WHERE role=? AND item_code=?', (_role, _code)
                 ).fetchone():
@@ -1870,13 +1883,32 @@ def _load_role_perms():
 
 
 def item_visible(item_code):
-    """Виден ли пункт меню/страница текущей роли сессии. Owner — всегда True."""
+    """Виден ли пункт меню/страница текущей роли сессии. Owner — всегда True.
+    Если у пункта есть подпункты (MENU_SUBITEMS) — виден, если разрешён весь
+    раздел целиком, либо доступ дан хотя бы на один подпункт (см. subitem_visible)."""
     role = session.get('role')
     if role == 'owner':
         return True
     if role not in ROLE_CONFIGURABLE:
         return False
-    return bool(_load_role_perms().get(item_code, {}).get('visible'))
+    perms = _load_role_perms()
+    if bool(perms.get(item_code, {}).get('visible')):
+        return True
+    return any(bool(perms.get(code, {}).get('visible')) for code, _label, _bs in MENU_SUBITEMS.get(item_code, []))
+
+
+def subitem_visible(parent_code, subitem_code):
+    """Доступен ли конкретный подпункт (вкладка) parent_code текущей роли —
+    да, если роли открыт весь раздел целиком, либо доступ дан именно на этот подпункт."""
+    role = session.get('role')
+    if role == 'owner':
+        return True
+    if role not in ROLE_CONFIGURABLE:
+        return False
+    perms = _load_role_perms()
+    if bool(perms.get(parent_code, {}).get('visible')):
+        return True
+    return bool(perms.get(subitem_code, {}).get('visible'))
 
 
 def group_has_visible_item(group):
@@ -1888,6 +1920,7 @@ def any_menu_visible():
 
 
 app.jinja_env.globals['item_visible'] = item_visible
+app.jinja_env.globals['subitem_visible'] = subitem_visible
 app.jinja_env.globals['group_has_visible_item'] = group_has_visible_item
 app.jinja_env.globals['any_menu_visible'] = any_menu_visible
 
@@ -6122,6 +6155,7 @@ def settings():
         formula_vars=FORMULA_VARS, role_labels=ROLE_LABELS,
         positions=positions, branch_groups_for_rates=branch_groups_for_rates,
         role_perms=role_perms, menu_items=MENU_ITEMS, menu_group_labels=MENU_GROUP_LABELS,
+        menu_subitems=MENU_SUBITEMS,
         role_configurable=ROLE_CONFIGURABLE, login_role_labels=LOGIN_ROLE_LABELS)
 
 
@@ -6129,9 +6163,10 @@ def settings():
 @login_required
 @owner_required
 def role_permissions_save():
+    all_codes = [m[0] for m in MENU_ITEMS] + MENU_SUBITEMS_FLAT
     with get_db() as conn:
         for role in ROLE_CONFIGURABLE:
-            for code, _label, _group, _branch_scoped in MENU_ITEMS:
+            for code in all_codes:
                 visible = 1 if request.form.get(f'visible_{role}_{code}') else 0
                 scope = request.form.get(f'scope_{role}_{code}', 'own_only')
                 if scope not in ('own_only', 'own_default'):
@@ -13210,7 +13245,13 @@ def _cc_snap_quarter(hhmm, fallback='10:00'):
 @menu_permission_required('call_center')
 def call_center():
     WD_LABELS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+    _cc_tabs = ('schedule', 'shifts', 'employees')
     active_tab = request.args.get('tab', 'schedule')
+    if active_tab not in _cc_tabs or not subitem_visible('call_center', f'call_center_{active_tab}'):
+        # запрошенная (или дефолтная) вкладка недоступна этой роли — переключаем
+        # на первую, на которую доступ есть (полный доступ к разделу уже
+        # разрешает все — см. subitem_visible)
+        active_tab = next((t for t in _cc_tabs if subitem_visible('call_center', f'call_center_{t}')), 'schedule')
     today = date.today()
     default_month = today.replace(day=1)
     month_str = request.args.get('month', default_month.strftime('%Y-%m'))

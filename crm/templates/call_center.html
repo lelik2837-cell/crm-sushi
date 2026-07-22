@@ -18,21 +18,27 @@
 </div>
 
 <ul class="nav nav-tabs mb-4">
+    {% if subitem_visible('call_center', 'call_center_schedule') %}
     <li class="nav-item">
         <a class="nav-link {% if active_tab == 'schedule' %}active{% endif %}" href="{{ url_for('call_center') }}?tab=schedule">
             <i class="bi bi-calendar-week"></i> График
         </a>
     </li>
+    {% endif %}
+    {% if subitem_visible('call_center', 'call_center_shifts') %}
     <li class="nav-item">
         <a class="nav-link {% if active_tab == 'shifts' %}active{% endif %}" href="{{ url_for('call_center') }}?tab=shifts">
             <i class="bi bi-clock-history"></i> Смены
         </a>
     </li>
+    {% endif %}
+    {% if subitem_visible('call_center', 'call_center_employees') %}
     <li class="nav-item">
         <a class="nav-link {% if active_tab == 'employees' %}active{% endif %}" href="{{ url_for('call_center') }}?tab=employees">
             <i class="bi bi-person-badge"></i> Сотрудники колл-центра
         </a>
     </li>
+    {% endif %}
 </ul>
 
 {% set _MONTHS_RU = ['','Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'] %}

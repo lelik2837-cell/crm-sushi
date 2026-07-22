@@ -1359,6 +1359,8 @@
             Владелец всегда видит и может всё. Здесь настраивается, что видят остальные роли,
             и — для страниц с данными по филиалам — видят ли они только свои филиалы,
             или свои по умолчанию с возможностью посмотреть чужие.
+            Для разделов с вкладками (например «Колл-центр») галочка у самого раздела открывает все вкладки сразу,
+            а галочки у вложенных пунктов ниже (со значком «└») дают доступ только к отдельным вкладкам.
         </div>
         {% for grp, grp_label in menu_group_labels.items() %}
         <div class="card mb-3">
@@ -1375,8 +1377,12 @@
                     </thead>
                     <tbody>
                         {% for code, label, item_grp, branch_scoped in menu_items if item_grp == grp %}
+                        {% set subitems = menu_subitems.get(code, []) %}
                         <tr>
-                            <td class="small">{{ label }}</td>
+                            <td class="small">
+                                {{ label }}
+                                {% if subitems %}<span class="text-muted" style="font-size:0.72rem">(весь раздел)</span>{% endif %}
+                            </td>
                             {% for role in role_configurable %}
                             {% set perm = role_perms[role].get(code, {'visible': False, 'branch_scope': 'own_only'}) %}
                             <td class="text-center" style="width:1%">
@@ -1400,6 +1406,33 @@
                             </td>
                             {% endfor %}
                         </tr>
+                        {% for subcode, sublabel, sub_branch_scoped in subitems %}
+                        <tr class="table-light">
+                            <td class="small ps-4 text-muted">└ {{ sublabel }}</td>
+                            {% for role in role_configurable %}
+                            {% set perm = role_perms[role].get(subcode, {'visible': False, 'branch_scope': 'own_only'}) %}
+                            <td class="text-center" style="width:1%">
+                                <input type="checkbox" class="form-check-input rp-visible"
+                                       name="visible_{{ role }}_{{ subcode }}" value="1"
+                                       data-target="scope_{{ role }}_{{ subcode }}"
+                                       {% if perm.visible %}checked{% endif %}
+                                       onchange="rpToggleScope(this)">
+                            </td>
+                            <td style="min-width:170px">
+                                {% if sub_branch_scoped %}
+                                <select name="scope_{{ role }}_{{ subcode }}" id="scope_{{ role }}_{{ subcode }}"
+                                        class="form-select form-select-sm"
+                                        {% if not perm.visible %}disabled{% endif %}>
+                                    <option value="own_only" {% if perm.branch_scope != 'own_default' %}selected{% endif %}>Только свои филиалы</option>
+                                    <option value="own_default" {% if perm.branch_scope == 'own_default' %}selected{% endif %}>Свои по умолчанию, можно выбрать другие</option>
+                                </select>
+                                {% else %}
+                                <span class="text-muted small">—</span>
+                                {% endif %}
+                            </td>
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
                         {% endfor %}
                     </tbody>
                 </table>
