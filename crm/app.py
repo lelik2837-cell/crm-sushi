@@ -13305,6 +13305,18 @@ def _orders_csv_col(header, *names):
     return None
 
 
+# Статусы заказов, которые не нужно показывать в «Отчёте по заказам» (запрос
+# пользователя: отменённые/возвраты не заказы по сути, а «Выполнен (завершён)» —
+# отдельный финальный статус, дублирующий обычный «Выполнен», не нужен отдельно).
+# Заказы с любым другим статусом (Принят/В пути/Приготовлен/Выполнен/Отложен/
+# Сайт (оператор) и т.п.) показываются как есть — фильтр «включающий по умолчанию».
+_ORDERS_EXCLUDED_STATUSES = {'отмена', 'возврат', 'выполнен (завершен)'}
+
+
+def _norm_status(s):
+    return re.sub(r'\s+', ' ', (s or '').strip().lower().replace('ё', 'е'))
+
+
 def _parse_orders_csv(file_bytes):
     """Разбирает CSV-выгрузку «Отчёт по заказам» (iiko, разделитель ';')."""
     text = None
@@ -13339,6 +13351,7 @@ def _parse_orders_csv(file_bytes):
     idx_promo    = _orders_csv_col(header, 'Промокод')
     idx_amount   = idx_or(9, 'К оплате', 'Оплачено')
     idx_new_cli  = _orders_csv_col(header, 'Новый клиент')
+    idx_status   = _orders_csv_col(header, 'Статус', 'Статус заказа', 'Название статуса', 'Status', 'StatusName')
 
     def cell(row, idx):
         if idx is None or idx >= len(row):
@@ -13360,6 +13373,8 @@ def _parse_orders_csv(file_bytes):
         order_number = cell(row, idx_number)
         if not order_number:
             continue
+        if _norm_status(cell(row, idx_status)) in _ORDERS_EXCLUDED_STATUSES:
+            continue  # Отмена/Возврат/Выполнен (завершён) — не показываем (см. _ORDERS_EXCLUDED_STATUSES)
         amount_raw = cell(row, idx_amount).replace(' ', '').replace(',', '.')
         try:
             amount = float(amount_raw) if amount_raw else 0.0
