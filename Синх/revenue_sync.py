@@ -253,16 +253,23 @@ def _looks_like_orders_csv(content: bytes) -> bool:
     как есть — вдруг для CSV нужен отдельный запрос/ссылка «Экспорт», а не этот же
     URL). Ищем характерный заголовок колонки — он есть в выгрузке в любой кодировке
     из тех, что понимает разбор на стороне crmpapa.ru (см. _parse_orders_csv)."""
+    # Декодируем сначала целиком, потом обрезаем — если резать сырые байты ДО
+    # декодирования (как было раньше), срез может попасть ровно на середину
+    # многобайтового символа кириллицы в UTF-8, из-за чего utf-8-sig упадёт
+    # с UnicodeDecodeError, а cp1251 (однобайтовый, никогда не падает) молча
+    # раскодирует те же UTF-8-байты в мусор — заголовок не найдётся, хотя
+    # реальный ответ был корректным CSV (см. п.192 — стало заметно чаще после
+    # расширения списка колонок, но баг был всегда, просто маловероятный).
     text = None
     for enc in ("utf-8-sig", "cp1251", "utf-8"):
         try:
-            text = content[:4000].decode(enc)
+            text = content.decode(enc)
             break
         except UnicodeDecodeError:
             continue
     if text is None:
         return False
-    return "Номер заказа" in text
+    return "Номер заказа" in text[:4000]
 
 
 def fetch_orders_csv(session: requests.Session, date_from: str, date_to: str, current_date: bool = False) -> bytes:
