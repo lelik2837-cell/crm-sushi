@@ -957,8 +957,21 @@
                             </div>
                             <div class="mb-3">
                                 <label class="form-label fw-semibold">Лимит на сотрудника</label>
-                                <input type="text" name="limit_amount" class="form-control" placeholder="Без ограничения — вся задолженность">
-                                <div class="form-text">Например 10000 для аванса. Оставьте пустым — выплачивается вся задолженность за период.</div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="limit_type" id="addLimitNone" value="none" checked onchange="togglePayoutLimitFields('add')">
+                                    <label class="form-check-label" for="addLimitNone">Без лимита — вся задолженность</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="limit_type" id="addLimitAmount" value="amount" onchange="togglePayoutLimitFields('add')">
+                                    <label class="form-check-label" for="addLimitAmount">Фиксированная сумма</label>
+                                </div>
+                                <input type="text" name="limit_amount" id="addLimitAmountInput" class="form-control mt-1 mb-2" placeholder="Например 10000" style="display:none">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="limit_type" id="addLimitDays" value="days" onchange="togglePayoutLimitFields('add')">
+                                    <label class="form-check-label" for="addLimitDays">Заработанное с 1 по число месяца</label>
+                                </div>
+                                <input type="number" name="limit_days" id="addLimitDaysInput" class="form-control mt-1" min="1" max="31" placeholder="Например 15" style="display:none">
+                                <div class="form-text">«Заработанное с 1 по число» — лимит не фиксированный, а считается как сумма, которую сотрудник уже заработал с 1 по указанное число текущего месяца включительно (например, при 15 нельзя выплатить больше заработанного за первую половину месяца).</div>
                             </div>
                             <div class="mb-3">
                                 <label class="form-label fw-semibold">Группа филиалов</label>
@@ -1002,7 +1015,11 @@
                                 <td class="fw-semibold">{{ r.name }}</td>
                                 <td>{{ r.day_of_month }} число</td>
                                 <td>{% if r.period == 'current_month' %}Текущий месяц{% else %}Предыдущий месяц{% endif %}</td>
-                                <td>{% if r.limit_amount %}{{ r.limit_amount|int }} ₽{% else %}Без ограничения{% endif %}</td>
+                                <td>
+                                    {% if r.limit_type == 'amount' and r.limit_amount %}{{ r.limit_amount|int }} ₽
+                                    {% elif r.limit_type == 'days' and r.limit_days %}заработанное с 1 по {{ r.limit_days }} число
+                                    {% else %}Без ограничения{% endif %}
+                                </td>
                                 <td>{{ r.branch_group_name or 'Все филиалы' }}</td>
                                 <td class="text-center">
                                     {% if r.is_active %}<span class="badge bg-success">Активно</span>
@@ -1011,7 +1028,8 @@
                                 <td class="text-end">
                                     <button class="btn btn-sm btn-outline-primary" title="Редактировать"
                                         data-id="{{ r.id }}" data-name="{{ r.name }}" data-day="{{ r.day_of_month }}"
-                                        data-period="{{ r.period }}" data-limit="{{ r.limit_amount or '' }}"
+                                        data-period="{{ r.period }}" data-limit-type="{{ r.limit_type or 'none' }}"
+                                        data-limit="{{ r.limit_amount or '' }}" data-limit-days="{{ r.limit_days or '' }}"
                                         data-group="{{ r.branch_group_id or '' }}"
                                         onclick="openEditPayoutRule(this)">
                                         <i class="bi bi-pencil"></i>
@@ -1069,7 +1087,20 @@
                             </div>
                             <div class="mb-3">
                                 <label class="form-label fw-semibold">Лимит на сотрудника</label>
-                                <input type="text" name="limit_amount" id="editPayoutLimit" class="form-control" placeholder="Без ограничения — вся задолженность">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="limit_type" id="editLimitNone" value="none" onchange="togglePayoutLimitFields('edit')">
+                                    <label class="form-check-label" for="editLimitNone">Без лимита — вся задолженность</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="limit_type" id="editLimitAmount" value="amount" onchange="togglePayoutLimitFields('edit')">
+                                    <label class="form-check-label" for="editLimitAmount">Фиксированная сумма</label>
+                                </div>
+                                <input type="text" name="limit_amount" id="editLimitAmountInput" class="form-control mt-1 mb-2" placeholder="Например 10000" style="display:none">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="limit_type" id="editLimitDays" value="days" onchange="togglePayoutLimitFields('edit')">
+                                    <label class="form-check-label" for="editLimitDays">Заработанное с 1 по число месяца</label>
+                                </div>
+                                <input type="number" name="limit_days" id="editLimitDaysInput" class="form-control mt-1" min="1" max="31" placeholder="Например 15" style="display:none">
                             </div>
                             <div class="mb-3">
                                 <label class="form-label fw-semibold">Группа филиалов</label>
@@ -1090,12 +1121,25 @@
             </div>
         </div>
         <script>
+        function togglePayoutLimitFields(prefix) {
+            const checked = document.querySelector('#' + prefix + 'LimitNone:checked, #' + prefix + 'LimitAmount:checked, #' + prefix + 'LimitDays:checked');
+            const val = checked ? checked.value : 'none';
+            document.getElementById(prefix + 'LimitAmountInput').style.display = (val === 'amount') ? '' : 'none';
+            document.getElementById(prefix + 'LimitDaysInput').style.display = (val === 'days') ? '' : 'none';
+        }
+
         function openEditPayoutRule(btn) {
             const d = btn.dataset;
             document.getElementById('editPayoutName').value = d.name;
             document.getElementById('editPayoutDay').value = d.day;
             document.getElementById('editPayoutPeriod').value = d.period;
-            document.getElementById('editPayoutLimit').value = d.limit || '';
+            const limitType = d.limitType || 'none';
+            document.getElementById('editLimitNone').checked = (limitType === 'none');
+            document.getElementById('editLimitAmount').checked = (limitType === 'amount');
+            document.getElementById('editLimitDays').checked = (limitType === 'days');
+            document.getElementById('editLimitAmountInput').value = d.limit || '';
+            document.getElementById('editLimitDaysInput').value = d.limitDays || '';
+            togglePayoutLimitFields('edit');
             document.getElementById('editPayoutBranchGroup').value = d.group || '';
             document.getElementById('editPayoutRuleForm').action = '/settings/salary-payout-rules/' + d.id + '/edit';
             new bootstrap.Modal(document.getElementById('editPayoutRuleModal')).show();

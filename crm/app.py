@@ -1910,6 +1910,14 @@ def init_db():
         if 'branch_group_id' not in _spr_cols:
             # NULL = правило действует на все филиалы; иначе — только на группу (branch_groups)
             conn.execute("ALTER TABLE salary_payout_rules ADD COLUMN branch_group_id INTEGER REFERENCES branch_groups(id)")
+        if 'limit_type' not in _spr_cols:
+            # 'none' — без лимита (вся задолженность), 'amount' — фиксированная сумма
+            # (старое поведение, см. limit_amount), 'days' — лимит считается динамически
+            # как сумма, заработанная сотрудником с 1 по limit_days число текущего месяца.
+            conn.execute("ALTER TABLE salary_payout_rules ADD COLUMN limit_type TEXT DEFAULT 'amount'")
+            conn.execute("UPDATE salary_payout_rules SET limit_type = CASE WHEN limit_amount IS NOT NULL THEN 'amount' ELSE 'none' END")
+        if 'limit_days' not in _spr_cols:
+            conn.execute("ALTER TABLE salary_payout_rules ADD COLUMN limit_days INTEGER")
 
         conn.commit()
 
@@ -2121,6 +2129,31 @@ def _payout_period_bounds(rule_period, ref_date):
     return start.isoformat(), end.isoformat(), label
 
 
+def _payout_rule_limit_amount(conn, rule, employee_id, ref_date):
+    """Эффективный лимит выплаты по правилу для сотрудника на дату ref_date:
+    limit_type='amount' — фиксированная сумма (rule['limit_amount']);
+    limit_type='days' — не фиксированная сумма, а то, что сотрудник реально
+    заработал (total_amount по его сменам) с 1 по limit_days число текущего
+    (по ref_date) календарного месяца включительно — например «до 15 числа»;
+    'none' (или лимита нет) — без лимита, возвращает None."""
+    limit_type = rule['limit_type'] or 'amount'
+    if limit_type == 'amount':
+        return float(rule['limit_amount']) if rule['limit_amount'] else None
+    if limit_type == 'days' and rule['limit_days']:
+        d = date.fromisoformat(ref_date) if isinstance(ref_date, str) else ref_date
+        last_day = calendar.monthrange(d.year, d.month)[1]
+        cutoff_day = min(int(rule['limit_days']), last_day)
+        cutoff_start = date(d.year, d.month, 1).isoformat()
+        cutoff_end = date(d.year, d.month, cutoff_day).isoformat()
+        row = conn.execute('''
+            SELECT COALESCE(SUM(es.total_amount), 0) AS s
+            FROM employee_shifts es JOIN shifts s ON s.id = es.shift_id
+            WHERE es.employee_id=? AND s.date BETWEEN ? AND ?
+        ''', (employee_id, cutoff_start, cutoff_end)).fetchone()
+        return float(row['s'] or 0)
+    return None
+
+
 def _active_payout_rules(conn, branch_id, ref_date):
     """Правила выплат, у которых уже наступила дата в месяце ref_date (действуют
     с этого числа и по каждый следующий день, пока не будет погашена вся задолженность)
@@ -2140,7 +2173,8 @@ def _active_payout_rules(conn, branch_id, ref_date):
         month_start, month_end, label = _payout_period_bounds(r['period'], d)
         result.append({
             'id': r['id'], 'name': r['name'], 'period': r['period'],
-            'limit_amount': r['limit_amount'], 'branch_group_id': r['branch_group_id'],
+            'limit_amount': r['limit_amount'], 'limit_type': r['limit_type'], 'limit_days': r['limit_days'],
+            'branch_group_id': r['branch_group_id'],
             'month_start': month_start, 'month_end': month_end, 'month_label': label,
         })
     return result
@@ -2174,8 +2208,8 @@ def _payout_eligible_employees(conn, branch_id, ref_date):
         ''', (rule['month_start'], rule['month_end'], branch_id)).fetchall()
         for r in rows:
             remaining = float(r['remaining'])
-            limit_amount = rule['limit_amount']
-            if limit_amount:
+            effective_limit = _payout_rule_limit_amount(conn, rule, r['employee_id'], ref_date)
+            if effective_limit:
                 # Лимит — это потолок на ВЕСЬ период по этому правилу (например «аванс
                 # не больше 10000»), а не разрешение заново на каждую выплату — поэтому
                 # учитываем уже выплаченное этим правилом за этот период у этого сотрудника.
@@ -2188,7 +2222,7 @@ def _payout_eligible_employees(conn, branch_id, ref_date):
                         WHERE s2.date BETWEEN ? AND ?
                       )
                 ''', (r['employee_id'], rule['id'], rule['month_start'], rule['month_end'])).fetchone()
-                left_under_limit = max(0.0, limit_amount - float(already['s'] or 0))
+                left_under_limit = max(0.0, effective_limit - float(already['s'] or 0))
                 due = min(remaining, left_under_limit)
             else:
                 due = remaining
@@ -2199,7 +2233,7 @@ def _payout_eligible_employees(conn, branch_id, ref_date):
                 'rule_id': rule['id'], 'rule_name': rule['name'],
                 'month_label': rule['month_label'],
                 'remaining': round(remaining, 2), 'due': round(due, 2),
-                'limit_amount': limit_amount,
+                'limit_amount': effective_limit,
             })
     return items
 
@@ -4501,7 +4535,8 @@ def pay_salary_debt(shift_id):
             WHERE es.employee_id=? AND s.date BETWEEN ? AND ?
         ''', (employee_id, month_start, month_end)).fetchone()
         remaining = float(remaining_row['remaining'] or 0)
-        if rule['limit_amount']:
+        effective_limit = _payout_rule_limit_amount(conn, rule, employee_id, shift['date'])
+        if effective_limit:
             # Лимит — потолок на весь период по этому правилу, а не на одну выплату:
             # учитываем уже выплаченное этим же правилом за этот период этому сотруднику.
             already_row = conn.execute('''
@@ -4513,7 +4548,7 @@ def pay_salary_debt(shift_id):
                     WHERE s2.date BETWEEN ? AND ?
                   )
             ''', (employee_id, rule_id, month_start, month_end)).fetchone()
-            left_under_limit = max(0.0, float(rule['limit_amount']) - float(already_row['s'] or 0))
+            left_under_limit = max(0.0, effective_limit - float(already_row['s'] or 0))
             max_allowed = min(remaining, left_under_limit)
         else:
             max_allowed = remaining
@@ -6823,6 +6858,31 @@ def edit_bonus_rule(rule_id):
 
 # ─── ВЫПЛАТНЫЕ ДНИ (задолженность по ЗП) ──────────────────────────────────────
 
+def _parse_payout_rule_limit(form):
+    """Разбор поля лимита из формы добавления/редактирования правила выплаты.
+    Возвращает (limit_type, limit_amount, limit_days, error)."""
+    limit_type = form.get('limit_type', 'none')
+    if limit_type not in ('none', 'amount', 'days'):
+        return None, None, None, 'Некорректный тип лимита'
+    if limit_type == 'amount':
+        limit_raw = form.get('limit_amount', '').strip().replace(',', '.')
+        if not limit_raw:
+            return None, None, None, 'Укажите сумму лимита'
+        try:
+            limit_amount = float(limit_raw)
+        except ValueError:
+            return None, None, None, 'Некорректная сумма лимита'
+        if limit_amount <= 0:
+            return None, None, None, 'Сумма лимита должна быть больше нуля'
+        return 'amount', limit_amount, None, None
+    if limit_type == 'days':
+        days_raw = form.get('limit_days', '').strip()
+        if not days_raw.isdigit() or not (1 <= int(days_raw) <= 31):
+            return None, None, None, 'Укажите число месяца от 1 до 31 для лимита по дням'
+        return 'days', None, int(days_raw), None
+    return 'none', None, None, None
+
+
 @app.route('/settings/salary-payout-rules/add', methods=['POST'])
 @login_required
 @owner_required
@@ -6830,17 +6890,13 @@ def add_salary_payout_rule():
     name = request.form.get('name', '').strip()
     day_raw = request.form.get('day_of_month', '').strip()
     period = request.form.get('period', 'previous_month')
-    limit_raw = request.form.get('limit_amount', '').strip().replace(',', '.')
     if not name or not day_raw.isdigit() or not (1 <= int(day_raw) <= 31) or period not in ('current_month', 'previous_month'):
         flash('Заполните все поля корректно', 'danger')
         return redirect(url_for('settings') + '?tab=salary_payouts')
-    limit_amount = None
-    if limit_raw:
-        try:
-            limit_amount = float(limit_raw)
-        except ValueError:
-            flash('Некорректный лимит', 'danger')
-            return redirect(url_for('settings') + '?tab=salary_payouts')
+    limit_type, limit_amount, limit_days, err = _parse_payout_rule_limit(request.form)
+    if err:
+        flash(err, 'danger')
+        return redirect(url_for('settings') + '?tab=salary_payouts')
     branch_group_id = request.form.get('branch_group_id') or None
     if branch_group_id:
         try:
@@ -6849,8 +6905,8 @@ def add_salary_payout_rule():
             branch_group_id = None
     with get_db() as conn:
         conn.execute(
-            'INSERT INTO salary_payout_rules (name, day_of_month, period, limit_amount, branch_group_id) VALUES (?,?,?,?,?)',
-            (name, int(day_raw), period, limit_amount, branch_group_id)
+            'INSERT INTO salary_payout_rules (name, day_of_month, period, limit_type, limit_amount, limit_days, branch_group_id) VALUES (?,?,?,?,?,?,?)',
+            (name, int(day_raw), period, limit_type, limit_amount, limit_days, branch_group_id)
         )
         conn.commit()
     flash('Правило выплаты добавлено', 'success')
@@ -6864,17 +6920,13 @@ def edit_salary_payout_rule(rule_id):
     name = request.form.get('name', '').strip()
     day_raw = request.form.get('day_of_month', '').strip()
     period = request.form.get('period', 'previous_month')
-    limit_raw = request.form.get('limit_amount', '').strip().replace(',', '.')
     if not name or not day_raw.isdigit() or not (1 <= int(day_raw) <= 31) or period not in ('current_month', 'previous_month'):
         flash('Заполните все поля корректно', 'danger')
         return redirect(url_for('settings') + '?tab=salary_payouts')
-    limit_amount = None
-    if limit_raw:
-        try:
-            limit_amount = float(limit_raw)
-        except ValueError:
-            flash('Некорректный лимит', 'danger')
-            return redirect(url_for('settings') + '?tab=salary_payouts')
+    limit_type, limit_amount, limit_days, err = _parse_payout_rule_limit(request.form)
+    if err:
+        flash(err, 'danger')
+        return redirect(url_for('settings') + '?tab=salary_payouts')
     branch_group_id = request.form.get('branch_group_id') or None
     if branch_group_id:
         try:
@@ -6883,8 +6935,8 @@ def edit_salary_payout_rule(rule_id):
             branch_group_id = None
     with get_db() as conn:
         conn.execute(
-            'UPDATE salary_payout_rules SET name=?, day_of_month=?, period=?, limit_amount=?, branch_group_id=? WHERE id=?',
-            (name, int(day_raw), period, limit_amount, branch_group_id, rule_id)
+            'UPDATE salary_payout_rules SET name=?, day_of_month=?, period=?, limit_type=?, limit_amount=?, limit_days=?, branch_group_id=? WHERE id=?',
+            (name, int(day_raw), period, limit_type, limit_amount, limit_days, branch_group_id, rule_id)
         )
         conn.commit()
     flash('Правило выплаты обновлено', 'success')
@@ -7709,7 +7761,9 @@ def employee_salary_detail(emp_id):
                    es.is_paid,
                    es.bonus_comment,
                    COALESCE((SELECT SUM(sp.amount) FROM salary_payments sp
-                              WHERE sp.employee_shift_id=es.id), 0) AS debt_paid_via
+                              WHERE sp.employee_shift_id=es.id), 0) AS debt_paid_via,
+                   (SELECT MAX(sp.payment_date) FROM salary_payments sp
+                     WHERE sp.employee_shift_id=es.id) AS debt_paid_date
             FROM employee_shifts es
             JOIN shifts s ON s.id = es.shift_id
             JOIN branches b ON b.id = s.branch_id
@@ -7718,11 +7772,19 @@ def employee_salary_detail(emp_id):
         ''', (emp_id, date_from, date_to)).fetchall()
 
         # «Выплачено» по строке = отмечено на смене, либо (если нет) погашено позже
-        # выплатой задолженности по ЗП — может быть и частичным.
+        # выплатой задолженности по ЗП — может быть и частичным. «Дата» рядом —
+        # день, когда деньги реально выданы: если is_paid=1, значит выплачено прямо
+        # на смене (тот же день, что и сама смена); иначе, если долг погашен позже
+        # через «выплатные дни» — дата последнего такого платежа (для полностью
+        # погашенных строк это и есть дата окончательной выплаты).
         shifts_data = []
         for r in shifts_data_rows:
             d = dict(r)
             d['row_paid'] = float(d['total_amount'] or 0) if d['is_paid'] else float(d['debt_paid_via'] or 0)
+            if d['is_paid']:
+                d['payment_date'] = d['date']
+            else:
+                d['payment_date'] = d['debt_paid_date']
             shifts_data.append(d)
 
         total_earned = sum(float(r['total_amount'] or 0) for r in shifts_data)

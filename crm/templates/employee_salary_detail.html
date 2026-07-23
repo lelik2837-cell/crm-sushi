@@ -156,6 +156,7 @@
                     <th class="text-end">Штраф</th>
                     <th class="text-end fw-bold">Итого</th>
                     <th class="text-end">Выплачено</th>
+                    <th class="text-end">Дата</th>
                     <th class="text-center">Статус</th>
                     <th class="text-center">Смена</th>
                 </tr>
@@ -203,6 +204,9 @@
                 </td>
                 <td class="text-end fw-bold">{{ '{:,.0f}'.format(r.total_amount or 0) }} ₽</td>
                 <td class="text-end text-success">{{ '{:,.0f}'.format(r.row_paid) }} ₽</td>
+                <td class="text-end text-muted small">
+                    {% if r.payment_date %}{{ r.payment_date | date_fmt }}{% else %}—{% endif %}
+                </td>
                 <td class="text-center">
                     {% if r.row_paid >= (r.total_amount or 0) - 0.5 %}
                         <span class="badge bg-success">Выплачено</span>
@@ -230,7 +234,7 @@
                     <td class="text-end text-danger">−{{ '{:,.0f}'.format(shifts_data | sum(attribute='penalty_amount')) }} ₽</td>
                     <td class="text-end">{{ '{:,.0f}'.format(total_earned) }} ₽</td>
                     <td class="text-end text-success">{{ '{:,.0f}'.format(total_paid) }} ₽</td>
-                    <td colspan="2"></td>
+                    <td colspan="3"></td>
                 </tr>
             </tfoot>
         </table>
