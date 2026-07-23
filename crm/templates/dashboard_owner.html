@@ -205,6 +205,14 @@
         <div id="rm-delivery-branches" style="display:flex;flex-direction:column;gap:4px;border-top:1px solid #f1f5f9;padding-top:8px;"></div>
       </div>
 
+      <!-- 6. Предзаказы: принятые сегодня, но с доставкой на другой день -->
+      <div id="rm-preorders-card" style="background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 100%); border:1.5px solid #e2e8f0; border-radius:14px; padding:16px 18px; box-shadow:0 2px 10px rgba(0,0,0,0.06);">
+        <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:12px;">Предзаказы</div>
+        <div id="rm-preorders-list" style="display:flex; flex-direction:column; gap:9px;">
+          <div style="font-size:12px;color:#94a3b8;">—</div>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -631,6 +639,28 @@ function updateOrdersStatus(d) {
     el = document.getElementById('rm-deferred-pct');   if(el) el.textContent = pctStr(d.deferred||0, total);
 }
 
+function updatePreorders(items) {
+    var el = document.getElementById('rm-preorders-list');
+    if (!el) return;
+    if (!items || !items.length) {
+        el.innerHTML = '<div style="font-size:12px;color:#94a3b8;">Нет предзаказов</div>';
+        return;
+    }
+    el.innerHTML = items.map(function(it) {
+        var label = it.date.split('-').reverse().join('.');
+        return '<div class="rm-pay-row">' +
+            '<div class="rm-pay-label"><span style="font-size:12px;color:#64748b;font-weight:500;">' + label + '</span></div>' +
+            '<div class="rm-pay-vals"><span style="font-size:13px;font-weight:700;color:#334155;">' + fmtNum(it.amount) + ' ₽</span></div>' +
+            '</div>';
+    }).join('');
+}
+
+function loadPreorders() {
+    fetch('/api/preorders-today' + (_revBranchSuffix() ? '?' + _revBranchSuffix().slice(1) : ''))
+        .then(function(r) { return r.json(); })
+        .then(function(d) { if (d.ok) updatePreorders(d.items); });
+}
+
 function clearMetrics() {
     updateRightMetrics({total:0,cash:0,card:0,online:0,fot:0,pickup:0,delivery:0,courier_fot:0,delivery_orders:0,branches:[]});
     var el;
@@ -897,6 +927,11 @@ function loadRevCard(period) {
     var ordersStatusBlock = document.getElementById('rm-orders-status');
     if (paymentsBlock) paymentsBlock.style.display = todayMode ? 'none' : '';
     if (ordersStatusBlock) ordersStatusBlock.style.display = todayMode ? '' : 'none';
+
+    // «Предзаказы» не зависит от выбранного периода на карточке выручки — это всегда
+    // про сегодняшний день (заказы, принятые сегодня, с доставкой на другой день),
+    // обновляем при каждой перезагрузке карточки (в т.ч. при смене филиала).
+    loadPreorders();
 
     var branchesWrap = document.getElementById('rev-branches');
     var yearWrap     = document.getElementById('rev-year-wrap');

@@ -1888,6 +1888,13 @@ def init_db():
             # фильтр _ORDERS_EXCLUDED_STATUSES (Отмена/Возврат туда не попадают вообще).
             # Нужен для разбивки «Выполнено/В работе/Отложено» на дашборде (сегодня).
             conn.execute("ALTER TABLE orders_report ADD COLUMN status TEXT")
+        if 'delivery_at' not in _or_cols:
+            # «Дата и время доставки» (план, date_time_plan) — когда заполнена, точнее
+            # received_at показывает, к какому дню реально относится заказ (предзаказы:
+            # принят сегодня, доставка через день-два — и наоборот, старые незакрытые
+            # заказы с доставкой сегодня). Если колонка пустая — в _parse_orders_csv
+            # используется received_at как запасной вариант, здесь NULL не бывает.
+            conn.execute("ALTER TABLE orders_report ADD COLUMN delivery_at TIMESTAMP")
         _oib_cols = [r[1] for r in conn.execute("PRAGMA table_info(orders_import_batches)").fetchall()]
         if 'updated_count' not in _oib_cols:
             conn.execute("ALTER TABLE orders_import_batches ADD COLUMN updated_count INTEGER DEFAULT 0")
@@ -2992,6 +2999,36 @@ def api_revenue_today_status():
         'done': done,
         'in_progress': in_progress,
         'deferred': deferred,
+    })
+
+
+@app.route('/api/preorders-today')
+@login_required
+def api_preorders_today():
+    """Блок «Предзаказы» на дашборде: заказы, ПРИНЯТЫЕ сегодня (received_at),
+    но с датой ДОСТАВКИ (delivery_at) на другой день — сгруппированные по дню
+    доставки с суммой. Обратный случай (заказ принят несколько дней назад,
+    доставка сегодня) сюда не попадает — он просто часть обычной «Текущей смены»
+    (см. delivery_at в /orders-report), эта карточка — только про будущие даты."""
+    if not (item_visible('dashboard') or item_visible('ratings_dashboard')):
+        return jsonify({'ok': False, 'error': 'forbidden'}), 403
+    raw_bids = request.args.get('branch_ids', '')
+    bids = [int(x) for x in raw_bids.split(',') if x.strip().isdigit()]
+    _code = 'dashboard' if item_visible('dashboard') else 'ratings_dashboard'
+    bids = [int(b) for b in get_effective_branch_ids(_code, [str(b) for b in bids]) or []]
+    bf = f"AND branch_id IN ({','.join('?'*len(bids))})" if bids else ''
+    today = date.today().isoformat()
+    with get_db() as conn:
+        rows = conn.execute(f'''
+            SELECT DATE(delivery_at) AS d, COALESCE(SUM(amount), 0) AS amt, COUNT(*) AS cnt
+            FROM orders_report
+            WHERE received_at >= ? AND received_at <= ? AND DATE(delivery_at) != ? {bf}
+            GROUP BY DATE(delivery_at)
+            ORDER BY d
+        ''', [today + ' 00:00:00', today + ' 23:59:59', today] + bids).fetchall()
+    return jsonify({
+        'ok': True,
+        'items': [{'date': r['d'], 'amount': float(r['amt']), 'count': r['cnt']} for r in rows],
     })
 
 
@@ -13399,6 +13436,7 @@ def _parse_orders_csv(file_bytes):
     idx_amount   = idx_or(9, 'К оплате', 'Оплачено')
     idx_new_cli  = _orders_csv_col(header, 'Новый клиент')
     idx_status   = _orders_csv_col(header, 'Статус', 'Статус заказа', 'Название статуса', 'Status', 'StatusName')
+    idx_delivery_plan = _orders_csv_col(header, 'Дата и время доставки')
 
     def cell(row, idx):
         if idx is None or idx >= len(row):
@@ -13429,10 +13467,24 @@ def _parse_orders_csv(file_bytes):
             amount = 0.0
         type_raw = cell(row, idx_type)
 
+        # «Дата и время доставки» (план) — точнее received_at показывает, к какому
+        # дню реально относится заказ (предзаказы и старые незакрытые доставки на
+        # сегодня, см. п.192); если колонки нет/пусто/не парсится — берём received_at.
+        delivery_plan_raw = cell(row, idx_delivery_plan)
+        delivery_at = None
+        if delivery_plan_raw:
+            try:
+                delivery_at = datetime.strptime(delivery_plan_raw, '%d.%m.%Y %H:%M').strftime('%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                delivery_at = None
+        if not delivery_at:
+            delivery_at = dt.strftime('%Y-%m-%d %H:%M:%S')
+
         rows.append({
             'order_number':     order_number,
             'branch_raw':       cell(row, idx_branch) or '—',
             'received_at':      dt.strftime('%Y-%m-%d %H:%M:%S'),
+            'delivery_at':      delivery_at,
             'promised_minutes': to_int(cell(row, idx_promised)),
             'order_type_raw':   type_raw,
             'order_type':       _normalize_order_type(type_raw),
@@ -13476,20 +13528,21 @@ def _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename, create
         h = _orders_row_hash(r)
         conn.execute('''
             INSERT INTO orders_report
-                (order_number, branch_raw, branch_id, received_at, promised_minutes,
+                (order_number, branch_raw, branch_id, received_at, delivery_at, promised_minutes,
                  order_type_raw, order_type, ready_minutes, delivery_minutes,
                  promo_code, amount, new_client, status, import_batch_id, import_hash)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(import_hash) DO UPDATE SET
                 branch_raw=excluded.branch_raw, branch_id=excluded.branch_id,
-                received_at=excluded.received_at, promised_minutes=excluded.promised_minutes,
+                received_at=excluded.received_at, delivery_at=excluded.delivery_at,
+                promised_minutes=excluded.promised_minutes,
                 order_type_raw=excluded.order_type_raw, order_type=excluded.order_type,
                 ready_minutes=excluded.ready_minutes, delivery_minutes=excluded.delivery_minutes,
                 promo_code=excluded.promo_code, amount=excluded.amount,
                 new_client=excluded.new_client, status=excluded.status, import_batch_id=excluded.import_batch_id
         ''', (
             r['order_number'], r['branch_raw'], branch_map.get(r['branch_raw']),
-            r['received_at'], r['promised_minutes'], r['order_type_raw'], r['order_type'],
+            r['received_at'], r['delivery_at'], r['promised_minutes'], r['order_type_raw'], r['order_type'],
             r['ready_minutes'], r['delivery_minutes'], r['promo_code'], r['amount'],
             r['new_client'], r['status'], batch_id, h
         ))
@@ -13560,13 +13613,19 @@ def orders_report():
             where.append('(order_number LIKE ? OR promo_code LIKE ?)')
             like = f'%{q}%'
             params.extend([like, like])
+        elif current_shift and shift_opened_at:
+            # «Текущая смена» — по дате/времени ДОСТАВКИ (delivery_at), не по времени
+            # приёма: предзаказ, принятый несколько дней назад с доставкой сегодня,
+            # должен попасть в текущую смену, а заказ, принятый сегодня с доставкой
+            # через день — не должен (см. п.192). delivery_at всегда заполнен —
+            # в _parse_orders_csv для него уже есть запасной вариант (received_at).
+            where.append('delivery_at >= ?')
+            params.append(shift_opened_at)
+            where.append('delivery_at <= ?')
+            params.append(date_to + ' 23:59:59')
         else:
-            if current_shift and shift_opened_at:
-                where.append('received_at >= ?')
-                params.append(shift_opened_at)
-            else:
-                where.append('received_at >= ?')
-                params.append(date_from + ' 00:00:00')
+            where.append('received_at >= ?')
+            params.append(date_from + ' 00:00:00')
             where.append('received_at <= ?')
             params.append(date_to + ' 23:59:59')
 
