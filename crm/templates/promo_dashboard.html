@@ -142,7 +142,7 @@ var lastDays         = [];
 var lastMonths        = [];
 
 window.promoBranchIds = [];
-window.promoOnBranchChange = function () { loadPromoCard(promoPeriod); loadPromoList(); };
+window.promoOnBranchChange = function () { loadPromoCard(promoPeriod); };
 
 function togglePromoUnit() {
     showPct = !showPct;
@@ -320,6 +320,7 @@ function renderPromoTotals(d) {
 
 function loadPromoCard(period) {
     if (period) promoPeriod = period;
+    loadPromoList();
     var calActive = promoPeriod === 'custom';
     document.querySelectorAll('.p-period-btn').forEach(function(b) {
         var active = !calActive && b.dataset.rp === promoPeriod;
@@ -536,6 +537,5 @@ function loadPromoList() {
 })();
 
 loadPromoCard('month');
-loadPromoList();
 </script>
 {% endblock %}

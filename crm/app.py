@@ -1895,6 +1895,7 @@ def init_db():
             # заказы с доставкой сегодня). Если колонка пустая — в _parse_orders_csv
             # используется received_at как запасной вариант, здесь NULL не бывает.
             conn.execute("ALTER TABLE orders_report ADD COLUMN delivery_at TIMESTAMP")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_orders_report_delivery ON orders_report(delivery_at)")
         _oib_cols = [r[1] for r in conn.execute("PRAGMA table_info(orders_import_batches)").fetchall()]
         if 'updated_count' not in _oib_cols:
             conn.execute("ALTER TABLE orders_import_batches ADD COLUMN updated_count INTEGER DEFAULT 0")
@@ -3469,13 +3470,13 @@ def api_promo_summary():
         total_row = conn.execute(f'''
             SELECT COALESCE(SUM(amount),0) AS total
             FROM orders_report
-            WHERE DATE(received_at) BETWEEN ? AND ? {bf}
+            WHERE DATE(delivery_at) BETWEEN ? AND ? {bf}
         ''', [date_from, date_to] + bparams).fetchone()
         promo_row = conn.execute(f'''
             SELECT COUNT(*) AS cnt, COALESCE(SUM(amount),0) AS revenue, COALESCE(AVG(amount),0) AS avg_check,
                    SUM(CASE WHEN new_client='Да' THEN 1 ELSE 0 END) AS new_clients
             FROM orders_report
-            WHERE DATE(received_at) BETWEEN ? AND ? {bf} {extra}
+            WHERE DATE(delivery_at) BETWEEN ? AND ? {bf} {extra}
         ''', [date_from, date_to] + pparams).fetchone()
 
     total_revenue = total_row['total'] or 0
@@ -3502,7 +3503,7 @@ def api_promo_list():
     with get_db() as conn:
         total_row = conn.execute(f'''
             SELECT COALESCE(SUM(amount),0) AS total
-            FROM orders_report WHERE DATE(received_at) BETWEEN ? AND ? {bf}
+            FROM orders_report WHERE DATE(delivery_at) BETWEEN ? AND ? {bf}
         ''', [date_from, date_to] + bparams).fetchone()
         total_revenue = total_row['total'] or 0
 
@@ -3510,9 +3511,9 @@ def api_promo_list():
             SELECT promo_code AS name, COUNT(*) AS cnt, COALESCE(SUM(amount),0) AS revenue,
                    COALESCE(AVG(amount),0) AS avg_check,
                    SUM(CASE WHEN new_client='Да' THEN 1 ELSE 0 END) AS new_clients,
-                   MAX(received_at) AS last_used
+                   MAX(delivery_at) AS last_used
             FROM orders_report
-            WHERE DATE(received_at) BETWEEN ? AND ? {bf}
+            WHERE DATE(delivery_at) BETWEEN ? AND ? {bf}
               AND promo_code IS NOT NULL AND promo_code != ''
             GROUP BY promo_code
             ORDER BY revenue DESC
@@ -3542,15 +3543,15 @@ def api_promo_days():
 
     with get_db() as conn:
         total_rows = conn.execute(f'''
-            SELECT DATE(received_at) AS d, COALESCE(SUM(amount),0) AS total
+            SELECT DATE(delivery_at) AS d, COALESCE(SUM(amount),0) AS total
             FROM orders_report
-            WHERE DATE(received_at) BETWEEN ? AND ? {bf}
+            WHERE DATE(delivery_at) BETWEEN ? AND ? {bf}
             GROUP BY d
         ''', [date_from, date_to] + bparams).fetchall()
         promo_rows = conn.execute(f'''
-            SELECT DATE(received_at) AS d, COALESCE(SUM(amount),0) AS revenue
+            SELECT DATE(delivery_at) AS d, COALESCE(SUM(amount),0) AS revenue
             FROM orders_report
-            WHERE DATE(received_at) BETWEEN ? AND ? {bf} {extra}
+            WHERE DATE(delivery_at) BETWEEN ? AND ? {bf} {extra}
             GROUP BY d
         ''', [date_from, date_to] + pparams).fetchall()
     total_by_day = {r['d']: r['total'] for r in total_rows}
@@ -3571,19 +3572,19 @@ def api_promo_days():
 
 def _promo_months_query(conn, bf, bparams, extra, pparams, date_from, date_to):
     total_rows = conn.execute(f'''
-        SELECT CAST(strftime('%Y', received_at) AS INTEGER) AS year,
-               CAST(strftime('%m', received_at) AS INTEGER) AS month,
+        SELECT CAST(strftime('%Y', delivery_at) AS INTEGER) AS year,
+               CAST(strftime('%m', delivery_at) AS INTEGER) AS month,
                COALESCE(SUM(amount),0) AS total
         FROM orders_report
-        WHERE DATE(received_at) BETWEEN ? AND ? {bf}
+        WHERE DATE(delivery_at) BETWEEN ? AND ? {bf}
         GROUP BY year, month
     ''', [date_from, date_to] + bparams).fetchall()
     promo_rows = conn.execute(f'''
-        SELECT CAST(strftime('%Y', received_at) AS INTEGER) AS year,
-               CAST(strftime('%m', received_at) AS INTEGER) AS month,
+        SELECT CAST(strftime('%Y', delivery_at) AS INTEGER) AS year,
+               CAST(strftime('%m', delivery_at) AS INTEGER) AS month,
                COALESCE(SUM(amount),0) AS revenue
         FROM orders_report
-        WHERE DATE(received_at) BETWEEN ? AND ? {bf} {extra}
+        WHERE DATE(delivery_at) BETWEEN ? AND ? {bf} {extra}
         GROUP BY year, month
     ''', [date_from, date_to] + pparams).fetchall()
     total_by_ym = {(r['year'], r['month']): r['total'] for r in total_rows}
@@ -3638,7 +3639,7 @@ def api_promo_all():
     today_iso = date.today().isoformat()
     with get_db() as conn:
         min_row = conn.execute(f'''
-            SELECT MIN(DATE(received_at)) FROM orders_report WHERE 1=1 {bf}
+            SELECT MIN(DATE(delivery_at)) FROM orders_report WHERE 1=1 {bf}
         ''', bparams).fetchone()
         date_from = min_row[0]
         if not date_from:
