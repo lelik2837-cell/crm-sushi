@@ -1083,8 +1083,14 @@ function loadRevCard(period) {
                         .then(function(r3) { return r3.json(); })
                         .then(function(d3) {
                             if (!d3.ok) return;
-                            document.getElementById('rev-total').textContent = fmtNum(d3.total);
                             updateOrdersStatus(d3);
+                            // Пока нет ни одного выполненного заказа, оставляем на
+                            // экране план — сумма "в работе"/"позже" ещё ничего не
+                            // говорит о реальной выручке за день, а мгновенная
+                            // подмена план -> небольшая сумма выглядит как дёрганье.
+                            if (d3.done > 0) {
+                                document.getElementById('rev-total').textContent = fmtNum(d3.total);
+                            }
                         });
                 }
             };
