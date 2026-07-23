@@ -10868,7 +10868,7 @@ def bank():
             'SELECT t.*, b.name as branch_name FROM bank_terminals t LEFT JOIN branches b ON b.id=t.branch_id ORDER BY t.terminal_number'
         ).fetchall()
         branches    = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
-        exp_cats    = [c for c in get_expense_categories(conn) if c['show_contractors']]
+        exp_cats_groups = build_cats_groups(filter_cats_by_flag(get_expense_categories(conn), 'show_contractors'))
 
         expense_rows = []
         expense_total = 0
@@ -10996,7 +10996,7 @@ def bank():
         tab=tab, date_from=date_from, date_to=date_to,
         accounts=accounts, acc_branches=acc_branches, statements=statements,
         contractors=contractors, terminals=terminals,
-        branches=branches, exp_cats=exp_cats,
+        branches=branches, exp_cats_groups=exp_cats_groups,
         expense_rows=expense_rows, expense_total=expense_total,
         compare_rows=compare_rows, compare_bank=compare_bank, compare_crm=compare_crm,
         parse_rules=parse_rules, branch_groups=branch_groups_list,

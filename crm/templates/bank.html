@@ -390,8 +390,16 @@
               <label class="form-label fw-semibold">Категория</label>
               <select name="category" class="form-select">
                 <option value="">— не выбрана —</option>
-                {% for cat in exp_cats %}
-                <option value="{{ cat.code }}">{{ cat.label }} ({{ 'доход' if cat.type == 'income' else 'расход' }})</option>
+                {% for parent, children in exp_cats_groups %}
+                {% if children %}
+                <optgroup label="{{ parent.label }} ({{ 'доход' if parent.type == 'income' else 'расход' }})">
+                  {% for child in children %}
+                  <option value="{{ child.code }}">{{ child.label }}</option>
+                  {% endfor %}
+                </optgroup>
+                {% else %}
+                <option value="{{ parent.code }}">{{ parent.label }} ({{ 'доход' if parent.type == 'income' else 'расход' }})</option>
+                {% endif %}
                 {% endfor %}
               </select>
             </div>
@@ -433,8 +441,16 @@
               <label class="form-label fw-semibold">Категория</label>
               <select name="category" class="form-select">
                 <option value="">— не выбрана —</option>
-                {% for cat in exp_cats %}
-                <option value="{{ cat.code }}" {% if cat.code == c.category %}selected{% endif %}>{{ cat.label }} ({{ 'доход' if cat.type == 'income' else 'расход' }})</option>
+                {% for parent, children in exp_cats_groups %}
+                {% if children %}
+                <optgroup label="{{ parent.label }} ({{ 'доход' if parent.type == 'income' else 'расход' }})">
+                  {% for child in children %}
+                  <option value="{{ child.code }}" {% if child.code == c.category %}selected{% endif %}>{{ child.label }}</option>
+                  {% endfor %}
+                </optgroup>
+                {% else %}
+                <option value="{{ parent.code }}" {% if parent.code == c.category %}selected{% endif %}>{{ parent.label }} ({{ 'доход' if parent.type == 'income' else 'расход' }})</option>
+                {% endif %}
                 {% endfor %}
               </select>
             </div>
