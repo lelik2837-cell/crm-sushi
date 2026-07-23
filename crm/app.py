@@ -13464,6 +13464,28 @@ def orders_report():
         type_flt   = request.args.get('type', '')
         q          = request.args.get('q', '').strip()
 
+        # «Текущая смена» — вместо диапазона дат берём окно от факт. открытия смены
+        # выбранного филиала (shifts.opened_at) до сейчас; имеет смысл только для
+        # ровно одного филиала (у разных филиалов смены открываются в разное время).
+        current_shift = request.args.get('current_shift') == '1'
+        shift_opened_at = None
+        if current_shift:
+            if len(branch_flt) != 1:
+                flash('Для фильтра «Текущая смена» выберите ровно один филиал', 'warning')
+                current_shift = False
+            else:
+                open_shift = conn.execute('''
+                    SELECT date, opened_at FROM shifts
+                    WHERE branch_id=? AND status='open'
+                    ORDER BY date DESC LIMIT 1
+                ''', (branch_flt[0],)).fetchone()
+                if not open_shift:
+                    flash('У выбранного филиала сейчас нет открытой смены', 'warning')
+                    current_shift = False
+                else:
+                    date_from = date_to = open_shift['date']
+                    shift_opened_at = open_shift['opened_at']
+
         where  = []
         params = []
 
@@ -13472,8 +13494,12 @@ def orders_report():
             like = f'%{q}%'
             params.extend([like, like])
         else:
-            where.append('received_at >= ?')
-            params.append(date_from + ' 00:00:00')
+            if current_shift and shift_opened_at:
+                where.append('received_at >= ?')
+                params.append(shift_opened_at)
+            else:
+                where.append('received_at >= ?')
+                params.append(date_from + ' 00:00:00')
             where.append('received_at <= ?')
             params.append(date_to + ' 23:59:59')
 
@@ -13532,6 +13558,7 @@ def orders_report():
         branch_groups=branch_groups,
         date_from=date_from, date_to=date_to,
         branch_flt=branch_flt, type_flt=type_flt, q=q,
+        current_shift=current_shift, shift_opened_at=shift_opened_at,
         total_count=total_count, total_amount=stats[1] or 0,
         pickup_count=stats[2] or 0, delivery_count=stats[3] or 0,
         data_min=data_min, data_max=data_max,
