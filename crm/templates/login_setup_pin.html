@@ -58,6 +58,34 @@
             letter-spacing: 0.3px;
         }
         .btn-login:hover { background: #a93226; }
+
+        .pin-step-title { text-align: center; font-weight: 600; color: #1a1a2e; margin-bottom: 4px; }
+        .pin-dots { display: flex; justify-content: center; gap: 16px; margin: 18px 0 24px; }
+        .pin-dot {
+            width: 14px; height: 14px; border-radius: 50%;
+            border: 2px solid #dee2e6; background: transparent;
+            transition: background .15s, border-color .15s, transform .15s;
+        }
+        .pin-dot.filled { background: #c0392b; border-color: #c0392b; transform: scale(1.1); }
+        .pin-shake { animation: pinShake .4s; }
+        @keyframes pinShake {
+            10%, 90% { transform: translateX(-2px); }
+            20%, 80% { transform: translateX(4px); }
+            30%, 50%, 70% { transform: translateX(-8px); }
+            40%, 60% { transform: translateX(8px); }
+        }
+        .pin-keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; max-width: 260px; margin: 0 auto; }
+        .pin-key {
+            aspect-ratio: 1; border-radius: 50%; border: none; background: transparent;
+            font-size: 1.6rem; font-weight: 400; color: #1a1a2e;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; user-select: none; transition: background .1s;
+            text-decoration: none; line-height: 1.15;
+        }
+        .pin-key:active { background: #f1f3f5; }
+        .pin-key-text { font-size: 0.72rem; font-weight: 500; color: #868e96; text-align: center; }
+        .pin-key-back { color: #adb5bd; font-size: 1.3rem; }
+        .pin-error { color: #c0392b; text-align: center; font-size: 0.82rem; min-height: 1.2em; margin-bottom: 4px; }
     </style>
 </head>
 <body>
@@ -79,29 +107,108 @@
             <input type="hidden" name="action" value="disable">
             <button type="submit" class="btn btn-outline-danger w-100">Отключить PIN-вход</button>
         </form>
+        <div class="text-center mt-3">
+            <a href="{{ url_for('dashboard') }}" class="text-muted small">Назад</a>
+        </div>
         {% else %}
-        <p class="text-muted small">Настройте 4-значный PIN-код для быстрого входа на этом устройстве — оно будет запомнено на 30&nbsp;дней, полный пароль не потребуется.</p>
-        <form method="POST">
-            <div class="mb-3">
-                <label class="form-label">Новый PIN-код</label>
-                <input type="password" name="pin" class="form-control text-center" inputmode="numeric"
-                       pattern="[0-9]*" maxlength="4" autocomplete="off"
-                       style="font-size:1.4rem; letter-spacing:8px;" required autofocus>
+        <div id="setupStep1">
+            <div class="pin-step-title">Придумайте PIN-код</div>
+            <div class="pin-dots" id="setupDots1">
+                <span class="pin-dot"></span><span class="pin-dot"></span><span class="pin-dot"></span><span class="pin-dot"></span>
             </div>
-            <div class="mb-4">
-                <label class="form-label">Повторите PIN-код</label>
-                <input type="password" name="pin_confirm" class="form-control text-center" inputmode="numeric"
-                       pattern="[0-9]*" maxlength="4" autocomplete="off"
-                       style="font-size:1.4rem; letter-spacing:8px;" required>
+        </div>
+        <div id="setupStep2" style="display:none;">
+            <div class="pin-step-title">Повторите PIN-код</div>
+            <div class="pin-dots" id="setupDots2">
+                <span class="pin-dot"></span><span class="pin-dot"></span><span class="pin-dot"></span><span class="pin-dot"></span>
             </div>
-            <button type="submit" class="btn btn-login w-100 text-white">Сохранить PIN</button>
+        </div>
+        <div class="pin-error" id="setupPinError"></div>
+        <div class="pin-keypad" id="setupPinPad">
+            <button type="button" class="pin-key" data-k="1">1</button>
+            <button type="button" class="pin-key" data-k="2">2</button>
+            <button type="button" class="pin-key" data-k="3">3</button>
+            <button type="button" class="pin-key" data-k="4">4</button>
+            <button type="button" class="pin-key" data-k="5">5</button>
+            <button type="button" class="pin-key" data-k="6">6</button>
+            <button type="button" class="pin-key" data-k="7">7</button>
+            <button type="button" class="pin-key" data-k="8">8</button>
+            <button type="button" class="pin-key" data-k="9">9</button>
+            <a href="{{ url_for('dashboard') }}" class="pin-key pin-key-text">Не использовать<br>PIN-пароль</a>
+            <button type="button" class="pin-key" data-k="0">0</button>
+            <button type="button" class="pin-key pin-key-back" data-k="back">&#9003;</button>
+        </div>
+        <form method="POST" id="setupPinForm" style="display:none;">
+            <input type="hidden" name="pin" id="setupPinValue">
+            <input type="hidden" name="pin_confirm" id="setupPinConfirmValue">
         </form>
         {% endif %}
-        <div class="text-center mt-3">
-            <a href="{{ url_for('dashboard') }}" class="text-muted small">{{ 'Назад' if has_pin else 'Пропустить' }}</a>
-        </div>
     </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+{% if not has_pin %}
+<script>
+function initPinFlow(padId, steps, onDone) {
+    var stepIdx = 0, values = [], digits = '';
+    function dotsFor(i) { return document.querySelectorAll('#' + steps[i].dotsId + ' .pin-dot'); }
+    function render() { dotsFor(stepIdx).forEach(function(d, i) { d.classList.toggle('filled', i < digits.length); }); }
+    function showStep(i) {
+        steps.forEach(function(s, idx) {
+            var wrap = document.getElementById(s.wrapId);
+            if (wrap) wrap.style.display = (idx === i) ? '' : 'none';
+        });
+    }
+    function shake() {
+        var wrap = document.getElementById(steps[stepIdx].wrapId);
+        if (wrap) { wrap.classList.add('pin-shake'); setTimeout(function() { wrap.classList.remove('pin-shake'); }, 400); }
+    }
+    function press(k) {
+        if (k === 'back') { digits = digits.slice(0, -1); render(); return; }
+        if (digits.length >= 4) return;
+        digits += k;
+        render();
+        if (digits.length === 4) {
+            setTimeout(function() {
+                values.push(digits);
+                digits = '';
+                if (stepIdx < steps.length - 1) { stepIdx++; render(); showStep(stepIdx); }
+                else { onDone(values, resetAll); }
+            }, 150);
+        }
+    }
+    function resetAll() {
+        stepIdx = 0; values = []; digits = '';
+        steps.forEach(function(s) {
+            document.querySelectorAll('#' + s.dotsId + ' .pin-dot').forEach(function(d) { d.classList.remove('filled'); });
+        });
+        showStep(0);
+    }
+    document.querySelectorAll('#' + padId + ' .pin-key[data-k]').forEach(function(btn) {
+        btn.addEventListener('click', function() { press(btn.dataset.k); });
+    });
+    document.addEventListener('keydown', function(e) {
+        if (e.key >= '0' && e.key <= '9') press(e.key);
+        else if (e.key === 'Backspace') press('back');
+    });
+    showStep(0);
+    return { reset: resetAll, shake: shake };
+}
+var pinFlow = initPinFlow('setupPinPad', [
+    {dotsId: 'setupDots1', wrapId: 'setupStep1'},
+    {dotsId: 'setupDots2', wrapId: 'setupStep2'}
+], function(values, reset) {
+    if (values[0] !== values[1]) {
+        document.getElementById('setupPinError').textContent = 'PIN-коды не совпадают, попробуйте снова';
+        pinFlow.shake();
+        reset();
+        return;
+    }
+    document.getElementById('setupPinError').textContent = '';
+    document.getElementById('setupPinValue').value = values[0];
+    document.getElementById('setupPinConfirmValue').value = values[1];
+    document.getElementById('setupPinForm').submit();
+});
+</script>
+{% endif %}
 </body>
 </html>
