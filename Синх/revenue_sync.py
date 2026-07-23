@@ -265,17 +265,26 @@ def _looks_like_orders_csv(content: bytes) -> bool:
     return "Номер заказа" in text
 
 
-def fetch_orders_csv(session: requests.Session, date_from: str, date_to: str) -> bytes:
+def fetch_orders_csv(session: requests.Session, date_from: str, date_to: str, current_date: bool = False) -> bytes:
     """date_from/date_to — строки в формате ДД.ММ.ГГГГ (как в фильтре страницы).
 
     Обычный GET на receipts/receipts/index с этими же параметрами отдаёт HTML-страницу
     отчёта (саму таблицу), а не файл — нужный CSV отдаётся только с дополнительным
     параметром is_excel=true. Найдено разбором JS на самой странице: кнопка «Выгрузить
     в Excel» (id="excel") берёт текущий фильтр, добавляет в него is_excel=true и делает
-    обычный переход по тому же URL с этим параметром — так же делаем и мы."""
+    обычный переход по тому же URL с этим параметром — так же делаем и мы.
+
+    current_date=True — переключает ReceiptsAll[isCurrentDate] с 0 на 1. Обнаружено
+    эмпирически: обычный запрос (isCurrentDate=0) для сегодняшнего, ещё не закрытого
+    дня возвращает 0 строк вообще, независимо от date_s/date_do — гуляш, похоже,
+    считает isCurrentDate=0 запросом только по «закрытым» дням. isCurrentDate=1 —
+    единственный способ увидеть сегодняшние заказы, включая ещё не завершённые
+    (см. sync_orders — вызывается отдельным запросом только за сегодня)."""
     if not ORDERS_QUERY_TEMPLATE:
         raise RuntimeError("Не задан GOULASH_ORDERS_QUERY_TEMPLATE")
     query = ORDERS_QUERY_TEMPLATE.format(date_from=date_from, date_to=date_to)
+    if current_date:
+        query = query.replace("ReceiptsAll%5BisCurrentDate%5D=0", "ReceiptsAll%5BisCurrentDate%5D=1")
     url = f"{BASE_URL}{RECEIPTS_PATH}?{query}&is_excel=true"
     resp = session.get(url, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
@@ -382,6 +391,21 @@ def sync_orders(session: requests.Session) -> None:
         )
     else:
         log.error("Заказы %s–%s: вебхук вернул ошибку: %s", date_from, date_to, result)
+
+    # Сегодняшний (ещё не закрытый) день обычный запрос выше не захватывает вообще
+    # (см. комментарий в fetch_orders_csv) — забираем его отдельно с isCurrentDate=1,
+    # это единственный способ увидеть заказы, которые прямо сейчас в работе.
+    today_str = today.strftime("%d.%m.%Y")
+    csv_bytes_today = fetch_orders_csv(session, today_str, today_str, current_date=True)
+    result_today = send_orders_to_crmpapa(csv_bytes_today, ORDERS_WEBHOOK_URL)
+
+    if result_today.get("ok"):
+        log.info(
+            "Заказы (сегодня) %s: импортировано %s, обновлено %s (всего строк %s)",
+            today_str, result_today.get("imported"), result_today.get("updated"), result_today.get("rows"),
+        )
+    else:
+        log.error("Заказы (сегодня) %s: вебхук вернул ошибку: %s", today_str, result_today)
 
 
 # ---------------------------------------------------------------------------
