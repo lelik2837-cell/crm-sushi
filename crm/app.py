@@ -1501,6 +1501,16 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_shift_terminals_shift ON shift_terminals(shift_id);
         ''')
 
+        # employee_shifts.shift_id и shifts.date не были проиндексированы — JOIN
+        # employee_shifts JOIN shifts (ФОТ-дашборд: /api/fot-summary, /api/fot-year,
+        # /api/fot-days, плюс сама страница смены) шёл полным перебором employee_shifts
+        # на каждый запрос, тот же класс проблемы, что была с bank_transactions/
+        # shift_terminals (см. п.188). shifts уже был проиндексирован по (branch_id, date)
+        # — этого достаточно для запроса с фильтром по конкретному филиалу, но не когда
+        # выбраны «Все филиалы» и фильтр только по date.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_employee_shifts_shift ON employee_shifts(shift_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_shifts_date ON shifts(date)")
+
         # Feature: change schedules
         conn.executescript('''
             CREATE TABLE IF NOT EXISTS change_schedule (
