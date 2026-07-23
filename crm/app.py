@@ -7675,6 +7675,10 @@ def employee_salary_detail(emp_id):
     today = date.today().isoformat()
     date_from = request.args.get('date_from', month_start)
     date_to   = request.args.get('date_to',   today)
+    monthly   = request.args.get('monthly') == '1'
+
+    _RU_MONTHS = ['','Январь','Февраль','Март','Апрель','Май','Июнь',
+                  'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь']
 
     with get_db() as conn:
         emp = conn.execute('SELECT * FROM employees WHERE id=?', (emp_id,)).fetchone()
@@ -7722,8 +7726,48 @@ def employee_salary_detail(emp_id):
         total_paid   = sum(r['row_paid'] for r in shifts_data)
         total_debt   = total_earned - total_paid
 
+        monthly_data = []
+        if monthly:
+            groups = {}
+            for r in shifts_data:
+                key = r['date'][:7]  # 'YYYY-MM'
+                g = groups.get(key)
+                if g is None:
+                    y, m = key.split('-')
+                    g = groups[key] = {
+                        'month': key,
+                        'month_label': f"{_RU_MONTHS[int(m)]} {y}",
+                        'branch_names': [],
+                        'roles': [],
+                        'shift_count': 0,
+                        'hours_worked': 0.0,
+                        'km': 0.0,
+                        'orders': 0.0,
+                        'base_pay': 0.0,
+                        'auto_bonus': 0.0,
+                        'bonus_amount': 0.0,
+                        'penalty_amount': 0.0,
+                        'total_amount': 0.0,
+                        'row_paid': 0.0,
+                    }
+                if r['branch_name'] not in g['branch_names']:
+                    g['branch_names'].append(r['branch_name'])
+                if r['role_snapshot'] not in g['roles']:
+                    g['roles'].append(r['role_snapshot'])
+                g['shift_count']     += 1
+                g['hours_worked']    += float(r['hours_worked'] or 0)
+                g['km']              += float(r['km'] or 0)
+                g['orders']          += float(r['orders'] or 0)
+                g['base_pay']        += float(r['base_pay'] or 0)
+                g['auto_bonus']      += float(r['auto_bonus'] or 0)
+                g['bonus_amount']    += float(r['bonus_amount'] or 0)
+                g['penalty_amount']  += float(r['penalty_amount'] or 0)
+                g['total_amount']    += float(r['total_amount'] or 0)
+                g['row_paid']        += r['row_paid']
+            monthly_data = list(groups.values())
+
     return render_template('employee_salary_detail.html',
-        emp=emp, shifts_data=shifts_data,
+        emp=emp, shifts_data=shifts_data, monthly_data=monthly_data, monthly=monthly,
         date_from=date_from, date_to=date_to,
         total_earned=total_earned, total_paid=total_paid, total_debt=total_debt,
         role_labels=ROLE_LABELS)
