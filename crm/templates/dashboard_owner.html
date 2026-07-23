@@ -123,7 +123,7 @@
         </div>
       </div>
 
-      <!-- 1b. Заказы сегодня: Выполнено + В работе + Отложено (вместо «Оплата», только для «Сегодня») -->
+      <!-- 1b. Заказы сегодня: Выполнено + В работе + Позже (вместо «Оплата», только для «Сегодня») -->
       <div id="rm-orders-status" style="display:none; background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 100%); border:1.5px solid #e2e8f0; border-radius:14px; padding:16px 18px; box-shadow:0 2px 10px rgba(0,0,0,0.06);">
         <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:12px;">Заказы сегодня</div>
         <div style="display:flex; flex-direction:column; gap:9px;">
@@ -150,7 +150,7 @@
           <div class="rm-pay-row">
             <div class="rm-pay-label">
               <div style="width:8px;height:8px;border-radius:50%;background:#64748b;flex-shrink:0;"></div>
-              <span style="font-size:12px;color:#64748b;font-weight:500;">Отложено</span>
+              <span style="font-size:12px;color:#64748b;font-weight:500;">Позже</span>
             </div>
             <div class="rm-pay-vals">
               <span id="rm-deferred-val" style="font-size:13px;font-weight:700;color:#334155;">—</span>
@@ -549,7 +549,7 @@ var MONTHS_RU_GEN  = ['января','февраля','марта','апреля
 function isSameDay(a, b) { return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate(); }
 
 // «Сегодня» в UI можно листать на другие дни (navRevToday) — блок «Заказы сегодня»
-// (Выполнено/В работе/Отложено) имеет смысл только для реального сегодня, не для
+// (Выполнено/В работе/Позже) имеет смысл только для реального сегодня, не для
 // произвольного выбранного дня в режиме «today».
 function isRevTodayActualToday() { return revPeriod === 'today' && isSameDay(revTodayDate, new Date()); }
 
@@ -920,7 +920,7 @@ function loadRevCard(period) {
     document.getElementById('rev-total').textContent = '…';
     document.getElementById('rev-period-label').textContent = 'рублей';
 
-    // «Заказы сегодня» (Выполнено/В работе/Отложено) вместо «Оплата» — только когда
+    // «Заказы сегодня» (Выполнено/В работе/Позже) вместо «Оплата» — только когда
     // выбран режим «today» и это реально сегодняшняя дата (а не пролистанный день).
     var todayMode = isRevTodayActualToday();
     var paymentsBlock = document.getElementById('rm-payments');

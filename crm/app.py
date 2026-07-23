@@ -1886,7 +1886,7 @@ def init_db():
         if 'status' not in _or_cols:
             # Статус заказа из Гуляша (Статус/statusName) — только для строк, прошедших
             # фильтр _ORDERS_EXCLUDED_STATUSES (Отмена/Возврат туда не попадают вообще).
-            # Нужен для разбивки «Выполнено/В работе/Отложено» на дашборде (сегодня).
+            # Нужен для разбивки «Выполнено/В работе/Позже» на дашборде (сегодня).
             conn.execute("ALTER TABLE orders_report ADD COLUMN status TEXT")
         if 'delivery_at' not in _or_cols:
             # «Дата и время доставки» (план, date_time_plan) — когда заполнена, точнее
@@ -2964,12 +2964,16 @@ def api_revenue_summary():
 @login_required
 def api_revenue_today_status():
     """Для карточки «Общая выручка» на дашборде в режиме «Сегодня»: сумма заказов
-    из Гуляша (orders_report) за сегодняшний календарный день, с разбивкой по
-    статусу — «Выполнено» / «В работе» (все остальные не-финальные статусы,
-    включая варианты типа «Принятготов», которые Гуляш иногда склеивает без
-    пробела) / «Отложено». Отменённые/возвраты в orders_report не попадают
-    вообще (отфильтрованы ещё при импорте, см. _ORDERS_EXCLUDED_STATUSES) —
-    total = done + in_progress + deferred строго, без дополнительных исключений."""
+    из Гуляша (orders_report) с ДОСТАВКОЙ (delivery_at) сегодня — не с приёмом
+    сегодня: предзаказ, принятый заранее с доставкой на другой день, в сегодняшнюю
+    выручку не входит (см. блок «Предзаказы», /api/preorders-today), а старый
+    заказ, принятый несколько дней назад с доставкой сегодня — входит (тот же
+    принцип, что и «Текущая смена» в /orders-report, см. п.192). Разбивка —
+    «Выполнено» / «В работе» (все остальные не-финальные статусы, включая
+    варианты типа «Принятготов», которые Гуляш иногда склеивает без пробела) /
+    «Позже» (статус «Отложен», но с доставкой именно сегодня). Отменённые/возвраты
+    в orders_report не попадают вообще (отфильтрованы ещё при импорте, см.
+    _ORDERS_EXCLUDED_STATUSES) — total = done + in_progress + deferred строго."""
     if not (item_visible('dashboard') or item_visible('ratings_dashboard')):
         return jsonify({'ok': False, 'error': 'forbidden'}), 403
     raw_bids = request.args.get('branch_ids', '')
@@ -2981,7 +2985,7 @@ def api_revenue_today_status():
     with get_db() as conn:
         rows = conn.execute(f'''
             SELECT status, amount FROM orders_report
-            WHERE received_at >= ? AND received_at <= ? {bf}
+            WHERE delivery_at >= ? AND delivery_at <= ? {bf}
         ''', [today + ' 00:00:00', today + ' 23:59:59'] + bids).fetchall()
     done = in_progress = deferred = 0.0
     for r in rows:
