@@ -1883,6 +1883,11 @@ def init_db():
         _or_cols = [r[1] for r in conn.execute("PRAGMA table_info(orders_report)").fetchall()]
         if 'new_client' not in _or_cols:
             conn.execute("ALTER TABLE orders_report ADD COLUMN new_client TEXT")
+        if 'status' not in _or_cols:
+            # Статус заказа из Гуляша (Статус/statusName) — только для строк, прошедших
+            # фильтр _ORDERS_EXCLUDED_STATUSES (Отмена/Возврат туда не попадают вообще).
+            # Нужен для разбивки «Выполнено/В работе/Отложено» на дашборде (сегодня).
+            conn.execute("ALTER TABLE orders_report ADD COLUMN status TEXT")
         _oib_cols = [r[1] for r in conn.execute("PRAGMA table_info(orders_import_batches)").fetchall()]
         if 'updated_count' not in _oib_cols:
             conn.execute("ALTER TABLE orders_import_batches ADD COLUMN updated_count INTEGER DEFAULT 0")
@@ -2945,6 +2950,48 @@ def api_revenue_summary():
         'fot':   fot,
         'courier_fot': courier_fot,
         'branches': branches,
+    })
+
+
+@app.route('/api/revenue-today-status')
+@login_required
+def api_revenue_today_status():
+    """Для карточки «Общая выручка» на дашборде в режиме «Сегодня»: сумма заказов
+    из Гуляша (orders_report) за сегодняшний календарный день, с разбивкой по
+    статусу — «Выполнено» / «В работе» (все остальные не-финальные статусы,
+    включая варианты типа «Принятготов», которые Гуляш иногда склеивает без
+    пробела) / «Отложено». Отменённые/возвраты в orders_report не попадают
+    вообще (отфильтрованы ещё при импорте, см. _ORDERS_EXCLUDED_STATUSES) —
+    total = done + in_progress + deferred строго, без дополнительных исключений."""
+    if not (item_visible('dashboard') or item_visible('ratings_dashboard')):
+        return jsonify({'ok': False, 'error': 'forbidden'}), 403
+    raw_bids = request.args.get('branch_ids', '')
+    bids = [int(x) for x in raw_bids.split(',') if x.strip().isdigit()]
+    _code = 'dashboard' if item_visible('dashboard') else 'ratings_dashboard'
+    bids = [int(b) for b in get_effective_branch_ids(_code, [str(b) for b in bids]) or []]
+    bf = f"AND branch_id IN ({','.join('?'*len(bids))})" if bids else ''
+    today = date.today().isoformat()
+    with get_db() as conn:
+        rows = conn.execute(f'''
+            SELECT status, amount FROM orders_report
+            WHERE received_at >= ? AND received_at <= ? {bf}
+        ''', [today + ' 00:00:00', today + ' 23:59:59'] + bids).fetchall()
+    done = in_progress = deferred = 0.0
+    for r in rows:
+        s = _norm_status(r['status'])
+        amt = float(r['amount'] or 0)
+        if s == 'выполнен':
+            done += amt
+        elif s == 'отложен':
+            deferred += amt
+        else:
+            in_progress += amt
+    return jsonify({
+        'ok': True,
+        'total': done + in_progress + deferred,
+        'done': done,
+        'in_progress': in_progress,
+        'deferred': deferred,
     })
 
 
@@ -13394,6 +13441,7 @@ def _parse_orders_csv(file_bytes):
             'promo_code':       cell(row, idx_promo) or None,
             'amount':           amount,
             'new_client':       cell(row, idx_new_cli) or None,
+            'status':           cell(row, idx_status) or None,
         })
     return rows
 
@@ -13430,20 +13478,20 @@ def _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename, create
             INSERT INTO orders_report
                 (order_number, branch_raw, branch_id, received_at, promised_minutes,
                  order_type_raw, order_type, ready_minutes, delivery_minutes,
-                 promo_code, amount, new_client, import_batch_id, import_hash)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 promo_code, amount, new_client, status, import_batch_id, import_hash)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(import_hash) DO UPDATE SET
                 branch_raw=excluded.branch_raw, branch_id=excluded.branch_id,
                 received_at=excluded.received_at, promised_minutes=excluded.promised_minutes,
                 order_type_raw=excluded.order_type_raw, order_type=excluded.order_type,
                 ready_minutes=excluded.ready_minutes, delivery_minutes=excluded.delivery_minutes,
                 promo_code=excluded.promo_code, amount=excluded.amount,
-                new_client=excluded.new_client, import_batch_id=excluded.import_batch_id
+                new_client=excluded.new_client, status=excluded.status, import_batch_id=excluded.import_batch_id
         ''', (
             r['order_number'], r['branch_raw'], branch_map.get(r['branch_raw']),
             r['received_at'], r['promised_minutes'], r['order_type_raw'], r['order_type'],
             r['ready_minutes'], r['delivery_minutes'], r['promo_code'], r['amount'],
-            r['new_client'], batch_id, h
+            r['new_client'], r['status'], batch_id, h
         ))
         if is_new:
             imported += 1

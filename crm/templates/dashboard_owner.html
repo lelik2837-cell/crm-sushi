@@ -123,6 +123,43 @@
         </div>
       </div>
 
+      <!-- 1b. Заказы сегодня: Выполнено + В работе + Отложено (вместо «Оплата», только для «Сегодня») -->
+      <div id="rm-orders-status" style="display:none; background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 100%); border:1.5px solid #e2e8f0; border-radius:14px; padding:16px 18px; box-shadow:0 2px 10px rgba(0,0,0,0.06);">
+        <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:12px;">Заказы сегодня</div>
+        <div style="display:flex; flex-direction:column; gap:9px;">
+          <div class="rm-pay-row">
+            <div class="rm-pay-label">
+              <div style="width:8px;height:8px;border-radius:50%;background:#15803d;flex-shrink:0;"></div>
+              <span style="font-size:12px;color:#64748b;font-weight:500;">Выполнено</span>
+            </div>
+            <div class="rm-pay-vals">
+              <span id="rm-done-val" style="font-size:13px;font-weight:700;color:#334155;">—</span>
+              <span id="rm-done-pct" style="font-size:11px;color:#94a3b8;">—</span>
+            </div>
+          </div>
+          <div class="rm-pay-row">
+            <div class="rm-pay-label">
+              <div style="width:8px;height:8px;border-radius:50%;background:#d97706;flex-shrink:0;"></div>
+              <span style="font-size:12px;color:#64748b;font-weight:500;">В работе</span>
+            </div>
+            <div class="rm-pay-vals">
+              <span id="rm-inprogress-val" style="font-size:13px;font-weight:700;color:#334155;">—</span>
+              <span id="rm-inprogress-pct" style="font-size:11px;color:#94a3b8;">—</span>
+            </div>
+          </div>
+          <div class="rm-pay-row">
+            <div class="rm-pay-label">
+              <div style="width:8px;height:8px;border-radius:50%;background:#64748b;flex-shrink:0;"></div>
+              <span style="font-size:12px;color:#64748b;font-weight:500;">Отложено</span>
+            </div>
+            <div class="rm-pay-vals">
+              <span id="rm-deferred-val" style="font-size:13px;font-weight:700;color:#334155;">—</span>
+              <span id="rm-deferred-pct" style="font-size:11px;color:#94a3b8;">—</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 2. ФОТ -->
       <div id="rm-fot-card" style="background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 100%); border:1.5px solid #e2e8f0; border-radius:14px; padding:16px 18px; box-shadow:0 2px 10px rgba(0,0,0,0.06);">
         <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:4px;">ФОТ</div>
@@ -503,6 +540,11 @@ var MONTHS_RU_GEN  = ['января','февраля','марта','апреля
 
 function isSameDay(a, b) { return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate(); }
 
+// «Сегодня» в UI можно листать на другие дни (navRevToday) — блок «Заказы сегодня»
+// (Выполнено/В работе/Отложено) имеет смысл только для реального сегодня, не для
+// произвольного выбранного дня в режиме «today».
+function isRevTodayActualToday() { return revPeriod === 'today' && isSameDay(revTodayDate, new Date()); }
+
 function fmtNum(n) { return Math.round(n).toLocaleString('ru-RU'); }
 function fmtPct(val, total) { return total ? '(' + Math.round(val / total * 100) + '%)' : ''; }
 
@@ -576,6 +618,17 @@ function updateRightMetrics(d) {
         function(b){ return b.delivery_revenue > 0 ? Math.round(b.courier_fot/b.delivery_revenue*100) : 0; },
         '#f97316',
         function(b){ return b.delivery_orders > 0 ? Math.round(b.courier_fot/b.delivery_orders) + 'р.' : '—'; });
+}
+
+function updateOrdersStatus(d) {
+    var total = (d.done||0) + (d.in_progress||0) + (d.deferred||0);
+    var el;
+    el = document.getElementById('rm-done-val');       if(el) el.textContent = fmtNum(d.done||0) + ' ₽';
+    el = document.getElementById('rm-done-pct');       if(el) el.textContent = pctStr(d.done||0, total);
+    el = document.getElementById('rm-inprogress-val'); if(el) el.textContent = fmtNum(d.in_progress||0) + ' ₽';
+    el = document.getElementById('rm-inprogress-pct'); if(el) el.textContent = pctStr(d.in_progress||0, total);
+    el = document.getElementById('rm-deferred-val');   if(el) el.textContent = fmtNum(d.deferred||0) + ' ₽';
+    el = document.getElementById('rm-deferred-pct');   if(el) el.textContent = pctStr(d.deferred||0, total);
 }
 
 function clearMetrics() {
@@ -837,6 +890,14 @@ function loadRevCard(period) {
     document.getElementById('rev-total').textContent = '…';
     document.getElementById('rev-period-label').textContent = 'рублей';
 
+    // «Заказы сегодня» (Выполнено/В работе/Отложено) вместо «Оплата» — только когда
+    // выбран режим «today» и это реально сегодняшняя дата (а не пролистанный день).
+    var todayMode = isRevTodayActualToday();
+    var paymentsBlock = document.getElementById('rm-payments');
+    var ordersStatusBlock = document.getElementById('rm-orders-status');
+    if (paymentsBlock) paymentsBlock.style.display = todayMode ? 'none' : '';
+    if (ordersStatusBlock) ordersStatusBlock.style.display = todayMode ? '' : 'none';
+
     var branchesWrap = document.getElementById('rev-branches');
     var yearWrap     = document.getElementById('rev-year-wrap');
     var dayWrap      = document.getElementById('rev-day-wrap');
@@ -977,6 +1038,20 @@ function loadRevCard(period) {
                 }
                 branchesWrap.innerHTML = branchListHtml(branchesForList, d.total);
                 updateRightMetrics(d);
+
+                // «Сегодня» (реально сегодня, не пролистанный день) — общая выручка
+                // и правый блок берутся не из кассовых итогов смены (d.total выше),
+                // а из суммы заказов Гуляша по всем статусам (см. api_revenue_today_status) —
+                // выполняется последним, чтобы гарантированно не быть перезаписанным.
+                if (todayMode) {
+                    fetch('/api/revenue-today-status' + (_revBranchSuffix() ? '?' + _revBranchSuffix().slice(1) : ''))
+                        .then(function(r3) { return r3.json(); })
+                        .then(function(d3) {
+                            if (!d3.ok) return;
+                            document.getElementById('rev-total').textContent = fmtNum(d3.total);
+                            updateOrdersStatus(d3);
+                        });
+                }
             };
 
             if (planDateTo !== dateTo) {
