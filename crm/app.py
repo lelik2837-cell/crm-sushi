@@ -10,7 +10,6 @@ import sys
 import logging
 import smtplib
 import secrets
-import time
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from functools import wraps
@@ -34,18 +33,6 @@ app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 DATABASE = os.environ.get('DATABASE_PATH', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'crm.db'))
-
-# PIN-вход (быстрый вход по 4-значному коду вместо пароля) — только для роли owner.
-# Полный пароль обязателен на новом/незапомненном устройстве; после него на этом
-# устройстве можно предложить настроить PIN — тогда оно "запоминается" на PIN_TRUST_DAYS
-# дней (см. cookie PIN_COOKIE_NAME + таблица trusted_devices), а внутри уже открытой
-# сессии владельца при простое дольше PIN_IDLE_TIMEOUT_SECONDS сессия сбрасывается и
-# следующий заход снова требует PIN (но не полный пароль, пока устройство доверенное).
-PIN_COOKIE_NAME          = 'pin_device'
-PIN_TRUST_DAYS           = 30
-PIN_IDLE_TIMEOUT_SECONDS = 15 * 60
-PIN_MAX_ATTEMPTS         = 5
-PIN_LOCKOUT_MINUTES      = 5
 
 SMTP_HOST     = 'smtp.gmail.com'
 SMTP_PORT     = 587
@@ -1164,14 +1151,6 @@ def init_db():
             conn.execute("ALTER TABLE users ADD COLUMN last_name TEXT DEFAULT ''")
         if 'first_name' not in user_cols:
             conn.execute("ALTER TABLE users ADD COLUMN first_name TEXT DEFAULT ''")
-        # PIN-вход (см. PIN_* константы выше) — хэш PIN и счётчик неудачных попыток с
-        # временной блокировкой (защита от перебора 4-значного кода).
-        if 'pin_hash' not in user_cols:
-            conn.execute("ALTER TABLE users ADD COLUMN pin_hash TEXT")
-        if 'pin_failed_attempts' not in user_cols:
-            conn.execute("ALTER TABLE users ADD COLUMN pin_failed_attempts INTEGER DEFAULT 0")
-        if 'pin_locked_until' not in user_cols:
-            conn.execute("ALTER TABLE users ADD COLUMN pin_locked_until TIMESTAMP")
         # Migrate existing full_name → last_name + first_name
         conn.execute("""
             UPDATE users SET
@@ -1203,17 +1182,6 @@ def init_db():
                 used       INTEGER DEFAULT 0,
                 used_by    INTEGER REFERENCES users(id)
             );
-            CREATE TABLE IF NOT EXISTS trusted_devices (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                token_hash   TEXT NOT NULL UNIQUE,
-                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                expires_at   TIMESTAMP NOT NULL,
-                last_used_at TIMESTAMP,
-                user_agent   TEXT DEFAULT ''
-            );
-            CREATE INDEX IF NOT EXISTS idx_trusted_devices_token ON trusted_devices(token_hash);
-            CREATE INDEX IF NOT EXISTS idx_trusted_devices_user ON trusted_devices(user_id);
         ''')
 
         # Create bank module tables
@@ -1970,17 +1938,8 @@ def init_db():
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        # Сессии с активным PIN-входом (см. PIN_* константы) сами себя "разлогинивают"
-        # после ~15 минут простоя — но не до конца: cookie доверенного устройства
-        # (см. _get_trusted_device) остаётся, так что следующий /login покажет форму
-        # PIN, а не полного пароля. Обычные сессии (PIN не настроен) не трогаем.
-        if 'user_id' in session and session.get('pin_active'):
-            last = session.get('last_activity')
-            if last is not None and (time.time() - last) > PIN_IDLE_TIMEOUT_SECONDS:
-                session.clear()
         if 'user_id' not in session:
             return redirect(url_for('login'))
-        session['last_activity'] = time.time()
         return f(*args, **kwargs)
     return decorated
 
@@ -2354,77 +2313,6 @@ def index():
     return redirect(url_for('login'))
 
 
-def _establish_session(conn, user_id, role, full_name):
-    """Единая точка входа для полного логина по паролю и логина по PIN — чтобы обе
-    ветки заводили сессию совершенно одинаково (branch_ids, IP-ограничение и т.п.)."""
-    rows = conn.execute(
-        'SELECT branch_id FROM user_branches WHERE user_id=? ORDER BY branch_id', (user_id,)
-    ).fetchall()
-    branch_ids = [r['branch_id'] for r in rows]
-    if not branch_ids:
-        urow = conn.execute('SELECT branch_id FROM users WHERE id=?', (user_id,)).fetchone()
-        if urow and urow['branch_id']:
-            branch_ids = [urow['branch_id']]
-    # IP restriction: non-owners are limited to the branch matching their IP
-    # Managers (управляющие) are exempt — they have access to all assigned branches
-    if role not in ('owner', 'director'):
-        client_ip = get_client_ip()
-        ip_branch = conn.execute(
-            "SELECT id FROM branches WHERE allowed_ip=? AND is_active=1", (client_ip,)
-        ).fetchone()
-        if ip_branch:
-            branch_ids = [ip_branch['id']]
-    session.clear()
-    session['user_id'] = user_id
-    session['role'] = role
-    session['full_name'] = full_name
-    session['branch_id'] = branch_ids[0] if branch_ids else None
-    session['branch_ids'] = branch_ids
-    session['last_activity'] = time.time()
-
-
-def _hash_pin_token(token):
-    return hashlib.sha256(token.encode()).hexdigest()
-
-
-def _issue_trusted_device(conn, resp, user_id):
-    """Помечает текущий браузер доверенным на PIN_TRUST_DAYS дней — раз PIN у
-    пользователя уже настроен (проверяется на вызывающей стороне), дальнейшие входы
-    с этого устройства смогут идти по PIN вместо полного пароля."""
-    conn.execute("DELETE FROM trusted_devices WHERE user_id=? AND expires_at <= datetime('now')", (user_id,))
-    token = secrets.token_urlsafe(32)
-    expires = (datetime.now() + timedelta(days=PIN_TRUST_DAYS)).strftime('%Y-%m-%d %H:%M:%S')
-    conn.execute(
-        'INSERT INTO trusted_devices (user_id, token_hash, expires_at, user_agent) VALUES (?,?,?,?)',
-        (user_id, _hash_pin_token(token), expires, (request.headers.get('User-Agent') or '')[:255])
-    )
-    conn.commit()
-    resp.set_cookie(PIN_COOKIE_NAME, token, max_age=PIN_TRUST_DAYS * 24 * 3600,
-                     httponly=True, secure=request.is_secure, samesite='Lax')
-
-
-def _get_trusted_device(conn):
-    """Доверенное устройство (по cookie) вместе с данными пользователя, если токен
-    существует и ещё не истёк. None — если cookie нет/просрочен/невалиден."""
-    token = request.cookies.get(PIN_COOKIE_NAME)
-    if not token:
-        return None
-    return conn.execute('''
-        SELECT td.id, td.user_id, u.role, u.pin_hash, u.pin_failed_attempts,
-               u.pin_locked_until, u.full_name
-        FROM trusted_devices td JOIN users u ON u.id = td.user_id
-        WHERE td.token_hash=? AND td.expires_at > datetime('now')
-    ''', (_hash_pin_token(token),)).fetchone()
-
-
-def _clear_trusted_device(conn, resp):
-    token = request.cookies.get(PIN_COOKIE_NAME)
-    if token:
-        conn.execute('DELETE FROM trusted_devices WHERE token_hash=?', (_hash_pin_token(token),))
-        conn.commit()
-    resp.delete_cookie(PIN_COOKIE_NAME)
-
-
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -2432,118 +2320,32 @@ def login():
         password = request.form['password']
         with get_db() as conn:
             user = conn.execute('SELECT * FROM users WHERE username=?', (username,)).fetchone()
-            if user and check_password_hash(user['password_hash'], password):
-                _establish_session(conn, user['id'], user['role'], user['full_name'])
-                if user['role'] == 'owner':
-                    session['pin_active'] = bool(user['pin_hash'])
-                    if user['pin_hash']:
-                        # PIN уже настроен (возможно, на другом устройстве) — молча
-                        # доверяем и этому устройству, повторно PIN не спрашиваем.
-                        resp = redirect(url_for('dashboard'))
-                        _issue_trusted_device(conn, resp, user['id'])
-                        return resp
-                    return redirect(url_for('login_setup_pin'))
-                return redirect(url_for('dashboard'))
-        flash('Неверный логин или пароль', 'danger')
-        return render_template('login.html', pin_mode=False)
-
-    # GET: если это доверенное устройство с уже настроенным PIN — предлагаем войти
-    # по PIN вместо полного пароля (?full=1 принудительно показывает обычную форму).
-    pin_mode = False
-    pin_name = None
-    if not request.args.get('full'):
-        with get_db() as conn:
-            trusted = _get_trusted_device(conn)
-        if trusted and trusted['role'] == 'owner' and trusted['pin_hash']:
-            pin_mode = True
-            pin_name = trusted['full_name']
-    return render_template('login.html', pin_mode=pin_mode, pin_name=pin_name)
-
-
-@app.route('/login/pin', methods=['POST'])
-def login_pin():
-    pin = (request.form.get('pin') or '').strip()
-    with get_db() as conn:
-        trusted = _get_trusted_device(conn)
-        if not trusted or trusted['role'] != 'owner' or not trusted['pin_hash']:
-            flash('Вход по PIN недоступен, войдите по паролю', 'danger')
-            resp = redirect(url_for('login', full=1))
-            _clear_trusted_device(conn, resp)
-            return resp
-
-        if trusted['pin_locked_until']:
-            locked_until = datetime.strptime(trusted['pin_locked_until'], '%Y-%m-%d %H:%M:%S')
-            if locked_until > datetime.now():
-                flash('Слишком много неверных попыток. Попробуйте позже или войдите по паролю.', 'danger')
-                return render_template('login.html', pin_mode=True, pin_name=trusted['full_name'])
-
-        if pin and check_password_hash(trusted['pin_hash'], pin):
-            conn.execute(
-                'UPDATE users SET pin_failed_attempts=0, pin_locked_until=NULL WHERE id=?',
-                (trusted['user_id'],)
-            )
-            conn.execute(
-                'UPDATE trusted_devices SET last_used_at=CURRENT_TIMESTAMP WHERE id=?', (trusted['id'],)
-            )
-            conn.commit()
-            _establish_session(conn, trusted['user_id'], 'owner', trusted['full_name'])
-            session['pin_active'] = True
+        if user and check_password_hash(user['password_hash'], password):
+            rows = conn.execute(
+                'SELECT branch_id FROM user_branches WHERE user_id=? ORDER BY branch_id',
+                (user['id'],)
+            ).fetchall()
+            branch_ids = [r['branch_id'] for r in rows]
+            if not branch_ids and user['branch_id']:
+                branch_ids = [user['branch_id']]
+            # IP restriction: non-owners are limited to the branch matching their IP
+            # Managers (управляющие) are exempt — they have access to all assigned branches
+            if user['role'] not in ('owner', 'director'):
+                client_ip = get_client_ip()
+                ip_branch = conn.execute(
+                    "SELECT id FROM branches WHERE allowed_ip=? AND is_active=1",
+                    (client_ip,)
+                ).fetchone()
+                if ip_branch:
+                    branch_ids = [ip_branch['id']]
+            session['user_id'] = user['id']
+            session['role'] = user['role']
+            session['full_name'] = user['full_name']
+            session['branch_id'] = branch_ids[0] if branch_ids else None
+            session['branch_ids'] = branch_ids
             return redirect(url_for('dashboard'))
-
-        attempts = (trusted['pin_failed_attempts'] or 0) + 1
-        if attempts >= PIN_MAX_ATTEMPTS:
-            locked_until = (datetime.now() + timedelta(minutes=PIN_LOCKOUT_MINUTES)).strftime('%Y-%m-%d %H:%M:%S')
-            conn.execute('UPDATE users SET pin_failed_attempts=0, pin_locked_until=? WHERE id=?',
-                         (locked_until, trusted['user_id']))
-            conn.commit()
-            flash('Слишком много неверных попыток. Попробуйте позже или войдите по паролю.', 'danger')
-        else:
-            conn.execute('UPDATE users SET pin_failed_attempts=? WHERE id=?', (attempts, trusted['user_id']))
-            conn.commit()
-            flash('Неверный PIN-код', 'danger')
-        return render_template('login.html', pin_mode=True, pin_name=trusted['full_name'])
-
-
-@app.route('/login/setup-pin', methods=['GET', 'POST'])
-@login_required
-def login_setup_pin():
-    if session.get('role') != 'owner':
-        flash('Доступ запрещён', 'danger')
-        return redirect(url_for('dashboard'))
-    with get_db() as conn:
-        user = conn.execute('SELECT * FROM users WHERE id=?', (session['user_id'],)).fetchone()
-        if request.method == 'POST':
-            if request.form.get('action') == 'disable':
-                conn.execute(
-                    'UPDATE users SET pin_hash=NULL, pin_failed_attempts=0, pin_locked_until=NULL WHERE id=?',
-                    (user['id'],)
-                )
-                conn.execute('DELETE FROM trusted_devices WHERE user_id=?', (user['id'],))
-                conn.commit()
-                session['pin_active'] = False
-                resp = redirect(url_for('login_setup_pin'))
-                resp.delete_cookie(PIN_COOKIE_NAME)
-                flash('PIN-вход отключён на всех устройствах', 'success')
-                return resp
-
-            pin = (request.form.get('pin') or '').strip()
-            pin_confirm = (request.form.get('pin_confirm') or '').strip()
-            if not re.fullmatch(r'\d{4}', pin):
-                flash('PIN должен состоять ровно из 4 цифр', 'danger')
-            elif pin != pin_confirm:
-                flash('PIN-коды не совпадают', 'danger')
-            else:
-                conn.execute(
-                    'UPDATE users SET pin_hash=?, pin_failed_attempts=0, pin_locked_until=NULL WHERE id=?',
-                    (generate_password_hash(pin, method='pbkdf2:sha256'), user['id'])
-                )
-                conn.commit()
-                session['pin_active'] = True
-                resp = redirect(url_for('dashboard'))
-                _issue_trusted_device(conn, resp, user['id'])
-                flash('PIN-код настроен, это устройство запомнено на 30 дней', 'success')
-                return resp
-    return render_template('login_setup_pin.html', has_pin=bool(user['pin_hash']))
+        flash('Неверный логин или пароль', 'danger')
+    return render_template('login.html')
 
 
 @app.route('/logout')
