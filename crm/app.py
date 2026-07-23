@@ -13489,8 +13489,12 @@ def orders_report():
                 flash('Для фильтра «Текущая смена» выберите ровно один филиал', 'warning')
                 current_shift = False
             else:
+                # opened_at хранится в UTC (SQLite CURRENT_TIMESTAMP), а received_at в
+                # orders_report — уже в местном времени (Asia/Novosibirsk, как приходит
+                # из Гуляша, без конвертации) — переводим opened_at в те же +7ч, иначе
+                # сравнение с received_at будет со сдвигом на 7 часов.
                 open_shift = conn.execute('''
-                    SELECT date, opened_at FROM shifts
+                    SELECT date, datetime(opened_at, '+7 hours') AS opened_at FROM shifts
                     WHERE branch_id=? AND status='open'
                     ORDER BY date DESC LIMIT 1
                 ''', (branch_flt[0],)).fetchone()
