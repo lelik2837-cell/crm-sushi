@@ -72,6 +72,7 @@
                     <th class="text-end">Км/Заказы</th>
                     <th class="text-end">База</th>
                     <th class="text-end">Бонус</th>
+                    <th class="text-end">Премия</th>
                     <th class="text-end">Штраф</th>
                     <th class="text-end fw-bold">Итого</th>
                     <th class="text-end">Выплачено</th>
@@ -107,9 +108,13 @@
                 </td>
                 <td class="text-end">{{ '{:,.0f}'.format(r.base_pay or 0) }} ₽</td>
                 <td class="text-end text-success">
-                    {% set total_bonus = (r.bonus_amount or 0) + (r.auto_bonus or 0) %}
-                    {% if total_bonus > 0 %}
-                    +{{ '{:,.0f}'.format(total_bonus) }} ₽
+                    {% if r.auto_bonus %}
+                    +{{ '{:,.0f}'.format(r.auto_bonus) }} ₽
+                    {% else %}—{% endif %}
+                </td>
+                <td class="text-end text-success">
+                    {% if r.bonus_amount %}
+                    +{{ '{:,.0f}'.format(r.bonus_amount) }} ₽
                     {% if r.bonus_comment %}<div class="text-muted" style="font-size:0.75rem">{{ r.bonus_comment }}</div>{% endif %}
                     {% else %}—{% endif %}
                 </td>
@@ -140,7 +145,8 @@
                 <tr>
                     <td colspan="5">Итого</td>
                     <td class="text-end">{{ '{:,.0f}'.format(shifts_data | sum(attribute='base_pay')) }} ₽</td>
-                    <td class="text-end text-success">+{{ '{:,.0f}'.format((shifts_data | sum(attribute='bonus_amount')) + (shifts_data | sum(attribute='auto_bonus'))) }} ₽</td>
+                    <td class="text-end text-success">+{{ '{:,.0f}'.format(shifts_data | sum(attribute='auto_bonus')) }} ₽</td>
+                    <td class="text-end text-success">+{{ '{:,.0f}'.format(shifts_data | sum(attribute='bonus_amount')) }} ₽</td>
                     <td class="text-end text-danger">−{{ '{:,.0f}'.format(shifts_data | sum(attribute='penalty_amount')) }} ₽</td>
                     <td class="text-end">{{ '{:,.0f}'.format(total_earned) }} ₽</td>
                     <td class="text-end text-success">{{ '{:,.0f}'.format(total_paid) }} ₽</td>
