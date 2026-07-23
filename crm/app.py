@@ -1243,6 +1243,8 @@ def init_db():
                 terminal_id INTEGER REFERENCES bank_terminals(id),
                 is_ignored INTEGER DEFAULT 0
             );
+            CREATE INDEX IF NOT EXISTS idx_bank_transactions_date ON bank_transactions(txn_date);
+            CREATE INDEX IF NOT EXISTS idx_bank_transactions_statement ON bank_transactions(statement_id);
             CREATE TABLE IF NOT EXISTS api_settings (
                 key   TEXT PRIMARY KEY,
                 value TEXT
@@ -1496,6 +1498,7 @@ def init_db():
                 amount REAL DEFAULT 0,
                 sort_order INTEGER DEFAULT 0
             );
+            CREATE INDEX IF NOT EXISTS idx_shift_terminals_shift ON shift_terminals(shift_id);
         ''')
 
         # Feature: change schedules
