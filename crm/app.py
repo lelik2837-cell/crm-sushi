@@ -3131,14 +3131,12 @@ def api_fot_summary():
 @login_required
 @menu_permission_required('fot_dashboard')
 def api_fot_year():
-    today   = date.today()
-    start_m = today.month - 11
-    start_y = today.year
-    if start_m <= 0:
-        start_m += 12
-        start_y -= 1
-    date_from = date(start_y, start_m, 1).isoformat()
-    date_to   = today.isoformat()
+    # По умолчанию (без явных дат) — календарный год до сегодня, тот же смысл,
+    # что и «Год» на карточке выручки (см. /api/revenue-months) — раньше здесь
+    # были жёстко «последние 12 месяцев от сегодня», без возможности выбрать
+    # конкретный прошлый год.
+    date_to   = request.args.get('date_to', date.today().isoformat())
+    date_from = request.args.get('date_from', date(date.fromisoformat(date_to).year, 1, 1).isoformat())
     raw_bids  = request.args.get('branch_ids', '')
     bids      = [int(x) for x in raw_bids.split(',') if x.strip().isdigit()]
     bids      = [int(b) for b in get_effective_branch_ids('fot_dashboard', [str(b) for b in bids]) or []]
@@ -3166,9 +3164,11 @@ def api_fot_year():
         if k not in rev_map:
             rev_map[k] = int(v)
     labels  = ['','Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек']
+    start = date.fromisoformat(date_from)
+    end   = date.fromisoformat(date_to)
     months_list = []
-    y, m = start_y, start_m
-    for _ in range(12):
+    y, m = start.year, start.month
+    while (y < end.year) or (y == end.year and m <= end.month):
         fv = fot_map.get((y, m), 0)
         rv = rev_map.get((y, m), 0)
         months_list.append({'year':y,'month':m,'label':labels[m],

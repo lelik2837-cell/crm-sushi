@@ -11,12 +11,33 @@
 
       <!-- Period buttons -->
       <div style="display:flex; gap:6px; margin-bottom:20px; align-items:center; flex-wrap:nowrap;">
-        <button onclick="loadFot('today')" data-fp="today" class="fot-pb"
-          style="font-size:11px;padding:4px 12px;border-radius:20px;border:1.5px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:#fff;cursor:pointer;font-weight:600;letter-spacing:.3px;transition:all .15s;">Сегодня</button>
-        <button onclick="loadFot('month')" data-fp="month" class="fot-pb"
-          style="font-size:11px;padding:4px 12px;border-radius:20px;border:1.5px solid rgba(255,255,255,.9);background:rgba(255,255,255,.25);color:#fff;cursor:pointer;font-weight:600;letter-spacing:.3px;transition:all .15s;">Месяц</button>
-        <button onclick="loadFot('year')"  data-fp="year"  class="fot-pb"
-          style="font-size:11px;padding:4px 12px;border-radius:20px;border:1.5px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:#fff;cursor:pointer;font-weight:600;letter-spacing:.3px;transition:all .15s;">Год</button>
+        <div class="fot-nav" data-period="today" style="display:flex; align-items:center; gap:1px; background:rgba(255,255,255,.12); border:1.5px solid rgba(255,255,255,.35); border-radius:16px; padding:2px;">
+          <button onclick="navFotToday(-1)" title="Предыдущий день"
+            style="width:19px; height:19px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; line-height:1;">‹</button>
+          <button onclick="selectFotToday()" id="fot-today-btn"
+            style="border:none; background:transparent; color:#fff; cursor:pointer; font-size:10px; font-weight:700; padding:2px 5px; letter-spacing:.2px; white-space:nowrap;">Сегодня</button>
+          <button onclick="navFotToday(1)" id="fot-today-next" title="Следующий день"
+            style="width:19px; height:19px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; line-height:1;">›</button>
+        </div>
+        <div class="fot-nav" data-period="month" style="display:flex; align-items:center; gap:1px; background:rgba(255,255,255,.25); border:1.5px solid rgba(255,255,255,.9); border-radius:16px; padding:2px;">
+          <button onclick="navFotMonth(-1)" title="Предыдущий месяц"
+            style="width:19px; height:19px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; line-height:1;">‹</button>
+          <button onclick="selectFotMonth()" id="fot-month-btn"
+            style="border:none; background:transparent; color:#fff; cursor:pointer; font-size:10px; font-weight:700; padding:2px 5px; letter-spacing:.2px; white-space:nowrap;">Месяц</button>
+          <button onclick="navFotMonth(1)" id="fot-month-next" title="Следующий месяц"
+            style="width:19px; height:19px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; line-height:1;">›</button>
+        </div>
+        <div style="position:relative;">
+          <div class="fot-nav" data-period="year" style="display:flex; align-items:center; gap:1px; background:rgba(255,255,255,.12); border:1.5px solid rgba(255,255,255,.35); border-radius:16px; padding:2px;">
+            <button onclick="loadFot('year')" id="fot-year-btn"
+              style="border:none; background:transparent; color:#fff; cursor:pointer; font-size:10px; font-weight:700; padding:2px 3px 2px 6px; letter-spacing:.2px; white-space:nowrap;">Год</button>
+            <button onclick="toggleFotYearMenu(event)" id="fot-year-caret" title="Выбрать год"
+              style="width:16px; height:19px; border:none; background:transparent; color:#fff; cursor:pointer; padding:0 4px 0 0; display:flex; align-items:center; justify-content:center;">
+              <svg viewBox="0 0 8 5" width="8" height="5" fill="currentColor"><path d="M0 0l4 5 4-5z"/></svg>
+            </button>
+          </div>
+          <div id="fot-year-menu" style="display:none; position:absolute; top:calc(100% + 4px); left:0; background:#fff; border-radius:10px; min-width:88px; overflow:hidden; z-index:30; box-shadow:0 6px 20px rgba(0,0,0,.25);"></div>
+        </div>
         <button id="fot-cal-btn" onclick="openFotCal()" title="Выбрать период"
           style="width:26px;height:26px;flex-shrink:0;border-radius:50%;border:1.5px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:rgba(255,255,255,.8);cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;transition:all .15s;">
           <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><path d="M3.5 0a.5.5 0 0 1 .5.5V1h8V.5a.5.5 0 0 1 1 0V1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h1V.5a.5.5 0 0 1 .5-.5zM1 4v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4H1z"/></svg>
@@ -95,6 +116,8 @@
 
 </div>
 
+{% endblock %}
+{% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
 // Локальная дата в формате YYYY-MM-DD (не через toISOString — тот конвертирует
@@ -114,6 +137,50 @@ var lastDays      = [];
 var fotCustomFrom = null;
 var fotCustomTo   = null;
 var fotCalPicker  = null;
+var fotYear       = new Date().getFullYear();
+var fotTodayDate  = new Date();
+var fotMonthDate  = (function() { var d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); })();
+
+var MONTHS_RU_FULL = ['', 'Январь','Февраль','Март','Апрель','Май','Июнь',
+                      'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+var MONTHS_RU_GEN  = ['января','февраля','марта','апреля','мая','июня',
+                      'июля','августа','сентября','октября','ноября','декабря'];
+function isSameDay(a, b) { return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate(); }
+
+function selectFotToday() { fotTodayDate = new Date(); loadFot('today'); }
+function selectFotMonth() { var d = new Date(); fotMonthDate = new Date(d.getFullYear(), d.getMonth(), 1); loadFot('month'); }
+function navFotToday(delta) { fotTodayDate.setDate(fotTodayDate.getDate() + delta); loadFot('today'); }
+function navFotMonth(delta) { fotMonthDate = new Date(fotMonthDate.getFullYear(), fotMonthDate.getMonth() + delta, 1); loadFot('month'); }
+
+function toggleFotYearMenu(ev) {
+    ev.stopPropagation();
+    var menu = document.getElementById('fot-year-menu');
+    if (!menu) return;
+    if (menu.style.display === 'block') { menu.style.display = 'none'; return; }
+    var curYear = new Date().getFullYear();
+    var items = '';
+    for (var y = curYear; y >= curYear - 4; y--) {
+        var active = fotPeriod === 'year' && fotYear === y;
+        items += '<div class="fot-year-opt" data-y="' + y + '" style="padding:7px 16px;font-size:13px;color:#1e293b;cursor:pointer;white-space:nowrap;' +
+                 (active ? 'font-weight:700;background:#f1f5f9;' : '') + '">' + y + '</div>';
+    }
+    menu.innerHTML = items;
+    menu.style.display = 'block';
+}
+document.addEventListener('click', function(e) {
+    var menu = document.getElementById('fot-year-menu');
+    if (!menu) return;
+    var opt = e.target.closest && e.target.closest('.fot-year-opt');
+    if (opt) {
+        menu.style.display = 'none';
+        fotYear = parseInt(opt.dataset.y);
+        loadFot('year');
+        return;
+    }
+    if (menu.style.display === 'block' && !menu.contains(e.target) && !(e.target.closest && e.target.closest('#fot-year-caret'))) {
+        menu.style.display = 'none';
+    }
+});
 
 var FOT_BRANCH_GROUPS = {{ branch_groups | tojson }};
 window.fotBranchIds = [];
@@ -137,26 +204,16 @@ function toggleUnit() {
     if (lastDays.length)  makeFotDayChart(lastDays);
 }
 
-// ── активная кнопка периода ──────────────────────────────────────────────────
-function setPb(period) {
-    document.querySelectorAll('.fot-pb').forEach(function(b) {
-        var on = b.dataset.fp === period;
-        b.style.border     = on ? '1.5px solid rgba(255,255,255,.9)'  : '1.5px solid rgba(255,255,255,.35)';
-        b.style.background = on ? 'rgba(255,255,255,.25)'             : 'rgba(255,255,255,.12)';
-    });
-    var calBtn = document.getElementById('fot-cal-btn');
-    if (calBtn) {
-        calBtn.style.border     = period === 'custom' ? '1.5px solid rgba(255,255,255,.9)'  : '1.5px solid rgba(255,255,255,.35)';
-        calBtn.style.background = period === 'custom' ? 'rgba(255,255,255,.25)'             : 'rgba(255,255,255,.12)';
-    }
-}
-
 // ── диапазон дат ──────────────────────────────────────────────────────────────
 function getDates(period) {
-    var t = new Date(), fmt = fmtLocalDate;
-    if (period === 'today')  return [fmt(t), fmt(t)];
-    if (period === 'custom') return [fotCustomFrom || fmt(t), fotCustomTo || fmt(t)];
-    return [fmt(t).slice(0,7)+'-01', fmt(t)];
+    var fmt = fmtLocalDate;
+    if (period === 'today')  return [fmt(fotTodayDate), fmt(fotTodayDate)];
+    if (period === 'custom') return [fotCustomFrom || fmt(new Date()), fotCustomTo || fmt(new Date())];
+    var y = fotMonthDate.getFullYear();
+    var m = fotMonthDate.getMonth();
+    var lastDay = new Date(y, m + 1, 0).getDate();
+    return [y + '-' + String(m + 1).padStart(2, '0') + '-01',
+            y + '-' + String(m + 1).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0')];
 }
 
 // ── flatpickr календарь ───────────────────────────────────────────────────────
@@ -356,7 +413,29 @@ function showMonthDetail(m) {
 function loadFot(period) {
     if (period) fotPeriod = period;
     activeRole = '';
-    setPb(fotPeriod);
+
+    var calActive = fotPeriod === 'custom';
+    document.querySelectorAll('.fot-nav').forEach(function(nav) {
+        var active = !calActive && nav.dataset.period === fotPeriod;
+        nav.style.background  = active ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.12)';
+        nav.style.borderColor = active ? 'rgba(255,255,255,.9)'  : 'rgba(255,255,255,.35)';
+    });
+    var calBtn = document.getElementById('fot-cal-btn');
+    if (calBtn) {
+        calBtn.style.background  = calActive ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.12)';
+        calBtn.style.borderColor = calActive ? 'rgba(255,255,255,.9)'  : 'rgba(255,255,255,.35)';
+    }
+
+    var todayBtn = document.getElementById('fot-today-btn');
+    if (todayBtn) {
+        var now = new Date();
+        todayBtn.textContent = isSameDay(fotTodayDate, now) ? 'Сегодня' : (fotTodayDate.getDate() + ' ' + MONTHS_RU_GEN[fotTodayDate.getMonth()]);
+    }
+    var monthBtn = document.getElementById('fot-month-btn');
+    if (monthBtn) {
+        var curYear2 = new Date().getFullYear();
+        monthBtn.textContent = MONTHS_RU_FULL[fotMonthDate.getMonth() + 1] + (fotMonthDate.getFullYear() !== curYear2 ? ' ' + fotMonthDate.getFullYear() : '');
+    }
 
     var rolesWrap  = document.getElementById('fot-roles-wrap');
     var yearWrap   = document.getElementById('fot-year-wrap');
@@ -372,7 +451,10 @@ function loadFot(period) {
         pctBig.textContent      = '—';
         subEl.textContent       = 'нажмите на столбец';
         if (monthDet) monthDet.style.display = 'none';
-        var yp = getFotBranchParam() ? '?branch_ids='+getFotBranchParam() : '';
+        var curYear  = new Date().getFullYear();
+        var yearFrom = fotYear + '-01-01';
+        var yearTo   = fotYear === curYear ? fmtLocalDate(new Date()) : fotYear + '-12-31';
+        var yp = '?date_from=' + yearFrom + '&date_to=' + yearTo + (getFotBranchParam() ? '&branch_ids=' + getFotBranchParam() : '');
         fetch('/api/fot-year'+yp).then(function(r){return r.json();}).then(function(d){
             if (!d.ok) return;
             makeFotYearChart(d.months);

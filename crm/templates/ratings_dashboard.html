@@ -24,6 +24,17 @@
           <button onclick="shiftMonth(1)" id="rat-month-next" title="Следующий месяц"
             style="width:24px; height:24px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:14px; font-weight:700; line-height:1;">›</button>
         </div>
+        <div style="position:relative;">
+          <div class="rat-nav" data-period="year" style="display:flex; align-items:center; gap:2px; background:rgba(255,255,255,.12); border:1.5px solid rgba(255,255,255,.35); border-radius:20px; padding:3px;">
+            <button onclick="selectPeriod('year')" id="rat-year-label"
+              style="border:none; background:transparent; color:#fff; cursor:pointer; font-size:12px; font-weight:700; padding:4px 4px 4px 10px; letter-spacing:.2px; white-space:nowrap;">Год</button>
+            <button onclick="toggleRatYearMenu(event)" id="rat-year-caret" title="Выбрать год"
+              style="width:20px; height:24px; border:none; background:transparent; color:#fff; cursor:pointer; padding:0 6px 0 0; display:flex; align-items:center; justify-content:center;">
+              <svg viewBox="0 0 8 5" width="8" height="5" fill="currentColor"><path d="M0 0l4 5 4-5z"/></svg>
+            </button>
+          </div>
+          <div id="rat-year-menu" style="display:none; position:absolute; top:calc(100% + 4px); left:0; background:#fff; border-radius:10px; min-width:88px; overflow:hidden; z-index:30; box-shadow:0 6px 20px rgba(0,0,0,.25);"></div>
+        </div>
 
         {% if can_pick_other_branches('ratings_dashboard') %}
         {% set bs_prefix = 'rat' %}
@@ -58,13 +69,22 @@
   </div>
 </div>
 
+{% endblock %}
+{% block scripts %}
 <script>
-var currentPeriod = 'day';   // 'day' | 'month'
+var currentPeriod = 'day';   // 'day' | 'month' | 'year'
 var currentMetric = 'revenue';
 var dayDate   = new Date();
 var monthDate = new Date();
+var ratYear   = new Date().getFullYear();
 window.ratBranchIds = [];
 window.ratOnBranchChange = function () { loadRatings(); };
+{% if can_pick_other_branches('ratings_dashboard') %}
+var RAT_BRANCH_GROUPS = {{ branch_groups | tojson }};
+dashBpInitGroup('rat', RAT_BRANCH_GROUPS, function (g) {
+    return g.abbr === 'НК' || g.name.indexOf('Новокузнецк') !== -1 || g.name === 'НК';
+});
+{% endif %}
 
 var MONTHS_GEN = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
 var MONTHS_NOM = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
@@ -96,12 +116,45 @@ function updateNavLabels() {
   document.getElementById('rat-month-next').disabled = isSameMonth(monthDate, today);
   document.getElementById('rat-month-next').style.opacity = isSameMonth(monthDate, today) ? '.35' : '1';
 
+  var yearLabel = document.getElementById('rat-year-label');
+  if (yearLabel) yearLabel.textContent = 'Год' + (ratYear !== today.getFullYear() ? ' ' + ratYear : '');
+
   document.querySelectorAll('.rat-nav').forEach(function(nav) {
     var active = nav.dataset.period === currentPeriod;
     nav.style.background = active ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.12)';
     nav.style.borderColor = active ? 'rgba(255,255,255,.9)' : 'rgba(255,255,255,.35)';
   });
 }
+
+function toggleRatYearMenu(ev) {
+  ev.stopPropagation();
+  var menu = document.getElementById('rat-year-menu');
+  if (!menu) return;
+  if (menu.style.display === 'block') { menu.style.display = 'none'; return; }
+  var curYear = new Date().getFullYear();
+  var items = '';
+  for (var y = curYear; y >= curYear - 4; y--) {
+    var active = currentPeriod === 'year' && ratYear === y;
+    items += '<div class="rat-year-opt" data-y="' + y + '" style="padding:7px 16px;font-size:13px;color:#1e293b;cursor:pointer;white-space:nowrap;' +
+             (active ? 'font-weight:700;background:#f1f5f9;' : '') + '">' + y + '</div>';
+  }
+  menu.innerHTML = items;
+  menu.style.display = 'block';
+}
+document.addEventListener('click', function(e) {
+  var menu = document.getElementById('rat-year-menu');
+  if (!menu) return;
+  var opt = e.target.closest && e.target.closest('.rat-year-opt');
+  if (opt) {
+    menu.style.display = 'none';
+    ratYear = parseInt(opt.dataset.y);
+    selectPeriod('year');
+    return;
+  }
+  if (menu.style.display === 'block' && !menu.contains(e.target) && !(e.target.closest && e.target.closest('#rat-year-caret'))) {
+    menu.style.display = 'none';
+  }
+});
 
 function selectPeriod(p) {
   currentPeriod = p;
@@ -138,6 +191,8 @@ function updateTitle() {
   var periodLabel;
   if (currentPeriod === 'day') {
     periodLabel = isSameDay(dayDate, new Date()) ? 'сегодня' : (dayDate.getDate() + ' ' + MONTHS_GEN[dayDate.getMonth()]);
+  } else if (currentPeriod === 'year') {
+    periodLabel = ratYear + ' год';
   } else {
     periodLabel = MONTHS_NOM[monthDate.getMonth()].toLowerCase() + ' ' + monthDate.getFullYear();
   }
@@ -190,6 +245,10 @@ function loadRatings() {
   var dateFrom, dateTo;
   if (currentPeriod === 'day') {
     dateFrom = dateTo = fmtDate(dayDate);
+  } else if (currentPeriod === 'year') {
+    var curYear = new Date().getFullYear();
+    dateFrom = ratYear + '-01-01';
+    dateTo   = ratYear === curYear ? fmtDate(new Date()) : ratYear + '-12-31';
   } else {
     var y = monthDate.getFullYear(), m = monthDate.getMonth();
     var today = new Date();
