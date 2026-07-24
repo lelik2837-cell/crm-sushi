@@ -3,6 +3,42 @@
 {% set tab_titles = {'categories': 'Категории расходов / доходов', 'bonuses': 'Премии', 'rates': 'Ставки сотрудников', 'api': 'Интеграции (1С, выручка)', 'roles': 'Роли и доступ', 'salary_payouts': 'Выплатные дни'} %}
 {% block title %}Настройки — {{ tab_titles.get(active_tab, '') }}{% endblock %}
 {% block content %}
+
+{# Мультивыбор филиалов с быстрым выбором по группам (для правил премий — раньше
+   можно было указать только один конкретный филиал или "все"). #}
+{% macro branch_picker(prefix, current_ids=[]) %}
+<div class="dropdown">
+    <button type="button" class="btn btn-outline-secondary w-100 text-start d-flex justify-content-between align-items-center"
+            id="{{ prefix }}BranchBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside">
+        <span id="{{ prefix }}BranchLabel">Все филиалы</span>
+        <i class="bi bi-chevron-down small"></i>
+    </button>
+    <div class="dropdown-menu p-2 shadow w-100" style="max-height:320px;overflow-y:auto;">
+        {% if branch_groups_for_rates %}
+        <div class="text-muted px-1 mb-1" style="font-size:0.7rem;font-weight:700;letter-spacing:.5px;">ГРУППЫ</div>
+        <div class="d-flex flex-wrap gap-1 mb-2">
+            {% for g in branch_groups_for_rates %}
+            <button type="button" class="btn btn-sm btn-outline-primary px-2 py-0 {{ prefix }}-group-btn"
+                    data-ids="{{ g.branch_ids | tojson | e }}"
+                    style="font-size:11px;border-radius:20px;">
+                {{ g.abbr or g.name }}
+            </button>
+            {% endfor %}
+        </div>
+        <hr class="my-1">
+        {% endif %}
+        {% for b in branches %}
+        <div class="form-check {{ prefix }}-branch-item">
+            <input class="form-check-input {{ prefix }}-branch-cb" type="checkbox"
+                   name="branch_ids" value="{{ b.id }}" id="{{ prefix }}Br{{ b.id }}"
+                   {% if b.id in current_ids %}checked{% endif %}>
+            <label class="form-check-label w-100" for="{{ prefix }}Br{{ b.id }}" style="cursor:pointer">{{ b.name }}</label>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endmacro %}
+
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h4 class="fw-bold mb-0"><i class="bi bi-gear"></i> {{ tab_titles.get(active_tab, 'Настройки') }}</h4>
 </div>
@@ -410,14 +446,9 @@
                                 </select>
                             </div>
                             <div class="mb-3">
-                                <label class="form-label fw-semibold">Филиал</label>
-                                <select name="branch_id" class="form-select">
-                                    <option value="">Все филиалы</option>
-                                    {% for b in branches %}
-                                    <option value="{{ b.id }}">{{ b.name }}</option>
-                                    {% endfor %}
-                                </select>
-                                <div class="form-text">Оставьте «Все филиалы» чтобы правило применялось везде</div>
+                                <label class="form-label fw-semibold">Филиал(ы)</label>
+                                {{ branch_picker('addBonus') }}
+                                <div class="form-text">Ничего не выбрано — правило применяется на всех филиалах. Кнопки групп сверху выбирают сразу все филиалы группы.</div>
                             </div>
                             <div class="mb-3">
                                 <label class="form-label fw-semibold">Порог ФОТ (%)</label>
@@ -457,7 +488,7 @@
                             <select id="filter-branch" class="form-select form-select-sm" style="width:auto;" onchange="filterBonusRules()">
                                 <option value="">Все филиалы</option>
                                 {% for b in branches %}
-                                <option value="{{ b.name }}">{{ b.name }}</option>
+                                <option value="{{ b.id }}">{{ b.name }}</option>
                                 {% endfor %}
                             </select>
                         </div>
@@ -478,7 +509,7 @@
                             <tbody>
                             {% set ns = namespace(prev_branch='__none__') %}
                             {% for r in bonus_rules %}
-                            {% set cur_branch = r.branch_name or 'Все филиалы' %}
+                            {% set cur_branch = r.branch_label %}
                             {% if cur_branch != ns.prev_branch %}
                             {% set ns.prev_branch = cur_branch %}
                             <tr class="branch-separator" data-branch="{{ cur_branch }}">
@@ -489,7 +520,7 @@
                             </tr>
                             {% endif %}
                             <tr class="bonus-rule-row {% if not r.is_active %}opacity-50{% endif %}"
-                                data-role="{{ r.role }}" data-branch="{{ r.branch_name or '' }}">
+                                data-role="{{ r.role }}" data-branch="{{ r.branch_ids|join(',') }}">
                                 <td class="fw-semibold">{{ role_labels.get(r.role, r.role) }}</td>
                                 <td>ФОТ &lt; <strong>{{ r.threshold_pct }}%</strong></td>
                                 <td><span class="badge bg-success">+{{ r.bonus_pct }}% выручки</span></td>
@@ -499,7 +530,7 @@
                                 </td>
                                 <td class="text-end">
                                     <button class="btn btn-sm btn-outline-primary" title="Редактировать"
-                                        onclick="openEditRule({{ r.id }}, '{{ r.role }}', {{ r.branch_id or 'null' }}, {{ r.threshold_pct }}, {{ r.bonus_pct }})">
+                                        onclick="openEditRule({{ r.id }}, '{{ r.role }}', {{ r.branch_ids|tojson }}, {{ r.threshold_pct }}, {{ r.bonus_pct }})">
                                         <i class="bi bi-pencil"></i>
                                     </button>
                                     <form method="POST" action="{{ url_for('toggle_bonus_rule', rule_id=r.id) }}" class="d-inline">
@@ -1827,13 +1858,9 @@
                         </select>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label fw-semibold">Филиал</label>
-                        <select name="branch_id" id="edit-branch" class="form-select">
-                            <option value="">Все филиалы</option>
-                            {% for b in branches %}
-                            <option value="{{ b.id }}">{{ b.name }}</option>
-                            {% endfor %}
-                        </select>
+                        <label class="form-label fw-semibold">Филиал(ы)</label>
+                        {{ branch_picker('editBonus') }}
+                        <div class="form-text">Ничего не выбрано — правило применяется на всех филиалах.</div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Порог ФОТ (%)</label>
@@ -1864,14 +1891,52 @@
 
 {% block scripts %}
 <script>
-function openEditRule(id, role, branchId, threshold, bonus) {
+function openEditRule(id, role, branchIds, threshold, bonus) {
     document.getElementById('editRuleForm').action = '/bonus_rules/' + id + '/edit';
     document.getElementById('edit-role').value = role;
-    document.getElementById('edit-branch').value = branchId || '';
+    document.querySelectorAll('.editBonus-branch-cb').forEach(function(cb) {
+        cb.checked = branchIds.indexOf(parseInt(cb.value)) !== -1;
+    });
+    if (window._branchPickerUpdaters && window._branchPickerUpdaters.editBonus) {
+        window._branchPickerUpdaters.editBonus();
+    }
     document.getElementById('edit-threshold').value = threshold;
     document.getElementById('edit-bonus').value = bonus;
     new bootstrap.Modal(document.getElementById('editRuleModal')).show();
 }
+
+// ── Мультивыбор филиалов (кнопка + чекбоксы + группы) для правил премий ─────
+function initBranchPicker(prefix) {
+    var cbs    = document.querySelectorAll('.' + prefix + '-branch-cb');
+    var label  = document.getElementById(prefix + 'BranchLabel');
+    var groups = document.querySelectorAll('.' + prefix + '-group-btn');
+
+    function updateLabel() {
+        var checked = Array.from(cbs).filter(function(c){ return c.checked; });
+        if (!checked.length) { label.textContent = 'Все филиалы'; return; }
+        label.textContent = checked.map(function(c){
+            return c.closest('.' + prefix + '-branch-item').querySelector('label').textContent.trim();
+        }).join(', ');
+    }
+
+    cbs.forEach(function(cb){ cb.addEventListener('change', updateLabel); });
+
+    groups.forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var ids = JSON.parse(this.dataset.ids);
+            cbs.forEach(function(cb){ cb.checked = ids.indexOf(parseInt(cb.value)) !== -1; });
+            updateLabel();
+        });
+    });
+
+    window._branchPickerUpdaters = window._branchPickerUpdaters || {};
+    window._branchPickerUpdaters[prefix] = updateLabel;
+    updateLabel();
+}
+{% if active_tab == 'bonuses' %}
+initBranchPicker('addBonus');
+initBranchPicker('editBonus');
+{% endif %}
 
 function filterBonusRules() {
     var role = document.getElementById('filter-role').value;
@@ -1880,8 +1945,8 @@ function filterBonusRules() {
     var rows = document.querySelectorAll('.bonus-rule-row');
     rows.forEach(function(row) {
         var rRole = row.dataset.role || '';
-        var rBranch = row.dataset.branch || '';
-        var show = (!role || rRole === role) && (!branch || rBranch === branch);
+        var rBranchIds = (row.dataset.branch || '').split(',').filter(Boolean);
+        var show = (!role || rRole === role) && (!branch || rBranchIds.indexOf(branch) !== -1);
         row.style.display = show ? '' : 'none';
     });
 

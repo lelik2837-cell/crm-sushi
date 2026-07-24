@@ -818,6 +818,24 @@ def init_db():
         if 'branch_id' not in br_cols:
             conn.execute("ALTER TABLE bonus_rules ADD COLUMN branch_id INTEGER REFERENCES branches(id)")
 
+        # Правило премии теперь может действовать сразу на несколько филиалов (и группы
+        # филиалов — на уровне выбора это просто отмечает входящие в группу филиалы),
+        # а не на один branch_id. Старая колонка branch_id оставлена в таблице (не
+        # читается больше нигде в коде), а её значения один раз переносятся в новую
+        # таблицу bonus_rule_branches — INSERT OR IGNORE + PRIMARY KEY делают перенос
+        # безопасным при повторных запусках.
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS bonus_rule_branches (
+                rule_id INTEGER NOT NULL REFERENCES bonus_rules(id) ON DELETE CASCADE,
+                branch_id INTEGER NOT NULL REFERENCES branches(id),
+                PRIMARY KEY (rule_id, branch_id)
+            );
+        ''')
+        conn.execute('''
+            INSERT OR IGNORE INTO bonus_rule_branches (rule_id, branch_id)
+            SELECT id, branch_id FROM bonus_rules WHERE branch_id IS NOT NULL
+        ''')
+
         # Add first_name / last_name to employees if missing
         emp_cols = [r[1] for r in conn.execute("PRAGMA table_info(employees)").fetchall()]
         if 'last_name' not in emp_cols:
@@ -3958,11 +3976,17 @@ def shift_view(shift_id):
             (shift['branch_id'], shift['date'])
         ).fetchone()
         promokod = promokod_row['code'] if promokod_row else ''
-        bonus_rules_rows = conn.execute(
-            'SELECT role, threshold_pct, bonus_pct FROM bonus_rules '
-            'WHERE is_active=1 AND (branch_id IS NULL OR branch_id=?) '
-            'ORDER BY role, threshold_pct DESC', (shift['branch_id'],)
-        ).fetchall()
+        bonus_rules_rows = conn.execute('''
+            SELECT br.role, br.threshold_pct, br.bonus_pct,
+                   EXISTS(SELECT 1 FROM bonus_rule_branches x WHERE x.rule_id=br.id) AS is_specific
+            FROM bonus_rules br
+            WHERE br.is_active=1
+              AND (
+                    NOT EXISTS(SELECT 1 FROM bonus_rule_branches x WHERE x.rule_id=br.id)
+                    OR EXISTS(SELECT 1 FROM bonus_rule_branches x WHERE x.rule_id=br.id AND x.branch_id=?)
+                  )
+            ORDER BY br.role, br.threshold_pct DESC, is_specific DESC
+        ''', (shift['branch_id'],)).fetchall()
         # Deduplicate by role+threshold keeping branch-specific over global
         _seen_br = {}
         for r in bonus_rules_rows:
@@ -6637,11 +6661,23 @@ def settings():
         kpi_blocks = conn.execute(
             'SELECT * FROM kpi_blocks ORDER BY sort_order, id'
         ).fetchall()
-        bonus_rules = conn.execute(
-            'SELECT br.*, b.name AS branch_name FROM bonus_rules br '
-            'LEFT JOIN branches b ON b.id=br.branch_id '
-            'ORDER BY COALESCE(b.name, \'ААА\'), br.role, br.threshold_pct'
-        ).fetchall()
+        bonus_rules_raw = conn.execute('SELECT * FROM bonus_rules').fetchall()
+        rule_branch_ids = {}
+        rule_branch_names = {}
+        for row in conn.execute('''
+            SELECT brb.rule_id, b.id AS branch_id, b.name FROM bonus_rule_branches brb
+            JOIN branches b ON b.id = brb.branch_id
+            ORDER BY b.name
+        ''').fetchall():
+            rule_branch_ids.setdefault(row['rule_id'], []).append(row['branch_id'])
+            rule_branch_names.setdefault(row['rule_id'], []).append(row['name'])
+        bonus_rules = []
+        for r in bonus_rules_raw:
+            d = dict(r)
+            d['branch_ids'] = rule_branch_ids.get(r['id'], [])
+            d['branch_label'] = ', '.join(rule_branch_names.get(r['id'], [])) or 'Все филиалы'
+            bonus_rules.append(d)
+        bonus_rules.sort(key=lambda d: (d['branch_label'], d['role'], d['threshold_pct']))
         branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
         rate_templates = conn.execute(
             'SELECT * FROM rate_templates ORDER BY role, name'
@@ -6936,25 +6972,28 @@ def add_bonus_rule():
     bonus = request.form.get('bonus_pct', '')
     if not role or not threshold or not bonus:
         flash('Заполните все поля', 'danger')
-        return redirect(url_for('settings') + '#tab-bonuses')
+        return redirect(url_for('settings') + '?tab=bonuses')
     try:
         threshold = float(threshold)
         bonus = float(bonus)
     except ValueError:
         flash('Неверный формат числа', 'danger')
-        return redirect(url_for('settings') + '#tab-bonuses')
-    branch_id = request.form.get('branch_id') or None
-    if branch_id:
-        try: branch_id = int(branch_id)
-        except ValueError: branch_id = None
+        return redirect(url_for('settings') + '?tab=bonuses')
+    branch_ids = []
+    for v in request.form.getlist('branch_ids'):
+        try: branch_ids.append(int(v))
+        except ValueError: pass
     with get_db() as conn:
         conn.execute(
-            'INSERT INTO bonus_rules (role, threshold_pct, bonus_pct, branch_id) VALUES (?,?,?,?)',
-            (role, threshold, bonus, branch_id)
+            'INSERT INTO bonus_rules (role, threshold_pct, bonus_pct) VALUES (?,?,?)',
+            (role, threshold, bonus)
         )
+        new_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        for bid in branch_ids:
+            conn.execute('INSERT OR IGNORE INTO bonus_rule_branches (rule_id, branch_id) VALUES (?,?)', (new_id, bid))
         conn.commit()
     flash(f'Правило добавлено', 'success')
-    return redirect(url_for('settings') + '#tab-bonuses')
+    return redirect(url_for('settings') + '?tab=bonuses')
 
 
 @app.route('/settings/bonus-rules/<int:rule_id>/delete', methods=['POST'])
@@ -6965,7 +7004,7 @@ def delete_bonus_rule(rule_id):
         conn.execute('DELETE FROM bonus_rules WHERE id=?', (rule_id,))
         conn.commit()
     flash('Правило удалено', 'success')
-    return redirect(url_for('settings') + '#tab-bonuses')
+    return redirect(url_for('settings') + '?tab=bonuses')
 
 
 @app.route('/settings/bonus-rules/<int:rule_id>/toggle', methods=['POST'])
@@ -6983,12 +7022,10 @@ def toggle_bonus_rule(rule_id):
 @menu_permission_required('settings_bonuses')
 def edit_bonus_rule(rule_id):
     role = request.form.get('role')
-    branch_id = request.form.get('branch_id') or None
-    if branch_id:
-        try:
-            branch_id = int(branch_id)
-        except ValueError:
-            branch_id = None
+    branch_ids = []
+    for v in request.form.getlist('branch_ids'):
+        try: branch_ids.append(int(v))
+        except ValueError: pass
     try:
         threshold_pct = float(request.form.get('threshold_pct', 0))
         bonus_pct = float(request.form.get('bonus_pct', 0))
@@ -6997,9 +7034,12 @@ def edit_bonus_rule(rule_id):
         return redirect(url_for('settings') + '?tab=bonuses')
     with get_db() as conn:
         conn.execute(
-            'UPDATE bonus_rules SET role=?, threshold_pct=?, bonus_pct=?, branch_id=? WHERE id=?',
-            (role, threshold_pct, bonus_pct, branch_id, rule_id)
+            'UPDATE bonus_rules SET role=?, threshold_pct=?, bonus_pct=? WHERE id=?',
+            (role, threshold_pct, bonus_pct, rule_id)
         )
+        conn.execute('DELETE FROM bonus_rule_branches WHERE rule_id=?', (rule_id,))
+        for bid in branch_ids:
+            conn.execute('INSERT OR IGNORE INTO bonus_rule_branches (rule_id, branch_id) VALUES (?,?)', (rule_id, bid))
         conn.commit()
     flash('Правило обновлено', 'success')
     return redirect(url_for('settings') + '?tab=bonuses')
@@ -10649,11 +10689,16 @@ def calculate_bonuses(conn, shift_id):
     if not staff:
         return []
 
-    rules = conn.execute(
-        'SELECT role, threshold_pct, bonus_pct FROM bonus_rules '
-        'WHERE is_active=1 AND (branch_id IS NULL OR branch_id=?) '
-        'ORDER BY threshold_pct ASC', (branch_id,)
-    ).fetchall()
+    rules = conn.execute('''
+        SELECT br.role, br.threshold_pct, br.bonus_pct
+        FROM bonus_rules br
+        WHERE br.is_active=1
+          AND (
+                NOT EXISTS(SELECT 1 FROM bonus_rule_branches x WHERE x.rule_id=br.id)
+                OR EXISTS(SELECT 1 FROM bonus_rule_branches x WHERE x.rule_id=br.id AND x.branch_id=?)
+              )
+        ORDER BY br.threshold_pct ASC
+    ''', (branch_id,)).fetchall()
 
     rules_by_role = {}
     for r in rules:
