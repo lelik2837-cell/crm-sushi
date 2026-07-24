@@ -1511,6 +1511,19 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_employee_shifts_shift ON employee_shifts(shift_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_shifts_date ON shifts(date)")
 
+        # Тот же класс проблемы (см. п.188/198), не замеченный тогда: expenses.shift_id
+        # тоже не был проиндексирован. get_kpi_values() (блоки KPI на дашборде,
+        # грузится безусловно при каждом открытии /dashboard через loadKpi())
+        # делает `expenses e JOIN shifts s ON s.id=e.shift_id WHERE s.date BETWEEN ?`
+        # — без индекса это полный перебор ВСЕЙ таблицы expenses на каждый заход на
+        # дашборд, независимо от периода. cash_plus_entries/taxi_trips/change_log —
+        # тот же риск (коррелированные подзапросы по shift_id в _calc_prev_kassa_nal
+        # и на странице смены), чинятся заодно, пока разбирались с этим классом багов.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_expenses_shift ON expenses(shift_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_cash_plus_entries_shift ON cash_plus_entries(shift_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_taxi_trips_shift ON taxi_trips(shift_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_change_log_shift ON change_log(shift_id)")
+
         # Feature: change schedules
         conn.executescript('''
             CREATE TABLE IF NOT EXISTS change_schedule (
