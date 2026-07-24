@@ -355,6 +355,56 @@ function applyFilters() {
   document.getElementById('catFilterIcon').classList.toggle('text-muted', !catActive);
 
   updateSummary();
+  _bsUpdatePageLinks();
+}
+
+// ── Фильтр категории/типа операции/верхний фильтр — сохраняются в ссылках
+// пагинации, иначе переход на следующую страницу (полная перезагрузка с сервера)
+// сбрасывал их, т.к. это чисто клиентское состояние, не привязанное к URL ──────
+function _bsFilterState() {
+  const topFilter = document.querySelector('.filter-btn.active')?.dataset.filter || 'all';
+  const optypeChks = [...document.querySelectorAll('.optype-chk')];
+  const checkedOptypes = optypeChks.filter(c => c.checked).map(c => c.value);
+  const catChks = [...document.querySelectorAll('.cat-chk')];
+  const checkedCats = catChks.filter(c => c.checked).map(c => c.value);
+  return {
+    f: topFilter,
+    optype: checkedOptypes.length < optypeChks.length ? checkedOptypes.join(',') : null,
+    cat: checkedCats.length < catChks.length ? checkedCats.join(',') : null,
+  };
+}
+
+function _bsUpdatePageLinks() {
+  const links = document.querySelectorAll('.pagination .page-link[href]');
+  if (!links.length) return;
+  const st = _bsFilterState();
+  links.forEach(a => {
+    const url = new URL(a.getAttribute('href'), window.location.origin);
+    if (st.f !== 'all') url.searchParams.set('f', st.f); else url.searchParams.delete('f');
+    if (st.optype !== null) url.searchParams.set('optype', st.optype); else url.searchParams.delete('optype');
+    if (st.cat !== null) url.searchParams.set('cat', st.cat); else url.searchParams.delete('cat');
+    a.setAttribute('href', url.pathname + '?' + url.searchParams.toString());
+  });
+}
+
+function _bsRestoreFiltersFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  if (!params.has('f') && !params.has('optype') && !params.has('cat')) return;
+
+  const f = params.get('f') || 'all';
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === f));
+
+  if (params.has('optype')) {
+    const vals = new Set((params.get('optype') || '').split(',').filter(Boolean));
+    document.querySelectorAll('.optype-chk').forEach(c => { c.checked = vals.has(c.value); });
+  }
+  if (params.has('cat')) {
+    // Без .filter(Boolean) — value="" ("без категории") сама по себе значимая
+    // пустая строка, а не "пусто, потому что ничего не выбрано"
+    const vals = new Set((params.get('cat') || '').split(','));
+    document.querySelectorAll('.cat-chk').forEach(c => { c.checked = vals.has(c.value); });
+  }
+  applyFilters();
 }
 
 // ── Пересчёт сумм в шапке под текущий фильтр ────────────────────────────────
@@ -425,6 +475,10 @@ document.querySelector('.deselect-all-cats')?.addEventListener('click', e => {
   document.querySelectorAll('.cat-chk').forEach(c => { if (c.value !== '') c.checked = false; });
   applyFilters();
 });
+
+// Восстанавливаем фильтр (верхний/тип операции/категория) из URL, если он там есть —
+// так ссылки пагинации, куда он прокинут через _bsUpdatePageLinks(), не сбрасывают его
+_bsRestoreFiltersFromUrl();
 
 // ── Сохранение контрагента/категории/игнор ───────────────────────────────────
 function saveRow(id, data) {
