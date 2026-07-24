@@ -83,7 +83,8 @@ def exchange_code(client_id, client_secret, code, redirect_uri):
         timeout=30,
     )
     log.info('exchange_code status=%s body=%s', resp.status_code, resp.text[:400])
-    resp.raise_for_status()
+    if not resp.ok:
+        raise RuntimeError(f'{resp.status_code} {resp.text[:400]}')
     return resp.json()
 
 
@@ -110,7 +111,8 @@ def refresh_access_token(client_id, client_secret, refresh_token):
         timeout=30,
     )
     log.info('refresh_token status=%s body=%s', resp.status_code, resp.text[:400])
-    resp.raise_for_status()
+    if not resp.ok:
+        raise RuntimeError(f'{resp.status_code} {resp.text[:400]}')
     return resp.json()
 
 
