@@ -11886,6 +11886,11 @@ def bank_statements_all():
     except ValueError:
         limit = 100
     limit = max(1, min(limit, 5000))
+    try:
+        page = int(request.args.get('page', 1))
+    except (TypeError, ValueError):
+        page = 1
+    page = max(1, page)
 
     _RU_MONTHS = ['','Январь','Февраль','Март','Апрель','Май','Июнь',
                   'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь']
@@ -11896,6 +11901,37 @@ def bank_statements_all():
             SELECT COUNT(*) FROM bank_transactions bt
             WHERE bt.txn_date BETWEEN ? AND ?
         ''', (date_from, date_to)).fetchone()[0]
+        total_pages = max(1, (total_count + limit - 1) // limit)
+        page = min(page, total_pages)
+        offset = (page - 1) * limit
+
+        # Лёгкая выборка (без JOIN'ов) ВСЕХ отфильтрованных по дате строк — нужна для сумм
+        # в шапке и списка категорий фильтра, которые должны учитывать весь период,
+        # а не только текущую страницу таблицы (см. LIMIT/OFFSET ниже, ради которого
+        # и не тянем сразу все строки с JOIN'ами — то самое торможение на большом периоде)
+        agg_rows = conn.execute('''
+            SELECT id, amount, category, is_ignored, bank_account_id, description
+            FROM bank_transactions
+            WHERE txn_date BETWEEN ? AND ?
+        ''', (date_from, date_to)).fetchall()
+        agg_txns = [dict(r) for r in agg_rows]
+        _apply_bank_parse_rules(conn, agg_txns)
+        summary_credit = 0.0
+        summary_debit = 0.0
+        summary_cnt_no_cat = 0
+        agg_cats = set()
+        for d in agg_txns:
+            eff_cat = d.get('category') or d.get('parse_rule_category') or ''
+            if not d.get('is_ignored'):
+                if d['amount'] > 0:
+                    summary_credit += d['amount']
+                elif d['amount'] < 0:
+                    summary_debit += d['amount']
+                if not eff_cat:
+                    summary_cnt_no_cat += 1
+            if eff_cat:
+                agg_cats.add(eff_cat)
+
         txns_raw = conn.execute('''
             SELECT bt.*, c.name as contractor_name,
                    t.terminal_number, b.name as terminal_branch,
@@ -11908,8 +11944,8 @@ def bank_statements_all():
             JOIN bank_accounts ba ON ba.id=bt.bank_account_id
             WHERE bt.txn_date BETWEEN ? AND ?
             ORDER BY bt.txn_date DESC, bt.id DESC
-            LIMIT ?
-        ''', (date_from, date_to, limit)).fetchall()
+            LIMIT ? OFFSET ?
+        ''', (date_from, date_to, limit, offset)).fetchall()
         txns = [_enrich_bank_txn(dict(row)) for row in txns_raw]
         _apply_bank_parse_rules(conn, txns)
         for d in txns:
@@ -11922,10 +11958,14 @@ def bank_statements_all():
         exp_cats_income  = [c for c in all_exp_cats if c['type'] == 'income']
         exp_cats_expense = [c for c in all_exp_cats if c['type'] != 'income']
         cat_labels = {c['code']: c['label'] for c in get_expense_categories(conn)}
-    unique_cats = sorted(
-        set(d['effective_category'] for d in txns if d['effective_category']),
-        key=lambda code: cat_labels.get(code, code)
-    )
+    unique_cats = sorted(agg_cats, key=lambda code: cat_labels.get(code, code))
+
+    def _bs_page_url(n):
+        import urllib.parse as _up
+        args = request.args.to_dict(flat=False)
+        args['page'] = [str(n)]
+        return url_for('bank_statements_all') + '?' + _up.urlencode(args, doseq=True)
+
     stmt = {'filename': 'Выписка по всем', 'account_name': 'Все счета',
             'date_from': date_from, 'date_to': date_to, 'row_count': total_count}
     return render_template('bank_statement.html',
@@ -11933,7 +11973,9 @@ def bank_statements_all():
         exp_cats_income=exp_cats_income, exp_cats_expense=exp_cats_expense,
         unique_cats=unique_cats, cat_labels=cat_labels, show_bank_col=True,
         date_from=date_from, date_to=date_to, row_limit=limit, total_count=total_count,
-        month_lbl=month_lbl)
+        month_lbl=month_lbl, page=page, total_pages=total_pages, page_url=_bs_page_url,
+        summary_credit=summary_credit, summary_debit=summary_debit,
+        summary_cnt_no_cat=summary_cnt_no_cat)
 
 
 # ─── SBERBANK API SYNC ────────────────────────────────────────────────────────
