@@ -2995,10 +2995,12 @@ def api_revenue_today_status():
     today = date.today().isoformat()
     with get_db() as conn:
         rows = conn.execute(f'''
-            SELECT status, amount FROM orders_report
+            SELECT branch_id, status, amount FROM orders_report
             WHERE delivery_at >= ? AND delivery_at <= ? {bf}
         ''', [today + ' 00:00:00', today + ' 23:59:59'] + bids).fetchall()
+        branch_info = {b['id']: b for b in conn.execute('SELECT id, name, abbr FROM branches').fetchall()}
     done = in_progress = deferred = 0.0
+    branch_totals = {}
     for r in rows:
         s = _norm_status(r['status'])
         amt = float(r['amount'] or 0)
@@ -3008,12 +3010,23 @@ def api_revenue_today_status():
             deferred += amt
         else:
             in_progress += amt
+        bid = r['branch_id']
+        if bid is not None:
+            branch_totals[bid] = branch_totals.get(bid, 0.0) + amt
+    branches = []
+    for bid, revenue in branch_totals.items():
+        info = branch_info.get(bid)
+        name = info['name'] if info else ''
+        abbr = ((info['abbr'] if info else '') or '').strip() or name[:3].upper()
+        branches.append({'id': bid, 'name': name, 'abbr': abbr, 'revenue': revenue})
+    branches.sort(key=lambda b: -b['revenue'])
     return jsonify({
         'ok': True,
         'total': done + in_progress + deferred,
         'done': done,
         'in_progress': in_progress,
         'deferred': deferred,
+        'branches': branches,
     })
 
 

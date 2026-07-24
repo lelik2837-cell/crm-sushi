@@ -670,9 +670,15 @@ function clearMetrics() {
 }
 
 // Блок "Кемерово / Новокузнецк" всегда считается по всем филиалам,
-// независимо от выбранного в дашборде фильтра филиалов/групп.
-function loadRegionSplit(dateFrom, dateTo) {
-    fetch('/api/revenue-summary?date_from=' + dateFrom + '&date_to=' + dateTo)
+// независимо от выбранного в дашборде фильтра филиалов/групп. Для «Сегодня»
+// (реально сегодня) — из суммы заказов Гуляша по всем статусам, тем же
+// источником, что и общая выручка карточки (см. api_revenue_today_status),
+// а не из кассовых итогов смены — иначе цифры разъезжались бы с заголовком.
+function loadRegionSplit(dateFrom, dateTo, useOrdersTotal) {
+    var url = useOrdersTotal
+        ? '/api/revenue-today-status'
+        : ('/api/revenue-summary?date_from=' + dateFrom + '&date_to=' + dateTo);
+    fetch(url)
         .then(function(r) { return r.json(); })
         .then(function(d) {
             if (!d.ok) return;
@@ -1035,7 +1041,7 @@ function loadRevCard(period) {
         document.getElementById('rev-period-label').textContent = 'рублей';
     }
 
-    loadRegionSplit(dateFrom, dateTo);
+    loadRegionSplit(dateFrom, dateTo, todayMode);
 
     // Для текущего (незавершённого) месяца план для сравнения берём только
     // за прошедшие дни (1-е число — сегодня), а не за весь месяц целиком —
@@ -1052,14 +1058,22 @@ function loadRevCard(period) {
             if (!d.ok) return;
 
             var renderTotals = function(planTotal, planByName) {
-                if (d.total > 0 || !planTotal) {
-                    document.getElementById('rev-total').textContent = fmtNum(d.total);
-                    showPlanDiff(d.total, planTotal || 0);
-                } else {
-                    document.getElementById('rev-total').textContent = fmtNum(planTotal);
-                    var pd = document.getElementById('rev-plan-diff');
-                    pd.style.color = 'rgba(255,255,255,.65)';
-                    pd.textContent = '(план)';
+                // «Сегодня» (реально сегодня, не пролистанный день) — заголовок
+                // выручки показывает только сумму заказов Гуляша по всем статусам
+                // (см. api_revenue_today_status), без промежуточного показа кассовых
+                // итогов смены (d.total) или плана — раньше между этими двумя числами
+                // была видна секундная замена ("моргание"), теперь до готовности
+                // реального числа заголовок остаётся в состоянии загрузки ("…").
+                if (!todayMode) {
+                    if (d.total > 0 || !planTotal) {
+                        document.getElementById('rev-total').textContent = fmtNum(d.total);
+                        showPlanDiff(d.total, planTotal || 0);
+                    } else {
+                        document.getElementById('rev-total').textContent = fmtNum(planTotal);
+                        var pd = document.getElementById('rev-plan-diff');
+                        pd.style.color = 'rgba(255,255,255,.65)';
+                        pd.textContent = '(план)';
+                    }
                 }
                 // План филиала для сравнения — за то же кол-во дней, что и у общего плана
                 // (planByName), а не за весь месяц целиком; факт выручки — за весь месяц.
@@ -1074,23 +1088,14 @@ function loadRevCard(period) {
                 branchesWrap.innerHTML = branchListHtml(branchesForList, d.total);
                 updateRightMetrics(d);
 
-                // «Сегодня» (реально сегодня, не пролистанный день) — общая выручка
-                // и правый блок берутся не из кассовых итогов смены (d.total выше),
-                // а из суммы заказов Гуляша по всем статусам (см. api_revenue_today_status) —
-                // выполняется последним, чтобы гарантированно не быть перезаписанным.
                 if (todayMode) {
                     fetch('/api/revenue-today-status' + (_revBranchSuffix() ? '?' + _revBranchSuffix().slice(1) : ''))
                         .then(function(r3) { return r3.json(); })
                         .then(function(d3) {
                             if (!d3.ok) return;
                             updateOrdersStatus(d3);
-                            // Пока нет ни одного выполненного заказа, оставляем на
-                            // экране план — сумма "в работе"/"позже" ещё ничего не
-                            // говорит о реальной выручке за день, а мгновенная
-                            // подмена план -> небольшая сумма выглядит как дёрганье.
-                            if (d3.done > 0) {
-                                document.getElementById('rev-total').textContent = fmtNum(d3.total);
-                            }
+                            document.getElementById('rev-total').textContent = fmtNum(d3.total);
+                            showPlanDiff(d3.total, planTotal || 0);
                         });
                 }
             };
