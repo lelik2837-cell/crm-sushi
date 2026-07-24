@@ -5,6 +5,15 @@ import uuid
 import logging
 from pathlib import Path
 
+# requests/urllib3 импортируются здесь один раз при загрузке модуля, а не лениво
+# внутри функций — иначе первый вызов может прийти одновременно из потока
+# APScheduler (часовая авто-синхронизация) и из потока запроса (ручная кнопка),
+# и первый одновременный импорт urllib3 падает с "partially initialized module
+# 'urllib3' has no attribute 'disable_warnings' (most likely due to a circular import)".
+import requests
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 log = logging.getLogger('sber_api')
 
 BASE_DIR  = Path(__file__).parent
@@ -61,9 +70,6 @@ def build_auth_url(client_id, redirect_uri, state, nonce):
 
 def exchange_code(client_id, client_secret, code, redirect_uri):
     """Обменять authorization code на access_token + refresh_token."""
-    import requests, urllib3
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    import base64
     auth = 'Basic ' + base64.b64encode(f'{client_id}:{client_secret}'.encode()).decode()
     resp = requests.post(
         TOKEN_URL,
@@ -90,9 +96,6 @@ def exchange_code(client_id, client_secret, code, redirect_uri):
 
 def refresh_access_token(client_id, client_secret, refresh_token):
     """Обновить access_token через refresh_token."""
-    import requests, urllib3
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    import base64
     auth = 'Basic ' + base64.b64encode(f'{client_id}:{client_secret}'.encode()).decode()
     resp = requests.post(
         TOKEN_URL,
@@ -118,10 +121,6 @@ def refresh_access_token(client_id, client_secret, refresh_token):
 
 def get_npa_token(client_id, scope=None):
     """Получить NPA access_token через JWT-аутентификацию (без участия пользователя)."""
-    import requests
-    import urllib3
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
     jwt_token = _make_jwt(client_id)
     scope = scope or SCOPES
 
@@ -189,10 +188,7 @@ def _get_one_day(session, access_token, client_id, account_number, statement_dat
 
 def get_statement(access_token, client_id, account_number, date_from, date_to):
     """Запрос выписки за период — перебираем каждый день."""
-    import requests
-    import urllib3
     from datetime import date as _date, timedelta
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     session = requests.Session()
     session.cert    = _mtls()

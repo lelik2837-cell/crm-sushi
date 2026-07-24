@@ -18,6 +18,12 @@ from functools import wraps
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
+# Импортируем здесь (один раз, при старте, в единственном потоке), а не лениво
+# внутри роутов — иначе первый запрос от APScheduler (фоновый поток, раз в час)
+# и от пользователя могут одновременно триггернуть первый import urllib3, а это
+# падает с "partially initialized module 'urllib3' has no attribute
+# 'disable_warnings' (most likely due to a circular import)".
+import sber_api
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, g
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -11961,8 +11967,7 @@ def sber_debug():
 def sber_debug_tx():
     """Показать сырую структуру первых 2 транзакций от Сбера (для отладки полей)."""
     from sber_api import get_statement, _mtls, STMT_URL
-    import time, requests, urllib3
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    import time, requests
     with get_db() as conn:
         access_token   = _sber_get(conn, 'sber_access_token')
         client_id      = _sber_get(conn, 'sber_client_id', '71154')
