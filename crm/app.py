@@ -11879,11 +11879,18 @@ def bank_statements_all():
     today = date.today()
     date_from = request.args.get('date_from', today.replace(day=1).isoformat())
     date_to   = request.args.get('date_to', today.isoformat())
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', date_from): date_from = today.replace(day=1).isoformat()
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', date_to):   date_to   = today.isoformat()
     try:
         limit = int(request.args.get('limit', 100))
     except ValueError:
         limit = 100
     limit = max(1, min(limit, 5000))
+
+    _RU_MONTHS = ['','Январь','Февраль','Март','Апрель','Май','Июнь',
+                  'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь']
+    month_lbl = f"{_RU_MONTHS[datetime.strptime(date_from, '%Y-%m-%d').month]} {date_from[:4]}"
+
     with get_db() as conn:
         total_count = conn.execute('''
             SELECT COUNT(*) FROM bank_transactions bt
@@ -11925,7 +11932,8 @@ def bank_statements_all():
         stmt=stmt, txns=txns, contractors=contractors,
         exp_cats_income=exp_cats_income, exp_cats_expense=exp_cats_expense,
         unique_cats=unique_cats, cat_labels=cat_labels, show_bank_col=True,
-        date_from=date_from, date_to=date_to, row_limit=limit, total_count=total_count)
+        date_from=date_from, date_to=date_to, row_limit=limit, total_count=total_count,
+        month_lbl=month_lbl)
 
 
 # ─── SBERBANK API SYNC ────────────────────────────────────────────────────────

@@ -18,21 +18,24 @@
   </div>
 
   {% if show_bank_col %}
-  <form method="get" class="row g-2 mb-3 align-items-end">
-    <div class="col-auto">
-      <label class="form-label mb-1 fw-semibold small">С</label>
-      <input type="date" name="date_from" class="form-control form-control-sm" value="{{ date_from }}">
+  <form method="get" id="bsFilterForm" class="d-flex align-items-end flex-wrap gap-2 mb-3">
+    <input type="hidden" name="date_from" id="bs_df" value="{{ date_from }}">
+    <input type="hidden" name="date_to"   id="bs_dt" value="{{ date_to }}">
+    <div>
+      <label class="form-label mb-1 fw-semibold small">Период</label>
+      <div class="d-flex align-items-center gap-1">
+        <button type="button" class="btn btn-sm btn-outline-secondary px-2" onclick="shiftBsMonth(-1)" title="Предыдущий месяц">‹</button>
+        <button type="button" class="btn btn-sm btn-outline-primary px-2 fw-semibold" style="white-space:nowrap;">{{ month_lbl }}</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary px-2" onclick="shiftBsMonth(1)" title="Следующий месяц">›</button>
+        <input type="text" id="bsRangePicker" class="form-control form-control-sm" style="width:115px;cursor:pointer;" readonly placeholder="дд.мм — дд.мм">
+      </div>
     </div>
-    <div class="col-auto">
-      <label class="form-label mb-1 fw-semibold small">По</label>
-      <input type="date" name="date_to" class="form-control form-control-sm" value="{{ date_to }}">
+    <div>
+      <button class="btn btn-primary btn-sm">Показать</button>
     </div>
-    <div class="col-auto">
+    <div class="ms-auto">
       <label class="form-label mb-1 fw-semibold small">Строк</label>
       <input type="number" name="limit" min="1" max="5000" class="form-control form-control-sm" style="width:90px" value="{{ row_limit or 100 }}">
-    </div>
-    <div class="col-auto">
-      <button class="btn btn-primary btn-sm">Показать</button>
     </div>
   </form>
   {% endif %}
@@ -411,5 +414,47 @@ document.querySelectorAll('.txn-category').forEach(sel => {
     updateSummary();
   });
 });
+
+{% if show_bank_col %}
+// ── Период: навигация по месяцам + мультивыбор дат (flatpickr, диапазон) ─────
+(function() {
+  var BS_DF = document.getElementById('bs_df').value;
+  var BS_DT = document.getElementById('bs_dt').value;
+
+  function _bsSubmitRange(df, dt) {
+    document.getElementById('bs_df').value = df;
+    document.getElementById('bs_dt').value = dt;
+    document.getElementById('bsFilterForm').submit();
+  }
+
+  window.shiftBsMonth = function(dir) {
+    var parts = BS_DF.split('-');
+    var y = parseInt(parts[0]), m = parseInt(parts[1]) - 1;
+    m += dir;
+    if (m > 11) { m = 0;  y++; }
+    if (m < 0)  { m = 11; y--; }
+    var first   = y + '-' + String(m + 1).padStart(2, '0') + '-01';
+    var lastDay = new Date(y, m + 1, 0).getDate();
+    var last    = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
+    _bsSubmitRange(first, last);
+  };
+
+  flatpickr('#bsRangePicker', {
+    mode: 'range',
+    dateFormat: 'Y-m-d',
+    altInput: true,
+    altFormat: 'd.m',
+    defaultDate: [BS_DF, BS_DT],
+    onChange: function(sel) {
+      if (sel.length === 2) {
+        var fmt = function(d) {
+          return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        };
+        _bsSubmitRange(fmt(sel[0]), fmt(sel[1]));
+      }
+    }
+  });
+})();
+{% endif %}
 </script>
 {% endblock %}
