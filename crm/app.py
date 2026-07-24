@@ -17,6 +17,7 @@ from functools import wraps
 # Гарантируем что папка crm/ в пути — нужно для sber_api.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, g
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -11920,6 +11921,13 @@ def _sber_get(conn, key, default=''):
 def _sber_set(conn, key, value):
     conn.execute('INSERT OR REPLACE INTO api_settings(key,value) VALUES(?,?)', (key, value))
 
+def _sber_today():
+    """'Сегодня' по московскому времени (Сбербанк проверяет дату выписки по MSK).
+    Сервер живёт в Asia/Novosibirsk (UTC+7, на 4ч впереди MSK) — с полуночи до ~4:00
+    по НСК date.today() уже показывает следующий день, которого в Москве ещё нет,
+    и Сбер отвечает ошибкой «нельзя запросить выписку на дату, которая не настала»."""
+    return datetime.now(ZoneInfo('Europe/Moscow')).date()
+
 
 @app.route('/bank/sber/debug')
 @login_required
@@ -11961,7 +11969,7 @@ def sber_debug_tx():
         account_number = _sber_get(conn, 'sber_account_number')
         if not access_token or not account_number:
             return jsonify({'error': 'Нет токена или счёта'})
-        today = date.today().isoformat()
+        today = _sber_today().isoformat()
         resp = requests.get(
             STMT_URL,
             cert=_mtls(), verify=False,
@@ -12157,8 +12165,8 @@ def _sber_do_sync(conn, access_token, client_id, bank_account_id, account_number
 @menu_permission_required('bank')
 def sber_sync():
     data = request.get_json(silent=True) or {}
-    date_from = data.get('date_from') or (date.today() - timedelta(days=7)).isoformat()
-    date_to   = data.get('date_to')   or date.today().isoformat()
+    date_from = data.get('date_from') or (_sber_today() - timedelta(days=7)).isoformat()
+    date_to   = data.get('date_to')   or _sber_today().isoformat()
 
     with get_db() as conn:
         bank_account_id = data.get('bank_account_id') or _sber_get(conn, 'sber_bank_account_id')
@@ -12260,8 +12268,8 @@ def _sber_sync_all_accounts(date_from, date_to):
 def sber_sync_all():
     """Синхронизировать все счета с включённой авто-загрузкой (кнопка «Синхронизировать сейчас»)."""
     data = request.get_json(silent=True) or {}
-    date_from = data.get('date_from') or (date.today() - timedelta(days=7)).isoformat()
-    date_to   = data.get('date_to')   or date.today().isoformat()
+    date_from = data.get('date_from') or (_sber_today() - timedelta(days=7)).isoformat()
+    date_to   = data.get('date_to')   or _sber_today().isoformat()
     return jsonify(_sber_sync_all_accounts(date_from, date_to))
 
 
@@ -14640,8 +14648,8 @@ def _scheduled_sber_sync():
                     return
             except ValueError:
                 pass
-        date_from = (date.today() - timedelta(days=7)).isoformat()
-        date_to   = date.today().isoformat()
+        date_from = (_sber_today() - timedelta(days=7)).isoformat()
+        date_to   = _sber_today().isoformat()
         r = _sber_sync_all_accounts(date_from, date_to)
         if r.get('ok'):
             print(f"[Сбербанк] авто-синхронизация: +{r.get('total_added', 0)} транзакций")
