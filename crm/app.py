@@ -11879,7 +11879,16 @@ def bank_statements_all():
     today = date.today()
     date_from = request.args.get('date_from', today.replace(day=1).isoformat())
     date_to   = request.args.get('date_to', today.isoformat())
+    try:
+        limit = int(request.args.get('limit', 100))
+    except ValueError:
+        limit = 100
+    limit = max(1, min(limit, 5000))
     with get_db() as conn:
+        total_count = conn.execute('''
+            SELECT COUNT(*) FROM bank_transactions bt
+            WHERE bt.txn_date BETWEEN ? AND ?
+        ''', (date_from, date_to)).fetchone()[0]
         txns_raw = conn.execute('''
             SELECT bt.*, c.name as contractor_name,
                    t.terminal_number, b.name as terminal_branch,
@@ -11892,7 +11901,8 @@ def bank_statements_all():
             JOIN bank_accounts ba ON ba.id=bt.bank_account_id
             WHERE bt.txn_date BETWEEN ? AND ?
             ORDER BY bt.txn_date DESC, bt.id DESC
-        ''', (date_from, date_to)).fetchall()
+            LIMIT ?
+        ''', (date_from, date_to, limit)).fetchall()
         txns = [_enrich_bank_txn(dict(row)) for row in txns_raw]
         _apply_bank_parse_rules(conn, txns)
         for d in txns:
@@ -11910,12 +11920,12 @@ def bank_statements_all():
         key=lambda code: cat_labels.get(code, code)
     )
     stmt = {'filename': 'Выписка по всем', 'account_name': 'Все счета',
-            'date_from': date_from, 'date_to': date_to, 'row_count': len(txns)}
+            'date_from': date_from, 'date_to': date_to, 'row_count': total_count}
     return render_template('bank_statement.html',
         stmt=stmt, txns=txns, contractors=contractors,
         exp_cats_income=exp_cats_income, exp_cats_expense=exp_cats_expense,
         unique_cats=unique_cats, cat_labels=cat_labels, show_bank_col=True,
-        date_from=date_from, date_to=date_to)
+        date_from=date_from, date_to=date_to, row_limit=limit, total_count=total_count)
 
 
 # ─── SBERBANK API SYNC ────────────────────────────────────────────────────────
