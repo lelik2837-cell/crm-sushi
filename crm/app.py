@@ -1356,6 +1356,23 @@ def init_db():
             );
         ''')
 
+        # Донабить категорию операциям без категории, если у привязанного контрагента
+        # она уже задана — раньше это применялось только на момент импорта/матчинга
+        # (_match_contractors), и если категория контрагенту назначалась позже (после
+        # того как он был создан из выписки без категории), уже импортированные его
+        # операции так и оставались "без категории" навсегда. WHERE самоограничивает
+        # запрос — после первого выполнения строк для обновления больше нет.
+        conn.execute('''
+            UPDATE bank_transactions
+            SET category = (SELECT c.category FROM contractors c WHERE c.id = bank_transactions.contractor_id)
+            WHERE (category IS NULL OR category = '')
+              AND contractor_id IS NOT NULL
+              AND EXISTS (
+                  SELECT 1 FROM contractors c
+                  WHERE c.id = bank_transactions.contractor_id AND COALESCE(c.category,'') != ''
+              )
+        ''')
+
         # Feature: multiple roles per employee
         conn.executescript('''
             CREATE TABLE IF NOT EXISTS employee_roles (
@@ -11413,8 +11430,21 @@ def bank_contractor_edit(ctr_id):
             'UPDATE contractors SET name=?, category=?, keywords=?, inn=? WHERE id=?',
             (name, category, keywords, inn or None, ctr_id)
         )
+        # Уже импортированные операции этого контрагента без категории (category
+        # проставляется только в момент импорта/матчинга — см. _match_contractors) —
+        # подтягиваем новую категорию задним числом, не трогая операции, где категория
+        # уже проставлена (в т.ч. вручную для конкретной операции).
+        backfilled = 0
+        if category:
+            backfilled = conn.execute(
+                "UPDATE bank_transactions SET category=? WHERE contractor_id=? AND (category IS NULL OR category='')",
+                (category, ctr_id)
+            ).rowcount
         conn.commit()
-    flash('Контрагент обновлён', 'success')
+    if backfilled:
+        flash(f'Контрагент обновлён, категория проставлена {backfilled} операциям без категории', 'success')
+    else:
+        flash('Контрагент обновлён', 'success')
     return redirect(url_for('bank', tab='contractors'))
 
 
