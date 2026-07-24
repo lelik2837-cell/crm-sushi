@@ -2282,7 +2282,7 @@ def _apply_change_amount_to_shift(conn, shift_id, branch_id, shift_date):
              AND (weekday IS NULL OR weekday=?)
              AND valid_from <= ?
              AND (valid_to IS NULL OR valid_to >= ?)
-           ORDER BY branch_id DESC NULLS LAST, weekday DESC NULLS LAST, id DESC
+           ORDER BY branch_id DESC, weekday DESC, id DESC
            LIMIT 1''',
         (branch_id, weekday, shift_date, shift_date)
     ).fetchone()
@@ -2293,7 +2293,7 @@ def _apply_change_amount_to_shift(conn, shift_id, branch_id, shift_date):
 def _apply_all_change_schedules(conn):
     """Apply all change schedules to matching existing OPEN shifts only."""
     schedules = conn.execute(
-        'SELECT * FROM change_schedule ORDER BY branch_id NULLS FIRST, weekday NULLS FIRST, id'
+        'SELECT * FROM change_schedule ORDER BY branch_id, weekday, id'
     ).fetchall()
     for sched in schedules:
         params = [sched['amount'], sched['valid_from']]
@@ -13902,7 +13902,7 @@ def change_settings():
                                    WHERE (branch_id IS NULL OR branch_id=?)
                                      AND (weekday IS NULL OR weekday=?)
                                      AND valid_from <= ? AND (valid_to IS NULL OR valid_to >= ?)
-                                   ORDER BY branch_id DESC NULLS LAST, weekday DESC NULLS LAST, id DESC
+                                   ORDER BY branch_id DESC, weekday DESC, id DESC
                                    LIMIT 1''',
                                 (b['id'], weekday, day_iso, day_iso)
                             ).fetchone()
