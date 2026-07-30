@@ -8,7 +8,7 @@
 <!-- Вкладки -->
 <ul class="nav nav-tabs mb-4" id="reportTabs">
     <li class="nav-item">
-        <a class="nav-link {% if active_tab != 'salary' %}active{% endif %}"
+        <a class="nav-link {% if active_tab == 'shifts' %}active{% endif %}"
            href="{{ url_for('reports') }}?tab=shifts&r_date_from={{ r_date_from }}&r_date_to={{ r_date_to }}{% for bid in selected_branches %}&branch_ids={{ bid }}{% endfor %}">
             <i class="bi bi-graph-up-arrow"></i> Выручка
         </a>
@@ -19,12 +19,18 @@
             <i class="bi bi-cash-coin"></i> Зарплаты
         </a>
     </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'courier' %}active{% endif %}"
+           href="{{ url_for('reports') }}?tab=courier&c_date_from={{ c_date_from }}&c_date_to={{ c_date_to }}{% for bid in c_branch_ids %}&c_branch_ids={{ bid }}{% endfor %}">
+            <i class="bi bi-bicycle"></i> Курьеры
+        </a>
+    </li>
 </ul>
 
 {% set _MONTHS_RU = ['','Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'] %}
 
 {# ═══════════════════════════════════════════ ВКЛ. 1 — ПО СМЕНАМ #}
-{% if active_tab != 'salary' %}
+{% if active_tab == 'shifts' %}
 
 {# ── Фильтры выручки ── #}
 {% set _cur_m = r_date_from[5:7] | int %}
@@ -647,10 +653,171 @@
 
 {% endif %}{# конец вкладки "Зарплатный отчёт" #}
 
+
+{# ═══════════════════════════════════════════ ВКЛ. 3 — ОТЧЁТ ПО КУРЬЕРАМ #}
+{% if active_tab == 'courier' %}
+
+{% set _cur_m_c = c_date_from[5:7] | int %}
+{% set _cur_y_c = c_date_from[:4] %}
+{% set _month_lbl_c = _MONTHS_RU[_cur_m_c] ~ ' ' ~ _cur_y_c %}
+
+<!-- Фильтры отчёта по курьерам -->
+<div class="card mb-4">
+    <div class="card-body">
+        <form method="GET" id="courierForm" class="row g-2 align-items-end">
+            <input type="hidden" name="tab" value="courier">
+            <input type="hidden" name="c_date_from" id="c_df" value="{{ c_date_from }}">
+            <input type="hidden" name="c_date_to"   id="c_dt" value="{{ c_date_to }}">
+            <div class="col-auto">
+                <label class="form-label small fw-semibold">Период</label>
+                <div class="d-flex align-items-center gap-1" style="white-space:nowrap;">
+                    <button type="button" class="btn btn-outline-secondary btn-sm px-2" style="font-size:15px;line-height:1;" onclick="shiftCourMonth(-1)" title="Предыдущий месяц">‹</button>
+                    <button type="button" class="btn btn-outline-primary btn-sm px-2 fw-semibold" id="courMonthLabel" onclick="setCourCurrentMonth()" title="Текущий месяц" style="white-space:nowrap;">{{ _month_lbl_c }}</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm px-2" style="font-size:15px;line-height:1;" onclick="shiftCourMonth(1)" title="Следующий месяц">›</button>
+                    <input type="text" id="courRangePicker" class="form-control form-control-sm" style="width:110px;cursor:pointer;" readonly placeholder="дд.мм — дд.мм">
+                </div>
+            </div>
+            {% if session.get('role') == 'owner' or can_pick_other_branches('reports_salary') %}
+            <div class="col-md-3">
+                <label class="form-label small fw-semibold">Филиалы</label>
+                <div class="dropdown">
+                    <button type="button" class="btn btn-outline-secondary w-100 text-start d-flex justify-content-between align-items-center"
+                            id="branchDropdownBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">
+                        <span id="branchBtnLabel">{% if c_branch_ids %}Выбрано: {{ c_branch_ids|length }}{% else %}Все филиалы{% endif %}</span>
+                        <i class="bi bi-chevron-down ms-2 small"></i>
+                    </button>
+                    <ul class="dropdown-menu p-2 shadow" style="min-width:240px;max-height:380px;overflow-y:auto">
+                        {% if branch_groups %}
+                        <li><div class="text-muted px-1 mb-1" style="font-size:0.75rem">ГРУППЫ</div></li>
+                        {% for g in branch_groups %}
+                        <li class="mb-1">
+                            <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1"
+                                    onclick="selectBranchGroup({{ g.branch_ids | tojson }})">
+                                <i class="bi bi-collection me-1"></i>{{ g.name }}
+                                <span class="text-muted small">({{ g.branch_ids | length }})</span>
+                            </button>
+                        </li>
+                        {% endfor %}
+                        <li><hr class="dropdown-divider my-1"></li>
+                        {% endif %}
+                        <li class="mb-1">
+                            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                                <input type="checkbox" id="branch-all-cb" onchange="toggleAllBranches(this)"
+                                    {% if not c_branch_ids %}checked{% endif %}>
+                                <span class="fw-semibold small">Все филиалы</span>
+                            </label>
+                        </li>
+                        <li><hr class="dropdown-divider my-1"></li>
+                        {% for b in branches %}
+                        <li>
+                            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                                <input type="checkbox" class="branch-cb" name="c_branch_ids" value="{{ b.id }}"
+                                    {% if b.id|string in c_branch_ids %}checked{% endif %}
+                                    onchange="onBranchCbChange()">
+                                <span class="small">{{ b.name }}</span>
+                            </label>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+            {% endif %}
+            <div class="col-auto">
+                <label class="form-label small fw-semibold">Ставка/час</label>
+                <input type="number" step="0.01" name="c_rate_hour" class="form-control form-control-sm" style="width:100px" value="{{ c_rate_hour }}" placeholder="напр. 150">
+            </div>
+            <div class="col-auto">
+                <label class="form-label small fw-semibold">Ставка/км</label>
+                <input type="number" step="0.01" name="c_rate_km" class="form-control form-control-sm" style="width:100px" value="{{ c_rate_km }}" placeholder="напр. 15">
+            </div>
+            <div class="col-auto">
+                <label class="form-label small fw-semibold">Ставка/заказ</label>
+                <input type="number" step="0.01" name="c_rate_order" class="form-control form-control-sm" style="width:100px" value="{{ c_rate_order }}" placeholder="напр. 60">
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-primary btn-sm">Показать</button>
+            </div>
+        </form>
+        {% if c_compare %}
+        <div class="form-text mt-2">
+            «По альт. ставке» считается только от часов/км/заказов (без бонусов и штрафов за смену) — чтобы сравнить именно ставку с конкурентами.
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Курьер</th>
+                    <th>Филиал(ы)</th>
+                    <th class="text-end">Смен</th>
+                    <th class="text-end">Часы</th>
+                    <th class="text-end">Км</th>
+                    <th class="text-end">Заказы</th>
+                    <th class="text-end">Начислено</th>
+                    {% if c_compare %}
+                    <th class="text-end">По альт. ставке</th>
+                    <th class="text-end">Разница</th>
+                    <th class="text-end">Разница, %</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in cour_report %}
+                <tr>
+                    <td class="fw-semibold">{{ r.name }}</td>
+                    <td class="text-muted small">{{ r.branch_names|join(', ') }}</td>
+                    <td class="text-end">{{ r.shifts_count }}</td>
+                    <td class="text-end">{{ '%.1f'|format(r.hours) }}</td>
+                    <td class="text-end">{{ '%.1f'|format(r.km) }}</td>
+                    <td class="text-end">{{ r.orders }}</td>
+                    <td class="text-end">{{ r.earned|money_cents }} ₽</td>
+                    {% if c_compare %}
+                    <td class="text-end">{{ r.hypothetical|money_cents }} ₽</td>
+                    <td class="text-end {% if r.diff > 0 %}text-success{% elif r.diff < 0 %}text-danger{% endif %}">{{ r.diff|money_cents }} ₽</td>
+                    <td class="text-end {% if r.diff > 0 %}text-success{% elif r.diff < 0 %}text-danger{% endif %}">
+                        {% if r.diff_pct is not none %}{{ '%+.1f'|format(r.diff_pct) }}%{% else %}—{% endif %}
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+                {% if not cour_report %}
+                <tr><td colspan="{{ 10 if c_compare else 7 }}" class="text-center text-muted py-4">Нет данных за выбранный период</td></tr>
+                {% endif %}
+            </tbody>
+            {% if cour_report %}
+            <tfoot class="table-light fw-semibold">
+                <tr>
+                    <td>Итого</td>
+                    <td></td>
+                    <td class="text-end">{{ cour_totals.shifts_count }}</td>
+                    <td class="text-end">{{ '%.1f'|format(cour_totals.hours) }}</td>
+                    <td class="text-end">{{ '%.1f'|format(cour_totals.km) }}</td>
+                    <td class="text-end">{{ cour_totals.orders }}</td>
+                    <td class="text-end">{{ cour_totals.earned|money_cents }} ₽</td>
+                    {% if c_compare %}
+                    <td class="text-end">{{ cour_totals.hypothetical|money_cents }} ₽</td>
+                    <td class="text-end {% if cour_totals.diff > 0 %}text-success{% elif cour_totals.diff < 0 %}text-danger{% endif %}">{{ cour_totals.diff|money_cents }} ₽</td>
+                    <td class="text-end {% if cour_totals.diff > 0 %}text-success{% elif cour_totals.diff < 0 %}text-danger{% endif %}">
+                        {% if cour_totals.diff_pct is not none %}{{ '%+.1f'|format(cour_totals.diff_pct) }}%{% else %}—{% endif %}
+                    </td>
+                    {% endif %}
+                </tr>
+            </tfoot>
+            {% endif %}
+        </table>
+    </div>
+</div>
+
+{% endif %}{# конец вкладки "Курьеры" #}
+
 {% endblock %}
 
 {% block scripts %}
-{% if active_tab != 'salary' %}
+{% if active_tab == 'shifts' %}
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
 <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
 <script>
@@ -964,24 +1131,98 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 {% endif %}
+{% if active_tab == 'courier' %}
+<script>
+// ── Flatpickr: выбор периода (вкладка «Курьеры») ────────────────────────────
+var _FP_MONTHS_COUR = ['','Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+var _courFp = null;
+
+function _padz2Cour(n) { return n < 10 ? '0' + n : String(n); }
+
+function _fmtDateStrCour(d) {
+    return d.getFullYear() + '-' + _padz2Cour(d.getMonth() + 1) + '-' + _padz2Cour(d.getDate());
+}
+
+function _setCourRange(df, dt) {
+    document.getElementById('c_df').value = df;
+    document.getElementById('c_dt').value = dt;
+    if (_courFp) _courFp.setDate([df, dt], false);
+    var m = parseInt(df.slice(5, 7));
+    var y = df.slice(0, 4);
+    var lbl = document.getElementById('courMonthLabel');
+    if (lbl) lbl.textContent = _FP_MONTHS_COUR[m] + ' ' + y;
+}
+
+function shiftCourMonth(dir) {
+    var from = new Date(document.getElementById('c_df').value + 'T00:00:00');
+    from.setMonth(from.getMonth() + dir);
+    from.setDate(1);
+    var to = new Date(from.getFullYear(), from.getMonth() + 1, 0);
+    _setCourRange(_fmtDateStrCour(from), _fmtDateStrCour(to));
+    document.getElementById('courierForm').submit();
+}
+
+function setCourCurrentMonth() {
+    var now = new Date();
+    var from = new Date(now.getFullYear(), now.getMonth(), 1);
+    var to   = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    _setCourRange(_fmtDateStrCour(from), _fmtDateStrCour(to));
+    document.getElementById('courierForm').submit();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    _courFp = flatpickr('#courRangePicker', {
+        mode: 'range',
+        dateFormat: 'Y-m-d',
+        defaultDate: [document.getElementById('c_df').value, document.getElementById('c_dt').value],
+        locale: {
+            weekdays: {
+                shorthand: ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'],
+                longhand:  ['Воскресенье','Понедельник','Вторник','Среда','Четверг','Пятница','Суббота']
+            },
+            months: {
+                shorthand: ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'],
+                longhand:  ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь']
+            },
+            firstDayOfWeek: 1,
+            rangeSeparator: ' — '
+        },
+        altInput: true,
+        altFormat: 'd.m',
+        onClose: function(dates) {
+            if (dates.length === 2) {
+                document.getElementById('c_df').value = _fmtDateStrCour(dates[0]);
+                document.getElementById('c_dt').value = _fmtDateStrCour(dates[1]);
+                var m = dates[0].getMonth() + 1;
+                var y = dates[0].getFullYear();
+                var lbl = document.getElementById('courMonthLabel');
+                if (lbl) lbl.textContent = _FP_MONTHS_COUR[m] + ' ' + y;
+                document.getElementById('courierForm').submit();
+            }
+        }
+    });
+});
+</script>
+{% endif %}
 <script>
 (function () {
-    // Branch dropdown (общий для вкладок «Выручка» и «Зарплаты» — на странице рендерится только одна из них)
-    function onBranchCbChange() {
+    // Branch dropdown (общий для вкладок «Выручка», «Зарплаты» и «Курьеры» — на странице рендерится только одна из них)
+    // window.* — вызываются из инлайновых onchange="..." в HTML (глобальная область)
+    window.onBranchCbChange = function() {
         var checked = Array.from(document.querySelectorAll('.branch-cb')).filter(function(c) { return c.checked; });
         var allCb = document.getElementById('branch-all-cb');
         if (allCb) allCb.checked = checked.length === 0;
         var lbl = document.getElementById('branchBtnLabel');
         if (lbl) lbl.textContent = checked.length === 0 ? 'Все филиалы' : 'Выбрано: ' + checked.length;
-    }
+    };
 
-    function toggleAllBranches(cb) {
+    window.toggleAllBranches = function(cb) {
         if (cb.checked) {
             document.querySelectorAll('.branch-cb').forEach(function(c) { c.checked = false; });
             var lbl = document.getElementById('branchBtnLabel');
             if (lbl) lbl.textContent = 'Все филиалы';
         }
-    }
+    };
 
     window.selectBranchGroup = function (ids) {
         var allCb = document.getElementById('branch-all-cb');

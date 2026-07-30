@@ -7309,7 +7309,7 @@ def edit_rate_template(tmpl_id):
 @login_required
 def reports():
     active_tab = request.args.get('tab', 'shifts')
-    if not item_visible('reports_salary' if active_tab == 'salary' else 'reports_shifts'):
+    if not item_visible('reports_salary' if active_tab in ('salary', 'courier') else 'reports_shifts'):
         flash('Доступ запрещён', 'danger')
         return redirect(url_for('dashboard'))
     branch_ids = [bid for bid in request.args.getlist('branch_ids') if bid.isdigit()]
@@ -7333,6 +7333,23 @@ def reports():
     s_branch_ids = [bid for bid in request.args.getlist('s_branch_ids') if bid.isdigit()]
     s_role      = request.args.get('s_role', '')
     s_unpaid    = request.args.get('s_unpaid', '')
+
+    c_date_from = request.args.get('c_date_from', month_start)
+    c_date_to   = request.args.get('c_date_to',   today)
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', c_date_from): c_date_from = month_start
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', c_date_to):   c_date_to   = today
+    c_branch_ids = [bid for bid in request.args.getlist('c_branch_ids') if bid.isdigit()]
+
+    def _c_float(v):
+        try:
+            return float(str(v).replace(',', '.'))
+        except (TypeError, ValueError):
+            return None
+    c_rate_hour  = request.args.get('c_rate_hour', '')
+    c_rate_km    = request.args.get('c_rate_km', '')
+    c_rate_order = request.args.get('c_rate_order', '')
+    _c_hr, _c_km, _c_ord = _c_float(c_rate_hour), _c_float(c_rate_km), _c_float(c_rate_order)
+    c_compare = any(v is not None for v in (_c_hr, _c_km, _c_ord))
 
     with get_db() as conn:
         branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
@@ -7625,6 +7642,75 @@ def reports():
             for r in conn.execute('SELECT code, name, abbr FROM positions').fetchall()
         }
 
+        # ── Отчёт по курьерам — как зарплатный, но только role='courier' и с
+        # километражем/заказами; сверху можно задать альтернативную ставку
+        # (час/км/заказ) и увидеть разницу с текущими начислениями — чтобы
+        # сравнить со ставкой конкурентов.
+        cour_conds  = ['s.date BETWEEN ? AND ?', "es.role_snapshot = 'courier'"]
+        cour_params = [c_date_from, c_date_to]
+        cour_branch_ids = get_effective_branch_ids('reports_salary', c_branch_ids)
+        if cour_branch_ids:
+            cour_ph = ','.join('?' * len(cour_branch_ids))
+            cour_conds.append(f's.branch_id IN ({cour_ph})')
+            cour_params.extend(int(x) for x in cour_branch_ids)
+        cour_where = ' AND '.join(cour_conds)
+
+        cour_rows_raw = conn.execute(f'''
+            SELECT es.employee_id,
+                   COALESCE(e.full_name, es.full_name_snapshot) AS name,
+                   b.id AS branch_id, b.name AS branch_name,
+                   COUNT(*) AS shifts_count,
+                   COALESCE(SUM(es.hours_worked), 0) AS hours,
+                   COALESCE(SUM(es.km), 0)           AS km,
+                   COALESCE(SUM(es.orders), 0)       AS orders,
+                   COALESCE(SUM(es.total_amount), 0) AS earned
+            FROM employee_shifts es
+            JOIN shifts   s ON s.id = es.shift_id
+            JOIN branches b ON b.id = s.branch_id
+            LEFT JOIN employees e ON e.id = es.employee_id
+            WHERE {cour_where}
+            GROUP BY COALESCE(CAST(es.employee_id AS TEXT), es.full_name_snapshot), b.id
+            ORDER BY COALESCE(e.full_name, es.full_name_snapshot), b.name
+        ''', cour_params).fetchall()
+
+        from collections import OrderedDict as _OD3
+        _cour_map = _OD3()
+        for row in cour_rows_raw:
+            key = (row['employee_id'], row['name'])
+            if key not in _cour_map:
+                _cour_map[key] = {
+                    'employee_id': row['employee_id'], 'name': row['name'],
+                    'branch_names': [], 'shifts_count': 0,
+                    'hours': 0.0, 'km': 0.0, 'orders': 0, 'earned': 0.0,
+                }
+            entry = _cour_map[key]
+            if row['branch_name'] not in entry['branch_names']:
+                entry['branch_names'].append(row['branch_name'])
+            entry['shifts_count'] += row['shifts_count']
+            entry['hours']  += row['hours']
+            entry['km']     += row['km']
+            entry['orders'] += row['orders']
+            entry['earned'] += row['earned']
+        cour_report = list(_cour_map.values())
+
+        cour_totals = {'shifts_count': 0, 'hours': 0.0, 'km': 0.0, 'orders': 0, 'earned': 0.0}
+        for r in cour_report:
+            if c_compare:
+                r['hypothetical'] = r['hours'] * (_c_hr or 0) + r['km'] * (_c_km or 0) + r['orders'] * (_c_ord or 0)
+                r['diff'] = r['hypothetical'] - r['earned']
+                r['diff_pct'] = (r['diff'] / r['earned'] * 100) if r['earned'] else None
+            cour_totals['shifts_count'] += r['shifts_count']
+            cour_totals['hours']  += r['hours']
+            cour_totals['km']     += r['km']
+            cour_totals['orders'] += r['orders']
+            cour_totals['earned'] += r['earned']
+        if c_compare:
+            cour_totals['hypothetical'] = (cour_totals['hours'] * (_c_hr or 0)
+                                            + cour_totals['km'] * (_c_km or 0)
+                                            + cour_totals['orders'] * (_c_ord or 0))
+            cour_totals['diff'] = cour_totals['hypothetical'] - cour_totals['earned']
+            cour_totals['diff_pct'] = (cour_totals['diff'] / cour_totals['earned'] * 100) if cour_totals['earned'] else None
+
     return render_template('reports.html',
         shifts_data=shifts_data, totals=totals, branches=branches,
         salary_data=salary_data, selected_branches=branch_ids,
@@ -7641,7 +7727,10 @@ def reports():
         rev_pivot=rev_pivot, rev_total_actual=rev_total_actual,
         rev_total_plan=rev_total_plan,
         branch_groups=get_branch_groups(conn),
-        pos_abbr_map=pos_abbr_map)
+        pos_abbr_map=pos_abbr_map,
+        cour_report=cour_report, cour_totals=cour_totals, c_compare=c_compare,
+        c_date_from=c_date_from, c_date_to=c_date_to, c_branch_ids=c_branch_ids,
+        c_rate_hour=c_rate_hour, c_rate_km=c_rate_km, c_rate_order=c_rate_order)
 
 
 # ─── EMPLOYEE SALARY DETAIL ───────────────────────────────────────────────────
