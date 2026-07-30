@@ -10034,6 +10034,17 @@ def pnl_report():
         """, [date_from, date_to] + b_args).fetchall():
             simple_taxi_cash_by_p[r['period']] = r['amount']
 
+        # Плюсы в кассу (наличными) — прибавляются к наличному приходу вместе
+        # с выручкой (см. «Наличные» в простом P&L ниже).
+        simple_cash_plus_by_p = {}
+        for r in conn.execute(f"""
+            SELECT {pe} AS period, COALESCE(SUM(cp.amount_cash),0) AS amount
+            FROM cash_plus_entries cp JOIN shifts s ON s.id=cp.shift_id
+            WHERE s.date BETWEEN ? AND ? {bf}
+            GROUP BY period
+        """, [date_from, date_to] + b_args).fetchall():
+            simple_cash_plus_by_p[r['period']] = r['amount']
+
         # Выписки банковские — весь приход/расход как есть, кроме исключённых
         # в настройках категорий (например «Перераспределение средств»).
         # Категория берётся эффективная (ручная ИЛИ подставленная правилом разбора
@@ -10050,6 +10061,7 @@ def pnl_report():
         _apply_bank_parse_rules(conn, simple_bt_txns)
 
         simple_bank_income_by_p = {}
+        simple_bank_income_by_cat = defaultdict(lambda: defaultdict(float))
         simple_bank_exp_by_cat = defaultdict(lambda: defaultdict(float))
         for d in simple_bt_txns:
             eff_cat = d.get('category') or d.get('parse_rule_category') or ''
@@ -10057,6 +10069,7 @@ def pnl_report():
                 continue
             if d['amount'] > 0:
                 simple_bank_income_by_p[d['period']] = simple_bank_income_by_p.get(d['period'], 0.0) + d['amount']
+                simple_bank_income_by_cat[eff_cat][d['period']] += d['amount']
             elif d['amount'] < 0:
                 simple_bank_exp_by_cat[eff_cat][d['period']] += -d['amount']
 
@@ -10066,12 +10079,15 @@ def pnl_report():
         all_p.update(d)
     for d in sal_by_role.values():
         all_p.update(d)
-    all_p.update(simple_cash_exp_by_p, simple_fot_by_p, simple_taxi_cash_by_p, simple_bank_income_by_p)
-    for d in simple_bank_exp_by_cat.values():
+    all_p.update(simple_cash_exp_by_p, simple_fot_by_p, simple_taxi_cash_by_p,
+                 simple_bank_income_by_p, simple_cash_plus_by_p)
+    for d in list(simple_bank_exp_by_cat.values()) + list(simple_bank_income_by_cat.values()):
         all_p.update(d)
     periods = sorted(all_p) if group_by == 'month' else ['total']
 
     cat_map = {c['code']: c['label'] for c in all_cats}
+    cat_by_code = {c['code']: c for c in all_cats}
+    cat_by_id   = {c['id']: c for c in all_cats}
 
     def _row(label, by_p, badges=None, sub=False):
         if isinstance(badges, str):
@@ -10082,6 +10098,33 @@ def pnl_report():
             r['amounts'][p] = v
             r['total'] += v
         return r
+
+    def _cat_label(code):
+        return cat_map.get(code, code) if code else 'Без категории'
+
+    def _parent_label(code):
+        """Категория верхнего уровня (или сама категория, если у неё нет родителя/это
+        категория целиком без кода) — нужна только для сортировки/группировки строк
+        «по выпискам» в Простом P&L по родительским категориям."""
+        c = cat_by_code.get(code)
+        if c and c['parent_id'] and c['parent_id'] in cat_by_id:
+            return cat_by_id[c['parent_id']]['label']
+        return _cat_label(code)
+
+    def _build_cat_rows(by_cat):
+        """Строки по категориям (для «Приход/Расход по выпискам» в Простом P&L),
+        отсортированные и сгруппированные по родительской категории — у каждой первой
+        строки новой группы row['is_new_parent']=True, чтобы шаблон вставил заголовок."""
+        rows = []
+        prev_parent = object()  # заведомо не равно ни одной настоящей метке
+        for code, by_p in sorted(by_cat.items(), key=lambda kv: (_parent_label(kv[0]), _cat_label(kv[0]))):
+            parent_label = _parent_label(code)
+            row = _row(_cat_label(code), dict(by_p))
+            row['parent_label']  = parent_label
+            row['is_new_parent'] = (parent_label != prev_parent)
+            prev_parent = parent_label
+            rows.append(row)
+        return rows
 
     # ── ДОХОДЫ ────────────────────────────────────────────────────────────────
     inc_totals = {}
@@ -10152,7 +10195,9 @@ def pnl_report():
     period_labels = {p: _pnl_period_label(p) for p in periods}
 
     # ── ПРОСТОЙ P&L: строки для шаблона ──────────────────────────────────────
-    s_income_cash_row = _row('Наличные (выручка)', cash_rev_by_p)
+    # «Наличные» = выручка наличными + плюсы в кассу (раньше считалась только выручка)
+    s_income_cash_by_p = {p: cash_rev_by_p.get(p, 0.0) + simple_cash_plus_by_p.get(p, 0.0) for p in periods}
+    s_income_cash_row = _row('Наличные', s_income_cash_by_p)
     s_exp_shift_row = _row('Расходы наличными в сменах', simple_cash_exp_by_p)
     s_exp_fot_row   = _row('ФОТ', simple_fot_by_p)
     s_exp_taxi_row  = _row('Такси наличными', simple_taxi_cash_by_p)
@@ -10163,13 +10208,10 @@ def pnl_report():
             s_cash_exp_total_by_p[p] = s_cash_exp_total_by_p.get(p, 0.0) + row['amounts'].get(p, 0.0)
     s_cash_exp_total_row = _row('Итого расходы наличными', s_cash_exp_total_by_p)
 
-    s_bank_income_row = _row('Приход по выпискам', simple_bank_income_by_p)
+    s_bank_income_row   = _row('Приход по выпискам', simple_bank_income_by_p)
+    s_bank_income_rows  = _build_cat_rows(simple_bank_income_by_cat)
 
-    s_bank_exp_rows = []
-    for cat_code, by_p in sorted(simple_bank_exp_by_cat.items(),
-                                  key=lambda kv: cat_map.get(kv[0], kv[0]) if kv[0] else 'яяя'):
-        label = cat_map.get(cat_code, cat_code) if cat_code else 'Без категории'
-        s_bank_exp_rows.append(_row(label, dict(by_p)))
+    s_bank_exp_rows = _build_cat_rows(simple_bank_exp_by_cat)
     s_bank_exp_total_by_p = {}
     for row in s_bank_exp_rows:
         for p in periods:
@@ -10200,7 +10242,7 @@ def pnl_report():
         bt_debug=bt_debug,
         s_income_cash_row=s_income_cash_row,
         s_cash_exp_rows=s_cash_exp_rows, s_cash_exp_total_row=s_cash_exp_total_row,
-        s_bank_income_row=s_bank_income_row,
+        s_bank_income_row=s_bank_income_row, s_bank_income_rows=s_bank_income_rows,
         s_bank_exp_rows=s_bank_exp_rows, s_bank_exp_total_row=s_bank_exp_total_row,
         s_total_income_row=s_total_income_row, s_total_expense_row=s_total_expense_row,
         s_profit_row=s_profit_row, s_profit_grand=s_profit_grand,

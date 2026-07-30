@@ -191,14 +191,45 @@
                 <i class="bi bi-arrow-up-circle me-1"></i>ПРИХОД
             </td>
         </tr>
-        {% for row in [s_income_cash_row, s_bank_income_row] %}
         <tr>
-            <td class="fw-semibold">{{ row.label }}</td>
+            <td class="fw-semibold">{{ s_income_cash_row.label }}</td>
             {% for p in periods %}
-            {{ cell(row.amounts.get(p,0), none) }}
+            {{ cell(s_income_cash_row.amounts.get(p,0), none) }}
             {% endfor %}
             {% if periods|length > 1 %}
-            <td class="text-end table-secondary fw-bold">{{ '{:,.0f}'.format(row.total) }} ₽</td>
+            <td class="text-end table-secondary fw-bold">{{ '{:,.0f}'.format(s_income_cash_row.total) }} ₽</td>
+            {% endif %}
+        </tr>
+        <tr style="cursor:pointer" onclick="toggleSimpleBankInc()">
+            <td class="fw-semibold">
+                <i class="bi bi-chevron-right" id="simpleBankIncChevron" style="transition:transform .2s"></i>
+                {{ s_bank_income_row.label }}
+            </td>
+            {% for p in periods %}
+            {{ cell(s_bank_income_row.amounts.get(p,0), none) }}
+            {% endfor %}
+            {% if periods|length > 1 %}
+            <td class="text-end table-secondary fw-bold">{{ '{:,.0f}'.format(s_bank_income_row.total) }} ₽</td>
+            {% endif %}
+        </tr>
+        {% for row in s_bank_income_rows %}
+        {% if row.is_new_parent %}
+        <tr class="simple-bank-inc-detail" style="display:none">
+            <td colspan="{{ sn_cols }}" class="ps-4 small fw-semibold text-muted" style="background:#eef7f1">{{ row.parent_label }}</td>
+        </tr>
+        {% endif %}
+        <tr class="simple-bank-inc-detail" style="display:none;background:#fafafa">
+            <td class="ps-4 small text-muted">
+                <i class="bi bi-arrow-return-right me-1" style="font-size:.7rem"></i>{{ row.label }}
+            </td>
+            {% for p in periods %}
+            <td class="text-end small text-muted">
+                {% set v = row.amounts.get(p,0) %}
+                {% if v %}{{ '{:,.0f}'.format(v) }} ₽{% else %}—{% endif %}
+            </td>
+            {% endfor %}
+            {% if periods|length > 1 %}
+            <td class="text-end small text-muted table-secondary">{{ '{:,.0f}'.format(row.total) }} ₽</td>
             {% endif %}
         </tr>
         {% endfor %}
@@ -253,13 +284,18 @@
                 {{ s_bank_exp_total_row.label }}
             </td>
             {% for p in periods %}
-            <td class="text-end fw-bold text-danger">{{ '{:,.0f}'.format(s_bank_exp_total_row.amounts.get(p,0)) }} ₽</td>
+            <td class="text-end fw-bold text-danger">{{ '{:,.0f}'.format(s_bank_exp_total_row.amounts.get(p,0)) }} ₽{{ pct(s_bank_exp_total_row.amounts.get(p,0), s_total_income_row.amounts.get(p,0)) }}</td>
             {% endfor %}
             {% if periods|length > 1 %}
-            <td class="text-end fw-bold text-danger table-secondary">{{ '{:,.0f}'.format(s_bank_exp_total_row.total) }} ₽</td>
+            <td class="text-end fw-bold text-danger table-secondary">{{ '{:,.0f}'.format(s_bank_exp_total_row.total) }} ₽{{ pct(s_bank_exp_total_row.total, s_total_income_row.total) }}</td>
             {% endif %}
         </tr>
         {% for row in s_bank_exp_rows %}
+        {% if row.is_new_parent %}
+        <tr class="simple-bank-exp-detail" style="display:none">
+            <td colspan="{{ sn_cols }}" class="ps-4 small fw-semibold text-muted" style="background:#fbeef0">{{ row.parent_label }}</td>
+        </tr>
+        {% endif %}
         <tr class="simple-bank-exp-detail" style="display:none;background:#fafafa">
             <td class="ps-4 small text-muted">
                 <i class="bi bi-arrow-return-right me-1" style="font-size:.7rem"></i>{{ row.label }}
@@ -267,11 +303,11 @@
             {% for p in periods %}
             <td class="text-end small text-muted">
                 {% set v = row.amounts.get(p,0) %}
-                {% if v %}{{ '{:,.0f}'.format(v) }} ₽{% else %}—{% endif %}
+                {% if v %}{{ '{:,.0f}'.format(v) }} ₽{{ pct(v, s_total_income_row.amounts.get(p,0)) }}{% else %}—{% endif %}
             </td>
             {% endfor %}
             {% if periods|length > 1 %}
-            <td class="text-end small text-muted table-secondary">{{ '{:,.0f}'.format(row.total) }} ₽</td>
+            <td class="text-end small text-muted table-secondary">{{ '{:,.0f}'.format(row.total) }} ₽{{ pct(row.total, s_total_income_row.total) }}</td>
             {% endif %}
         </tr>
         {% endfor %}
@@ -360,6 +396,15 @@ document.querySelectorAll('form').forEach(function(f) {
 function toggleSimpleBankExp() {
     var rows = document.querySelectorAll('.simple-bank-exp-detail');
     var chv  = document.getElementById('simpleBankExpChevron');
+    var hidden = rows.length > 0 && rows[0].style.display === 'none';
+    rows.forEach(function(r) { r.style.display = hidden ? '' : 'none'; });
+    if (chv) chv.style.transform = hidden ? 'rotate(90deg)' : '';
+}
+
+// ── Разворот прихода по выпискам по категориям ──────────────────────────────
+function toggleSimpleBankInc() {
+    var rows = document.querySelectorAll('.simple-bank-inc-detail');
+    var chv  = document.getElementById('simpleBankIncChevron');
     var hidden = rows.length > 0 && rows[0].style.display === 'none';
     rows.forEach(function(r) { r.style.display = hidden ? '' : 'none'; });
     if (chv) chv.style.transform = hidden ? 'rotate(90deg)' : '';
