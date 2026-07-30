@@ -8237,7 +8237,8 @@ def cash_flow_report():
                    COALESCE(r.actual_cash, 0)    AS actual_cash,
                    COALESCE(r.actual_cash_comment, '') AS actual_cash_comment,
                    COALESCE(r.change_amount, 0)  AS razmen,
-                   COALESCE(r.plus_amount, 0)    AS plus_amount,
+                   COALESCE((SELECT SUM(cp.amount_cash) FROM cash_plus_entries cp
+                             WHERE cp.shift_id=s.id), 0) AS plus_amount,
                    COALESCE(r.morning_cash, 0)   AS morning_cash
             FROM shifts s
             JOIN branches b ON b.id = s.branch_id
