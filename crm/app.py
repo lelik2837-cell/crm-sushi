@@ -4667,7 +4667,7 @@ def pay_staff(shift_id, staff_id):
 @login_required
 def pay_salary_debt(shift_id):
     """Погашение задолженности по ЗП за прошлые смены наличными текущей смены
-    (блок «Задолженность по ЗП» в смене, см. настройки → «Выплатные дни»)."""
+    (блок «Задолженность по ЗП» в смене, см. настройки → «Настройки выплат ежемесячной ЗП»)."""
     if not _can_edit_shift(shift_id):
         return jsonify({'error': 'Нет доступа'}), 403
     data = request.json or {}
@@ -7451,7 +7451,7 @@ def reports():
         )
 
         # «Выплачено» = отмечено оплаченным на самой смене, либо (если нет) погашено
-        # позже выплатой задолженности по ЗП (см. настройки → «Выплатные дни»).
+        # позже выплатой задолженности по ЗП (см. настройки → «Настройки выплат ежемесячной ЗП»).
         _paid_expr = ("CASE WHEN es.is_paid=1 THEN es.total_amount ELSE "
                        "COALESCE((SELECT SUM(sp.amount) FROM salary_payments sp "
                        "WHERE sp.employee_shift_id=es.id), 0) END")
