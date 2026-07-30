@@ -10114,17 +10114,29 @@ def pnl_report():
     def _build_cat_rows(by_cat):
         """Строки по категориям (для «Приход/Расход по выпискам» в Простом P&L),
         отсортированные и сгруппированные по родительской категории — у каждой первой
-        строки новой группы row['is_new_parent']=True, чтобы шаблон вставил заголовок."""
+        строки новой группы row['is_new_parent']=True и row['parent_group_idx'] (номер
+        группы, для независимого сворачивания каждой группы на фронте), чтобы шаблон
+        вставил заголовок. Вместе со строками возвращаются суммы по каждой группе
+        родителя целиком (parent_totals[idx]) — для отображения итога у заголовка."""
         rows = []
+        parent_totals = {}
         prev_parent = object()  # заведомо не равно ни одной настоящей метке
+        group_idx = -1
         for code, by_p in sorted(by_cat.items(), key=lambda kv: (_parent_label(kv[0]), _cat_label(kv[0]))):
             parent_label = _parent_label(code)
             row = _row(_cat_label(code), dict(by_p))
             row['parent_label']  = parent_label
             row['is_new_parent'] = (parent_label != prev_parent)
+            if row['is_new_parent']:
+                group_idx += 1
+                parent_totals[group_idx] = _row(parent_label, {})
+            row['parent_group_idx'] = group_idx
+            for p in periods:
+                parent_totals[group_idx]['amounts'][p] += row['amounts'][p]
+            parent_totals[group_idx]['total'] += row['total']
             prev_parent = parent_label
             rows.append(row)
-        return rows
+        return rows, parent_totals
 
     # ── ДОХОДЫ ────────────────────────────────────────────────────────────────
     inc_totals = {}
@@ -10195,8 +10207,11 @@ def pnl_report():
     period_labels = {p: _pnl_period_label(p) for p in periods}
 
     # ── ПРОСТОЙ P&L: строки для шаблона ──────────────────────────────────────
-    # «Наличные» = выручка наличными + плюсы в кассу (раньше считалась только выручка)
-    s_income_cash_by_p = {p: cash_rev_by_p.get(p, 0.0) + simple_cash_plus_by_p.get(p, 0.0) for p in periods}
+    # «Наличные» = выручка наличными + плюсы в кассу (раньше считалась только выручка);
+    # обе составляющие также отдаём отдельными строками — для разворота в шаблоне.
+    s_cash_rev_row  = _row('Наличные — выручка', cash_rev_by_p)
+    s_cash_plus_row = _row('Наличные — плюсы в кассу', simple_cash_plus_by_p)
+    s_income_cash_by_p = {p: s_cash_rev_row['amounts'][p] + s_cash_plus_row['amounts'][p] for p in periods}
     s_income_cash_row = _row('Наличные', s_income_cash_by_p)
     s_exp_shift_row = _row('Расходы наличными в сменах', simple_cash_exp_by_p)
     s_exp_fot_row   = _row('ФОТ', simple_fot_by_p)
@@ -10209,9 +10224,9 @@ def pnl_report():
     s_cash_exp_total_row = _row('Итого расходы наличными', s_cash_exp_total_by_p)
 
     s_bank_income_row   = _row('Приход по выпискам', simple_bank_income_by_p)
-    s_bank_income_rows  = _build_cat_rows(simple_bank_income_by_cat)
+    s_bank_income_rows, _s_bank_income_parent_totals = _build_cat_rows(simple_bank_income_by_cat)
 
-    s_bank_exp_rows = _build_cat_rows(simple_bank_exp_by_cat)
+    s_bank_exp_rows, s_bank_exp_parent_totals = _build_cat_rows(simple_bank_exp_by_cat)
     s_bank_exp_total_by_p = {}
     for row in s_bank_exp_rows:
         for p in periods:
@@ -10241,9 +10256,11 @@ def pnl_report():
         branch_ids=branch_ids, group_by=group_by,
         bt_debug=bt_debug,
         s_income_cash_row=s_income_cash_row,
+        s_cash_rev_row=s_cash_rev_row, s_cash_plus_row=s_cash_plus_row,
         s_cash_exp_rows=s_cash_exp_rows, s_cash_exp_total_row=s_cash_exp_total_row,
         s_bank_income_row=s_bank_income_row, s_bank_income_rows=s_bank_income_rows,
         s_bank_exp_rows=s_bank_exp_rows, s_bank_exp_total_row=s_bank_exp_total_row,
+        s_bank_exp_parent_totals=s_bank_exp_parent_totals,
         s_total_income_row=s_total_income_row, s_total_expense_row=s_total_expense_row,
         s_profit_row=s_profit_row, s_profit_grand=s_profit_grand,
     )
