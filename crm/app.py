@@ -11273,7 +11273,19 @@ def bank_upload():
             (int(account_id), f.filename, session['user_id'], min(dates), max(dates), len(txns))
         ).lastrowid
         new_txn_ids = []
+        added = 0
+        skipped = 0
         for t in txns:
+            # Дубликат — та же операция (счёт+дата+сумма+описание) уже загружена раньше,
+            # например при повторной/пересекающейся по датам выгрузке из банк-клиента
+            # (тот же признак дубля, что и в автосинхронизации Сбербанка, см. _sber_do_sync).
+            dup = conn.execute('''
+                SELECT id FROM bank_transactions
+                WHERE bank_account_id=? AND txn_date=? AND amount=? AND description=?
+            ''', (int(account_id), t['date'], t['amount'], t.get('description', ''))).fetchone()
+            if dup:
+                skipped += 1
+                continue
             tid = _match_terminal(conn, t)
             bt_id = conn.execute(
                 'INSERT INTO bank_transactions (statement_id, bank_account_id, txn_date, amount, description, counterparty, contractor_id, category, terminal_id) VALUES (?,?,?,?,?,?,?,?,?)',
@@ -11281,9 +11293,13 @@ def bank_upload():
                  t.get('contractor_id'), t.get('category', ''), tid)
             ).lastrowid
             new_txn_ids.append(bt_id)
+            added += 1
         _sync_parse_rule_extractions(conn, new_txn_ids)
         conn.commit()
-    flash(f'Загружено {len(txns)} транзакций.', 'success')
+    if skipped:
+        flash(f'Загружено {added} новых транзакций, пропущено {skipped} уже загруженных ранее (дубликаты).', 'success')
+    else:
+        flash(f'Загружено {added} транзакций.', 'success')
     return redirect(url_for('bank_statement_view', stmt_id=stmt_id))
 
 
