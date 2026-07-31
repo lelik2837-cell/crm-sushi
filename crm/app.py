@@ -2970,10 +2970,13 @@ def api_revenue_summary():
         plan_by_bid = {r['branch_id']: int(r['plan'] or 0) for r in plan_rows}
 
         # Если сегодняшний день попадает в запрошенный диапазон (например «Месяц» с
-        # сегодня по 1-е число) — подменяем вклад сегодня с shift_revenue.total_revenue
-        # (смена ещё не закрыта, касса не пробита целиком) на выручку по заказам из
-        # Гуляша, как и в карточке «Сегодня» (см. _orders_revenue_today, п.216) —
-        # иначе один и тот же «сегодня» показывал бы разные цифры в двух режимах.
+        # сегодня по 1-е число) — подменяем вклад сегодня с сырого shift_revenue на
+        # результат _today_revenue_by_branch (см. п.216/217): для филиалов с ещё
+        # открытой сегодняшней сменой это даёт выручку по заказам из Гуляша (касса не
+        # пробита целиком), а для филиалов с уже закрытой сменой возвращает ту же
+        # сумму shift_revenue, что и так уже стояла в запросе — то есть для закрытых
+        # смен подмена фактически не меняет ничего (не полагаемся на заказы Гуляша,
+        # которые после закрытия смены могут «застревать» в старом статусе).
         today_str = date.today().isoformat()
         today_shift_total = 0.0
         today_shift_by_branch = {}
@@ -2988,7 +2991,7 @@ def api_revenue_summary():
             ''', [today_str] + bids).fetchall()
             today_shift_total = sum(r['revenue'] for r in today_shift_rows)
             today_shift_by_branch = {r['branch_id']: r['revenue'] for r in today_shift_rows}
-            _od, _oip, _odf, today_orders_by_branch = _orders_revenue_today(conn, bids)
+            _od, _oip, _odf, today_orders_by_branch = _today_revenue_by_branch(conn, bids)
             today_orders_total = _od + _oip + _odf
 
     total       = int(total_row['total'] or 0) + int(manual_total)
@@ -3056,11 +3059,10 @@ def _orders_revenue_today(conn, bids):
     доставкой на другой день, в сегодняшнюю выручку не входит (см. блок
     «Предзаказы», /api/preorders-today), а старый заказ, принятый несколько дней
     назад с доставкой сегодня — входит (тот же принцип, что и «Текущая смена» в
-    /orders-report, см. п.192). Возвращает done/in_progress/deferred и разбивку
-    по филиалам — используется и карточкой «Сегодня» (api_revenue_today_status),
-    и подменой «сегодня» внутри диапазона в api_revenue_summary (см. п.216):
-    сегодняшняя смена ещё не закрыта, shift_revenue.total_revenue за сегодня
-    занижен/пуст, поэтому для «сегодня» везде считаем по заказам, а не по кассе."""
+    /orders-report, см. п.192). Возвращает done/in_progress/deferred (итого по всем
+    филиалам) и разбивку по филиалам с тем же делением на статусы — сырой источник
+    для _today_revenue_by_branch, сам по себе больше нигде не используется (не
+    учитывает закрыта ли смена, см. ниже)."""
     bf = f"AND branch_id IN ({','.join('?'*len(bids))})" if bids else ''
     today = date.today().isoformat()
     rows = conn.execute(f'''
@@ -3072,28 +3074,70 @@ def _orders_revenue_today(conn, bids):
     for r in rows:
         s = _norm_status(r['status'])
         amt = float(r['amount'] or 0)
-        if s == 'выполнен':
+        bucket = 'done' if s == 'выполнен' else ('deferred' if s == 'отложен' else 'in_progress')
+        if bucket == 'done':
             done += amt
-        elif s == 'отложен':
+        elif bucket == 'deferred':
             deferred += amt
         else:
             in_progress += amt
         bid = r['branch_id']
         if bid is not None:
-            branch_totals[bid] = branch_totals.get(bid, 0.0) + amt
+            bt = branch_totals.setdefault(bid, {'done': 0.0, 'in_progress': 0.0, 'deferred': 0.0})
+            bt[bucket] += amt
     return done, in_progress, deferred, branch_totals
+
+
+def _today_revenue_by_branch(conn, bids):
+    """Выручка за сегодня по филиалам с учётом того, ОТКРЫТА ли ещё сегодняшняя
+    смена филиала:
+      - смена ОТКРЫТА (или её вообще нет) → берём заказы из Гуляша (касса ещё не
+        пробита, заказы — единственный актуальный источник на этот момент).
+      - смена ЗАКРЫТА → берём shift_revenue.total_revenue: сумма при закрытии уже
+        сверена и окончательна, а статусы заказов в Гуляше после закрытия смены
+        могут больше не обновляться и «застревать» в промежуточном статусе — так что
+        для закрытой смены заказам из Гуляша доверять нельзя, доверяем листу смены.
+    Возвращает done/in_progress/deferred (итого; для закрытых смен вся их выручка
+    целиком идёт в done — как окончательно подтверждённая) и revenue по каждому
+    филиалу. Используется и карточкой «Сегодня» (api_revenue_today_status), и
+    подменой «сегодня» внутри диапазона в api_revenue_summary (см. п.216/217)."""
+    bf_s = f"AND s.branch_id IN ({','.join('?'*len(bids))})" if bids else ''
+    today = date.today().isoformat()
+    shift_rows = conn.execute(f'''
+        SELECT s.branch_id, s.status, COALESCE(r.total_revenue, 0) AS revenue
+        FROM shifts s LEFT JOIN shift_revenue r ON r.shift_id = s.id
+        WHERE s.date=? {bf_s}
+    ''', [today] + bids).fetchall()
+    open_bids = {r['branch_id'] for r in shift_rows if r['status'] == 'open'}
+    closed_revenue_by_branch = {r['branch_id']: r['revenue'] for r in shift_rows if r['status'] != 'open'}
+
+    _, _, _, orders_branch_totals = _orders_revenue_today(conn, bids)
+
+    done = in_progress = deferred = 0.0
+    revenue_by_branch = {}
+    for bid in set(orders_branch_totals) | set(closed_revenue_by_branch):
+        if bid in open_bids or bid not in closed_revenue_by_branch:
+            b = orders_branch_totals.get(bid, {'done': 0.0, 'in_progress': 0.0, 'deferred': 0.0})
+            done += b['done']; in_progress += b['in_progress']; deferred += b['deferred']
+            revenue_by_branch[bid] = b['done'] + b['in_progress'] + b['deferred']
+        else:
+            rev = closed_revenue_by_branch[bid]
+            done += rev
+            revenue_by_branch[bid] = rev
+    return done, in_progress, deferred, revenue_by_branch
 
 
 @app.route('/api/revenue-today-status')
 @login_required
 def api_revenue_today_status():
     """Для карточки «Общая выручка» на дашборде в режиме «Сегодня» — см.
-    _orders_revenue_today. Разбивка — «Выполнено» / «В работе» (все остальные
-    не-финальные статусы, включая варианты типа «Принятготов», которые Гуляш
-    иногда склеивает без пробела) / «Позже» (статус «Отложен», но с доставкой
-    именно сегодня). Отменённые/возвраты в orders_report не попадают вообще
-    (отфильтрованы ещё при импорте, см. _ORDERS_EXCLUDED_STATUSES) — total =
-    done + in_progress + deferred строго."""
+    _today_revenue_by_branch (учитывает закрыта ли смена филиала). Разбивка —
+    «Выполнено» / «В работе» (все остальные не-финальные статусы, включая
+    варианты типа «Принятготов», которые Гуляш иногда склеивает без пробела) /
+    «Позже» (статус «Отложен», но с доставкой именно сегодня); выручка закрытых
+    смен целиком попадает в «Выполнено». Отменённые/возвраты в orders_report не
+    попадают вообще (отфильтрованы ещё при импорте, см.
+    _ORDERS_EXCLUDED_STATUSES) — total = done + in_progress + deferred строго."""
     if not (item_visible('dashboard') or item_visible('ratings_dashboard')):
         return jsonify({'ok': False, 'error': 'forbidden'}), 403
     raw_bids = request.args.get('branch_ids', '')
@@ -3101,7 +3145,7 @@ def api_revenue_today_status():
     _code = 'dashboard' if item_visible('dashboard') else 'ratings_dashboard'
     bids = [int(b) for b in get_effective_branch_ids(_code, [str(b) for b in bids]) or []]
     with get_db() as conn:
-        done, in_progress, deferred, branch_totals = _orders_revenue_today(conn, bids)
+        done, in_progress, deferred, branch_totals = _today_revenue_by_branch(conn, bids)
         branch_info = {b['id']: b for b in conn.execute('SELECT id, name, abbr FROM branches').fetchall()}
     branches = []
     for bid, revenue in branch_totals.items():
