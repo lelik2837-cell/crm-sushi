@@ -2969,7 +2969,30 @@ def api_revenue_summary():
         ''', [date_from, date_to] + bids).fetchall()
         plan_by_bid = {r['branch_id']: int(r['plan'] or 0) for r in plan_rows}
 
+        # Если сегодняшний день попадает в запрошенный диапазон (например «Месяц» с
+        # сегодня по 1-е число) — подменяем вклад сегодня с shift_revenue.total_revenue
+        # (смена ещё не закрыта, касса не пробита целиком) на выручку по заказам из
+        # Гуляша, как и в карточке «Сегодня» (см. _orders_revenue_today, п.216) —
+        # иначе один и тот же «сегодня» показывал бы разные цифры в двух режимах.
+        today_str = date.today().isoformat()
+        today_shift_total = 0.0
+        today_shift_by_branch = {}
+        today_orders_total = 0.0
+        today_orders_by_branch = {}
+        if date_from <= today_str <= date_to:
+            today_shift_rows = conn.execute(f'''
+                SELECT s.branch_id, COALESCE(SUM(r.total_revenue),0) AS revenue
+                FROM shifts s JOIN shift_revenue r ON r.shift_id = s.id
+                WHERE s.date=? {bf}
+                GROUP BY s.branch_id
+            ''', [today_str] + bids).fetchall()
+            today_shift_total = sum(r['revenue'] for r in today_shift_rows)
+            today_shift_by_branch = {r['branch_id']: r['revenue'] for r in today_shift_rows}
+            _od, _oip, _odf, today_orders_by_branch = _orders_revenue_today(conn, bids)
+            today_orders_total = _od + _oip + _odf
+
     total       = int(total_row['total'] or 0) + int(manual_total)
+    total       = total - int(today_shift_total) + int(today_orders_total)
     plan_total  = sum(plan_by_bid.values())
     fot         = int(fot_row['fot'] or 0)
     courier_fot = int(courier_fot_row['courier_fot'] or 0)
@@ -2986,9 +3009,10 @@ def api_revenue_summary():
         man   = manual_by_bid.get(br['id'], {})
         bid_  = br['id']
         seen_bids.add(bid_)
+        today_adj = int(today_orders_by_branch.get(bid_, 0)) - int(today_shift_by_branch.get(bid_, 0))
         branches.append({
             'abbr': abbr, 'name': name,
-            'revenue':         int(br['revenue']) + int(man.get('revenue', 0)),
+            'revenue':         int(br['revenue']) + int(man.get('revenue', 0)) + today_adj,
             'pickup':          int(br['pickup']),
             'delivery_revenue':int(br['delivery_revenue']),
             'delivery_orders': int(br['delivery_orders']),
@@ -3026,34 +3050,23 @@ def api_revenue_summary():
     })
 
 
-@app.route('/api/revenue-today-status')
-@login_required
-def api_revenue_today_status():
-    """Для карточки «Общая выручка» на дашборде в режиме «Сегодня»: сумма заказов
-    из Гуляша (orders_report) с ДОСТАВКОЙ (delivery_at) сегодня — не с приёмом
-    сегодня: предзаказ, принятый заранее с доставкой на другой день, в сегодняшнюю
-    выручку не входит (см. блок «Предзаказы», /api/preorders-today), а старый
-    заказ, принятый несколько дней назад с доставкой сегодня — входит (тот же
-    принцип, что и «Текущая смена» в /orders-report, см. п.192). Разбивка —
-    «Выполнено» / «В работе» (все остальные не-финальные статусы, включая
-    варианты типа «Принятготов», которые Гуляш иногда склеивает без пробела) /
-    «Позже» (статус «Отложен», но с доставкой именно сегодня). Отменённые/возвраты
-    в orders_report не попадают вообще (отфильтрованы ещё при импорте, см.
-    _ORDERS_EXCLUDED_STATUSES) — total = done + in_progress + deferred строго."""
-    if not (item_visible('dashboard') or item_visible('ratings_dashboard')):
-        return jsonify({'ok': False, 'error': 'forbidden'}), 403
-    raw_bids = request.args.get('branch_ids', '')
-    bids = [int(x) for x in raw_bids.split(',') if x.strip().isdigit()]
-    _code = 'dashboard' if item_visible('dashboard') else 'ratings_dashboard'
-    bids = [int(b) for b in get_effective_branch_ids(_code, [str(b) for b in bids]) or []]
+def _orders_revenue_today(conn, bids):
+    """Выручка за СЕГОДНЯ по заказам из Гуляша (orders_report) с ДОСТАВКОЙ
+    (delivery_at) сегодня — не с приёмом сегодня: предзаказ, принятый заранее с
+    доставкой на другой день, в сегодняшнюю выручку не входит (см. блок
+    «Предзаказы», /api/preorders-today), а старый заказ, принятый несколько дней
+    назад с доставкой сегодня — входит (тот же принцип, что и «Текущая смена» в
+    /orders-report, см. п.192). Возвращает done/in_progress/deferred и разбивку
+    по филиалам — используется и карточкой «Сегодня» (api_revenue_today_status),
+    и подменой «сегодня» внутри диапазона в api_revenue_summary (см. п.216):
+    сегодняшняя смена ещё не закрыта, shift_revenue.total_revenue за сегодня
+    занижен/пуст, поэтому для «сегодня» везде считаем по заказам, а не по кассе."""
     bf = f"AND branch_id IN ({','.join('?'*len(bids))})" if bids else ''
     today = date.today().isoformat()
-    with get_db() as conn:
-        rows = conn.execute(f'''
-            SELECT branch_id, status, amount FROM orders_report
-            WHERE delivery_at >= ? AND delivery_at <= ? {bf}
-        ''', [today + ' 00:00:00', today + ' 23:59:59'] + bids).fetchall()
-        branch_info = {b['id']: b for b in conn.execute('SELECT id, name, abbr FROM branches').fetchall()}
+    rows = conn.execute(f'''
+        SELECT branch_id, status, amount FROM orders_report
+        WHERE delivery_at >= ? AND delivery_at <= ? {bf}
+    ''', [today + ' 00:00:00', today + ' 23:59:59'] + bids).fetchall()
     done = in_progress = deferred = 0.0
     branch_totals = {}
     for r in rows:
@@ -3068,6 +3081,28 @@ def api_revenue_today_status():
         bid = r['branch_id']
         if bid is not None:
             branch_totals[bid] = branch_totals.get(bid, 0.0) + amt
+    return done, in_progress, deferred, branch_totals
+
+
+@app.route('/api/revenue-today-status')
+@login_required
+def api_revenue_today_status():
+    """Для карточки «Общая выручка» на дашборде в режиме «Сегодня» — см.
+    _orders_revenue_today. Разбивка — «Выполнено» / «В работе» (все остальные
+    не-финальные статусы, включая варианты типа «Принятготов», которые Гуляш
+    иногда склеивает без пробела) / «Позже» (статус «Отложен», но с доставкой
+    именно сегодня). Отменённые/возвраты в orders_report не попадают вообще
+    (отфильтрованы ещё при импорте, см. _ORDERS_EXCLUDED_STATUSES) — total =
+    done + in_progress + deferred строго."""
+    if not (item_visible('dashboard') or item_visible('ratings_dashboard')):
+        return jsonify({'ok': False, 'error': 'forbidden'}), 403
+    raw_bids = request.args.get('branch_ids', '')
+    bids = [int(x) for x in raw_bids.split(',') if x.strip().isdigit()]
+    _code = 'dashboard' if item_visible('dashboard') else 'ratings_dashboard'
+    bids = [int(b) for b in get_effective_branch_ids(_code, [str(b) for b in bids]) or []]
+    with get_db() as conn:
+        done, in_progress, deferred, branch_totals = _orders_revenue_today(conn, bids)
+        branch_info = {b['id']: b for b in conn.execute('SELECT id, name, abbr FROM branches').fetchall()}
     branches = []
     for bid, revenue in branch_totals.items():
         info = branch_info.get(bid)
