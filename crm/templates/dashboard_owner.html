@@ -1096,6 +1096,22 @@ function loadRevCard(period) {
                             updateOrdersStatus(d3);
                             document.getElementById('rev-total').textContent = fmtNum(d3.total);
                             showPlanDiff(d3.total, planTotal || 0);
+
+                            // Список филиалов должен показывать те же числа, что и заголовок
+                            // (заказы из Гуляша, а не кассовые итоги смены/ручную выручку) —
+                            // иначе сумма по филиалам не совпадает с заголовком, см. plan.md.
+                            var planByBranchName = {};
+                            d.branches.forEach(function(b) { planByBranchName[b.name] = b.plan; });
+                            if (planByName) {
+                                Object.keys(planByName).forEach(function(n) { planByBranchName[n] = planByName[n]; });
+                            }
+                            var branchesToday = (d3.branches || []).map(function(b) {
+                                return {
+                                    abbr: b.abbr, name: b.name, revenue: b.revenue,
+                                    plan: planByBranchName.hasOwnProperty(b.name) ? planByBranchName[b.name] : 0
+                                };
+                            }).sort(function(a, b) { return b.revenue - a.revenue; });
+                            branchesWrap.innerHTML = branchListHtml(branchesToday, d3.total);
                         });
                 }
             };
