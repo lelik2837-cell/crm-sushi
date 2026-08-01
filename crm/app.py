@@ -3105,6 +3105,12 @@ def api_revenue_summary():
         'pickup': int(total_row['pickup'] or 0),
         'fot':   fot,
         'courier_fot': courier_fot,
+        '_debug_total_row': int(total_row['total'] or 0),
+        '_debug_manual_total': int(manual_total),
+        '_debug_today_shift_total': int(today_shift_total),
+        '_debug_today_orders_total': int(today_orders_total),
+        '_debug_today_shift_by_branch': today_shift_by_branch,
+        '_debug_today_orders_by_branch': today_orders_by_branch,
         'branches': branches,
     })
 
