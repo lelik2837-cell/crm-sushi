@@ -2707,7 +2707,25 @@ def api_revenue_months():
             GROUP BY year, month ORDER BY year, month
         ''', [date_from, date_to] + bids).fetchall()
         manual_map = _manual_rev_by_month(conn, date_from, date_to, bids or None)
+        # Та же подмена «сегодня», что и в api_revenue_summary/api_revenue_days
+        # (см. п.216/217): без неё столбик текущего месяца в графике «Год»
+        # занижен на разницу между кассой открытой сегодня смены и реальными
+        # заказами из Гуляша (в работе/отложен), пока смена не закрыта.
+        today = date.today()
+        today_str = today.isoformat()
+        today_adj = 0
+        if date_from <= today_str <= date_to:
+            today_shift_row = conn.execute(f'''
+                SELECT COALESCE(SUM(r.total_revenue), 0) AS revenue
+                FROM shifts s JOIN shift_revenue r ON r.shift_id = s.id
+                WHERE s.date = ? {bf}
+            ''', [today_str] + bids).fetchone()
+            _done, _in_progress, _deferred, _ = _today_revenue_by_branch(conn, bids)
+            today_adj = (_done + _in_progress + _deferred) - int(today_shift_row['revenue'] or 0)
     rev = {(r['year'], r['month']): int(r['revenue']) for r in rows}
+    if today_adj:
+        key = (today.year, today.month)
+        rev[key] = rev.get(key, 0) + int(today_adj)
     labels = ['', 'Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн',
               'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
     start = date.fromisoformat(date_from)
@@ -3256,9 +3274,23 @@ def api_revenue_days():
             WHERE date BETWEEN ? AND ? {plan_bf}
             GROUP BY date
         ''', [date_from, date_to] + bids).fetchall()
+        # Сегодняшний день — та же подмена, что и в api_revenue_summary (см.
+        # п.216/217): столбик за сегодня в графике не должен браться из сырого
+        # shift_revenue (для открытой смены это только «выполненные» заказы,
+        # уже пробитые в кассу; «в работе»/«отложен» туда ещё не попадают) —
+        # берём тот же результат _today_revenue_by_branch, что и карточка
+        # «Сегодня», иначе столбик сегодня в «Месяце» занижен относительно
+        # заголовка и списка филиалов.
+        today_str = date.today().isoformat()
+        today_total = None
+        if date_from <= today_str <= date_to:
+            _done, _in_progress, _deferred, _ = _today_revenue_by_branch(conn, bids)
+            today_total = _done + _in_progress + _deferred
     rev_map = {r['date']: int(r['revenue']) for r in rows}
     for d, amt in manual_days.items():
         rev_map[d] = rev_map.get(d, 0) + int(amt)
+    if today_total is not None:
+        rev_map[today_str] = int(today_total)
     plan_map = {r['date']: int(r['plan'] or 0) for r in plan_rows}
     # Возвращаем все дни диапазона (включая ещё не наступившие), чтобы на
     # дашборде можно было показать план на будущие дни столбцами
