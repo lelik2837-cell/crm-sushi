@@ -3015,6 +3015,10 @@ def api_revenue_summary():
             GROUP BY m.branch_id
         ''', [date_from, date_to] + bids).fetchall()
         manual_total = _manual_rev_total(conn, date_from, date_to, bids or None)
+        _debug_raw_manual = [dict(r) for r in conn.execute(
+            'SELECT branch_id, date, amount, orders_count FROM revenue_manual WHERE date BETWEEN ? AND ?',
+            [date_from, date_to]
+        ).fetchall()]
         # Plan
         plan_bf2 = f"AND branch_id IN ({','.join('?'*len(bids))})" if bids else ''
         plan_rows = conn.execute(f'''
@@ -3111,6 +3115,11 @@ def api_revenue_summary():
         '_debug_today_orders_total': int(today_orders_total),
         '_debug_today_shift_by_branch': today_shift_by_branch,
         '_debug_today_orders_by_branch': today_orders_by_branch,
+        '_debug_manual_branch_rows': [dict(r) for r in manual_branch_rows],
+        '_debug_raw_manual': _debug_raw_manual,
+        '_debug_date_from': date_from,
+        '_debug_date_to': date_to,
+        '_debug_bids': bids,
         'branches': branches,
     })
 
