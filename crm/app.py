@@ -2706,13 +2706,18 @@ def api_revenue_months():
             WHERE s.date BETWEEN ? AND ? {bf}
             GROUP BY year, month ORDER BY year, month
         ''', [date_from, date_to] + bids).fetchall()
-        manual_map = _manual_rev_by_month(conn, date_from, date_to, bids or None)
+        # Сегодняшняя дата исключена из manual_map намеренно — см. комментарий в
+        # api_revenue_summary про /api/revenue-webhook, который пишет в
+        # revenue_manual «сырую» выручку сегодня параллельно с заказами из Гуляша;
+        # без исключения она задваивалась бы поверх today_adj ниже.
+        today = date.today()
+        today_str = today.isoformat()
+        manual_date_to = min(date_to, (today - timedelta(days=1)).isoformat())
+        manual_map = _manual_rev_by_month(conn, date_from, manual_date_to, bids or None) if date_from <= manual_date_to else {}
         # Та же подмена «сегодня», что и в api_revenue_summary/api_revenue_days
         # (см. п.216/217): без неё столбик текущего месяца в графике «Год»
         # занижен на разницу между кассой открытой сегодня смены и реальными
         # заказами из Гуляша (в работе/отложен), пока смена не закрыта.
-        today = date.today()
-        today_str = today.isoformat()
         today_adj = 0
         if date_from <= today_str <= date_to:
             today_shift_row = conn.execute(f'''
@@ -3000,25 +3005,33 @@ def api_revenue_summary():
             WHERE s.date BETWEEN ? AND ? {bf}
             GROUP BY b.id, b.name
         ''', [date_from, date_to] + bids).fetchall()
-        # Manual revenue по филиалам (fallback)
+        # Manual revenue по филиалам (fallback). Сегодняшняя дата из этого диапазона
+        # исключена намеренно: /api/revenue-webhook пишет в revenue_manual «сырую»
+        # текущую выручку сегодня параллельно с заказами из Гуляша (orders_report), и
+        # для филиала с открытой сменой (total_revenue=0, ещё не закрыта) условие
+        # NOT EXISTS ниже её не отсеивало — сумма по заказам (см. today_orders_total
+        # ниже) и «ручная» вебхук-выручка за сегодня складывались, задваивая факт (см.
+        # plan.md). За сегодня единственный источник истины — _today_revenue_by_branch.
+        today_str = date.today().isoformat()
+        manual_date_to = min(date_to, (datetime.strptime(today_str, '%Y-%m-%d').date() - timedelta(days=1)).isoformat())
         mbf = f"AND m.branch_id IN ({','.join('?'*len(bids))})" if bids else ''
-        manual_branch_rows = conn.execute(f'''
-            SELECT m.branch_id, b.id, b.name, b.abbr,
-                   COALESCE(SUM(m.amount), 0) AS revenue
-            FROM revenue_manual m
-            JOIN branches b ON b.id = m.branch_id
-            WHERE m.date BETWEEN ? AND ? {mbf}
-            AND NOT EXISTS (
-                SELECT 1 FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id
-                WHERE s.date=m.date AND s.branch_id=m.branch_id AND (r.total_revenue > 0 OR s.status='closed')
-            )
-            GROUP BY m.branch_id
-        ''', [date_from, date_to] + bids).fetchall()
-        manual_total = _manual_rev_total(conn, date_from, date_to, bids or None)
-        _debug_raw_manual = [dict(r) for r in conn.execute(
-            'SELECT branch_id, date, amount, orders_count FROM revenue_manual WHERE date BETWEEN ? AND ?',
-            [date_from, date_to]
-        ).fetchall()]
+        if date_from <= manual_date_to:
+            manual_branch_rows = conn.execute(f'''
+                SELECT m.branch_id, b.id, b.name, b.abbr,
+                       COALESCE(SUM(m.amount), 0) AS revenue
+                FROM revenue_manual m
+                JOIN branches b ON b.id = m.branch_id
+                WHERE m.date BETWEEN ? AND ? {mbf}
+                AND NOT EXISTS (
+                    SELECT 1 FROM shifts s JOIN shift_revenue r ON r.shift_id=s.id
+                    WHERE s.date=m.date AND s.branch_id=m.branch_id AND (r.total_revenue > 0 OR s.status='closed')
+                )
+                GROUP BY m.branch_id
+            ''', [date_from, manual_date_to] + bids).fetchall()
+            manual_total = _manual_rev_total(conn, date_from, manual_date_to, bids or None)
+        else:
+            manual_branch_rows = []
+            manual_total = 0.0
         # Plan
         plan_bf2 = f"AND branch_id IN ({','.join('?'*len(bids))})" if bids else ''
         plan_rows = conn.execute(f'''
@@ -3037,7 +3050,6 @@ def api_revenue_summary():
         # сумму shift_revenue, что и так уже стояла в запросе — то есть для закрытых
         # смен подмена фактически не меняет ничего (не полагаемся на заказы Гуляша,
         # которые после закрытия смены могут «застревать» в старом статусе).
-        today_str = date.today().isoformat()
         today_shift_total = 0.0
         today_shift_by_branch = {}
         today_orders_total = 0.0
@@ -3109,17 +3121,6 @@ def api_revenue_summary():
         'pickup': int(total_row['pickup'] or 0),
         'fot':   fot,
         'courier_fot': courier_fot,
-        '_debug_total_row': int(total_row['total'] or 0),
-        '_debug_manual_total': int(manual_total),
-        '_debug_today_shift_total': int(today_shift_total),
-        '_debug_today_orders_total': int(today_orders_total),
-        '_debug_today_shift_by_branch': today_shift_by_branch,
-        '_debug_today_orders_by_branch': today_orders_by_branch,
-        '_debug_manual_branch_rows': [dict(r) for r in manual_branch_rows],
-        '_debug_raw_manual': _debug_raw_manual,
-        '_debug_date_from': date_from,
-        '_debug_date_to': date_to,
-        '_debug_bids': bids,
         'branches': branches,
     })
 
