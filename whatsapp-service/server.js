@@ -5,14 +5,23 @@ import pino from 'pino';
 import fs from 'fs';
 import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
+import { SocksProxyAgent } from 'socks-proxy-agent';
 
 const PORT = process.env.PORT || 3000;
 const AUTH_DIR = process.env.AUTH_DIR || '/data/auth';
 const WEBHOOK_URL = process.env.WEBHOOK_URL || '';
 const WEBHOOK_TOKEN = process.env.WEBHOOK_TOKEN || '';
 const RESUME_URL = process.env.RESUME_URL || '';
+const PROXY_URL = process.env.PROXY_URL || '';
 
 const logger = pino({ level: 'warn' });
+// WhatsApp/Meta недоступны напрямую с этого сервера (сеть режет соединения до
+// web.whatsapp.com/static.whatsapp.net) — весь трафик Baileys идёт через локальный
+// SOCKS5-туннель (см. сервис xray в docker-compose.yml).
+const proxyAgent = PROXY_URL ? new SocksProxyAgent(PROXY_URL) : undefined;
+if (proxyAgent) {
+  console.log('[whatsapp] using proxy', PROXY_URL);
+}
 
 let sock = null;
 let latestQr = null;
@@ -47,6 +56,8 @@ async function startSock() {
     browser: ['CRM Sushi', 'Chrome', '1.0'],
     syncFullHistory: false,
     markOnlineOnConnect: false,
+    agent: proxyAgent,
+    fetchAgent: proxyAgent,
   });
 
   sock.ev.on('creds.update', saveCreds);
