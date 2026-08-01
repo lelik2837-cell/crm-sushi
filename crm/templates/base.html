@@ -380,6 +380,13 @@
                             </a>
                         </li>
                         {% endif %}
+                        {% if item_visible('whatsapp_broadcast') %}
+                        <li>
+                            <a class="dropdown-item {% if request.endpoint and request.endpoint.startswith('whatsapp_') %}active{% endif %}" href="{{ url_for('whatsapp_broadcast_page') }}">
+                                <i class="bi bi-whatsapp me-2"></i>Рассылка WhatsApp
+                            </a>
+                        </li>
+                        {% endif %}
                         {% if item_visible('call_center') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='call_center' %}active{% endif %}" href="{{ url_for('call_center') }}">

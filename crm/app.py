@@ -1,4 +1,5 @@
 import ast
+import base64
 import calendar
 import csv
 import hashlib
@@ -24,6 +25,7 @@ from zoneinfo import ZoneInfo
 # падает с "partially initialized module 'urllib3' has no attribute
 # 'disable_warnings' (most likely due to a circular import)".
 import sber_api
+import whatsapp_api
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, g
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -137,6 +139,7 @@ MENU_ITEMS = [
     ('change_settings',       'Размен',                   'reports',  True),
     ('purchases',             'Накладные',                'reports',  True),
     ('bank',                  'Банк',                     'reports',  True),
+    ('whatsapp_broadcast',    'Рассылка WhatsApp',        'reports',  False),
     ('call_center',           'Колл-центр',               'reports',  False),
     ('contact_center_report', 'Контакт-центр',            'reports',  False),
     ('employees',             'Сотрудники',               'settings', True),
@@ -1996,6 +1999,41 @@ def init_db():
             conn.execute("UPDATE salary_payout_rules SET limit_type = CASE WHEN limit_amount IS NOT NULL THEN 'amount' ELSE 'none' END")
         if 'limit_days' not in _spr_cols:
             conn.execute("ALTER TABLE salary_payout_rules ADD COLUMN limit_days INTEGER")
+
+        # Массовая рассылка WhatsApp (вход по QR через отдельный Node-сервис Baileys,
+        # см. whatsapp-service/ и crm/whatsapp_api.py) — картинка хранится в БД (BLOB),
+        # как и остальные загружаемые в проекте файлы (нигде не пишутся на диск).
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS whatsapp_broadcasts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT,
+                message_text TEXT NOT NULL,
+                image_blob BLOB,
+                image_mime TEXT,
+                interval_min_seconds INTEGER NOT NULL DEFAULT 5,
+                interval_max_seconds INTEGER NOT NULL DEFAULT 5,
+                batch_size INTEGER NOT NULL DEFAULT 0,
+                batch_pause_seconds INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'draft',
+                total_count INTEGER NOT NULL DEFAULT 0,
+                sent_count INTEGER NOT NULL DEFAULT 0,
+                failed_count INTEGER NOT NULL DEFAULT 0,
+                invalid_count INTEGER NOT NULL DEFAULT 0,
+                created_by INTEGER REFERENCES users(id),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                started_at TIMESTAMP,
+                finished_at TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS whatsapp_broadcast_recipients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                broadcast_id INTEGER NOT NULL REFERENCES whatsapp_broadcasts(id) ON DELETE CASCADE,
+                phone TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                error TEXT,
+                sent_at TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_wa_recip_broadcast ON whatsapp_broadcast_recipients(broadcast_id, status);
+        ''')
 
         conn.commit()
 
@@ -8845,6 +8883,283 @@ def _parse_1c_body(conn, branch_id, body, content_type):
         return created
 
     return 0
+
+
+# ─── WHATSAPP РАССЫЛКА (Baileys, отдельный Node-сервис, см. whatsapp-service/) ─
+
+def _normalize_ru_phone(raw):
+    """8/10/11-значный российский номер -> 11 цифр, начинающихся с 7. None, если не распознан."""
+    digits = re.sub(r'\D', '', str(raw or ''))
+    if len(digits) == 11 and digits[0] == '8':
+        digits = '7' + digits[1:]
+    elif len(digits) == 10 and digits[0] == '9':
+        digits = '7' + digits
+    if len(digits) == 11 and digits[0] == '7':
+        return digits
+    return None
+
+
+def _parse_phone_list(raw_text, file_storage):
+    """Номера построчно/через запятую из textarea и/или загруженного файла (.xlsx/.csv/.txt).
+    Файлы читаются в память, как и остальная загрузка в проекте (см. bank_upload/import_shifts) —
+    ничего не пишется на диск."""
+    numbers = []
+    if file_storage and file_storage.filename:
+        filename = file_storage.filename.lower()
+        raw = file_storage.read()
+        if filename.endswith('.xlsx'):
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(raw), data_only=True)
+            for row in wb.active.iter_rows(values_only=True):
+                if row and row[0] is not None:
+                    numbers.append(str(row[0]))
+        else:
+            text = raw.decode(_detect_encoding(raw), errors='ignore')
+            for line in text.splitlines():
+                numbers.extend(p.strip() for p in re.split(r'[,;\t]', line) if p.strip())
+    if raw_text:
+        for line in raw_text.splitlines():
+            # Только запятая/точка с запятой/таб — пробелы внутри строки НЕ разделитель
+            # (номер часто вводят с пробелами: "+7 999 123-45-67" — это один номер, не три).
+            numbers.extend(p.strip() for p in re.split(r'[,;\t]+', line) if p.strip())
+    return numbers
+
+
+def _check_whatsapp_token(token):
+    expected = os.environ.get('WHATSAPP_WEBHOOK_TOKEN', '')
+    return bool(expected) and bool(token) and secrets.compare_digest(token, expected)
+
+
+@app.route('/reports/whatsapp')
+@login_required
+@menu_permission_required('whatsapp_broadcast')
+def whatsapp_broadcast_page():
+    with get_db() as conn:
+        broadcasts = conn.execute(
+            'SELECT * FROM whatsapp_broadcasts ORDER BY created_at DESC LIMIT 50'
+        ).fetchall()
+    return render_template('whatsapp.html', broadcasts=broadcasts)
+
+
+@app.route('/reports/whatsapp/session-status')
+@login_required
+@menu_permission_required('whatsapp_broadcast')
+def whatsapp_session_status():
+    try:
+        status = whatsapp_api.get_status()
+    except Exception as e:
+        logging.exception('whatsapp get_status failed')
+        return jsonify({'status': 'error', 'error': str(e)})
+    if status.get('status') == 'qr':
+        try:
+            status['qr'] = whatsapp_api.get_qr()
+        except Exception:
+            logging.exception('whatsapp get_qr failed')
+            status['qr'] = None
+    return jsonify(status)
+
+
+@app.route('/reports/whatsapp/session-logout', methods=['POST'])
+@login_required
+@menu_permission_required('whatsapp_broadcast')
+def whatsapp_session_logout():
+    try:
+        whatsapp_api.logout()
+        flash('Сессия WhatsApp сброшена, отсканируйте новый QR-код.', 'success')
+    except Exception as e:
+        flash(f'Не удалось выйти: {e}', 'danger')
+    return redirect(url_for('whatsapp_broadcast_page'))
+
+
+@app.route('/reports/whatsapp/broadcast', methods=['POST'])
+@login_required
+@menu_permission_required('whatsapp_broadcast')
+def whatsapp_create_broadcast():
+    name = request.form.get('name', '').strip()
+    message = request.form.get('message', '').strip()
+    numbers_file = request.files.get('numbers_file')
+    image_file = request.files.get('image')
+
+    if not message and not (image_file and image_file.filename):
+        flash('Укажите текст сообщения или картинку', 'danger')
+        return redirect(url_for('whatsapp_broadcast_page'))
+
+    raw_numbers = _parse_phone_list(request.form.get('numbers_text', ''), numbers_file)
+    seen, phones, invalid = set(), [], 0
+    for raw in raw_numbers:
+        phone = _normalize_ru_phone(raw)
+        if not phone:
+            invalid += 1
+            continue
+        if phone not in seen:
+            seen.add(phone)
+            phones.append(phone)
+
+    if not phones:
+        flash('Не найдено ни одного распознанного номера', 'danger')
+        return redirect(url_for('whatsapp_broadcast_page'))
+
+    try:
+        interval_min = max(0, int(request.form.get('interval_min', 5)))
+        interval_max = max(interval_min, int(request.form.get('interval_max', interval_min)))
+        batch_size = max(0, int(request.form.get('batch_size', 0)))
+        batch_pause_seconds = max(0, int(request.form.get('batch_pause_seconds', 0)))
+    except ValueError:
+        flash('Некорректные настройки периодичности', 'danger')
+        return redirect(url_for('whatsapp_broadcast_page'))
+
+    image_blob, image_mime = None, None
+    if image_file and image_file.filename:
+        image_blob = image_file.read()
+        image_mime = image_file.mimetype
+
+    with get_db() as conn:
+        broadcast_id = conn.execute('''
+            INSERT INTO whatsapp_broadcasts
+                (name, message_text, image_blob, image_mime, interval_min_seconds, interval_max_seconds,
+                 batch_size, batch_pause_seconds, total_count, created_by)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
+        ''', (name or None, message, image_blob, image_mime, interval_min, interval_max,
+              batch_size, batch_pause_seconds, len(phones), session['user_id'])).lastrowid
+        conn.executemany(
+            'INSERT INTO whatsapp_broadcast_recipients (broadcast_id, phone) VALUES (?,?)',
+            [(broadcast_id, p) for p in phones]
+        )
+        conn.commit()
+
+    msg = f'Рассылка создана: {len(phones)} номеров.'
+    if invalid:
+        msg += f' Не распознано {invalid} записей — пропущены.'
+    flash(msg, 'success')
+    return redirect(url_for('whatsapp_broadcast_page'))
+
+
+@app.route('/reports/whatsapp/broadcast/<int:broadcast_id>/start', methods=['POST'])
+@login_required
+@menu_permission_required('whatsapp_broadcast')
+def whatsapp_start_broadcast(broadcast_id):
+    with get_db() as conn:
+        b = conn.execute('SELECT * FROM whatsapp_broadcasts WHERE id=?', (broadcast_id,)).fetchone()
+        if not b:
+            flash('Рассылка не найдена', 'danger')
+            return redirect(url_for('whatsapp_broadcast_page'))
+        if b['status'] == 'running':
+            flash('Рассылка уже запущена', 'warning')
+            return redirect(url_for('whatsapp_broadcast_page'))
+        phones = [r['phone'] for r in conn.execute(
+            "SELECT phone FROM whatsapp_broadcast_recipients WHERE broadcast_id=? AND status='pending'",
+            (broadcast_id,)
+        ).fetchall()]
+        if not phones:
+            flash('Нет номеров для отправки', 'danger')
+            return redirect(url_for('whatsapp_broadcast_page'))
+        try:
+            whatsapp_api.start_campaign(
+                broadcast_id=broadcast_id, message=b['message_text'], recipients=phones,
+                interval_min=b['interval_min_seconds'], interval_max=b['interval_max_seconds'],
+                batch_size=b['batch_size'], batch_pause_seconds=b['batch_pause_seconds'],
+                image_bytes=b['image_blob'], image_mime=b['image_mime'],
+            )
+        except Exception as e:
+            flash(f'Не удалось запустить рассылку: {e}', 'danger')
+            return redirect(url_for('whatsapp_broadcast_page'))
+        conn.execute(
+            "UPDATE whatsapp_broadcasts SET status='running', started_at=CURRENT_TIMESTAMP WHERE id=?",
+            (broadcast_id,)
+        )
+        conn.commit()
+    flash('Рассылка запущена.', 'success')
+    return redirect(url_for('whatsapp_broadcast_page'))
+
+
+@app.route('/reports/whatsapp/broadcast/<int:broadcast_id>/stop', methods=['POST'])
+@login_required
+@menu_permission_required('whatsapp_broadcast')
+def whatsapp_stop_broadcast(broadcast_id):
+    try:
+        whatsapp_api.stop_campaign(broadcast_id)
+    except Exception as e:
+        flash(f'Не удалось остановить: {e}', 'danger')
+        return redirect(url_for('whatsapp_broadcast_page'))
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE whatsapp_broadcasts SET status='stopped', finished_at=CURRENT_TIMESTAMP WHERE id=? AND status='running'",
+            (broadcast_id,)
+        )
+        conn.commit()
+    flash('Рассылка остановлена.', 'success')
+    return redirect(url_for('whatsapp_broadcast_page'))
+
+
+@app.route('/reports/whatsapp/broadcast/<int:broadcast_id>/status')
+@login_required
+@menu_permission_required('whatsapp_broadcast')
+def whatsapp_broadcast_status(broadcast_id):
+    with get_db() as conn:
+        b = conn.execute('SELECT * FROM whatsapp_broadcasts WHERE id=?', (broadcast_id,)).fetchone()
+        if not b:
+            return jsonify({'error': 'not_found'}), 404
+        return jsonify({
+            'status': b['status'], 'total_count': b['total_count'], 'sent_count': b['sent_count'],
+            'failed_count': b['failed_count'], 'invalid_count': b['invalid_count'],
+        })
+
+
+@app.route('/api/whatsapp-webhook/<token>', methods=['POST'])
+def whatsapp_webhook(token):
+    if not _check_whatsapp_token(token):
+        return jsonify({'error': 'forbidden'}), 403
+    data = request.get_json(silent=True) or {}
+    broadcast_id, phone, status, error = data.get('broadcast_id'), data.get('phone'), data.get('status'), data.get('error')
+    if not broadcast_id or not phone or status not in ('sent', 'failed', 'invalid'):
+        return jsonify({'error': 'bad_request'}), 400
+    with get_db() as conn:
+        cur = conn.execute('''
+            UPDATE whatsapp_broadcast_recipients
+            SET status=?, error=?, sent_at=CASE WHEN ?='sent' THEN CURRENT_TIMESTAMP ELSE sent_at END
+            WHERE broadcast_id=? AND phone=? AND status='pending'
+        ''', (status, error, status, broadcast_id, phone))
+        if cur.rowcount:
+            count_field = {'sent': 'sent_count', 'failed': 'failed_count', 'invalid': 'invalid_count'}[status]
+            conn.execute(f'UPDATE whatsapp_broadcasts SET {count_field} = {count_field} + 1 WHERE id=?', (broadcast_id,))
+            remaining = conn.execute(
+                "SELECT COUNT(*) FROM whatsapp_broadcast_recipients WHERE broadcast_id=? AND status='pending'",
+                (broadcast_id,)
+            ).fetchone()[0]
+            if remaining == 0:
+                conn.execute(
+                    "UPDATE whatsapp_broadcasts SET status='completed', finished_at=CURRENT_TIMESTAMP WHERE id=? AND status='running'",
+                    (broadcast_id,)
+                )
+        conn.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/internal/whatsapp/resume')
+def whatsapp_resume():
+    if not _check_whatsapp_token(request.args.get('token', '')):
+        return jsonify({'error': 'forbidden'}), 403
+    with get_db() as conn:
+        b = conn.execute("SELECT * FROM whatsapp_broadcasts WHERE status='running' ORDER BY id LIMIT 1").fetchone()
+        if not b:
+            return jsonify({'none': True})
+        phones = [r['phone'] for r in conn.execute(
+            "SELECT phone FROM whatsapp_broadcast_recipients WHERE broadcast_id=? AND status='pending'",
+            (b['id'],)
+        ).fetchall()]
+        if not phones:
+            return jsonify({'none': True})
+        return jsonify({
+            'broadcast_id': b['id'],
+            'message': b['message_text'],
+            'image_base64': base64.b64encode(b['image_blob']).decode() if b['image_blob'] else None,
+            'image_mime': b['image_mime'],
+            'recipients': phones,
+            'interval_min_seconds': b['interval_min_seconds'],
+            'interval_max_seconds': b['interval_max_seconds'],
+            'batch_size': b['batch_size'],
+            'batch_pause_seconds': b['batch_pause_seconds'],
+        })
 
 
 # ─── API ВЕБХУК ВЫРУЧКИ (внешние источники в реальном времени) ───────────────
