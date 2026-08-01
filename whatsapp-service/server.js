@@ -81,7 +81,8 @@ async function startSock() {
         fs.rmSync(AUTH_DIR, { recursive: true, force: true });
         fs.mkdirSync(AUTH_DIR, { recursive: true });
       } else {
-        console.log('[whatsapp] connection closed, reconnecting in 3s');
+        console.log('[whatsapp] connection closed, reconnecting in 3s. statusCode=', statusCode,
+          'error=', lastDisconnect?.error ? String(lastDisconnect.error) : null);
         setTimeout(() => {
           startSock().catch((err) => console.error('[whatsapp] reconnect failed', err));
         }, 3000);
