@@ -119,8 +119,10 @@ async function runCampaign(cfg) {
   campaign = cfg;
   let sentSinceBatch = 0;
 
-  for (const phone of cfg.queue) {
+  for (const item of cfg.queue) {
     if (campaign?.stopFlag) break;
+    const phone = item.phone;
+    const text = item.message || '';
 
     const result = { broadcast_id: cfg.broadcastId, phone, status: 'failed', error: null };
     try {
@@ -134,10 +136,10 @@ async function runCampaign(cfg) {
           await sock.sendMessage(targetJid, {
             image: cfg.image,
             mimetype: cfg.imageMime || 'image/jpeg',
-            caption: cfg.message || '',
+            caption: text,
           });
         } else {
-          await sock.sendMessage(targetJid, { text: cfg.message || '' });
+          await sock.sendMessage(targetJid, { text });
         }
         result.status = 'sent';
       }
@@ -173,7 +175,6 @@ async function checkResume() {
     console.log(`[whatsapp] resuming broadcast #${data.broadcast_id}, ${data.recipients.length} pending`);
     const cfg = {
       broadcastId: data.broadcast_id,
-      message: data.message || '',
       image: data.image_base64 ? Buffer.from(data.image_base64, 'base64') : null,
       imageMime: data.image_mime || null,
       queue: data.recipients,
@@ -237,6 +238,37 @@ app.post('/session/logout', async (req, res) => {
   }
 });
 
+app.post('/numbers/check', async (req, res) => {
+  if (connectionStatus !== 'connected') {
+    res.status(409).json({ error: 'not_connected' });
+    return;
+  }
+  const phones = Array.isArray(req.body.phones) ? req.body.phones : [];
+  if (phones.length === 0) {
+    res.status(400).json({ error: 'empty' });
+    return;
+  }
+  const results = {};
+  const CHUNK = 30;
+  try {
+    for (let i = 0; i < phones.length; i += CHUNK) {
+      const chunk = phones.slice(i, i + CHUNK);
+      const checked = await sock.onWhatsApp(...chunk.map(jidFor));
+      const existsByPhone = new Map();
+      for (const c of checked || []) {
+        if (c?.jid) existsByPhone.set(c.jid.split('@')[0], !!c.exists);
+      }
+      for (const phone of chunk) {
+        results[phone] = existsByPhone.get(phone) ?? false;
+      }
+      if (i + CHUNK < phones.length) await sleep(300);
+    }
+    res.json({ ok: true, results });
+  } catch (err) {
+    res.status(500).json({ error: String(err?.message || err) });
+  }
+});
+
 app.post('/campaign/start', upload.single('image'), (req, res) => {
   if (connectionStatus !== 'connected') {
     res.status(409).json({ error: 'not_connected' });
@@ -254,14 +286,13 @@ app.post('/campaign/start', upload.single('image'), (req, res) => {
     res.status(400).json({ error: 'bad_recipients' });
     return;
   }
-  if (!Array.isArray(recipients) || recipients.length === 0) {
+  if (!Array.isArray(recipients) || recipients.length === 0 || !recipients[0]?.phone) {
     res.status(400).json({ error: 'empty_recipients' });
     return;
   }
 
   const cfg = {
     broadcastId: req.body.broadcastId,
-    message: req.body.message || '',
     image: req.file ? req.file.buffer : null,
     imageMime: req.file ? req.file.mimetype : null,
     queue: recipients,

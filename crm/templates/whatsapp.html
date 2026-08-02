@@ -23,8 +23,15 @@
                 <input type="text" name="name" class="form-control" placeholder="Например: Акция на роллы">
             </div>
             <div class="col-12">
-                <label class="form-label small fw-semibold">Текст сообщения</label>
-                <textarea name="message" class="form-control" rows="4" placeholder="Текст, который получат все номера из списка"></textarea>
+                <label class="form-label small fw-semibold">Варианты текста сообщения</label>
+                <div class="form-text mb-2">Если вариантов больше одного — рассылаются по кругу: 1-й номер из списка получит вариант 1, 2-й — вариант 2, и так далее по кругу.</div>
+                <div id="wa-message-variants">
+                    <div class="input-group mb-2 wa-variant-row">
+                        <textarea name="message_variants[]" class="form-control" rows="3" placeholder="Вариант 1"></textarea>
+                        <button type="button" class="btn btn-outline-danger wa-variant-remove" onclick="waRemoveVariant(this)" title="Убрать вариант">&times;</button>
+                    </div>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline-primary" onclick="waAddVariant()"><i class="bi bi-plus-lg"></i> Добавить вариант текста</button>
             </div>
             <div class="col-md-6">
                 <label class="form-label small fw-semibold">Картинка (необязательно)</label>
@@ -136,6 +143,22 @@ function renderSessionCard(data) {
     } else {
         el.innerHTML = `<div class="text-muted"><span class="spinner-border spinner-border-sm me-2"></span>Подключение…</div>`;
     }
+}
+
+function waAddVariant() {
+    const container = document.getElementById('wa-message-variants');
+    const n = container.querySelectorAll('.wa-variant-row').length + 1;
+    const row = document.createElement('div');
+    row.className = 'input-group mb-2 wa-variant-row';
+    row.innerHTML = `<textarea name="message_variants[]" class="form-control" rows="3" placeholder="Вариант ${n}"></textarea>
+        <button type="button" class="btn btn-outline-danger wa-variant-remove" onclick="waRemoveVariant(this)" title="Убрать вариант">&times;</button>`;
+    container.appendChild(row);
+}
+
+function waRemoveVariant(btn) {
+    const container = document.getElementById('wa-message-variants');
+    if (container.querySelectorAll('.wa-variant-row').length <= 1) return;
+    btn.closest('.wa-variant-row').remove();
 }
 
 function pollSessionStatus() {

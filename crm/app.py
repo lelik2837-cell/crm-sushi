@@ -2034,6 +2034,20 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_wa_recip_broadcast ON whatsapp_broadcast_recipients(broadcast_id, status);
         ''')
+        _war_cols = [r[1] for r in conn.execute("PRAGMA table_info(whatsapp_broadcast_recipients)").fetchall()]
+        if 'variant_index' not in _war_cols:
+            # Каким вариантом текста (см. whatsapp_broadcast_messages) отправлять этому
+            # получателю — назначается по кругу (round-robin) при создании рассылки.
+            conn.execute("ALTER TABLE whatsapp_broadcast_recipients ADD COLUMN variant_index INTEGER NOT NULL DEFAULT 0")
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS whatsapp_broadcast_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                broadcast_id INTEGER NOT NULL REFERENCES whatsapp_broadcasts(id) ON DELETE CASCADE,
+                variant_index INTEGER NOT NULL,
+                text TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_wa_msg_broadcast ON whatsapp_broadcast_messages(broadcast_id);
+        ''')
 
         conn.commit()
 
@@ -8978,6 +8992,19 @@ def _check_whatsapp_token(token):
     return bool(expected) and bool(token) and secrets.compare_digest(token, expected)
 
 
+def _wa_pending_recipients(conn, broadcast_id):
+    """[{'phone':..., 'message':...}] для ещё не отправленных получателей — текст уже
+    подобран по варианту, назначенному этому номеру (round-robin при создании рассылки)."""
+    rows = conn.execute('''
+        SELECT r.phone AS phone, m.text AS message
+        FROM whatsapp_broadcast_recipients r
+        JOIN whatsapp_broadcast_messages m ON m.broadcast_id = r.broadcast_id AND m.variant_index = r.variant_index
+        WHERE r.broadcast_id=? AND r.status='pending'
+        ORDER BY r.id
+    ''', (broadcast_id,)).fetchall()
+    return [{'phone': r['phone'], 'message': r['message']} for r in rows]
+
+
 @app.route('/reports/whatsapp')
 @login_required
 @menu_permission_required('whatsapp_broadcast')
@@ -9024,20 +9051,22 @@ def whatsapp_session_logout():
 @menu_permission_required('whatsapp_broadcast')
 def whatsapp_create_broadcast():
     name = request.form.get('name', '').strip()
-    message = request.form.get('message', '').strip()
+    variants = [v.strip() for v in request.form.getlist('message_variants[]') if v.strip()]
     numbers_file = request.files.get('numbers_file')
     image_file = request.files.get('image')
 
-    if not message and not (image_file and image_file.filename):
-        flash('Укажите текст сообщения или картинку', 'danger')
+    if not variants and not (image_file and image_file.filename):
+        flash('Укажите хотя бы один вариант текста сообщения или картинку', 'danger')
         return redirect(url_for('whatsapp_broadcast_page'))
+    if not variants:
+        variants = ['']  # только картинка, без текста — один "пустой" вариант
 
     raw_numbers = _parse_phone_list(request.form.get('numbers_text', ''), numbers_file)
-    seen, phones, invalid = set(), [], 0
+    seen, phones, bad_format = set(), [], 0
     for raw in raw_numbers:
         phone = _normalize_ru_phone(raw)
         if not phone:
-            invalid += 1
+            bad_format += 1
             continue
         if phone not in seen:
             seen.add(phone)
@@ -9061,23 +9090,50 @@ def whatsapp_create_broadcast():
         image_blob = image_file.read()
         image_mime = image_file.mimetype
 
+    # Проверка прямо на WhatsApp, зарегистрирован ли номер — сразу по списку, до старта
+    # отправки (чтобы не тратить впустую паузы между сообщениями на мёртвые номера и
+    # сразу показать реальную картину). Требует уже подключённого WhatsApp — если сервис
+    # недоступен/не подключён, просто пропускаем проверку, статус номеров не трогаем.
+    not_on_whatsapp = set()
+    check_failed = False
+    try:
+        results = whatsapp_api.check_numbers(phones)
+        not_on_whatsapp = {p for p in phones if results.get(p) is False}
+    except Exception:
+        logging.exception('whatsapp check_numbers failed')
+        check_failed = True
+
     with get_db() as conn:
         broadcast_id = conn.execute('''
             INSERT INTO whatsapp_broadcasts
                 (name, message_text, image_blob, image_mime, interval_min_seconds, interval_max_seconds,
-                 batch_size, batch_pause_seconds, total_count, created_by)
-            VALUES (?,?,?,?,?,?,?,?,?,?)
-        ''', (name or None, message, image_blob, image_mime, interval_min, interval_max,
-              batch_size, batch_pause_seconds, len(phones), session['user_id'])).lastrowid
+                 batch_size, batch_pause_seconds, total_count, invalid_count, created_by)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        ''', (name or None, variants[0], image_blob, image_mime, interval_min, interval_max,
+              batch_size, batch_pause_seconds, len(phones), len(not_on_whatsapp), session['user_id'])).lastrowid
         conn.executemany(
-            'INSERT INTO whatsapp_broadcast_recipients (broadcast_id, phone) VALUES (?,?)',
-            [(broadcast_id, p) for p in phones]
+            'INSERT INTO whatsapp_broadcast_messages (broadcast_id, variant_index, text) VALUES (?,?,?)',
+            [(broadcast_id, i, v) for i, v in enumerate(variants)]
+        )
+        # Round-robin: первому номеру — вариант 0, второму — 1, ... по кругу.
+        conn.executemany(
+            'INSERT INTO whatsapp_broadcast_recipients (broadcast_id, phone, variant_index, status) VALUES (?,?,?,?)',
+            [(broadcast_id, p, i % len(variants), 'invalid' if p in not_on_whatsapp else 'pending')
+             for i, p in enumerate(phones)]
         )
         conn.commit()
 
-    msg = f'Рассылка создана: {len(phones)} номеров.'
-    if invalid:
-        msg += f' Не распознано {invalid} записей — пропущены.'
+    to_send = len(phones) - len(not_on_whatsapp)
+    msg = f'Рассылка создана: {to_send} номеров к отправке'
+    if len(variants) > 1:
+        msg += f' ({len(variants)} варианта(ов) текста по кругу)'
+    msg += '.'
+    if bad_format:
+        msg += f' Не распознан формат — {bad_format}.'
+    if check_failed:
+        msg += ' Проверка регистрации в WhatsApp не выполнена (сервис недоступен/не подключён) — непроверенные номера попробуем отправить как есть.'
+    elif not_on_whatsapp:
+        msg += f' Не зарегистрированы в WhatsApp — {len(not_on_whatsapp)} (отправка пропущена).'
     flash(msg, 'success')
     return redirect(url_for('whatsapp_broadcast_page'))
 
@@ -9094,16 +9150,13 @@ def whatsapp_start_broadcast(broadcast_id):
         if b['status'] == 'running':
             flash('Рассылка уже запущена', 'warning')
             return redirect(url_for('whatsapp_broadcast_page'))
-        phones = [r['phone'] for r in conn.execute(
-            "SELECT phone FROM whatsapp_broadcast_recipients WHERE broadcast_id=? AND status='pending'",
-            (broadcast_id,)
-        ).fetchall()]
-        if not phones:
+        recipients = _wa_pending_recipients(conn, broadcast_id)
+        if not recipients:
             flash('Нет номеров для отправки', 'danger')
             return redirect(url_for('whatsapp_broadcast_page'))
         try:
             whatsapp_api.start_campaign(
-                broadcast_id=broadcast_id, message=b['message_text'], recipients=phones,
+                broadcast_id=broadcast_id, recipients=recipients,
                 interval_min=b['interval_min_seconds'], interval_max=b['interval_max_seconds'],
                 batch_size=b['batch_size'], batch_pause_seconds=b['batch_pause_seconds'],
                 image_bytes=b['image_blob'], image_mime=b['image_mime'],
@@ -9191,18 +9244,14 @@ def whatsapp_resume():
         b = conn.execute("SELECT * FROM whatsapp_broadcasts WHERE status='running' ORDER BY id LIMIT 1").fetchone()
         if not b:
             return jsonify({'none': True})
-        phones = [r['phone'] for r in conn.execute(
-            "SELECT phone FROM whatsapp_broadcast_recipients WHERE broadcast_id=? AND status='pending'",
-            (b['id'],)
-        ).fetchall()]
-        if not phones:
+        recipients = _wa_pending_recipients(conn, b['id'])
+        if not recipients:
             return jsonify({'none': True})
         return jsonify({
             'broadcast_id': b['id'],
-            'message': b['message_text'],
             'image_base64': base64.b64encode(b['image_blob']).decode() if b['image_blob'] else None,
             'image_mime': b['image_mime'],
-            'recipients': phones,
+            'recipients': recipients,
             'interval_min_seconds': b['interval_min_seconds'],
             'interval_max_seconds': b['interval_max_seconds'],
             'batch_size': b['batch_size'],

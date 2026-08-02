@@ -33,12 +33,12 @@ def logout(timeout=10):
     return resp.json()
 
 
-def start_campaign(broadcast_id, message, recipients, interval_min, interval_max,
+def start_campaign(broadcast_id, recipients, interval_min, interval_max,
                     batch_size, batch_pause_seconds, image_bytes=None, image_mime=None,
                     timeout=30):
+    """recipients — список {'phone': ..., 'message': ...} (текст уже подобран по варианту получателя)."""
     data = {
         'broadcastId': str(broadcast_id),
-        'message': message or '',
         'recipients': json.dumps(recipients),
         'intervalMin': str(interval_min),
         'intervalMax': str(interval_max),
@@ -61,3 +61,15 @@ def stop_campaign(broadcast_id, timeout=10):
     if not resp.ok:
         raise RuntimeError(f'{resp.status_code} {resp.text[:400]}')
     return resp.json()
+
+
+def check_numbers(phones, timeout=60):
+    """Проверка прямо на WhatsApp, зарегистрирован ли номер — до отправки, чтобы не
+    тратить впустую отправки/паузы на заведомо мёртвые номера. Требует активной сессии
+    (подключённого WhatsApp) — вызывающий код должен сам решить, что делать при ошибке
+    (например, просто пропустить проверку и оставить номера как есть)."""
+    resp = requests.post(f'{BASE_URL}/numbers/check', json={'phones': phones}, timeout=timeout)
+    log.info('check_numbers count=%s status=%s', len(phones), resp.status_code)
+    if not resp.ok:
+        raise RuntimeError(f'{resp.status_code} {resp.text[:400]}')
+    return resp.json().get('results', {})
