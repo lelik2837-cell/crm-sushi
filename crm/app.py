@@ -4181,7 +4181,7 @@ def shift_view(shift_id):
             if s['role_snapshot'] != 'courier' and s['employee_id'] and s['employee_id'] not in seen_taxi_ids:
                 seen_taxi_ids.add(s['employee_id'])
                 taxi_staff.append(s)
-        can_edit = (role == 'owner') or (shift['status'] == 'open')
+        can_edit = (role in ('owner', 'director')) or (shift['status'] == 'open')
         try:
             shift_weekday = date.fromisoformat(shift['date']).weekday()  # 0=Mon, 4=Fri, 5=Sat
         except Exception:
@@ -11364,7 +11364,14 @@ def _can_edit_shift(shift_id):
         shift = conn.execute('SELECT * FROM shifts WHERE id=?', (shift_id,)).fetchone()
         if not shift:
             return False
-        return shift['status'] == 'open' and shift['branch_id'] in _session_branch_ids()
+        if shift['branch_id'] not in _session_branch_ids():
+            return False
+        # Управляющий (director), как и владелец, может редактировать уже закрытые
+        # смены своих филиалов «на месте», без переоткрытия — остальные роли (admin,
+        # callcenter) по-прежнему только пока смена открыта.
+        if role == 'director':
+            return True
+        return shift['status'] == 'open'
 
 
 def _f(data, key):
