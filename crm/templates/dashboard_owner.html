@@ -737,14 +737,14 @@ function loadDeliveryTimeBlock(dateFrom, dateTo) {
         .then(function(d) {
             if (!d.ok) return;
             var el = document.getElementById('rm-delivery-time-val');
-            if (el) el.textContent = d.count > 0 ? d.avg : '—';
+            if (el) el.textContent = d.count > 0 ? Math.round(d.avg) : '—';
             var branchEl = document.getElementById('rm-delivery-time-branches');
             if (branchEl) {
                 var rows = (d.branches || []).filter(function(b) { return b.count > 0; });
                 branchEl.innerHTML = rows.length ? rows.map(function(b) {
                     return '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">' +
                         '<span style="font-size:11px;color:#64748b;font-weight:600;">' + b.name + '</span>' +
-                        '<span style="font-size:12px;font-weight:700;color:#334155;">' + b.avg + ' мин</span>' +
+                        '<span style="font-size:12px;font-weight:700;color:#334155;">' + Math.round(b.avg) + '</span>' +
                     '</div>';
                 }).join('') : '<div style="font-size:11px;color:#94a3b8;">Нет данных за период</div>';
             }
