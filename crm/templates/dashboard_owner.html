@@ -219,6 +219,28 @@
         </div>
       </div>
 
+      <!-- 7. Промокоды: % от выручки + топ по выручке за период -->
+      <div id="rm-promo-card" style="background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 100%); border:1.5px solid #e2e8f0; border-radius:14px; padding:16px 18px; box-shadow:0 2px 10px rgba(0,0,0,0.06); order:{{ dash_order.get('promo', 6) }};{% if not dash_visible.get('promo', true) %} display:none;{% endif %}">
+        <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:4px;">Промокоды</div>
+        <div style="display:flex; align-items:baseline; gap:2px; line-height:1;">
+          <span id="rm-promo-pct" style="font-size:34px;font-weight:800;color:#0891b2;letter-spacing:-1px;">—</span>
+          <span style="font-size:18px;font-weight:700;color:#0891b2;">%</span>
+        </div>
+        <div style="font-size:12px;color:#94a3b8;margin-bottom:8px;">от выручки</div>
+        <div id="rm-promo-list" style="display:flex;flex-direction:column;gap:4px;border-top:1px solid #f1f5f9;padding-top:8px;"></div>
+      </div>
+
+      <!-- 8. Время доставки: среднее за период + по филиалам -->
+      <div id="rm-delivery-time-card" style="background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 100%); border:1.5px solid #e2e8f0; border-radius:14px; padding:16px 18px; box-shadow:0 2px 10px rgba(0,0,0,0.06); order:{{ dash_order.get('delivery_time', 7) }};{% if not dash_visible.get('delivery_time', true) %} display:none;{% endif %}">
+        <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:4px;">Время доставки</div>
+        <div style="display:flex; align-items:baseline; gap:2px; line-height:1;">
+          <span id="rm-delivery-time-val" style="font-size:34px;font-weight:800;color:#059669;letter-spacing:-1px;">—</span>
+          <span style="font-size:15px;font-weight:700;color:#059669;">мин</span>
+        </div>
+        <div style="font-size:12px;color:#94a3b8;margin-bottom:8px;">среднее за период</div>
+        <div id="rm-delivery-time-branches" style="display:flex;flex-direction:column;gap:4px;border-top:1px solid #f1f5f9;padding-top:8px;"></div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -673,6 +695,60 @@ function clearMetrics() {
     el = document.getElementById('rm-region-pct'); if(el) el.textContent = '—';
     el = document.getElementById('rm-nvkz-sum');   if(el) el.textContent = '— ₽';
     el = document.getElementById('rm-kem-sum');    if(el) el.textContent = '— ₽';
+    el = document.getElementById('rm-promo-pct');  if(el) el.textContent = '—';
+    el = document.getElementById('rm-promo-list'); if(el) el.innerHTML = '';
+    el = document.getElementById('rm-delivery-time-val'); if(el) el.textContent = '—';
+    el = document.getElementById('rm-delivery-time-branches'); if(el) el.innerHTML = '';
+}
+
+// «Промокоды» — % выручки, пришедшей с промокодом, за период + топ-3 промокода
+// по сумме выручки. Источник — тот же /api/promo-list, что у страницы
+// «Отчёт по промокодам» (crm/templates/promo_dashboard.html).
+function loadPromoBlock(dateFrom, dateTo) {
+    fetch('/api/promo-list?date_from=' + dateFrom + '&date_to=' + dateTo + _revBranchSuffix())
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.ok) return;
+            var promos = d.promos || [];
+            var el = document.getElementById('rm-promo-pct');
+            if (el) {
+                var promoRevenue = promos.reduce(function(s, p) { return s + (p.revenue || 0); }, 0);
+                el.textContent = d.total_revenue > 0 ? Math.round(promoRevenue / d.total_revenue * 100) : '—';
+            }
+            var listEl = document.getElementById('rm-promo-list');
+            if (listEl) {
+                var top = promos.slice(0, 3);
+                listEl.innerHTML = top.length ? top.map(function(p) {
+                    return '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">' +
+                        '<span style="font-size:11px;color:#64748b;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + p.name + '</span>' +
+                        '<span style="font-size:12px;font-weight:700;color:#334155;white-space:nowrap;">' + fmtNum(p.revenue) + ' ₽</span>' +
+                    '</div>';
+                }).join('') : '<div style="font-size:11px;color:#94a3b8;">Нет промокодов за период</div>';
+            }
+        });
+}
+
+// «Время доставки» — среднее время доставки (мин) за период и по филиалам.
+// Источник — тот же /api/wait-summary, что у страницы «Время ожидания»
+// (crm/templates/wait_dashboard.html), режим mode=delivery/metric=delivery.
+function loadDeliveryTimeBlock(dateFrom, dateTo) {
+    fetch('/api/wait-summary?date_from=' + dateFrom + '&date_to=' + dateTo + '&mode=delivery&metric=delivery' + _revBranchSuffix())
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.ok) return;
+            var el = document.getElementById('rm-delivery-time-val');
+            if (el) el.textContent = d.count > 0 ? d.avg : '—';
+            var branchEl = document.getElementById('rm-delivery-time-branches');
+            if (branchEl) {
+                var rows = (d.branches || []).filter(function(b) { return b.count > 0; });
+                branchEl.innerHTML = rows.length ? rows.map(function(b) {
+                    return '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">' +
+                        '<span style="font-size:11px;color:#64748b;font-weight:600;">' + b.name + '</span>' +
+                        '<span style="font-size:12px;font-weight:700;color:#334155;">' + b.avg + ' мин</span>' +
+                    '</div>';
+                }).join('') : '<div style="font-size:11px;color:#94a3b8;">Нет данных за период</div>';
+            }
+        });
 }
 
 // Блок "Кемерово / Новокузнецк" всегда считается по всем филиалам,
@@ -1048,6 +1124,8 @@ function loadRevCard(period) {
     }
 
     loadRegionSplit(dateFrom, dateTo, todayMode);
+    loadPromoBlock(dateFrom, dateTo);
+    loadDeliveryTimeBlock(dateFrom, dateTo);
 
     // Для текущего (незавершённого) месяца план для сравнения берём только
     // за прошедшие дни (1-е число — сегодня), а не за весь месяц целиком —

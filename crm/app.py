@@ -221,12 +221,14 @@ _SAFE_OPS = {
 # (dashboard_owner.html) — состав и порядок настраивается каждым
 # пользователем отдельно в /settings?tab=dashboard.
 DASHBOARD_REVENUE_BLOCKS = [
-    ('payments',  'Оплата'),
-    ('fot',       'ФОТ'),
-    ('region',    'Кемерово / Новокузнецк'),
-    ('pickup',    'Самовывоз'),
-    ('delivery',  'Доставка'),
-    ('preorders', 'Предзаказы'),
+    ('payments',      'Оплата'),
+    ('fot',           'ФОТ'),
+    ('region',        'Кемерово / Новокузнецк'),
+    ('pickup',        'Самовывоз'),
+    ('delivery',      'Доставка'),
+    ('preorders',     'Предзаказы'),
+    ('promo',         'Промокоды'),
+    ('delivery_time', 'Время доставки'),
 ]
 DASHBOARD_REVENUE_BLOCK_TITLES = dict(DASHBOARD_REVENUE_BLOCKS)
 
