@@ -3326,25 +3326,6 @@ def api_preorders_today():
     })
 
 
-@app.route('/api/orders-last-sync')
-@login_required
-def api_orders_last_sync():
-    """Когда последний раз реально пришли и разобрались данные заказов из Гуляша
-    (вебхук /api/orders-webhook — тот же источник, что наполняет orders_report,
-    на нём строится «сегодняшняя» выручка на дашборде). Разница считается в
-    julianday() — обе стороны в UTC (SQLite CURRENT_TIMESTAMP), часовой пояс
-    сокращается сам, отдельно конвертировать не нужно."""
-    if not item_visible('dashboard'):
-        return jsonify({'ok': False, 'error': 'forbidden'}), 403
-    with get_db() as conn:
-        row = conn.execute('''
-            SELECT CAST((julianday('now') - julianday(MAX(created_at))) * 24 * 60 AS INTEGER) AS minutes_ago
-            FROM api_orders_log WHERE parsed_ok=1
-        ''').fetchone()
-    minutes_ago = row['minutes_ago'] if row and row['minutes_ago'] is not None else None
-    return jsonify({'ok': True, 'minutes_ago': max(0, minutes_ago) if minutes_ago is not None else None})
-
-
 @app.route('/api/revenue-days')
 @login_required
 @menu_permission_required('dashboard')
