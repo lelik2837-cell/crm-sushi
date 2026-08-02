@@ -96,9 +96,9 @@
       <thead class="table-light">
         <tr>
           <th class="p-sort" style="cursor:pointer;user-select:none">Промокод <span class="p-arrow text-muted"></span></th>
-          <th class="p-sort" style="cursor:pointer;user-select:none">Последний заказ <span class="p-arrow text-muted"></span></th>
           <th class="p-sort text-end" style="cursor:pointer;user-select:none">Сумма выручки <span class="p-arrow text-muted"></span></th>
           <th class="p-sort text-end" style="cursor:pointer;user-select:none">% от выручки <span class="p-arrow text-muted"></span></th>
+          <th class="p-sort text-end" style="cursor:pointer;user-select:none">Количество заказов <span class="p-arrow text-muted"></span></th>
           <th class="p-sort text-end" style="cursor:pointer;user-select:none">Новых клиентов <span class="p-arrow text-muted"></span></th>
           <th class="p-sort text-end" style="cursor:pointer;user-select:none">Средний чек <span class="p-arrow text-muted"></span></th>
         </tr>
@@ -463,11 +463,6 @@ function loadPromoCard(period) {
     }
 }
 
-function fmtLastUsed(iso) {
-    if (!iso) return '—';
-    return iso.slice(8,10) + '.' + iso.slice(5,7) + '.' + iso.slice(0,4);
-}
-
 function loadPromoList() {
     var dateFrom, dateTo;
     if (promoPeriod === 'custom' && promoCustomFrom && promoCustomTo) {
@@ -499,9 +494,9 @@ function loadPromoList() {
             tbody.innerHTML = d.promos.map(function(p) {
                 return '<tr data-name="' + p.name.replace(/"/g,'&quot;') + '"' + (p.name === selectedPromo ? ' class="table-active"' : '') + '>' +
                     '<td class="fw-semibold"><a href="#" onclick="selectPromo(' + JSON.stringify(p.name) + '); return false;" class="text-decoration-none">' + p.name + '</a></td>' +
-                    '<td class="text-muted" data-val="' + (p.last_used || '') + '">' + fmtLastUsed(p.last_used) + '</td>' +
                     '<td class="text-end fw-semibold" data-val="' + p.revenue + '">' + fmtNum(p.revenue) + ' ₽</td>' +
                     '<td class="text-end" data-val="' + p.pct + '">' + fmtPct1(p.pct) + '%</td>' +
+                    '<td class="text-end" data-val="' + p.count + '">' + p.count + '</td>' +
                     '<td class="text-end" data-val="' + p.new_clients + '">' + p.new_clients + '</td>' +
                     '<td class="text-end" data-val="' + p.avg_check + '">' + fmtNum(p.avg_check) + ' ₽</td>' +
                 '</tr>';
