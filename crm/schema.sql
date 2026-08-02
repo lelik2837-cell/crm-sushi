@@ -133,6 +133,15 @@ CREATE TABLE IF NOT EXISTS kpi_blocks (
     is_active INTEGER DEFAULT 1
 );
 
+CREATE TABLE IF NOT EXISTS user_dashboard_blocks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    block_key TEXT NOT NULL,
+    is_visible INTEGER DEFAULT 1,
+    sort_order INTEGER DEFAULT 0,
+    UNIQUE(user_id, block_key)
+);
+
 CREATE TABLE IF NOT EXISTS bonus_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     role TEXT NOT NULL,

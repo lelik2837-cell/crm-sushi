@@ -217,6 +217,40 @@ _SAFE_OPS = {
     ast.USub: _op.neg, ast.UAdd: lambda x: x,
 }
 
+# Мелкие блоки под основной карточкой выручки на дашборде директора
+# (dashboard_owner.html) — состав и порядок настраивается каждым
+# пользователем отдельно в /settings?tab=dashboard.
+DASHBOARD_REVENUE_BLOCKS = [
+    ('payments',  'Оплата'),
+    ('fot',       'ФОТ'),
+    ('region',    'Кемерово / Новокузнецк'),
+    ('pickup',    'Самовывоз'),
+    ('delivery',  'Доставка'),
+    ('preorders', 'Предзаказы'),
+]
+DASHBOARD_REVENUE_BLOCK_TITLES = dict(DASHBOARD_REVENUE_BLOCKS)
+
+
+def get_user_dashboard_blocks(conn, user_id):
+    existing = {r['block_key'] for r in conn.execute(
+        'SELECT block_key FROM user_dashboard_blocks WHERE user_id=?', (user_id,)
+    ).fetchall()}
+    for i, (key, _title) in enumerate(DASHBOARD_REVENUE_BLOCKS):
+        if key not in existing:
+            conn.execute(
+                'INSERT INTO user_dashboard_blocks (user_id, block_key, is_visible, sort_order) VALUES (?,?,1,?)',
+                (user_id, key, i)
+            )
+    rows = conn.execute(
+        'SELECT block_key, is_visible, sort_order FROM user_dashboard_blocks '
+        'WHERE user_id=? ORDER BY sort_order, id', (user_id,)
+    ).fetchall()
+    return [{
+        'key': r['block_key'],
+        'title': DASHBOARD_REVENUE_BLOCK_TITLES.get(r['block_key'], r['block_key']),
+        'visible': bool(r['is_visible']),
+    } for r in rows]
+
 
 def safe_eval(formula, variables):
     def _eval(node):
@@ -2534,11 +2568,13 @@ def dashboard():
                 WHERE s.date >= date('now', 'start of month')
             ''').fetchone()
             branch_groups = get_branch_groups(conn)
+            dash_blocks = get_user_dashboard_blocks(conn, session['user_id'])
             return render_template('dashboard_owner.html',
                 branches=branches, stats=stats, weekly=weekly,
                 open_shifts=open_shifts, kpi_blocks=kpi_blocks,
                 month_rev=month_rev, month_fot=month_fot['fot'] or 0,
-                branch_groups=branch_groups, today=date.today().isoformat())
+                branch_groups=branch_groups, today=date.today().isoformat(),
+                dash_blocks=dash_blocks)
         else:
             if not item_visible('dashboard'):
                 # "dashboard" — единственная всегда-достижимая страница после логина,
@@ -6916,6 +6952,7 @@ def settings():
             LEFT JOIN branch_groups bg ON bg.id = spr.branch_group_id
             ORDER BY spr.day_of_month, spr.id
         ''').fetchall()
+        dash_blocks = get_user_dashboard_blocks(conn, session['user_id']) if session.get('role') == 'owner' else []
     return render_template('settings.html',
         exp_cats=exp_cats, exp_cats_parents=exp_cats_parents,
         cat_branches=cat_branches,
@@ -6934,7 +6971,8 @@ def settings():
         role_perms=role_perms, menu_items=MENU_ITEMS, menu_group_labels=MENU_GROUP_LABELS,
         menu_subitems=MENU_SUBITEMS,
         role_configurable=ROLE_CONFIGURABLE, login_role_labels=LOGIN_ROLE_LABELS,
-        salary_payout_rules=salary_payout_rules)
+        salary_payout_rules=salary_payout_rules,
+        dash_blocks=dash_blocks)
 
 
 @app.route('/settings/role-permissions/save', methods=['POST'])
@@ -7140,6 +7178,47 @@ def toggle_kpi_block(block_id):
         conn.execute('UPDATE kpi_blocks SET is_active=1-is_active WHERE id=?', (block_id,))
         conn.commit()
     return redirect(url_for('settings'))
+
+
+@app.route('/settings/dashboard-blocks/<block_key>/toggle', methods=['POST'])
+@login_required
+@owner_required
+def toggle_dashboard_block(block_key):
+    if block_key not in DASHBOARD_REVENUE_BLOCK_TITLES:
+        flash('Неизвестный блок', 'danger')
+        return redirect(url_for('settings', tab='dashboard'))
+    with get_db() as conn:
+        get_user_dashboard_blocks(conn, session['user_id'])  # гарантирует наличие строки
+        conn.execute(
+            'UPDATE user_dashboard_blocks SET is_visible=1-is_visible WHERE user_id=? AND block_key=?',
+            (session['user_id'], block_key)
+        )
+        conn.commit()
+    return redirect(url_for('settings', tab='dashboard'))
+
+
+@app.route('/settings/dashboard-blocks/<block_key>/move', methods=['POST'])
+@login_required
+@owner_required
+def move_dashboard_block(block_key):
+    direction = request.form.get('direction')
+    if block_key not in DASHBOARD_REVENUE_BLOCK_TITLES or direction not in ('up', 'down'):
+        flash('Неизвестный блок', 'danger')
+        return redirect(url_for('settings', tab='dashboard'))
+    with get_db() as conn:
+        blocks = get_user_dashboard_blocks(conn, session['user_id'])
+        keys = [b['key'] for b in blocks]
+        idx = keys.index(block_key)
+        swap_idx = idx - 1 if direction == 'up' else idx + 1
+        if 0 <= swap_idx < len(keys):
+            keys[idx], keys[swap_idx] = keys[swap_idx], keys[idx]
+            for i, key in enumerate(keys):
+                conn.execute(
+                    'UPDATE user_dashboard_blocks SET sort_order=? WHERE user_id=? AND block_key=?',
+                    (i, session['user_id'], key)
+                )
+            conn.commit()
+    return redirect(url_for('settings', tab='dashboard'))
 
 
 @app.route('/settings/bonus-rules/add', methods=['POST'])

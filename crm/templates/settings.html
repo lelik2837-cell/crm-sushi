@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% set active_tab = request.args.get('tab', 'categories') %}
-{% set tab_titles = {'categories': 'Категории расходов / доходов', 'bonuses': 'Премии', 'rates': 'Ставки сотрудников', 'api': 'Интеграции (1С, выручка)', 'roles': 'Роли и доступ', 'salary_payouts': 'Настройки выплат ежемесячной ЗП'} %}
+{% set tab_titles = {'categories': 'Категории расходов / доходов', 'bonuses': 'Премии', 'rates': 'Ставки сотрудников', 'api': 'Интеграции (1С, выручка)', 'roles': 'Роли и доступ', 'salary_payouts': 'Настройки выплат ежемесячной ЗП', 'dashboard': 'Дашборд'} %}
 {% block title %}Настройки — {{ tab_titles.get(active_tab, '') }}{% endblock %}
 {% block content %}
 
@@ -1743,6 +1743,63 @@
         {% endif %}
     </div>
 
+    </div>{% endif %}
+
+    {% if active_tab == 'dashboard' %}<div>
+        <div class="alert alert-info mb-4">
+            <i class="bi bi-info-circle me-1"></i>
+            Здесь настраивается, какие небольшие блоки показывать под основной карточкой выручки
+            на дашборде («Оплата», «ФОТ» и т.д.), и в каком порядке. Настройка личная — у каждого
+            пользователя-владельца свой набор и порядок блоков, на других пользователей не влияет.
+        </div>
+        <div class="row">
+            <div class="col-md-7">
+                <div class="card">
+                    <div class="card-header bg-light fw-bold">
+                        <i class="bi bi-grid"></i> Блоки под карточкой выручки
+                    </div>
+                    <div class="card-body p-0">
+                        <table class="table table-sm mb-0 align-middle">
+                            <tbody>
+                            {% for b in dash_blocks %}
+                            <tr class="{% if not b.visible %}opacity-50{% endif %}">
+                                <td style="width:1%;white-space:nowrap;">
+                                    <form method="POST" action="{{ url_for('move_dashboard_block', block_key=b.key) }}" class="d-inline">
+                                        <input type="hidden" name="direction" value="up">
+                                        <button class="btn btn-sm btn-outline-secondary" title="Выше" {% if loop.first %}disabled{% endif %}>
+                                            <i class="bi bi-arrow-up"></i>
+                                        </button>
+                                    </form>
+                                    <form method="POST" action="{{ url_for('move_dashboard_block', block_key=b.key) }}" class="d-inline">
+                                        <input type="hidden" name="direction" value="down">
+                                        <button class="btn btn-sm btn-outline-secondary" title="Ниже" {% if loop.last %}disabled{% endif %}>
+                                            <i class="bi bi-arrow-down"></i>
+                                        </button>
+                                    </form>
+                                </td>
+                                <td class="fw-semibold">{{ b.title }}</td>
+                                <td class="text-center">
+                                    {% if b.visible %}
+                                    <span class="badge bg-success">Показан</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">Скрыт</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-end">
+                                    <form method="POST" action="{{ url_for('toggle_dashboard_block', block_key=b.key) }}" class="d-inline">
+                                        <button class="btn btn-sm btn-outline-secondary" title="Показать/скрыть">
+                                            <i class="bi bi-{% if b.visible %}eye-slash{% else %}eye{% endif %}"></i>
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>{% endif %}
 
     {% if active_tab == 'roles' %}<div>
