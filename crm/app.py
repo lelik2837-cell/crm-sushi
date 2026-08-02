@@ -223,7 +223,7 @@ _SAFE_OPS = {
 DASHBOARD_REVENUE_BLOCKS = [
     ('payments',      'Оплата'),
     ('fot',           'ФОТ'),
-    ('region',        'Кемерово / Новокузнецк'),
+    ('region',        'Кем / Нвкз'),
     ('pickup',        'Самовывоз'),
     ('delivery',      'Доставка'),
     ('preorders',     'Предзаказы'),
