@@ -81,6 +81,7 @@
         </div>
       </div>
     </div>
+    <div id="rev-last-sync" style="font-size:10px; color:#94a3b8; margin-top:4px;"></div>
   </div>
   <!-- Right: detail metrics -->
   <div class="col-12 col-lg-7">
@@ -1227,6 +1228,36 @@ function loadRevCard(period) {
 }
 
 loadRevCard('today');
+
+// «Обновлено N мин назад» под карточкой выручки — как давно реально пришли
+// (и разобрались) данные заказов из Гуляша, независимо от выбранного периода
+// на карточке. Обновляется само раз в минуту, без перезагрузки страницы.
+function pluralRu(n, one, few, many) {
+    var n10 = n % 10, n100 = n % 100;
+    if (n10 === 1 && n100 !== 11) return one;
+    if (n10 >= 2 && n10 <= 4 && (n100 < 10 || n100 >= 20)) return few;
+    return many;
+}
+function fmtAgoRu(minutes) {
+    if (minutes < 1) return 'только что';
+    if (minutes < 60) return minutes + ' ' + pluralRu(minutes, 'минуту', 'минуты', 'минут') + ' назад';
+    var hours = Math.floor(minutes / 60);
+    if (hours < 24) return hours + ' ' + pluralRu(hours, 'час', 'часа', 'часов') + ' назад';
+    var days = Math.floor(hours / 24);
+    return days + ' ' + pluralRu(days, 'день', 'дня', 'дней') + ' назад';
+}
+function updateLastSync() {
+    var el = document.getElementById('rev-last-sync');
+    if (!el) return;
+    fetch('/api/orders-last-sync')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.ok || d.minutes_ago === null) { el.textContent = ''; return; }
+            el.textContent = 'Обновлено ' + fmtAgoRu(d.minutes_ago);
+        });
+}
+updateLastSync();
+setInterval(updateLastSync, 60000);
 </script>
 {% endblock %}
 
