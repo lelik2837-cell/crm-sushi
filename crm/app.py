@@ -1141,6 +1141,14 @@ def init_db():
             pass
 
         try:
+            # Сдвиг месяца для отчёта «Контакт-центр» (см. contact_center_report) —
+            # у некоторых контрагентов оплата приходит позже/раньше периода, за
+            # который она была начислена (например оплата в августе за июль).
+            conn.execute("ALTER TABLE contractors ADD COLUMN cc_month_offset INTEGER DEFAULT 0")
+        except Exception:
+            pass
+
+        try:
             conn.execute("ALTER TABLE branches ADD COLUMN abbr TEXT DEFAULT ''")
         except Exception:
             pass
@@ -15307,6 +15315,35 @@ def _month_range(date_from, date_to):
     return months
 
 
+def _shift_month(mo, offset):
+    """'YYYY-MM' + число месяцев (может быть отрицательным) -> 'YYYY-MM'."""
+    if not offset:
+        return mo
+    y, m = int(mo[:4]), int(mo[5:7])
+    m += offset
+    while m > 12:
+        m -= 12
+        y += 1
+    while m < 1:
+        m += 12
+        y -= 1
+    return f'{y:04d}-{m:02d}'
+
+
+def _add_months_to_date(d, delta):
+    """'YYYY-MM-DD' + число месяцев -> 'YYYY-MM-DD' (день клампится к концу месяца)."""
+    y, m, day = int(d[:4]), int(d[5:7]), int(d[8:10])
+    m += delta
+    while m > 12:
+        m -= 12
+        y += 1
+    while m < 1:
+        m += 12
+        y -= 1
+    last_day = calendar.monthrange(y, m)[1]
+    return f'{y:04d}-{m:02d}-{min(day, last_day):02d}'
+
+
 @app.route('/report/contact-center')
 @login_required
 @menu_permission_required('contact_center_report')
@@ -15349,10 +15386,21 @@ def contact_center_report():
 
         # Расходы по контрагентам категории «Контакт-центр»
         contractors = conn.execute(
-            "SELECT id, name FROM contractors WHERE category=? AND is_active=1 ORDER BY name",
+            "SELECT id, name, COALESCE(cc_month_offset,0) AS cc_month_offset "
+            "FROM contractors WHERE category=? AND is_active=1 ORDER BY name",
             (cc_cat_code,)
         ).fetchall()
+        cc_offsets = {c['id']: c['cc_month_offset'] for c in contractors}
 
+        # Сдвиг месяца (см. cc_offsets/настройка «шестерёнка» на странице) — у части
+        # контрагентов оплата приходит месяцем раньше/позже периода, за который она
+        # начислена, и должна отображаться в колонке того периода, а не даты платежа.
+        # Расширяем выборку на ±1 месяц за пределы видимого диапазона, чтобы платежи,
+        # сдвигающиеся ВНУТРЬ выбранного периода с его границы, не терялись — и наоборот
+        # отфильтровываем те, что после сдвига выходят ЗА пределы months.
+        months_set = set(months)
+        ext_from = _add_months_to_date(date_from, -1)
+        ext_to   = _add_months_to_date(date_to, 1)
         ctr_pay = {}  # contractor_id -> {month: amount}
         for r in conn.execute('''
             SELECT bt.contractor_id AS cid, strftime('%Y-%m', bt.txn_date) AS month,
@@ -15362,8 +15410,12 @@ def contact_center_report():
             WHERE c.category=? AND bt.amount<0 AND bt.is_ignored=0
               AND bt.txn_date BETWEEN ? AND ?
             GROUP BY bt.contractor_id, month
-        ''', (cc_cat_code, date_from, date_to)).fetchall():
-            ctr_pay.setdefault(r['cid'], {})[r['month']] = r['amt']
+        ''', (cc_cat_code, ext_from, ext_to)).fetchall():
+            shifted = _shift_month(r['month'], cc_offsets.get(r['cid'], 0))
+            if shifted not in months_set:
+                continue
+            by_month = ctr_pay.setdefault(r['cid'], {})
+            by_month[shifted] = by_month.get(shifted, 0.0) + r['amt']
 
         # Выручка по филиалам ПО МЕСЯЦАМ за период — база для распределения расходов
         # на контакт-центр (доля филиала в выручке месяца применяется к итогу
@@ -15484,7 +15536,33 @@ def contact_center_report():
         pct_of_revenue_row=pct_of_revenue_row,
         date_from=date_from, date_to=date_to,
         group_alloc_rows=group_alloc_rows, ungrouped_alloc_rows=ungrouped_alloc_rows,
+        cc_contractors=contractors,
     )
+
+
+@app.route('/report/contact-center/offsets/save', methods=['POST'])
+@login_required
+@menu_permission_required('contact_center_report')
+def contact_center_offsets_save():
+    date_from = request.form.get('date_from', '')
+    date_to   = request.form.get('date_to', '')
+    with get_db() as conn:
+        cc_cat_code = _ensure_contact_center_category(conn)
+        for cid in request.form.getlist('contractor_id'):
+            if not cid.isdigit():
+                continue
+            try:
+                offset = int(request.form.get(f'offset_{cid}', '0'))
+            except ValueError:
+                offset = 0
+            offset = max(-1, min(1, offset))
+            conn.execute(
+                'UPDATE contractors SET cc_month_offset=? WHERE id=? AND category=?',
+                (offset, int(cid), cc_cat_code)
+            )
+        conn.commit()
+    flash('Настройки отображения контакт-центра сохранены', 'success')
+    return redirect(url_for('contact_center_report', date_from=date_from, date_to=date_to))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
