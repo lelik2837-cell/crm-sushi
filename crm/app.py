@@ -3635,12 +3635,12 @@ def api_wait_summary():
         total = conn.execute(f'''
             SELECT COUNT(*) AS cnt, AVG({col}) AS avg_val
             FROM orders_report
-            WHERE {where} AND DATE(received_at) BETWEEN ? AND ? {bf}
+            WHERE {where} AND received_at >= ? AND received_at < date(?, '+1 day') {bf}
         ''', [date_from, date_to] + bparams).fetchone()
         branch_rows = conn.execute(f'''
             SELECT branch_raw AS name, COUNT(*) AS cnt, AVG({col}) AS avg_val
             FROM orders_report
-            WHERE {where} AND DATE(received_at) BETWEEN ? AND ? {bf}
+            WHERE {where} AND received_at >= ? AND received_at < date(?, '+1 day') {bf}
             GROUP BY branch_raw ORDER BY name
         ''', [date_from, date_to] + bparams).fetchall()
 
@@ -3806,7 +3806,7 @@ def api_promo_list():
     with get_db() as conn:
         total_row = conn.execute(f'''
             SELECT COALESCE(SUM(amount),0) AS total
-            FROM orders_report WHERE DATE(delivery_at) BETWEEN ? AND ? {bf}
+            FROM orders_report WHERE delivery_at >= ? AND delivery_at < date(?, '+1 day') {bf}
         ''', [date_from, date_to] + bparams).fetchone()
         total_revenue = total_row['total'] or 0
 
@@ -3816,7 +3816,7 @@ def api_promo_list():
                    SUM(CASE WHEN new_client='Да' THEN 1 ELSE 0 END) AS new_clients,
                    MAX(delivery_at) AS last_used
             FROM orders_report
-            WHERE DATE(delivery_at) BETWEEN ? AND ? {bf}
+            WHERE delivery_at >= ? AND delivery_at < date(?, '+1 day') {bf}
               AND promo_code IS NOT NULL AND promo_code != ''
             GROUP BY promo_code
             ORDER BY revenue DESC
