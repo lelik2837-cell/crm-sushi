@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS salary_payments (
     paid_by_name TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+CREATE INDEX IF NOT EXISTS idx_salary_payments_employee_shift ON salary_payments(employee_shift_id);
 
 CREATE TABLE IF NOT EXISTS expense_categories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
