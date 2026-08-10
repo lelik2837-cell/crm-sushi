@@ -5824,8 +5824,12 @@ def employees():
                 branches = all_branches
         else:
             fired_emps = []
+            # Управляющий (director) видит полный список филиалов для карточки
+            # сотрудника (назначение филиалов/область ежемес. оплаты) так же, как
+            # владелец — независимо от настройки branch_scope в «Роли и доступ»,
+            # которая тут регулирует другое (какие сотрудники видны в списке).
             all_branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall() \
-                if can_pick_other_branches('employees') else []
+                if (role == 'director' or can_pick_other_branches('employees')) else []
             bids = [int(b) for b in get_effective_branch_ids('employees', _req_branches) or []]
             if bids:
                 ids_str = ','.join(str(int(b)) for b in bids)
@@ -5932,6 +5936,7 @@ def employees():
                            pm_role_branches_map=pm_role_branches_map,
                            pos_abbr_map=pos_abbr_map,
                            role_labels=ROLE_LABELS, is_owner=(role == 'owner'),
+                           can_edit_card=(role in ('owner', 'director')),
                            address_history=address_history,
                            rate_templates=all_tmpls,
                            rate_templates_by_role=tmpls_by_role,
@@ -6139,7 +6144,7 @@ def edit_employee(emp_id):
         # Меняем режим оплаты только с текущей даты — история хранит момент смены,
         # чтобы уже прошедшие смены не блокировались задним числом (см. pay_staff).
         _log_pay_monthly_change(conn, emp_id, final_role, emp['pay_monthly'], pay_monthly, pay_monthly_from)
-        if session.get('role') == 'owner':
+        if session.get('role') in ('owner', 'director'):
             branch_ids_form = [bid for bid in request.form.getlist('branch_ids') if bid.isdigit()]
             if branch_ids_form:
                 conn.execute('UPDATE employees SET branch_id=? WHERE id=?', (int(branch_ids_form[0]), emp_id))
