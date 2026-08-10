@@ -40,16 +40,23 @@
 </div>
 
 {# ═══ ФИЛЬТРЫ ═══ #}
+{% set _MONTHS_RU_PNL = ['','Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'] %}
+{% set _cur_m_pnl = date_from[5:7] | int %}
+{% set _cur_y_pnl = date_from[:4] %}
+{% set _month_lbl_pnl = _MONTHS_RU_PNL[_cur_m_pnl] ~ ' ' ~ _cur_y_pnl %}
 <div class="card mb-4">
     <div class="card-body py-3">
-        <form method="GET" action="{{ url_for('pnl_report') }}" class="row g-2 align-items-end">
+        <form method="GET" action="{{ url_for('pnl_report') }}" class="row g-2 align-items-end" id="pnlFilterForm">
+            <input type="hidden" name="date_from" id="pnl_df" value="{{ date_from }}">
+            <input type="hidden" name="date_to"   id="pnl_dt" value="{{ date_to }}">
             <div class="col-sm-auto">
-                <label class="form-label small fw-semibold mb-1">С</label>
-                <input type="date" name="date_from" class="form-control form-control-sm" value="{{ date_from }}">
-            </div>
-            <div class="col-sm-auto">
-                <label class="form-label small fw-semibold mb-1">По</label>
-                <input type="date" name="date_to" class="form-control form-control-sm" value="{{ date_to }}">
+                <label class="form-label small fw-semibold mb-1">Период</label>
+                <div class="d-flex align-items-center gap-1" style="white-space:nowrap;">
+                    <button type="button" class="btn btn-outline-secondary btn-sm px-2" style="font-size:15px;line-height:1;" onclick="shiftPnlMonth(-1)" title="Предыдущий месяц">‹</button>
+                    <button type="button" class="btn btn-outline-primary btn-sm px-2 fw-semibold" id="pnlMonthLabel" onclick="setPnlCurrentMonth()" title="Текущий месяц" style="white-space:nowrap;">{{ _month_lbl_pnl }}</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm px-2" style="font-size:15px;line-height:1;" onclick="shiftPnlMonth(1)" title="Следующий месяц">›</button>
+                    <input type="text" id="pnlRangePicker" class="form-control form-control-sm" style="width:110px;cursor:pointer;" readonly placeholder="дд.мм — дд.мм">
+                </div>
             </div>
             {% if session.get('role') == 'owner' or can_pick_other_branches('pnl_report') %}
             <div class="col-sm-auto">
@@ -421,6 +428,74 @@ function pnlSelectGroup(ids) {
     });
     pnlBranchChange();
 }
+
+// ── Flatpickr: выбор периода (как на вкладке «Выручка» в Отчётах) ──────────
+var _FP_MONTHS_PNL = ['','Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+var _pnlFp = null;
+
+function _padzPnl(n) { return n < 10 ? '0' + n : String(n); }
+function _fmtDateStrPnl(d) { return d.getFullYear() + '-' + _padzPnl(d.getMonth() + 1) + '-' + _padzPnl(d.getDate()); }
+
+function _setPnlRange(df, dt) {
+    document.getElementById('pnl_df').value = df;
+    document.getElementById('pnl_dt').value = dt;
+    if (_pnlFp) _pnlFp.setDate([df, dt], false);
+    var m = parseInt(df.slice(5, 7));
+    var y = df.slice(0, 4);
+    var lbl = document.getElementById('pnlMonthLabel');
+    if (lbl) lbl.textContent = _FP_MONTHS_PNL[m] + ' ' + y;
+}
+
+function shiftPnlMonth(dir) {
+    var from = new Date(document.getElementById('pnl_df').value + 'T00:00:00');
+    from.setMonth(from.getMonth() + dir);
+    from.setDate(1);
+    var to = new Date(from.getFullYear(), from.getMonth() + 1, 0);
+    _setPnlRange(_fmtDateStrPnl(from), _fmtDateStrPnl(to));
+    document.getElementById('pnlFilterForm').submit();
+}
+
+function setPnlCurrentMonth() {
+    var now = new Date();
+    var from = new Date(now.getFullYear(), now.getMonth(), 1);
+    var to   = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    _setPnlRange(_fmtDateStrPnl(from), _fmtDateStrPnl(to));
+    document.getElementById('pnlFilterForm').submit();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    _pnlFp = flatpickr('#pnlRangePicker', {
+        mode: 'range',
+        dateFormat: 'Y-m-d',
+        defaultDate: [document.getElementById('pnl_df').value, document.getElementById('pnl_dt').value],
+        locale: {
+            weekdays: {
+                shorthand: ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'],
+                longhand:  ['Воскресенье','Понедельник','Вторник','Среда','Четверг','Пятница','Суббота']
+            },
+            months: {
+                shorthand: ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'],
+                longhand:  ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь']
+            },
+            firstDayOfWeek: 1,
+            rangeSeparator: ' — '
+        },
+        altInput: true,
+        altFormat: 'd.m',
+        onClose: function(dates) {
+            if (dates.length === 2) {
+                document.getElementById('pnl_df').value = _fmtDateStrPnl(dates[0]);
+                document.getElementById('pnl_dt').value = _fmtDateStrPnl(dates[1]);
+                var m = dates[0].getMonth() + 1;
+                var y = dates[0].getFullYear();
+                var lbl = document.getElementById('pnlMonthLabel');
+                if (lbl) lbl.textContent = _FP_MONTHS_PNL[m] + ' ' + y;
+                document.getElementById('pnlFilterForm').submit();
+            }
+        }
+    });
+});
+
 // ── Сохранение позиции прокрутки и открытых панелей настроек при отправке форм ──
 var PNL_SCROLL_KEY   = 'pnlScrollPos';
 var PNL_OPEN_KEY      = 'pnlOpenPanels';
