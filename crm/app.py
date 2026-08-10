@@ -11563,6 +11563,17 @@ def datetime_fmt(value):
         return value
 
 
+@app.template_filter('plural_ru')
+def plural_ru(n, one, few, many):
+    n = abs(int(n))
+    n10, n100 = n % 10, n % 100
+    if n10 == 1 and n100 != 11:
+        return one
+    if 2 <= n10 <= 4 and not (10 <= n100 <= 20):
+        return few
+    return many
+
+
 @app.template_filter('date_fmt')
 def date_fmt(value):
     if not value:
@@ -11699,6 +11710,18 @@ def bank():
             FROM bank_statements bs JOIN bank_accounts ba ON ba.id=bs.bank_account_id
             ORDER BY bs.uploaded_at DESC
         ''').fetchall()
+        # Группировка выписок по счёту (для вкладки «Выписки») — statements уже
+        # отсортированы по uploaded_at DESC, поэтому первая встреченная в каждой
+        # группе строка — самая свежая выписка этого счёта; группы в результате
+        # идут в порядке «у какого счёта недавнее всего что-то загружалось».
+        from collections import OrderedDict as _OD_STMT
+        _stmt_groups = _OD_STMT()
+        for s in statements:
+            grp = _stmt_groups.setdefault(s['bank_account_id'], {
+                'account_name': s['account_name'], 'statements': [], 'last_uploaded': s['uploaded_at'],
+            })
+            grp['statements'].append(s)
+        statement_groups = list(_stmt_groups.values())
         contractors = conn.execute('''
             SELECT c.*, ec.label as category_label
             FROM contractors c
@@ -11838,6 +11861,7 @@ def bank():
     return render_template('bank.html',
         tab=tab, date_from=date_from, date_to=date_to,
         accounts=accounts, acc_branches=acc_branches, statements=statements,
+        statement_groups=statement_groups,
         contractors=contractors, terminals=terminals,
         branches=branches, exp_cats_groups=exp_cats_groups,
         exp_cats_groups_all=exp_cats_groups_all,

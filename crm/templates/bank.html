@@ -90,7 +90,6 @@
         <table class="table table-hover mb-0">
           <thead class="table-light">
             <tr>
-              <th>Счёт</th>
               <th>Файл</th>
               <th>Период</th>
               <th>Строк</th>
@@ -99,10 +98,21 @@
             </tr>
           </thead>
           <tbody>
-            {% for s in statements %}
-            <tr>
-              <td>{{ s.account_name }}</td>
-              <td>
+            {% for g in statement_groups %}
+            {% set gi = loop.index %}
+            <tr class="table-light" style="cursor:pointer" onclick="toggleStmtGroup({{ gi }})">
+              <td colspan="5">
+                <i class="bi bi-chevron-right" id="stmtChevron{{ gi }}" style="transition:transform .2s"></i>
+                <span class="fw-bold">{{ g.account_name }}</span>
+                <span class="text-muted small ms-2">{{ g.statements|length }} {{ g.statements|length|plural_ru('выписка','выписки','выписок') }}</span>
+                <span class="text-muted small float-end">
+                  Последняя загрузка: {{ (g.last_uploaded[:10]|date_fmt) + ' ' + g.last_uploaded[11:16] if g.last_uploaded else '—' }}
+                </span>
+              </td>
+            </tr>
+            {% for s in g.statements %}
+            <tr class="stmt-detail-{{ gi }}" style="display:none">
+              <td class="ps-4">
                 <a href="{{ url_for('bank_statement_view', stmt_id=s.id) }}">{{ s.filename }}</a>
               </td>
               <td>{{ s.date_from|date_fmt }} — {{ s.date_to|date_fmt }}</td>
@@ -118,12 +128,23 @@
               </td>
             </tr>
             {% endfor %}
+            {% endfor %}
           </tbody>
         </table>
       </div>
       {% endif %}
     </div>
   </div>
+
+  <script>
+  function toggleStmtGroup(gi) {
+    var rows = document.querySelectorAll('.stmt-detail-' + gi);
+    var chv = document.getElementById('stmtChevron' + gi);
+    var hidden = rows.length > 0 && rows[0].style.display === 'none';
+    rows.forEach(function (r) { r.style.display = hidden ? '' : 'none'; });
+    if (chv) chv.style.transform = hidden ? 'rotate(90deg)' : '';
+  }
+  </script>
 
   <!-- Upload Modal -->
   <div class="modal fade" id="uploadModal" tabindex="-1">
