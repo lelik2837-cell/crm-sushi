@@ -497,6 +497,24 @@ def _parse_bank_csv(raw_bytes):
     return result
 
 
+def _bank_statement_account_ok(raw_bytes, account_number):
+    """Проверка при загрузке выписки: номер счёта, указанный при создании счёта
+    в CRM, должен где-то встречаться в файле выписки — иначе похоже, что выбран
+    не тот счёт/банк (например выписка Альфа-банка загружается в счёт Сбербанка).
+    Сравнение — по «голым» цифрам (пробелы/дефисы в форматировании номера не
+    мешают), ищем как подстроку по всему файлу, а не в конкретной колонке —
+    формат выписок у разных банков сильно отличается, а сам номер счёта почти
+    всегда где-то в файле присутствует (шапка, колонка «Счёт» и т.п.).
+    Если номер счёта у аккаунта не задан или короче 10 цифр — сверять нечего,
+    считаем ок (fail-open, как и остальной разбор CSV в этом файле)."""
+    digits = re.sub(r'\D', '', account_number or '')
+    if len(digits) < 10:
+        return True
+    enc = _detect_encoding(raw_bytes)
+    text_digits = re.sub(r'\D', '', raw_bytes.decode(enc, errors='replace'))
+    return digits in text_digits
+
+
 def _detect_branch_card(conn, txn):
     """Если транзакция — расход по карте филиала, возвращает (card4, branch_name), иначе None."""
     desc = (txn.get('description') or '') + ' ' + (txn.get('counterparty') or '')
@@ -11893,6 +11911,17 @@ def bank_upload():
         flash('Не найдено ни одной транзакции', 'warning')
         return redirect(url_for('bank'))
     with get_db() as conn:
+        acc = conn.execute('SELECT * FROM bank_accounts WHERE id=?', (int(account_id),)).fetchone()
+        if not acc:
+            flash('Счёт не найден', 'danger')
+            return redirect(url_for('bank'))
+        if not _bank_statement_account_ok(raw, acc['account_number']):
+            flash(
+                f'Номер счёта «{acc["account_number"]}», указанный для счёта «{acc["name"]}», '
+                f'не найден в загруженном файле — похоже, это выписка другого счёта или банка. '
+                f'Файл не загружен, проверьте выбранный счёт.', 'danger'
+            )
+            return redirect(url_for('bank'))
         # Сначала помечаем расходы по картам филиалов
         for t in txns:
             bc = _detect_branch_card(conn, t)
