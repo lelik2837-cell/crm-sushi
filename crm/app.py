@@ -11711,6 +11711,7 @@ def bank():
         branches    = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
         exp_cats = get_expense_categories(conn)
         exp_cats_groups = build_cats_groups(filter_cats_by_flag(exp_cats, 'show_contractors'))
+        exp_cats_groups_all = build_cats_groups(exp_cats)
 
         expense_rows = []
         expense_total = 0
@@ -11838,7 +11839,8 @@ def bank():
         tab=tab, date_from=date_from, date_to=date_to,
         accounts=accounts, acc_branches=acc_branches, statements=statements,
         contractors=contractors, terminals=terminals,
-        branches=branches, exp_cats=exp_cats, exp_cats_groups=exp_cats_groups,
+        branches=branches, exp_cats_groups=exp_cats_groups,
+        exp_cats_groups_all=exp_cats_groups_all,
         expense_rows=expense_rows, expense_total=expense_total,
         compare_rows=compare_rows, compare_bank=compare_bank, compare_crm=compare_crm,
         parse_rules=parse_rules, branch_groups=branch_groups_list,

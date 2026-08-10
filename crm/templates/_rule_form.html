@@ -29,9 +29,18 @@
   <label class="form-label fw-semibold">Категория</label>
   <select name="category" class="form-select rule-cat-select">
     <option value="">— не задана —</option>
-    {% for cat in exp_cats %}
-    <option value="{{ cat.code }}" {% if rule and rule.category==cat.code %}selected{% endif %}
-            data-dir="{{ 'income' if cat.type == 'income' else 'expense' }}">{{ cat.label }}</option>
+    {% for parent, children in exp_cats_groups_all %}
+    {% if children %}
+    <optgroup label="{{ parent.label }} ({{ 'доход' if parent.type == 'income' else 'расход' }})">
+      {% for child in children %}
+      <option value="{{ child.code }}" {% if rule and rule.category==child.code %}selected{% endif %}
+              data-dir="{{ 'income' if child.type == 'income' else 'expense' }}">{{ child.label }}</option>
+      {% endfor %}
+    </optgroup>
+    {% else %}
+    <option value="{{ parent.code }}" {% if rule and rule.category==parent.code %}selected{% endif %}
+            data-dir="{{ 'income' if parent.type == 'income' else 'expense' }}">{{ parent.label }} ({{ 'доход' if parent.type == 'income' else 'расход' }})</option>
+    {% endif %}
     {% endfor %}
   </select>
   <div class="form-text">Если задана — подставляется в выписке для совпавших транзакций без категории</div>
@@ -81,9 +90,18 @@
       <label class="form-label small mb-1">Категория</label>
       <select class="form-select form-select-sm" name="pattern[{{ idx }}][category]">
         <option value="">— не задана —</option>
-        {% for cat in exp_cats %}
-        {% if cat.type != 'income' %}
-        <option value="{{ cat.code }}" {% if pat and pat.category==cat.code %}selected{% endif %}>{{ cat.label }}</option>
+        {% for parent, children in exp_cats_groups_all %}
+        {% set expense_children = children | selectattr('type', 'ne', 'income') | list %}
+        {% if children %}
+        {% if expense_children %}
+        <optgroup label="{{ parent.label }}">
+          {% for child in expense_children %}
+          <option value="{{ child.code }}" {% if pat and pat.category==child.code %}selected{% endif %}>{{ child.label }}</option>
+          {% endfor %}
+        </optgroup>
+        {% endif %}
+        {% elif parent.type != 'income' %}
+        <option value="{{ parent.code }}" {% if pat and pat.category==parent.code %}selected{% endif %}>{{ parent.label }}</option>
         {% endif %}
         {% endfor %}
       </select>
