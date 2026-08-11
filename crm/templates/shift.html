@@ -901,12 +901,25 @@
         <div style="font-size:13px; font-weight:700; color:#854d0e; margin-bottom:8px;">
           ⚠️ Расхождение наличных в кассе: <span id="close-diff-value"></span>
         </div>
-        <button type="button" id="close-diff-surplus-btn" onclick="addCashSurplusToPlus()"
-                style="display:none; margin-bottom:8px; font-size:12px; padding:6px 10px; border-radius:6px; border:1px solid #16a34a; background:#f0fdf4; color:#15803d; font-weight:600; cursor:pointer;">
-          ➕ Добавить в излишки кассы
-        </button>
-        <div class="field-label">Причина расхождения</div>
-        <textarea name="actual_cash_comment" class="field-input" rows="2"
+        <div id="close-diff-surplus-row" style="display:none; align-items:center; gap:8px; margin-bottom:8px;">
+          <button type="button" id="close-diff-surplus-btn" onclick="addCashSurplusToPlus()"
+                  style="font-size:12px; padding:6px 10px; border-radius:6px; border:1px solid #16a34a; background:#f0fdf4; color:#15803d; font-weight:600; cursor:pointer; white-space:nowrap;">
+            ➕ Добавить в излишки кассы
+          </button>
+          <input type="text" inputmode="numeric" id="close-diff-surplus-amount" class="mini-input money-field"
+                 style="width:90px; font-size:14px; font-weight:700; text-align:right; border:1.5px solid #cbd5e1; border-radius:6px; padding:5px 6px; background:#fff;">
+          <span style="font-size:12px; color:#94a3b8;">₽</span>
+        </div>
+        <div id="close-diff-surplus-hint" style="display:none; font-size:11px; color:#78716c; margin-bottom:8px; line-height:1.4;">
+          Если лишняя сумма — это оплаченный предзаказ, пометьте эту сумму в кассе номером заказа и датой. И не учитывайте их в «Факт в кассе».
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;">
+          <div class="field-label" id="close-diff-comment-label" style="margin-bottom:0;">Причина расхождения</div>
+          <div id="close-diff-prepay-row" style="display:none; font-size:11px; color:#64748b; white-space:nowrap;">
+            Предполагаемая предоплата: <span id="close-diff-prepay-amount">0</span> ₽
+          </div>
+        </div>
+        <textarea name="actual_cash_comment" id="close-diff-comment" class="field-input" rows="2"
                   placeholder="Укажите причину расхождения..."></textarea>
         <div id="close-diff-err" style="display:none; color:#dc2626; font-size:12px; margin-top:4px; font-weight:600;">⚠ Укажите причину расхождения</div>
       </div>
@@ -2188,18 +2201,25 @@ document.addEventListener('click', function(e) {
 
 // ── Факт в кассе / открытие модала закрытия ──────────────────────────────────
 // Пересчитывает блок расхождения в модалке закрытия — вызывается и при
-// открытии модалки, и после «Добавить в излишки кассы» (расхождение должно
-// закрыться, раз излишек уже учтён отдельной строкой в «Плюсы в кассу»).
+// открытии модалки, и после «Добавить в излишки кассы» (расхождение
+// пересчитывается заново — если добавили не весь излишек, а только часть,
+// блок останется открытым с остатком).
 function refreshCloseDiffBlock() {
-  var factInput  = document.getElementById('actual-cash-input');
-  var diffBlock  = document.getElementById('close-diff-block');
-  var diffValue  = document.getElementById('close-diff-value');
-  var surplusBtn = document.getElementById('close-diff-surplus-btn');
-  var ta         = diffBlock ? diffBlock.querySelector('textarea') : null;
-  var diffErr    = document.getElementById('close-diff-err');
+  var factInput   = document.getElementById('actual-cash-input');
+  var diffBlock   = document.getElementById('close-diff-block');
+  var diffValue   = document.getElementById('close-diff-value');
+  var surplusRow  = document.getElementById('close-diff-surplus-row');
+  var surplusHint = document.getElementById('close-diff-surplus-hint');
+  var surplusAmt  = document.getElementById('close-diff-surplus-amount');
+  var prepayRow   = document.getElementById('close-diff-prepay-row');
+  var commentLbl  = document.getElementById('close-diff-comment-label');
+  var ta          = document.getElementById('close-diff-comment');
+  var diffErr     = document.getElementById('close-diff-err');
   // Скрываем блок расхождения по умолчанию
   if (diffBlock) diffBlock.style.display = 'none';
-  if (surplusBtn) surplusBtn.style.display = 'none';
+  if (surplusRow) surplusRow.style.display = 'none';
+  if (surplusHint) surplusHint.style.display = 'none';
+  if (prepayRow) prepayRow.style.display = 'none';
   if (ta) ta.required = false;
   if (diffErr) diffErr.style.display = 'none';
   if (factInput && factInput.value.trim() && diffBlock) {
@@ -2215,10 +2235,35 @@ function refreshCloseDiffBlock() {
         diffValue.style.color = diff < 0 ? '#dc2626' : '#16a34a';
       }
       if (ta) ta.required = true;
-      if (surplusBtn) surplusBtn.style.display = diff > 0 ? '' : 'none';
+      if (diff > 0) {
+        if (surplusRow) surplusRow.style.display = 'flex';
+        if (surplusHint) surplusHint.style.display = '';
+        if (surplusAmt) surplusAmt.value = fmtMoney(Math.round(diff));
+        if (commentLbl) commentLbl.textContent = 'Комментарий по предоплате';
+        if (ta) ta.placeholder = '№ заказа и дата...';
+        if (prepayRow) prepayRow.style.display = '';
+        updatePrepayAmount();
+      } else {
+        if (commentLbl) commentLbl.textContent = 'Причина расхождения';
+        if (ta) ta.placeholder = 'Укажите причину расхождения...';
+      }
     }
   }
 }
+
+// «Предполагаемая предоплата» — чисто справочное значение рядом с комментарием,
+// ни в какую запись не сохраняется: если админ уменьшил сумму излишка (часть —
+// оплаченный предзаказ, не настоящие излишки), тут показывается разница —
+// для сверки с тем, что он пишет в комментарии (номер заказа/дата).
+function updatePrepayAmount() {
+  var diffBlock  = document.getElementById('close-diff-block');
+  var diff       = Math.round(parseFloat(diffBlock && diffBlock.dataset.diff) || 0);
+  var surplusAmt = readNum(document.getElementById('close-diff-surplus-amount'));
+  var prepay     = Math.max(0, diff - surplusAmt);
+  var el = document.getElementById('close-diff-prepay-amount');
+  if (el) el.textContent = prepay.toLocaleString('ru-RU');
+}
+document.getElementById('close-diff-surplus-amount')?.addEventListener('input', updatePrepayAmount);
 
 function openCloseModal() {
   refreshCloseDiffBlock();
@@ -2227,13 +2272,13 @@ function openCloseModal() {
 }
 
 // ── «Добавить в излишки кассы» — расхождение в большую сторону (факт больше
-// расчётного «Итого нал») можно сразу занести как «Плюс в кассу» с категорией
+// расчётного «Итого нал») можно занести как «Плюс в кассу» с категорией
 // «Излишки кассы» (код izlishki_v_kasse, заводится в Настройках → Категории
-// расходов, тип «Доход»), вместо/вместе с текстовым объяснением расхождения ──
+// расходов, тип «Доход») — суммой из поля рядом с кнопкой (по умолчанию это
+// весь излишек, но админ мог уменьшить её, если часть — предоплата заказа) ──
 function addCashSurplusToPlus() {
-  var diffBlock = document.getElementById('close-diff-block');
-  var diff = Math.round(parseFloat(diffBlock && diffBlock.dataset.diff) || 0);
-  if (diff <= 0) return;
+  var amt = Math.round(readNum(document.getElementById('close-diff-surplus-amount')));
+  if (amt <= 0) return;
   var row = addPlusRow();
   if (!row) return;
   var catSel = row.querySelector('.plus-cat');
@@ -2244,7 +2289,7 @@ function addCashSurplusToPlus() {
       showToast('Не найдена категория «Излишки кассы» — выберите категорию вручную');
     }
   }
-  if (amtInp) amtInp.value = String(diff);
+  if (amtInp) amtInp.value = String(amt);
   savePlusRow(catSel || amtInp);
   updateKassa();
   refreshCloseDiffBlock();
