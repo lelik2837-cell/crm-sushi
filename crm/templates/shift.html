@@ -347,7 +347,7 @@
             <div id="kassa-beznal" style="font-size:22px; font-weight:800; color:#15803d; line-height:1;">{{ (revenue.card_amount or 0)|int }} ₽</div>
           </div>
           <!-- Факт в кассе -->
-          <div style="background:#f1f5f9; border:1.5px solid #cbd5e1; border-radius:10px; padding:10px 12px; display:flex; align-items:center; gap:6px;">
+          <div style="position:relative; background:#f1f5f9; border:1.5px solid #cbd5e1; border-radius:10px; padding:10px 12px; display:flex; align-items:center; gap:6px;">
             <span style="font-size:10px; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:.5px; flex:1; white-space:nowrap;">Факт в кассе</span>
             <input type="text" inputmode="numeric" id="actual-cash-input"
                    class="mini-input money-field rev-field" data-field="actual_cash"
@@ -356,6 +356,18 @@
                    style="font-size:15px; font-weight:800; color:#334155; background:transparent; border:none; padding:0; width:72px; text-align:right; outline:none; line-height:1;"
                    {% if not can_edit %}disabled{% endif %}>
             <span style="font-size:12px; color:#94a3b8; font-weight:600;">₽</span>
+            <div id="actual-cash-surplus-confirm" style="display:none; position:absolute; z-index:50; top:100%; right:0; margin-top:4px; padding:10px 12px; background:#fff; border:1.5px solid #86efac; border-radius:10px; box-shadow:0 4px 16px rgba(0,0,0,.18); width:250px; text-align:left;">
+              <div style="font-size:11px; font-weight:700; color:#166534; margin-bottom:4px;">
+                Факт в кассе больше расчётного на <span id="actual-cash-surplus-amount">0</span> ₽
+              </div>
+              <div style="font-size:11px; color:#64748b; margin-bottom:8px;">
+                Это излишки кассы? Добавить разницу в «Плюсы в кассу»?
+              </div>
+              <div style="display:flex; gap:6px;">
+                <button type="button" onclick="cashSurplusDecline()" style="flex:1; font-size:12px; padding:5px; border-radius:6px; border:1px solid #d1d5db; background:#fff; cursor:pointer;">Нет</button>
+                <button type="button" onclick="cashSurplusConfirm()" style="flex:1; font-size:12px; padding:5px; border-radius:6px; border:none; background:#16a34a; color:#fff; font-weight:600; cursor:pointer;">Да, добавить</button>
+              </div>
+            </div>
           </div>
           <!-- Факт безнал — выпадающий список поверх контента -->
           <div style="position:relative; background:#f1f5f9; border:1.5px solid #cbd5e1; border-radius:10px;">
@@ -1171,10 +1183,59 @@ if (CAN_EDIT) {
     el.addEventListener('input', updateKassa);
     if (el.dataset.field === 'morning_cash') {
       el.addEventListener('change', onMorningCashChange);
+    } else if (el.dataset.field === 'actual_cash') {
+      el.addEventListener('change', onActualCashChange);
     } else {
       el.addEventListener('change', () => { saveAllRevenue(); updateKassa(); });
     }
   });
+}
+
+// ── Факт в кассе больше расчётного «Итого нал» — предложить занести разницу
+// как «Плюс в кассу» с категорией «Излишки кассы» (код категории — izlishki_v_kasse,
+// заводится в Настройках → Категории расходов, тип «Доход») ────────────────────
+const CASH_SURPLUS_CATEGORY = 'izlishki_v_kasse';
+
+function onActualCashChange() {
+  saveAllRevenue();
+  updateKassa();
+  const factInput = document.getElementById('actual-cash-input');
+  const box = document.getElementById('actual-cash-surplus-confirm');
+  if (!factInput || !box) return;
+  const factVal = readNum(factInput);
+  const kassaVal = readNum(document.getElementById('kassa-nal-hidden'));
+  const diff = factVal - kassaVal;
+  if (diff > 0) {
+    document.getElementById('actual-cash-surplus-amount').textContent = Math.round(diff).toLocaleString('ru-RU');
+    box.dataset.diff = diff;
+    box.style.display = '';
+  } else {
+    box.style.display = 'none';
+  }
+}
+
+function cashSurplusDecline() {
+  document.getElementById('actual-cash-surplus-confirm').style.display = 'none';
+}
+
+function cashSurplusConfirm() {
+  const box = document.getElementById('actual-cash-surplus-confirm');
+  const diff = Math.round(parseFloat(box.dataset.diff) || 0);
+  box.style.display = 'none';
+  if (diff <= 0) return;
+  const row = addPlusRow();
+  if (!row) return;
+  const catSel = row.querySelector('.plus-cat');
+  const amtInp = row.querySelector('.plus-amount');
+  if (catSel) {
+    catSel.value = CASH_SURPLUS_CATEGORY;
+    if (catSel.value !== CASH_SURPLUS_CATEGORY) {
+      showToast('Не найдена категория «Излишки кассы» — выберите категорию вручную');
+    }
+  }
+  if (amtInp) amtInp.value = String(diff);
+  savePlusRow(catSel || amtInp);
+  updateKassa();
 }
 
 // ── Утром в кассе: требуем комментарий при изменении, отдельная запись в истории ──
@@ -1323,6 +1384,7 @@ function addPlusRow() {
   row.querySelector('.plus-cat').addEventListener('change', () => savePlusRow(row.querySelector('.plus-cat')));
   row.querySelector('.plus-note').addEventListener('blur', () => savePlusRow(row.querySelector('.plus-note')));
   row.querySelector('.plus-cat').focus();
+  return row;
 }
 
 function savePlusRow(el) {
