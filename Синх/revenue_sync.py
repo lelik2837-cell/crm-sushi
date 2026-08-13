@@ -393,8 +393,8 @@ def sync_orders(session: requests.Session) -> None:
 
     if result.get("ok"):
         log.info(
-            "Заказы %s–%s: импортировано %s, обновлено %s (всего строк %s)",
-            date_from, date_to, result.get("imported"), result.get("updated"), result.get("rows"),
+            "Заказы %s–%s: импортировано %s, обновлено %s, удалено %s (всего строк %s)",
+            date_from, date_to, result.get("imported"), result.get("updated"), result.get("removed"), result.get("rows"),
         )
     else:
         log.error("Заказы %s–%s: вебхук вернул ошибку: %s", date_from, date_to, result)
@@ -408,8 +408,8 @@ def sync_orders(session: requests.Session) -> None:
 
     if result_today.get("ok"):
         log.info(
-            "Заказы (сегодня) %s: импортировано %s, обновлено %s (всего строк %s)",
-            today_str, result_today.get("imported"), result_today.get("updated"), result_today.get("rows"),
+            "Заказы (сегодня) %s: импортировано %s, обновлено %s, удалено %s (всего строк %s)",
+            today_str, result_today.get("imported"), result_today.get("updated"), result_today.get("removed"), result_today.get("rows"),
         )
     else:
         log.error("Заказы (сегодня) %s: вебхук вернул ошибку: %s", today_str, result_today)

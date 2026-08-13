@@ -2025,6 +2025,8 @@ def init_db():
             # заказы с доставкой сегодня). Если колонка пустая — в _parse_orders_csv
             # используется received_at как запасной вариант, здесь NULL не бывает.
             conn.execute("ALTER TABLE orders_report ADD COLUMN delivery_at TIMESTAMP")
+        if 'phone' not in _or_cols:
+            conn.execute("ALTER TABLE orders_report ADD COLUMN phone TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_orders_report_delivery ON orders_report(delivery_at)")
         _oib_cols = [r[1] for r in conn.execute("PRAGMA table_info(orders_import_batches)").fetchall()]
         if 'updated_count' not in _oib_cols:
@@ -9573,8 +9575,8 @@ def api_orders_webhook(token):
             return jsonify({'ok': False, 'error': 'invalid token'}), 401
 
         try:
-            frows = _parse_orders_csv(body_bytes)
-            if not frows:
+            frows, excluded_keys = _parse_orders_csv(body_bytes)
+            if not frows and not excluded_keys:
                 conn.execute('UPDATE api_orders_log SET status=? WHERE id=?',
                              ('строк с заказами не найдено (пустой период?)', log_id))
                 conn.commit()
@@ -9586,16 +9588,20 @@ def api_orders_webhook(token):
                 for er in conn.execute('SELECT order_number, received_at FROM orders_report').fetchall()
             )
             filename = f'webhook_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
-            imported, updated = _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename)
+            imported, updated, removed = _ingest_orders_rows(
+                conn, frows, branch_map, existing_keys, filename, excluded_keys=excluded_keys
+            )
 
             unmapped = sorted(set(r['branch_raw'] for r in frows) - set(branch_map))
             status = f'импортировано {imported}, обновлено {updated} из {len(frows)} строк'
+            if removed:
+                status += f', удалено (отмена/возврат) {removed}'
             if unmapped:
                 status += f' (не сопоставлены филиалы: {", ".join(unmapped)} — см. Филиалы)'
             conn.execute('UPDATE api_orders_log SET parsed_ok=1, status=?, imported_count=?, updated_count=? WHERE id=?',
                          (status, imported, updated, log_id))
             conn.commit()
-            return jsonify({'ok': True, 'imported': imported, 'updated': updated, 'rows': len(frows)})
+            return jsonify({'ok': True, 'imported': imported, 'updated': updated, 'removed': removed, 'rows': len(frows)})
         except Exception as e:
             conn.execute('UPDATE api_orders_log SET status=? WHERE id=?',
                          (f'ошибка: {str(e)[:200]}', log_id))
@@ -14439,6 +14445,7 @@ def _parse_orders_csv(file_bytes):
     idx_new_cli  = _orders_csv_col(header, 'Новый клиент')
     idx_status   = _orders_csv_col(header, 'Статус', 'Статус заказа', 'Название статуса', 'Status', 'StatusName')
     idx_delivery_plan = _orders_csv_col(header, 'Дата и время доставки')
+    idx_phone    = _orders_csv_col(header, 'Телефон', 'Телефон гостя', 'Номер телефона', 'Phone', 'ClientPhone')
 
     def cell(row, idx):
         if idx is None or idx >= len(row):
@@ -14449,6 +14456,13 @@ def _parse_orders_csv(file_bytes):
         return int(v) if v.isdigit() else None
 
     rows = []
+    # Ключи (номер заказа, дата) заказов со статусом из _ORDERS_EXCLUDED_STATUSES —
+    # такие заказы не показываем, но если заказ раньше уже был импортирован под
+    # другим (ещё не финальным) статусом, его нужно убрать из orders_report, а не
+    # просто пропустить эту строку — иначе отменённый/возвращённый заказ навсегда
+    # застревает в отчёте под своим последним «живым» статусом и его сумма
+    # продолжает считаться в выручке. Удаление — в _ingest_orders_rows.
+    excluded_keys = []
     for row in reader:
         received_raw = cell(row, idx_received)
         if not received_raw:
@@ -14461,6 +14475,7 @@ def _parse_orders_csv(file_bytes):
         if not order_number:
             continue
         if _norm_status(cell(row, idx_status)) in _ORDERS_EXCLUDED_STATUSES:
+            excluded_keys.append((order_number, dt.strftime('%Y-%m-%d')))
             continue  # Отмена/Возврат/Выполнен (завершён) — не показываем (см. _ORDERS_EXCLUDED_STATUSES)
         amount_raw = cell(row, idx_amount).replace(' ', '').replace(',', '.')
         try:
@@ -14496,8 +14511,9 @@ def _parse_orders_csv(file_bytes):
             'amount':           amount,
             'new_client':       cell(row, idx_new_cli) or None,
             'status':           cell(row, idx_status) or None,
+            'phone':            cell(row, idx_phone) or None,
         })
-    return rows
+    return rows, excluded_keys
 
 
 def _orders_row_hash(r):
@@ -14507,7 +14523,7 @@ def _orders_row_hash(r):
     return hashlib.md5(key.encode('utf-8')).hexdigest()
 
 
-def _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename, created_by=None):
+def _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename, created_by=None, excluded_keys=None):
     """Загружает уже разобранные строки заказов (формат _parse_orders_csv) в orders_report.
     Общая логика для ручной загрузки файла (orders_report_import) и вебхука (api_orders_webhook) —
     один и тот же upsert по import_hash, одна и та же запись в orders_import_batches.
@@ -14515,12 +14531,29 @@ def _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename, create
     branch_raw импортируются с branch_id=NULL (сопоставить можно позже на странице «Филиалы»).
     existing_keys — множество уже известных (order_number, date), мутируется на месте для
     подсчёта новых/обновлённых при загрузке сразу нескольких файлов/батчей подряд.
-    Возвращает (imported, updated)."""
+    excluded_keys — [(order_number, date), ...] заказов, пришедших в этой выгрузке со
+    статусом из _ORDERS_EXCLUDED_STATUSES (Отмена/Возврат/Выполнен (завершён)): если такой
+    заказ уже лежит в orders_report под старым «живым» статусом — удаляем его, иначе он
+    навсегда застревает в отчёте и продолжает считаться в выручке. Применяется ДО upsert
+    новых строк — если один и тот же ключ почему-то пришёл в обоих списках, «живая» строка
+    из frows побеждает.
+    Возвращает (imported, updated, removed)."""
     cur = conn.execute(
         'INSERT INTO orders_import_batches (filename, created_by) VALUES (?,?)',
         (filename, created_by)
     )
     batch_id = cur.lastrowid
+
+    removed = 0
+    for order_number, day in (excluded_keys or []):
+        key = (order_number, day)
+        dcur = conn.execute(
+            'DELETE FROM orders_report WHERE order_number=? AND substr(received_at,1,10)=?',
+            (order_number, day)
+        )
+        if dcur.rowcount:
+            removed += dcur.rowcount
+            existing_keys.discard(key)
 
     imported = updated = 0
     for r in frows:
@@ -14532,8 +14565,8 @@ def _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename, create
             INSERT INTO orders_report
                 (order_number, branch_raw, branch_id, received_at, delivery_at, promised_minutes,
                  order_type_raw, order_type, ready_minutes, delivery_minutes,
-                 promo_code, amount, new_client, status, import_batch_id, import_hash)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 promo_code, amount, new_client, status, phone, import_batch_id, import_hash)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(import_hash) DO UPDATE SET
                 branch_raw=excluded.branch_raw, branch_id=excluded.branch_id,
                 received_at=excluded.received_at, delivery_at=excluded.delivery_at,
@@ -14541,12 +14574,13 @@ def _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename, create
                 order_type_raw=excluded.order_type_raw, order_type=excluded.order_type,
                 ready_minutes=excluded.ready_minutes, delivery_minutes=excluded.delivery_minutes,
                 promo_code=excluded.promo_code, amount=excluded.amount,
-                new_client=excluded.new_client, status=excluded.status, import_batch_id=excluded.import_batch_id
+                new_client=excluded.new_client, status=excluded.status, phone=excluded.phone,
+                import_batch_id=excluded.import_batch_id
         ''', (
             r['order_number'], r['branch_raw'], branch_map.get(r['branch_raw']),
             r['received_at'], r['delivery_at'], r['promised_minutes'], r['order_type_raw'], r['order_type'],
             r['ready_minutes'], r['delivery_minutes'], r['promo_code'], r['amount'],
-            r['new_client'], r['status'], batch_id, h
+            r['new_client'], r['status'], r['phone'], batch_id, h
         ))
         if is_new:
             imported += 1
@@ -14557,7 +14591,7 @@ def _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename, create
         'UPDATE orders_import_batches SET imported_count=?, updated_count=? WHERE id=?',
         (imported, updated, batch_id)
     )
-    return imported, updated
+    return imported, updated, removed
 
 
 @app.route('/orders-report')
@@ -14736,14 +14770,14 @@ def orders_report_import():
     parsed = []
     for fname, fbytes in file_items:
         try:
-            frows = _parse_orders_csv(fbytes)
+            frows, excluded_keys = _parse_orders_csv(fbytes)
         except Exception as e:
             flash(f'Ошибка чтения файла «{fname}»: {e}', 'danger')
             return redirect(url_for('orders_report_import'))
-        if not frows:
+        if not frows and not excluded_keys:
             flash(f'В файле «{fname}» не найдено строк с заказами. Проверьте, что это CSV-выгрузка «Отчёт по заказам»', 'warning')
             continue
-        parsed.append((fname, frows))
+        parsed.append((fname, frows, excluded_keys))
 
     if not parsed:
         return redirect(url_for('orders_report_import'))
@@ -14751,7 +14785,7 @@ def orders_report_import():
     with get_db() as conn:
         branch_map = get_branch_raw_map(conn)
         all_raws = set()
-        for _, frows in parsed:
+        for _, frows, _excl in parsed:
             all_raws.update(r['branch_raw'] for r in frows)
         unmapped = sorted(all_raws - set(branch_map))
 
@@ -14769,13 +14803,15 @@ def orders_report_import():
             for er in conn.execute('SELECT order_number, received_at FROM orders_report').fetchall()
         )
 
-        total_imported = total_updated = total_rows = 0
-        for fname, frows in parsed:
-            imported, updated = _ingest_orders_rows(
-                conn, frows, branch_map, existing_keys, fname, created_by=session.get('user_id')
+        total_imported = total_updated = total_rows = total_removed = 0
+        for fname, frows, excluded_keys in parsed:
+            imported, updated, removed = _ingest_orders_rows(
+                conn, frows, branch_map, existing_keys, fname,
+                created_by=session.get('user_id'), excluded_keys=excluded_keys
             )
             total_imported += imported
             total_updated  += updated
+            total_removed  += removed
             total_rows     += len(frows)
 
         conn.commit()
@@ -14783,8 +14819,10 @@ def orders_report_import():
     parts = [f'Импортировано {total_imported} новых заказов']
     if total_updated:
         parts.append(f'обновлено: {total_updated}')
+    if total_removed:
+        parts.append(f'удалено (отмена/возврат): {total_removed}')
     suffix = f' из {len(parsed)} файлов' if len(parsed) > 1 else ''
-    flash(', '.join(parts) + f' (всего строк: {total_rows}{suffix})', 'success' if (total_imported or total_updated) else 'warning')
+    flash(', '.join(parts) + f' (всего строк: {total_rows}{suffix})', 'success' if (total_imported or total_updated or total_removed) else 'warning')
     return redirect(url_for('orders_report'))
 
 

@@ -144,6 +144,7 @@
             <thead class="table-light">
                 <tr>
                     <th class="ord-sort" style="cursor:pointer;user-select:none">Номер <span class="ord-arrow text-muted"></span></th>
+                    <th class="ord-sort" style="cursor:pointer;user-select:none">Телефон <span class="ord-arrow text-muted"></span></th>
                     <th class="ord-sort" style="cursor:pointer;user-select:none">Подразделение <span class="ord-arrow text-muted"></span></th>
                     <th class="ord-sort" style="cursor:pointer;user-select:none">Дата и время приёма <span class="ord-arrow text-muted"></span></th>
                     <th class="ord-sort" style="cursor:pointer;user-select:none">Тип <span class="ord-arrow text-muted"></span></th>
@@ -160,6 +161,7 @@
             {% for r in rows %}
                 <tr>
                     <td class="fw-semibold">{{ r.order_number }}</td>
+                    <td>{{ r.phone or '—' }}</td>
                     <td>{{ r.branch_raw }}</td>
                     <td data-val="{{ r.received_at }}">{{ r.received_at[8:10] }}.{{ r.received_at[5:7] }}.{{ r.received_at[0:4] }} {{ r.received_at[11:16] }}</td>
                     <td>
