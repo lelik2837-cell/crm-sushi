@@ -25,6 +25,12 @@ from zoneinfo import ZoneInfo
 # падает с "partially initialized module 'urllib3' has no attribute
 # 'disable_warnings' (most likely due to a circular import)".
 import sber_api
+# Тот же класс гонки, что и с urllib3 выше, только для datetime.strptime(): он сам
+# лениво импортирует _strptime при первом вызове, и если это одновременно сделают
+# два потока (например, запрос пользователя и фоновый APScheduler), падает с
+# "partially initialized module '_strptime' has no attribute '_strptime_datetime'
+# (most likely due to a circular import)" — прогреваем здесь же, заранее.
+import _strptime
 import whatsapp_api
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, g
 from werkzeug.security import generate_password_hash, check_password_hash
