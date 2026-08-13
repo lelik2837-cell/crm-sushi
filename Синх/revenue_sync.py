@@ -110,7 +110,7 @@ ORDERS_WEBHOOK_URL = os.environ.get("CRMPAPA_ORDERS_WEBHOOK_URL", "")
 # чем интервал опроса, — чтобы подхватывать заказы, которые "дозрели" (сменили сумму
 # или статус) уже после первой загрузки. Это безопасно: повторная загрузка уже
 # известного заказа не создаёт дубль на crmpapa.ru, а обновляет его строку.
-ORDERS_LOOKBACK_DAYS = int(os.environ.get("ORDERS_LOOKBACK_DAYS", "3"))
+ORDERS_LOOKBACK_DAYS = int(os.environ.get("ORDERS_LOOKBACK_DAYS", "2"))
 
 logging.basicConfig(
     level=logging.INFO,
