@@ -75,7 +75,7 @@ WAITTIME_SYNC_MAP_RAW = os.environ.get("GOULASH_WAITTIME_SYNC_MAP", "")
 DEPARTMENT_ID = os.environ.get("GOULASH_DEPARTMENT_ID", "")
 CRMPAPA_WEBHOOK_URL = os.environ.get("CRMPAPA_WEBHOOK_URL", "")
 
-POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "600"))  # по умолчанию 10 минут
+POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "300"))  # по умолчанию 5 минут
 
 # Таймаут на все запросы к goulash (в секундах). Без него зависший/недоступный сайт мог
 # заблокировать процесс навсегда без единой строки в логе — ни ошибки, ни следующей попытки.

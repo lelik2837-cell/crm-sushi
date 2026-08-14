@@ -146,7 +146,7 @@ export GOULASH_SYNC_MAP="162=https://crmpapa.ru/api/revenue-webhook/tok1;165=htt
 python revenue_sync.py --once
 ```
 
-Постоянно, с опросом каждые 10 минут (значение берётся из `POLL_INTERVAL_SECONDS`):
+Постоянно, с опросом каждые 5 минут (значение берётся из `POLL_INTERVAL_SECONDS`):
 
 ```bash
 python revenue_sync.py
