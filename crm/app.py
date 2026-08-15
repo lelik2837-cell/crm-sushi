@@ -31,7 +31,7 @@ import sber_api
 # "partially initialized module '_strptime' has no attribute '_strptime_datetime'
 # (most likely due to a circular import)" — прогреваем здесь же, заранее.
 import _strptime
-import whatsapp_api
+import messenger_api
 from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, g
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -145,7 +145,7 @@ MENU_ITEMS = [
     ('change_settings',       'Размен',                   'reports',  True),
     ('purchases',             'Накладные',                'reports',  True),
     ('bank',                  'Банк',                     'reports',  True),
-    ('whatsapp_broadcast',    'Рассылка WhatsApp',        'reports',  False),
+    ('whatsapp_broadcast',    'Рассылка',                 'reports',  False),
     ('call_center',           'Колл-центр',               'reports',  False),
     ('contact_center_report', 'Контакт-центр',            'reports',  False),
     ('employees',             'Сотрудники',               'settings', True),
@@ -2070,11 +2070,21 @@ def init_db():
         if 'limit_days' not in _spr_cols:
             conn.execute("ALTER TABLE salary_payout_rules ADD COLUMN limit_days INTEGER")
 
-        # Массовая рассылка WhatsApp (вход по QR через отдельный Node-сервис Baileys,
-        # см. whatsapp-service/ и crm/whatsapp_api.py) — картинка хранится в БД (BLOB),
-        # как и остальные загружаемые в проекте файлы (нигде не пишутся на диск).
+        # Массовая рассылка (WhatsApp/Max/Telegram, вход по QR через отдельные микросервисы —
+        # whatsapp-service/, telegram-service/, max-service/ и общий crm/messenger_api.py) —
+        # картинка хранится в БД (BLOB), как и остальные загружаемые в проекте файлы (нигде не
+        # пишутся на диск). Раньше был только WhatsApp (таблицы whatsapp_broadcasts*) — переименовано
+        # в канало-нейтральные имена при добавлении Max/Telegram и нескольких аккаунтов-отправителей.
+        _existing_tables = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        if 'whatsapp_broadcasts' in _existing_tables and 'broadcasts' not in _existing_tables:
+            conn.executescript('''
+                ALTER TABLE whatsapp_broadcasts RENAME TO broadcasts;
+                ALTER TABLE whatsapp_broadcast_recipients RENAME TO broadcast_recipients;
+                ALTER TABLE whatsapp_broadcast_messages RENAME TO broadcast_messages;
+            ''')
         conn.executescript('''
-            CREATE TABLE IF NOT EXISTS whatsapp_broadcasts (
+            CREATE TABLE IF NOT EXISTS broadcasts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT,
                 message_text TEXT NOT NULL,
@@ -2094,29 +2104,57 @@ def init_db():
                 started_at TIMESTAMP,
                 finished_at TIMESTAMP
             );
-            CREATE TABLE IF NOT EXISTS whatsapp_broadcast_recipients (
+            CREATE TABLE IF NOT EXISTS broadcast_recipients (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                broadcast_id INTEGER NOT NULL REFERENCES whatsapp_broadcasts(id) ON DELETE CASCADE,
+                broadcast_id INTEGER NOT NULL REFERENCES broadcasts(id) ON DELETE CASCADE,
                 phone TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
                 error TEXT,
                 sent_at TIMESTAMP
             );
-            CREATE INDEX IF NOT EXISTS idx_wa_recip_broadcast ON whatsapp_broadcast_recipients(broadcast_id, status);
+            CREATE INDEX IF NOT EXISTS idx_broadcast_recip_broadcast ON broadcast_recipients(broadcast_id, status);
         ''')
-        _war_cols = [r[1] for r in conn.execute("PRAGMA table_info(whatsapp_broadcast_recipients)").fetchall()]
-        if 'variant_index' not in _war_cols:
-            # Каким вариантом текста (см. whatsapp_broadcast_messages) отправлять этому
-            # получателю — назначается по кругу (round-robin) при создании рассылки.
-            conn.execute("ALTER TABLE whatsapp_broadcast_recipients ADD COLUMN variant_index INTEGER NOT NULL DEFAULT 0")
+        _br_cols = [r[1] for r in conn.execute("PRAGMA table_info(broadcast_recipients)").fetchall()]
+        if 'variant_index' not in _br_cols:
+            # Каким вариантом текста (см. broadcast_messages) отправлять этому получателю —
+            # назначается по кругу (round-robin) при создании рассылки.
+            conn.execute("ALTER TABLE broadcast_recipients ADD COLUMN variant_index INTEGER NOT NULL DEFAULT 0")
+        if 'assigned_account_id' not in _br_cols:
+            # На какой аккаунт-отправитель (messenger_accounts, значит и на какой канал —
+            # WhatsApp/Max/Telegram) назначен получатель — определяется один раз при создании
+            # рассылки перебором выбранных аккаунтов по приоритету (см. _assign_broadcast_recipients).
+            conn.execute("ALTER TABLE broadcast_recipients ADD COLUMN assigned_account_id INTEGER REFERENCES messenger_accounts(id)")
         conn.executescript('''
-            CREATE TABLE IF NOT EXISTS whatsapp_broadcast_messages (
+            CREATE TABLE IF NOT EXISTS broadcast_messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                broadcast_id INTEGER NOT NULL REFERENCES whatsapp_broadcasts(id) ON DELETE CASCADE,
+                broadcast_id INTEGER NOT NULL REFERENCES broadcasts(id) ON DELETE CASCADE,
                 variant_index INTEGER NOT NULL,
                 text TEXT NOT NULL
             );
-            CREATE INDEX IF NOT EXISTS idx_wa_msg_broadcast ON whatsapp_broadcast_messages(broadcast_id);
+            CREATE INDEX IF NOT EXISTS idx_broadcast_msg_broadcast ON broadcast_messages(broadcast_id);
+
+            -- Подключённые номера-отправители (независимо от мессенджера) — вход по QR в отдельном
+            -- микросервисе своего канала, состояние сессии живёт там, здесь — только карточка для UI
+            -- (статус синхронизируется опросом сервиса, см. messenger_accounts_page()).
+            CREATE TABLE IF NOT EXISTS messenger_accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel TEXT NOT NULL,
+                phone TEXT,
+                label TEXT,
+                status TEXT NOT NULL DEFAULT 'disconnected',
+                created_by INTEGER REFERENCES users(id),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                connected_at TIMESTAMP
+            );
+
+            -- Какие аккаунты-отправители выбраны для конкретной рассылки и в каком порядке
+            -- пробовать их по каскаду (меньше priority — пробуем раньше).
+            CREATE TABLE IF NOT EXISTS broadcast_accounts (
+                broadcast_id INTEGER NOT NULL REFERENCES broadcasts(id) ON DELETE CASCADE,
+                account_id INTEGER NOT NULL REFERENCES messenger_accounts(id),
+                priority INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (broadcast_id, account_id)
+            );
         ''')
 
         conn.commit()
@@ -9067,7 +9105,8 @@ def _parse_1c_body(conn, branch_id, body, content_type):
     return 0
 
 
-# ─── WHATSAPP РАССЫЛКА (Baileys, отдельный Node-сервис, см. whatsapp-service/) ─
+# ─── РАССЫЛКА (WhatsApp/Max/Telegram, отдельные микросервисы, см. whatsapp-service/, ─
+# ─── telegram-service/, max-service/ и crm/messenger_api.py) ────────────────────────
 
 def _normalize_ru_phone(raw):
     """8/10/11-значный российский номер -> 11 цифр, начинающихся с 7. None, если не распознан."""
@@ -9107,79 +9146,206 @@ def _parse_phone_list(raw_text, file_storage):
     return numbers
 
 
-def _check_whatsapp_token(token):
+def _check_broadcast_token(token):
+    # Имя переменной окружения осталось от изначальной WhatsApp-only схемы — общий секрет
+    # для вебхука/resume теперь используют все каналы, переименовывать не стали, чтобы не
+    # трогать уже настроенный на сервере docker-compose.yml.
     expected = os.environ.get('WHATSAPP_WEBHOOK_TOKEN', '')
     return bool(expected) and bool(token) and secrets.compare_digest(token, expected)
 
 
-def _wa_pending_recipients(conn, broadcast_id):
-    """[{'phone':..., 'message':...}] для ещё не отправленных получателей — текст уже
-    подобран по варианту, назначенному этому номеру (round-robin при создании рассылки)."""
+def _pending_recipients(conn, broadcast_id, account_id):
+    """[{'phone':..., 'message':...}] для ещё не отправленных получателей конкретного
+    аккаунта-отправителя — текст уже подобран по варианту, назначенному этому номеру
+    (round-robin при создании рассылки)."""
     rows = conn.execute('''
         SELECT r.phone AS phone, m.text AS message
-        FROM whatsapp_broadcast_recipients r
-        JOIN whatsapp_broadcast_messages m ON m.broadcast_id = r.broadcast_id AND m.variant_index = r.variant_index
-        WHERE r.broadcast_id=? AND r.status='pending'
+        FROM broadcast_recipients r
+        JOIN broadcast_messages m ON m.broadcast_id = r.broadcast_id AND m.variant_index = r.variant_index
+        WHERE r.broadcast_id=? AND r.assigned_account_id=? AND r.status='pending'
         ORDER BY r.id
-    ''', (broadcast_id,)).fetchall()
+    ''', (broadcast_id, account_id)).fetchall()
     return [{'phone': r['phone'], 'message': r['message']} for r in rows]
 
 
-@app.route('/reports/whatsapp')
+def _assign_broadcast_recipients(phones, accounts):
+    """Каскад по приоритету: для каждого аккаунта (в переданном порядке) проверяем на его
+    канале, кто из ещё не назначенных номеров там зарегистрирован, — назначаем их этому
+    аккаунту и убираем из остатка. Кто не нашёлся ни на одном канале — invalid.
+    Если проверка для аккаунта не выполнилась (сервис недоступен/не подключён): если дальше
+    по цепочке есть ещё аккаунты — просто пропускаем этот аккаунт для этих номеров и пробуем
+    следующий канал; если это последний аккаунт в цепочке — отдаём остаток ему без проверки
+    (та же деградация, что раньше была для единственного WhatsApp-канала: отправить как есть).
+    Возвращает (assignment: {phone: account_id}, invalid: set, check_failed_accounts: list)."""
+    remaining = list(phones)
+    assignment = {}
+    check_failed_accounts = []
+    for idx, acc in enumerate(accounts):
+        if not remaining:
+            break
+        is_last = idx == len(accounts) - 1
+        try:
+            results = messenger_api.check_numbers(acc['channel'], acc['id'], remaining)
+        except Exception:
+            logging.exception('check_numbers failed channel=%s account_id=%s', acc['channel'], acc['id'])
+            check_failed_accounts.append(acc)
+            if is_last:
+                for p in remaining:
+                    assignment[p] = acc['id']
+                remaining = []
+            continue
+        matched = [p for p in remaining if results.get(p) is True]
+        for p in matched:
+            assignment[p] = acc['id']
+        remaining = [p for p in remaining if results.get(p) is not True]
+    return assignment, set(remaining), check_failed_accounts
+
+
+@app.route('/reports/broadcast')
 @login_required
 @menu_permission_required('whatsapp_broadcast')
-def whatsapp_broadcast_page():
+def broadcast_page():
     with get_db() as conn:
-        broadcasts = conn.execute(
-            'SELECT * FROM whatsapp_broadcasts ORDER BY created_at DESC LIMIT 50'
+        accounts = conn.execute(
+            'SELECT * FROM messenger_accounts ORDER BY created_at DESC'
         ).fetchall()
-    return render_template('whatsapp.html', broadcasts=broadcasts)
+        broadcasts = conn.execute(
+            'SELECT * FROM broadcasts ORDER BY created_at DESC LIMIT 50'
+        ).fetchall()
+    return render_template('broadcast.html', accounts=accounts, broadcasts=broadcasts,
+                            active_tab=request.args.get('tab', 'numbers'))
 
 
-@app.route('/reports/whatsapp/session-status')
+@app.route('/reports/broadcast/accounts', methods=['POST'])
 @login_required
 @menu_permission_required('whatsapp_broadcast')
-def whatsapp_session_status():
+def broadcast_add_account():
+    channel = request.form.get('channel', '').strip()
+    phone_raw = request.form.get('phone', '').strip()
+    label = request.form.get('label', '').strip()
+    if channel not in ('whatsapp', 'telegram', 'max'):
+        flash('Выберите мессенджер', 'danger')
+        return redirect(url_for('broadcast_page', tab='numbers'))
+    phone = _normalize_ru_phone(phone_raw)
+    with get_db() as conn:
+        account_id = conn.execute(
+            'INSERT INTO messenger_accounts (channel, phone, label, status, created_by) VALUES (?,?,?,?,?)',
+            (channel, phone or phone_raw or None, label or None, 'connecting', session['user_id'])
+        ).lastrowid
+        conn.commit()
     try:
-        status = whatsapp_api.get_status()
+        messenger_api.start_session(channel, account_id, phone=phone)
     except Exception as e:
-        logging.exception('whatsapp get_status failed')
+        flash(f'Номер добавлен, но не удалось начать подключение: {e}', 'danger')
+        return redirect(url_for('broadcast_page', tab='numbers'))
+    flash('Номер добавлен, отсканируйте QR-код.', 'success')
+    return redirect(url_for('broadcast_page', tab='numbers'))
+
+
+@app.route('/reports/broadcast/accounts/<int:account_id>/reconnect', methods=['POST'])
+@login_required
+@menu_permission_required('whatsapp_broadcast')
+def broadcast_account_reconnect(account_id):
+    with get_db() as conn:
+        acc = conn.execute('SELECT * FROM messenger_accounts WHERE id=?', (account_id,)).fetchone()
+    if not acc:
+        flash('Номер не найден', 'danger')
+        return redirect(url_for('broadcast_page', tab='numbers'))
+    try:
+        messenger_api.start_session(acc['channel'], account_id, phone=acc['phone'])
+        flash('Подключение начато, отсканируйте QR-код.', 'success')
+    except Exception as e:
+        flash(f'Не удалось начать подключение: {e}', 'danger')
+    return redirect(url_for('broadcast_page', tab='numbers'))
+
+
+@app.route('/reports/broadcast/accounts/<int:account_id>/logout', methods=['POST'])
+@login_required
+@menu_permission_required('whatsapp_broadcast')
+def broadcast_account_logout(account_id):
+    with get_db() as conn:
+        acc = conn.execute('SELECT * FROM messenger_accounts WHERE id=?', (account_id,)).fetchone()
+    if not acc:
+        flash('Номер не найден', 'danger')
+        return redirect(url_for('broadcast_page', tab='numbers'))
+    try:
+        messenger_api.logout(acc['channel'], account_id)
+        with get_db() as conn:
+            conn.execute("UPDATE messenger_accounts SET status='disconnected' WHERE id=?", (account_id,))
+            conn.commit()
+        flash('Номер отключён.', 'success')
+    except Exception as e:
+        flash(f'Не удалось отключить: {e}', 'danger')
+    return redirect(url_for('broadcast_page', tab='numbers'))
+
+
+@app.route('/reports/broadcast/accounts/<int:account_id>/status')
+@login_required
+@menu_permission_required('whatsapp_broadcast')
+def broadcast_account_status(account_id):
+    with get_db() as conn:
+        acc = conn.execute('SELECT * FROM messenger_accounts WHERE id=?', (account_id,)).fetchone()
+    if not acc:
+        return jsonify({'error': 'not_found'}), 404
+    try:
+        status = messenger_api.get_status(acc['channel'], account_id)
+    except Exception as e:
+        logging.exception('broadcast get_status failed channel=%s account_id=%s', acc['channel'], account_id)
         return jsonify({'status': 'error', 'error': str(e)})
     if status.get('status') == 'qr':
         try:
-            status['qr'] = whatsapp_api.get_qr()
+            status['qr'] = messenger_api.get_qr(acc['channel'], account_id)
         except Exception:
-            logging.exception('whatsapp get_qr failed')
+            logging.exception('broadcast get_qr failed channel=%s account_id=%s', acc['channel'], account_id)
             status['qr'] = None
+    new_status = status.get('status')
+    if new_status and new_status != acc['status']:
+        with get_db() as conn:
+            conn.execute('''
+                UPDATE messenger_accounts SET status=?, phone=COALESCE(?, phone),
+                    connected_at=CASE WHEN ?='connected' AND connected_at IS NULL THEN CURRENT_TIMESTAMP ELSE connected_at END
+                WHERE id=?
+            ''', (new_status, status.get('phone'), new_status, account_id))
+            conn.commit()
     return jsonify(status)
 
 
-@app.route('/reports/whatsapp/session-logout', methods=['POST'])
+@app.route('/reports/broadcast/create', methods=['POST'])
 @login_required
 @menu_permission_required('whatsapp_broadcast')
-def whatsapp_session_logout():
-    try:
-        whatsapp_api.logout()
-        flash('Сессия WhatsApp сброшена, отсканируйте новый QR-код.', 'success')
-    except Exception as e:
-        flash(f'Не удалось выйти: {e}', 'danger')
-    return redirect(url_for('whatsapp_broadcast_page'))
-
-
-@app.route('/reports/whatsapp/broadcast', methods=['POST'])
-@login_required
-@menu_permission_required('whatsapp_broadcast')
-def whatsapp_create_broadcast():
+def create_broadcast():
     name = request.form.get('name', '').strip()
     variants = [v.strip() for v in request.form.getlist('message_variants[]') if v.strip()]
     numbers_file = request.files.get('numbers_file')
     image_file = request.files.get('image')
+    account_ids = [a for a in request.form.getlist('account_ids[]') if a]
 
+    if not account_ids:
+        flash('Выберите хотя бы один подключённый номер-отправитель', 'danger')
+        return redirect(url_for('broadcast_page', tab='send'))
     if not variants and not (image_file and image_file.filename):
         flash('Укажите хотя бы один вариант текста сообщения или картинку', 'danger')
-        return redirect(url_for('whatsapp_broadcast_page'))
+        return redirect(url_for('broadcast_page', tab='send'))
     if not variants:
         variants = ['']  # только картинка, без текста — один "пустой" вариант
+
+    # Порядок каскада — по числу в поле "приоритет" каждого чекбокса в форме (меньше — раньше),
+    # а не по порядку чекбоксов в DOM (checkbox'ы в HTML идут в порядке добавления номера,
+    # не в порядке желаемого приоритета отправки).
+    def _priority_for(aid):
+        try:
+            return int(request.form.get(f'priority_{aid}', aid))
+        except ValueError:
+            return int(aid)
+    account_ids.sort(key=_priority_for)
+
+    with get_db() as conn:
+        accounts = [conn.execute('SELECT * FROM messenger_accounts WHERE id=?', (aid,)).fetchone()
+                     for aid in account_ids]
+    accounts = [a for a in accounts if a]
+    if not accounts:
+        flash('Выбранные номера не найдены', 'danger')
+        return redirect(url_for('broadcast_page', tab='send'))
 
     raw_numbers = _parse_phone_list(request.form.get('numbers_text', ''), numbers_file)
     seen, phones, bad_format = set(), [], 0
@@ -9194,7 +9360,7 @@ def whatsapp_create_broadcast():
 
     if not phones:
         flash('Не найдено ни одного распознанного номера', 'danger')
-        return redirect(url_for('whatsapp_broadcast_page'))
+        return redirect(url_for('broadcast_page', tab='send'))
 
     try:
         interval_min = max(0, int(request.form.get('interval_min', 5)))
@@ -9203,121 +9369,148 @@ def whatsapp_create_broadcast():
         batch_pause_seconds = max(0, int(request.form.get('batch_pause_seconds', 0)))
     except ValueError:
         flash('Некорректные настройки периодичности', 'danger')
-        return redirect(url_for('whatsapp_broadcast_page'))
+        return redirect(url_for('broadcast_page', tab='send'))
 
     image_blob, image_mime = None, None
     if image_file and image_file.filename:
         image_blob = image_file.read()
         image_mime = image_file.mimetype
 
-    # Проверка прямо на WhatsApp, зарегистрирован ли номер — сразу по списку, до старта
-    # отправки (чтобы не тратить впустую паузы между сообщениями на мёртвые номера и
-    # сразу показать реальную картину). Требует уже подключённого WhatsApp — если сервис
-    # недоступен/не подключён, просто пропускаем проверку, статус номеров не трогаем.
-    not_on_whatsapp = set()
-    check_failed = False
-    try:
-        results = whatsapp_api.check_numbers(phones)
-        not_on_whatsapp = {p for p in phones if results.get(p) is False}
-    except Exception:
-        logging.exception('whatsapp check_numbers failed')
-        check_failed = True
+    # Каскад по приоритету выбранных аккаунтов — см. _assign_broadcast_recipients: сначала
+    # проверяем регистрацию на канале первого приоритета, остаток уходит на проверку второму
+    # и так далее, кто не нашёлся нигде — invalid. Выполняется один раз здесь, при создании
+    # рассылки (не в рантайме отправки), по аналогии с прежней upfront-проверкой WhatsApp.
+    assignment, invalid, check_failed_accounts = _assign_broadcast_recipients(phones, accounts)
 
     with get_db() as conn:
         broadcast_id = conn.execute('''
-            INSERT INTO whatsapp_broadcasts
+            INSERT INTO broadcasts
                 (name, message_text, image_blob, image_mime, interval_min_seconds, interval_max_seconds,
                  batch_size, batch_pause_seconds, total_count, invalid_count, created_by)
             VALUES (?,?,?,?,?,?,?,?,?,?,?)
         ''', (name or None, variants[0], image_blob, image_mime, interval_min, interval_max,
-              batch_size, batch_pause_seconds, len(phones), len(not_on_whatsapp), session['user_id'])).lastrowid
+              batch_size, batch_pause_seconds, len(phones), len(invalid), session['user_id'])).lastrowid
         conn.executemany(
-            'INSERT INTO whatsapp_broadcast_messages (broadcast_id, variant_index, text) VALUES (?,?,?)',
+            'INSERT INTO broadcast_messages (broadcast_id, variant_index, text) VALUES (?,?,?)',
             [(broadcast_id, i, v) for i, v in enumerate(variants)]
         )
-        # Round-robin: первому номеру — вариант 0, второму — 1, ... по кругу.
+        # Round-robin по всему списку получателей независимо от того, на какой аккаунт/канал
+        # его в итоге назначил каскад: первому номеру — вариант 0, второму — 1, ... по кругу.
         conn.executemany(
-            'INSERT INTO whatsapp_broadcast_recipients (broadcast_id, phone, variant_index, status) VALUES (?,?,?,?)',
-            [(broadcast_id, p, i % len(variants), 'invalid' if p in not_on_whatsapp else 'pending')
+            'INSERT INTO broadcast_recipients (broadcast_id, phone, variant_index, status, assigned_account_id) VALUES (?,?,?,?,?)',
+            [(broadcast_id, p, i % len(variants), 'invalid' if p in invalid else 'pending', assignment.get(p))
              for i, p in enumerate(phones)]
+        )
+        conn.executemany(
+            'INSERT INTO broadcast_accounts (broadcast_id, account_id, priority) VALUES (?,?,?)',
+            [(broadcast_id, acc['id'], i) for i, acc in enumerate(accounts)]
         )
         conn.commit()
 
-    to_send = len(phones) - len(not_on_whatsapp)
+    to_send = len(phones) - len(invalid)
     msg = f'Рассылка создана: {to_send} номеров к отправке'
     if len(variants) > 1:
         msg += f' ({len(variants)} варианта(ов) текста по кругу)'
     msg += '.'
     if bad_format:
         msg += f' Не распознан формат — {bad_format}.'
-    if check_failed:
-        msg += ' Проверка регистрации в WhatsApp не выполнена (сервис недоступен/не подключён) — непроверенные номера попробуем отправить как есть.'
-    elif not_on_whatsapp:
-        msg += f' Не зарегистрированы в WhatsApp — {len(not_on_whatsapp)} (отправка пропущена).'
+    if check_failed_accounts:
+        names = ', '.join(a['label'] or a['phone'] or a['channel'] for a in check_failed_accounts)
+        msg += f' Проверка регистрации не выполнена для: {names} (сервис недоступен/не подключён).'
+    if invalid:
+        msg += f' Не найдены ни на одном из выбранных каналов — {len(invalid)} (отправка пропущена).'
     flash(msg, 'success')
-    return redirect(url_for('whatsapp_broadcast_page'))
+    return redirect(url_for('broadcast_page', tab='send'))
 
 
-@app.route('/reports/whatsapp/broadcast/<int:broadcast_id>/start', methods=['POST'])
+@app.route('/reports/broadcast/<int:broadcast_id>/start', methods=['POST'])
 @login_required
 @menu_permission_required('whatsapp_broadcast')
-def whatsapp_start_broadcast(broadcast_id):
+def start_broadcast(broadcast_id):
     with get_db() as conn:
-        b = conn.execute('SELECT * FROM whatsapp_broadcasts WHERE id=?', (broadcast_id,)).fetchone()
+        b = conn.execute('SELECT * FROM broadcasts WHERE id=?', (broadcast_id,)).fetchone()
         if not b:
             flash('Рассылка не найдена', 'danger')
-            return redirect(url_for('whatsapp_broadcast_page'))
+            return redirect(url_for('broadcast_page', tab='send'))
         if b['status'] == 'running':
             flash('Рассылка уже запущена', 'warning')
-            return redirect(url_for('whatsapp_broadcast_page'))
-        recipients = _wa_pending_recipients(conn, broadcast_id)
-        if not recipients:
+            return redirect(url_for('broadcast_page', tab='send'))
+        pending_accounts = conn.execute('''
+            SELECT DISTINCT r.assigned_account_id AS account_id, a.channel AS channel
+            FROM broadcast_recipients r JOIN messenger_accounts a ON a.id = r.assigned_account_id
+            WHERE r.broadcast_id=? AND r.status='pending'
+        ''', (broadcast_id,)).fetchall()
+        if not pending_accounts:
             flash('Нет номеров для отправки', 'danger')
-            return redirect(url_for('whatsapp_broadcast_page'))
+            return redirect(url_for('broadcast_page', tab='send'))
+        errors = []
+        started = 0
+        for row in pending_accounts:
+            recipients = _pending_recipients(conn, broadcast_id, row['account_id'])
+            if not recipients:
+                continue
+            try:
+                messenger_api.start_campaign(
+                    row['channel'], row['account_id'], broadcast_id, recipients,
+                    interval_min=b['interval_min_seconds'], interval_max=b['interval_max_seconds'],
+                    batch_size=b['batch_size'], batch_pause_seconds=b['batch_pause_seconds'],
+                    image_bytes=b['image_blob'], image_mime=b['image_mime'],
+                )
+                started += 1
+            except Exception as e:
+                logging.exception('start_campaign failed channel=%s account_id=%s', row['channel'], row['account_id'])
+                errors.append(str(e))
+        if not started:
+            flash(f'Не удалось запустить рассылку: {"; ".join(errors)}', 'danger')
+            return redirect(url_for('broadcast_page', tab='send'))
+        conn.execute(
+            "UPDATE broadcasts SET status='running', started_at=CURRENT_TIMESTAMP WHERE id=?",
+            (broadcast_id,)
+        )
+        conn.commit()
+    msg = 'Рассылка запущена.'
+    if errors:
+        msg += f' Часть номеров не запущена (сервис недоступен) — получатели остались в очереди, можно запустить позже.'
+    flash(msg, 'success' if not errors else 'warning')
+    return redirect(url_for('broadcast_page', tab='send'))
+
+
+@app.route('/reports/broadcast/<int:broadcast_id>/stop', methods=['POST'])
+@login_required
+@menu_permission_required('whatsapp_broadcast')
+def stop_broadcast(broadcast_id):
+    with get_db() as conn:
+        accounts = conn.execute('''
+            SELECT a.id AS account_id, a.channel AS channel
+            FROM broadcast_accounts ba JOIN messenger_accounts a ON a.id = ba.account_id
+            WHERE ba.broadcast_id=?
+        ''', (broadcast_id,)).fetchall()
+    errors = 0
+    for acc in accounts:
         try:
-            whatsapp_api.start_campaign(
-                broadcast_id=broadcast_id, recipients=recipients,
-                interval_min=b['interval_min_seconds'], interval_max=b['interval_max_seconds'],
-                batch_size=b['batch_size'], batch_pause_seconds=b['batch_pause_seconds'],
-                image_bytes=b['image_blob'], image_mime=b['image_mime'],
-            )
-        except Exception as e:
-            flash(f'Не удалось запустить рассылку: {e}', 'danger')
-            return redirect(url_for('whatsapp_broadcast_page'))
+            messenger_api.stop_campaign(acc['channel'], acc['account_id'], broadcast_id)
+        except Exception:
+            logging.exception('stop_campaign failed channel=%s account_id=%s', acc['channel'], acc['account_id'])
+            errors += 1
+    with get_db() as conn:
         conn.execute(
-            "UPDATE whatsapp_broadcasts SET status='running', started_at=CURRENT_TIMESTAMP WHERE id=?",
+            "UPDATE broadcasts SET status='stopped', finished_at=CURRENT_TIMESTAMP WHERE id=? AND status='running'",
             (broadcast_id,)
         )
         conn.commit()
-    flash('Рассылка запущена.', 'success')
-    return redirect(url_for('whatsapp_broadcast_page'))
+    msg = 'Рассылка остановлена.'
+    if errors:
+        msg += f' ({errors} сервис(ов) не ответили, но локально остановлено.)'
+    flash(msg, 'success')
+    return redirect(url_for('broadcast_page', tab='send'))
 
 
-@app.route('/reports/whatsapp/broadcast/<int:broadcast_id>/stop', methods=['POST'])
+@app.route('/reports/broadcast/<int:broadcast_id>/status')
 @login_required
 @menu_permission_required('whatsapp_broadcast')
-def whatsapp_stop_broadcast(broadcast_id):
-    try:
-        whatsapp_api.stop_campaign(broadcast_id)
-    except Exception as e:
-        flash(f'Не удалось остановить: {e}', 'danger')
-        return redirect(url_for('whatsapp_broadcast_page'))
+def broadcast_status(broadcast_id):
     with get_db() as conn:
-        conn.execute(
-            "UPDATE whatsapp_broadcasts SET status='stopped', finished_at=CURRENT_TIMESTAMP WHERE id=? AND status='running'",
-            (broadcast_id,)
-        )
-        conn.commit()
-    flash('Рассылка остановлена.', 'success')
-    return redirect(url_for('whatsapp_broadcast_page'))
-
-
-@app.route('/reports/whatsapp/broadcast/<int:broadcast_id>/status')
-@login_required
-@menu_permission_required('whatsapp_broadcast')
-def whatsapp_broadcast_status(broadcast_id):
-    with get_db() as conn:
-        b = conn.execute('SELECT * FROM whatsapp_broadcasts WHERE id=?', (broadcast_id,)).fetchone()
+        b = conn.execute('SELECT * FROM broadcasts WHERE id=?', (broadcast_id,)).fetchone()
         if not b:
             return jsonify({'error': 'not_found'}), 404
         return jsonify({
@@ -9326,45 +9519,54 @@ def whatsapp_broadcast_status(broadcast_id):
         })
 
 
-@app.route('/api/whatsapp-webhook/<token>', methods=['POST'])
-def whatsapp_webhook(token):
-    if not _check_whatsapp_token(token):
+@app.route('/api/messenger-webhook/<token>', methods=['POST'])
+def messenger_webhook(token):
+    if not _check_broadcast_token(token):
         return jsonify({'error': 'forbidden'}), 403
     data = request.get_json(silent=True) or {}
-    broadcast_id, phone, status, error = data.get('broadcast_id'), data.get('phone'), data.get('status'), data.get('error')
+    broadcast_id, account_id, phone, status, error = (
+        data.get('broadcast_id'), data.get('account_id'), data.get('phone'), data.get('status'), data.get('error'))
     if not broadcast_id or not phone or status not in ('sent', 'failed', 'invalid'):
         return jsonify({'error': 'bad_request'}), 400
     with get_db() as conn:
         cur = conn.execute('''
-            UPDATE whatsapp_broadcast_recipients
+            UPDATE broadcast_recipients
             SET status=?, error=?, sent_at=CASE WHEN ?='sent' THEN CURRENT_TIMESTAMP ELSE sent_at END
-            WHERE broadcast_id=? AND phone=? AND status='pending'
-        ''', (status, error, status, broadcast_id, phone))
+            WHERE broadcast_id=? AND phone=? AND status='pending' AND (assigned_account_id=? OR ? IS NULL)
+        ''', (status, error, status, broadcast_id, phone, account_id, account_id))
         if cur.rowcount:
             count_field = {'sent': 'sent_count', 'failed': 'failed_count', 'invalid': 'invalid_count'}[status]
-            conn.execute(f'UPDATE whatsapp_broadcasts SET {count_field} = {count_field} + 1 WHERE id=?', (broadcast_id,))
+            conn.execute(f'UPDATE broadcasts SET {count_field} = {count_field} + 1 WHERE id=?', (broadcast_id,))
             remaining = conn.execute(
-                "SELECT COUNT(*) FROM whatsapp_broadcast_recipients WHERE broadcast_id=? AND status='pending'",
+                "SELECT COUNT(*) FROM broadcast_recipients WHERE broadcast_id=? AND status='pending'",
                 (broadcast_id,)
             ).fetchone()[0]
             if remaining == 0:
                 conn.execute(
-                    "UPDATE whatsapp_broadcasts SET status='completed', finished_at=CURRENT_TIMESTAMP WHERE id=? AND status='running'",
+                    "UPDATE broadcasts SET status='completed', finished_at=CURRENT_TIMESTAMP WHERE id=? AND status='running'",
                     (broadcast_id,)
                 )
         conn.commit()
     return jsonify({'ok': True})
 
 
-@app.route('/internal/whatsapp/resume')
-def whatsapp_resume():
-    if not _check_whatsapp_token(request.args.get('token', '')):
+@app.route('/internal/messenger/resume')
+def messenger_resume():
+    if not _check_broadcast_token(request.args.get('token', '')):
         return jsonify({'error': 'forbidden'}), 403
+    account_id = request.args.get('account_id')
+    if not account_id:
+        return jsonify({'error': 'bad_request'}), 400
     with get_db() as conn:
-        b = conn.execute("SELECT * FROM whatsapp_broadcasts WHERE status='running' ORDER BY id LIMIT 1").fetchone()
+        b = conn.execute('''
+            SELECT b.* FROM broadcasts b
+            JOIN broadcast_recipients r ON r.broadcast_id = b.id
+            WHERE b.status='running' AND r.assigned_account_id=? AND r.status='pending'
+            GROUP BY b.id ORDER BY b.id LIMIT 1
+        ''', (account_id,)).fetchone()
         if not b:
             return jsonify({'none': True})
-        recipients = _wa_pending_recipients(conn, b['id'])
+        recipients = _pending_recipients(conn, b['id'], account_id)
         if not recipients:
             return jsonify({'none': True})
         return jsonify({

@@ -3,6 +3,7 @@ import multer from 'multer';
 import qrcode from 'qrcode';
 import pino from 'pino';
 import fs from 'fs';
+import path from 'path';
 import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import { SocksProxyAgent } from 'socks-proxy-agent';
@@ -23,12 +24,34 @@ if (proxyAgent) {
   console.log('[whatsapp] using proxy', PROXY_URL);
 }
 
-let sock = null;
-let latestQr = null;
-let connectionStatus = 'disconnected'; // disconnected | connecting | qr | connected
-let connectedPhone = null;
-let resumeChecked = false;
-let campaign = null;
+// Мульти-сессионность: несколько WhatsApp-аккаунтов в одном процессе, ключ — accountId,
+// который генерирует Flask/SQLite при создании записи "номер-отправитель" (messenger_accounts).
+// Раньше сервис держал ровно одну глобальную сессию — расширено при добавлении Max/Telegram
+// и возможности подключить сразу несколько номеров с приоритетом отправки.
+const accounts = new Map(); // accountId -> AccountState
+
+function newAccountState(accountId) {
+  return {
+    accountId,
+    sock: null,
+    status: 'disconnected', // disconnected | connecting | qr | connected
+    qr: null,
+    phone: null,
+    resumeChecked: false,
+    campaign: null,
+  };
+}
+
+function getAccount(accountId) {
+  if (!accounts.has(accountId)) {
+    accounts.set(accountId, newAccountState(accountId));
+  }
+  return accounts.get(accountId);
+}
+
+function authDirFor(accountId) {
+  return path.join(AUTH_DIR, String(accountId));
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -45,12 +68,13 @@ function randomDelayMs(min, max) {
   return Math.round(sec * 1000);
 }
 
-async function startSock() {
-  fs.mkdirSync(AUTH_DIR, { recursive: true });
-  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-  connectionStatus = 'connecting';
-  sock = makeWASocket({
-    auth: state,
+async function startAccountSock(state) {
+  const dir = authDirFor(state.accountId);
+  fs.mkdirSync(dir, { recursive: true });
+  const { state: authState, saveCreds } = await useMultiFileAuthState(dir);
+  state.status = 'connecting';
+  const sock = makeWASocket({
+    auth: authState,
     logger,
     printQRInTerminal: false,
     browser: ['CRM Sushi', 'Chrome', '1.0'],
@@ -59,6 +83,7 @@ async function startSock() {
     agent: proxyAgent,
     fetchAgent: proxyAgent,
   });
+  state.sock = sock;
 
   sock.ev.on('creds.update', saveCreds);
 
@@ -66,36 +91,36 @@ async function startSock() {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      latestQr = qr;
-      connectionStatus = 'qr';
+      state.qr = qr;
+      state.status = 'qr';
     }
 
     if (connection === 'open') {
-      connectionStatus = 'connected';
-      latestQr = null;
-      connectedPhone = sock.user?.id ? sock.user.id.split(':')[0] : null;
-      console.log('[whatsapp] connected as', connectedPhone);
-      if (!resumeChecked) {
-        resumeChecked = true;
-        checkResume().catch((err) => console.error('[whatsapp] resume check failed', err));
+      state.status = 'connected';
+      state.qr = null;
+      state.phone = sock.user?.id ? sock.user.id.split(':')[0] : null;
+      console.log('[whatsapp] account', state.accountId, 'connected as', state.phone);
+      if (!state.resumeChecked) {
+        state.resumeChecked = true;
+        checkResume(state).catch((err) => console.error('[whatsapp] resume check failed', state.accountId, err));
       }
     } else if (connection === 'close') {
       const statusCode = lastDisconnect?.error instanceof Boom
         ? lastDisconnect.error.output?.statusCode
         : null;
       const loggedOut = statusCode === DisconnectReason.loggedOut;
-      connectionStatus = 'disconnected';
-      connectedPhone = null;
+      state.status = 'disconnected';
+      state.phone = null;
 
       if (loggedOut) {
-        console.log('[whatsapp] logged out, clearing session');
-        fs.rmSync(AUTH_DIR, { recursive: true, force: true });
-        fs.mkdirSync(AUTH_DIR, { recursive: true });
+        console.log('[whatsapp] account', state.accountId, 'logged out, clearing session');
+        fs.rmSync(dir, { recursive: true, force: true });
+        fs.mkdirSync(dir, { recursive: true });
       } else {
-        console.log('[whatsapp] connection closed, reconnecting in 3s. statusCode=', statusCode,
+        console.log('[whatsapp] account', state.accountId, 'connection closed, reconnecting in 3s. statusCode=', statusCode,
           'error=', lastDisconnect?.error ? String(lastDisconnect.error) : null);
         setTimeout(() => {
-          startSock().catch((err) => console.error('[whatsapp] reconnect failed', err));
+          startAccountSock(state).catch((err) => console.error('[whatsapp] reconnect failed', state.accountId, err));
         }, 3000);
       }
     }
@@ -115,31 +140,33 @@ async function sendWebhook(payload) {
   }
 }
 
-async function runCampaign(cfg) {
-  campaign = cfg;
+async function runCampaign(state, cfg) {
+  state.campaign = cfg;
   let sentSinceBatch = 0;
 
   for (const item of cfg.queue) {
-    if (campaign?.stopFlag) break;
+    if (state.campaign?.stopFlag) break;
     const phone = item.phone;
     const text = item.message || '';
 
-    const result = { broadcast_id: cfg.broadcastId, phone, status: 'failed', error: null };
+    const result = {
+      broadcast_id: cfg.broadcastId, account_id: state.accountId, phone, status: 'failed', error: null,
+    };
     try {
-      const checkResults = await sock.onWhatsApp(jidFor(phone)).catch(() => []);
+      const checkResults = await state.sock.onWhatsApp(jidFor(phone)).catch(() => []);
       const check = checkResults && checkResults[0];
       if (!check?.exists) {
         result.status = 'invalid';
       } else {
         const targetJid = check.jid || jidFor(phone);
         if (cfg.image) {
-          await sock.sendMessage(targetJid, {
+          await state.sock.sendMessage(targetJid, {
             image: cfg.image,
             mimetype: cfg.imageMime || 'image/jpeg',
             caption: text,
           });
         } else {
-          await sock.sendMessage(targetJid, { text });
+          await state.sock.sendMessage(targetJid, { text });
         }
         result.status = 'sent';
       }
@@ -151,7 +178,7 @@ async function runCampaign(cfg) {
     await sendWebhook(result);
     if (result.status !== 'invalid') sentSinceBatch += 1;
 
-    if (campaign?.stopFlag) break;
+    if (state.campaign?.stopFlag) break;
 
     if (cfg.batchSize > 0 && sentSinceBatch >= cfg.batchSize) {
       sentSinceBatch = 0;
@@ -161,18 +188,19 @@ async function runCampaign(cfg) {
     }
   }
 
-  campaign = null;
+  state.campaign = null;
 }
 
-async function checkResume() {
-  if (!RESUME_URL || !WEBHOOK_TOKEN || campaign) return;
+async function checkResume(state) {
+  if (!RESUME_URL || !WEBHOOK_TOKEN || state.campaign) return;
   try {
-    const resp = await fetch(`${RESUME_URL}?token=${encodeURIComponent(WEBHOOK_TOKEN)}`);
+    const url = `${RESUME_URL}?token=${encodeURIComponent(WEBHOOK_TOKEN)}&account_id=${encodeURIComponent(state.accountId)}`;
+    const resp = await fetch(url);
     if (!resp.ok) return;
     const data = await resp.json();
     if (!data || data.none || !Array.isArray(data.recipients) || data.recipients.length === 0) return;
 
-    console.log(`[whatsapp] resuming broadcast #${data.broadcast_id}, ${data.recipients.length} pending`);
+    console.log(`[whatsapp] account ${state.accountId} resuming broadcast #${data.broadcast_id}, ${data.recipients.length} pending`);
     const cfg = {
       broadcastId: data.broadcast_id,
       image: data.image_base64 ? Buffer.from(data.image_base64, 'base64') : null,
@@ -184,12 +212,12 @@ async function checkResume() {
       batchPauseSeconds: data.batch_pause_seconds || 0,
       stopFlag: false,
     };
-    runCampaign(cfg).catch((err) => {
-      console.error('[whatsapp] resumed campaign crashed', err);
-      campaign = null;
+    runCampaign(state, cfg).catch((err) => {
+      console.error('[whatsapp] resumed campaign crashed', state.accountId, err);
+      state.campaign = null;
     });
   } catch (err) {
-    console.error('[whatsapp] checkResume failed', err);
+    console.error('[whatsapp] checkResume failed', state.accountId, err);
   }
 }
 
@@ -198,48 +226,64 @@ app.use(express.json({ limit: '2mb' }));
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
 
 app.get('/health', (req, res) => {
-  res.json({ ok: true, connectionStatus });
+  res.json({ ok: true, accounts: accounts.size });
 });
 
-app.get('/session/status', (req, res) => {
-  res.json({ status: connectionStatus, phone: connectedPhone, campaignRunning: !!campaign });
+app.post('/accounts/:id/session/start', async (req, res) => {
+  const state = getAccount(req.params.id);
+  if (state.status === 'connecting' || state.status === 'qr' || state.status === 'connected') {
+    // Идемпотентно — не поднимаем вторую сессию поверх той же auth-директории.
+    res.json({ ok: true, status: state.status });
+    return;
+  }
+  try {
+    await startAccountSock(state);
+    res.json({ ok: true, status: state.status });
+  } catch (err) {
+    res.status(500).json({ error: String(err?.message || err) });
+  }
 });
 
-app.get('/session/qr', async (req, res) => {
-  if (!latestQr) {
+app.get('/accounts/:id/session/status', (req, res) => {
+  const state = getAccount(req.params.id);
+  res.json({ status: state.status, phone: state.phone, campaignRunning: !!state.campaign });
+});
+
+app.get('/accounts/:id/session/qr', async (req, res) => {
+  const state = getAccount(req.params.id);
+  if (!state.qr) {
     res.json({ qr: null });
     return;
   }
   try {
-    const dataUrl = await qrcode.toDataURL(latestQr);
+    const dataUrl = await qrcode.toDataURL(state.qr);
     res.json({ qr: dataUrl });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
 });
 
-app.post('/session/logout', async (req, res) => {
+app.post('/accounts/:id/session/logout', async (req, res) => {
+  const state = getAccount(req.params.id);
   try {
-    if (sock) {
-      await sock.logout().catch(() => {});
+    if (state.sock) {
+      await state.sock.logout().catch(() => {});
     }
-    fs.rmSync(AUTH_DIR, { recursive: true, force: true });
-    fs.mkdirSync(AUTH_DIR, { recursive: true });
-    connectionStatus = 'disconnected';
-    connectedPhone = null;
-    latestQr = null;
-    resumeChecked = false;
-    setTimeout(() => {
-      startSock().catch((err) => console.error('[whatsapp] restart after logout failed', err));
-    }, 1000);
+    fs.rmSync(authDirFor(state.accountId), { recursive: true, force: true });
+    fs.mkdirSync(authDirFor(state.accountId), { recursive: true });
+    state.status = 'disconnected';
+    state.phone = null;
+    state.qr = null;
+    state.resumeChecked = false;
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
 });
 
-app.post('/numbers/check', async (req, res) => {
-  if (connectionStatus !== 'connected') {
+app.post('/accounts/:id/numbers/check', async (req, res) => {
+  const state = getAccount(req.params.id);
+  if (state.status !== 'connected') {
     res.status(409).json({ error: 'not_connected' });
     return;
   }
@@ -253,7 +297,7 @@ app.post('/numbers/check', async (req, res) => {
   try {
     for (let i = 0; i < phones.length; i += CHUNK) {
       const chunk = phones.slice(i, i + CHUNK);
-      const checked = await sock.onWhatsApp(...chunk.map(jidFor));
+      const checked = await state.sock.onWhatsApp(...chunk.map(jidFor));
       const existsByPhone = new Map();
       for (const c of checked || []) {
         if (c?.jid) existsByPhone.set(c.jid.split('@')[0], !!c.exists);
@@ -269,12 +313,13 @@ app.post('/numbers/check', async (req, res) => {
   }
 });
 
-app.post('/campaign/start', upload.single('image'), (req, res) => {
-  if (connectionStatus !== 'connected') {
+app.post('/accounts/:id/campaign/start', upload.single('image'), (req, res) => {
+  const state = getAccount(req.params.id);
+  if (state.status !== 'connected') {
     res.status(409).json({ error: 'not_connected' });
     return;
   }
-  if (campaign) {
+  if (state.campaign) {
     res.status(409).json({ error: 'already_running' });
     return;
   }
@@ -304,27 +349,37 @@ app.post('/campaign/start', upload.single('image'), (req, res) => {
   };
 
   res.status(202).json({ ok: true });
-  runCampaign(cfg).catch((err) => {
-    console.error('[whatsapp] campaign crashed', err);
-    campaign = null;
+  runCampaign(state, cfg).catch((err) => {
+    console.error('[whatsapp] campaign crashed', state.accountId, err);
+    state.campaign = null;
   });
 });
 
-app.post('/campaign/stop', (req, res) => {
-  if (campaign) campaign.stopFlag = true;
+app.post('/accounts/:id/campaign/stop', (req, res) => {
+  const state = getAccount(req.params.id);
+  if (state.campaign) state.campaign.stopFlag = true;
   res.json({ ok: true });
 });
 
-app.get('/campaign/status', (req, res) => {
-  if (!campaign) {
+app.get('/accounts/:id/campaign/status', (req, res) => {
+  const state = getAccount(req.params.id);
+  if (!state.campaign) {
     res.json({ running: false });
     return;
   }
-  res.json({ running: true, broadcastId: campaign.broadcastId });
+  res.json({ running: true, broadcastId: state.campaign.broadcastId });
 });
 
 app.listen(PORT, () => {
   console.log(`[whatsapp] listening on ${PORT}`);
 });
 
-startSock().catch((err) => console.error('[whatsapp] startSock failed', err));
+// Переживаем рестарт контейнера: поднимаем заново все сессии, для которых на диске уже есть
+// auth-директория (Flask могла и не успеть/не быть обязана заново дёргать session/start для
+// каждого известного аккаунта) — так подключённые номера не отваливаются молча после деплоя.
+fs.mkdirSync(AUTH_DIR, { recursive: true });
+for (const entry of fs.readdirSync(AUTH_DIR, { withFileTypes: true })) {
+  if (!entry.isDirectory()) continue;
+  const state = getAccount(entry.name);
+  startAccountSock(state).catch((err) => console.error('[whatsapp] startup restore failed', entry.name, err));
+}

@@ -1,0 +1,327 @@
+{% extends 'base.html' %}
+{% block title %}Рассылка{% endblock %}
+{% block content %}
+
+{% set channel_labels = {'whatsapp': 'WhatsApp', 'telegram': 'Telegram', 'max': 'MAX'} %}
+{% set channel_icons = {'whatsapp': 'bi-whatsapp', 'telegram': 'bi-telegram', 'max': 'bi-chat-dots'} %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="fw-bold mb-0"><i class="bi bi-megaphone me-2"></i>Рассылка</h4>
+</div>
+
+<ul class="nav nav-tabs mb-3" id="bcTabs">
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'numbers' %}active{% endif %}" href="{{ url_for('broadcast_page', tab='numbers') }}" data-tab="numbers">
+            <i class="bi bi-phone me-1"></i>Номера
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'send' %}active{% endif %}" href="{{ url_for('broadcast_page', tab='send') }}" data-tab="send">
+            <i class="bi bi-send me-1"></i>Ручная рассылка
+        </a>
+    </li>
+</ul>
+
+<!-- ═══ Вкладка «Номера» ═══ -->
+<div class="bc-tab-pane" id="bc-pane-numbers" style="{% if active_tab != 'numbers' %}display:none;{% endif %}">
+    <div class="card mb-4">
+        <div class="card-header fw-semibold"><i class="bi bi-plus-lg me-2"></i>Добавить номер</div>
+        <div class="card-body">
+            <form method="POST" action="{{ url_for('broadcast_add_account') }}" class="row g-3 align-items-end">
+                <div class="col-md-3">
+                    <label class="form-label small fw-semibold">Мессенджер</label>
+                    <select name="channel" class="form-select" required>
+                        <option value="whatsapp">WhatsApp</option>
+                        <option value="telegram">Telegram</option>
+                        <option value="max">MAX</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small fw-semibold">Номер телефона</label>
+                    <input type="text" name="phone" class="form-control" placeholder="+7 999 123-45-67" required>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small fw-semibold">Метка (необязательно)</label>
+                    <input type="text" name="label" class="form-control" placeholder="Например: рабочий">
+                </div>
+                <div class="col-md-3">
+                    <button type="submit" class="btn btn-primary w-100"><i class="bi bi-plus-lg me-1"></i>Добавить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="row g-3" id="bc-accounts-list">
+        {% for acc in accounts %}
+        <div class="col-md-6 col-lg-4">
+            <div class="card h-100" id="bc-account-card-{{ acc.id }}" data-account-id="{{ acc.id }}" data-channel="{{ acc.channel }}">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <i class="bi {{ channel_icons.get(acc.channel, 'bi-chat') }} me-1"></i>
+                            <b>{{ channel_labels.get(acc.channel, acc.channel) }}</b>
+                            {% if acc.label %}<span class="text-muted small">— {{ acc.label }}</span>{% endif %}
+                        </div>
+                    </div>
+                    <div id="bc-account-status-{{ acc.id }}" class="small">
+                        <span class="text-muted"><span class="spinner-border spinner-border-sm me-1"></span>Проверяю статус…</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="col-12 text-muted">Номера ещё не добавлены.</div>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- ═══ Вкладка «Ручная рассылка» ═══ -->
+<div class="bc-tab-pane" id="bc-pane-send" style="{% if active_tab != 'send' %}display:none;{% endif %}">
+
+    {% set connected_accounts = accounts|selectattr('status', 'equalto', 'connected')|list %}
+
+    <div class="card mb-4">
+        <div class="card-header fw-semibold"><i class="bi bi-send me-2"></i>Новая рассылка</div>
+        <div class="card-body">
+            {% if not connected_accounts %}
+            <div class="alert alert-warning">Нет ни одного подключённого номера — сначала подключите номер на вкладке «Номера».</div>
+            {% endif %}
+            <form method="POST" action="{{ url_for('create_broadcast') }}" enctype="multipart/form-data" class="row g-3">
+                <div class="col-12">
+                    <label class="form-label small fw-semibold">Номера-отправители и порядок каскада</label>
+                    <div class="form-text mb-2">Отмеченные номера пробуются по очереди приоритета (1 — первым): если получатель не найден на канале первого номера, проверяем следующий.</div>
+                    <div class="row g-2">
+                        {% for acc in connected_accounts %}
+                        <div class="col-md-4">
+                            <div class="input-group input-group-sm">
+                                <div class="input-group-text">
+                                    <input type="checkbox" name="account_ids[]" value="{{ acc.id }}" class="form-check-input mt-0 bc-acc-checkbox" checked>
+                                </div>
+                                <span class="input-group-text flex-grow-1 justify-content-start">
+                                    <i class="bi {{ channel_icons.get(acc.channel, 'bi-chat') }} me-1"></i>
+                                    {{ channel_labels.get(acc.channel, acc.channel) }}{% if acc.label %} — {{ acc.label }}{% endif %}
+                                    {% if acc.phone %}({{ acc.phone }}){% endif %}
+                                </span>
+                                <span class="input-group-text">приоритет</span>
+                                <input type="number" name="priority_{{ acc.id }}" class="form-control bc-acc-priority" value="{{ loop.index }}" min="1" style="max-width:70px;">
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <div class="col-12"><hr></div>
+
+                <div class="col-md-6">
+                    <label class="form-label small fw-semibold">Название (для истории, необязательно)</label>
+                    <input type="text" name="name" class="form-control" placeholder="Например: Акция на роллы">
+                </div>
+                <div class="col-12">
+                    <label class="form-label small fw-semibold">Варианты текста сообщения</label>
+                    <div class="form-text mb-2">Если вариантов больше одного — рассылаются по кругу: 1-й номер из списка получит вариант 1, 2-й — вариант 2, и так далее по кругу.</div>
+                    <div id="bc-message-variants">
+                        <div class="input-group mb-2 bc-variant-row">
+                            <textarea name="message_variants[]" class="form-control" rows="3" placeholder="Вариант 1"></textarea>
+                            <button type="button" class="btn btn-outline-danger bc-variant-remove" onclick="bcRemoveVariant(this)" title="Убрать вариант">&times;</button>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="bcAddVariant()"><i class="bi bi-plus-lg"></i> Добавить вариант текста</button>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label small fw-semibold">Картинка (необязательно)</label>
+                    <input type="file" name="image" class="form-control" accept="image/*">
+                </div>
+
+                <div class="col-12"><hr></div>
+
+                <div class="col-md-6">
+                    <label class="form-label small fw-semibold">Список номеров — вставить построчно</label>
+                    <textarea name="numbers_text" class="form-control" rows="6" placeholder="+7 999 123-45-67&#10;89991234567&#10;79991234567"></textarea>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label small fw-semibold">…или загрузить файл (.xlsx / .csv / .txt)</label>
+                    <input type="file" name="numbers_file" class="form-control" accept=".xlsx,.csv,.txt">
+                    <div class="form-text">Можно указать и то, и другое — номера объединятся, дубликаты уберутся автоматически. Формат номера не важен — 8/+7/10 цифр распознаются одинаково.</div>
+                </div>
+
+                <div class="col-12"><hr></div>
+
+                <div class="col-md-3">
+                    <label class="form-label small fw-semibold">Интервал между сообщениями, сек</label>
+                    <div class="input-group">
+                        <input type="number" name="interval_min" class="form-control" value="5" min="0">
+                        <span class="input-group-text">—</span>
+                        <input type="number" name="interval_max" class="form-control" value="10" min="0">
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small fw-semibold">Доп. пауза раз в N сообщений</label>
+                    <input type="number" name="batch_size" class="form-control" value="20" min="0">
+                    <div class="form-text">0 — без дополнительной паузы</div>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small fw-semibold">Длительность паузы, сек</label>
+                    <input type="number" name="batch_pause_seconds" class="form-control" value="60" min="0">
+                </div>
+
+                <div class="col-12">
+                    <button type="submit" class="btn btn-primary" {% if not connected_accounts %}disabled{% endif %}><i class="bi bi-plus-lg me-1"></i>Создать рассылку</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- История рассылок -->
+    <div class="card">
+        <div class="card-header fw-semibold"><i class="bi bi-clock-history me-2"></i>История рассылок</div>
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>Создана</th>
+                        <th>Название</th>
+                        <th>Статус</th>
+                        <th>Прогресс</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for b in broadcasts %}
+                    <tr id="bc-row-{{ b.id }}">
+                        <td class="text-nowrap">{{ b.created_at }}</td>
+                        <td>{{ b.name or '—' }}</td>
+                        <td><span class="badge bg-secondary" id="bc-status-{{ b.id }}">{{ b.status }}</span></td>
+                        <td>
+                            <span id="bc-progress-{{ b.id }}">{{ b.sent_count + b.failed_count + b.invalid_count }}/{{ b.total_count }}</span>
+                            <span class="text-muted small">(отправлено {{ b.sent_count }}, ошибок {{ b.failed_count }}, невалидных {{ b.invalid_count }})</span>
+                        </td>
+                        <td class="text-end">
+                            {% if b.status == 'draft' or b.status == 'stopped' %}
+                            <form method="POST" action="{{ url_for('start_broadcast', broadcast_id=b.id) }}" class="d-inline">
+                                <button type="submit" class="btn btn-sm btn-success"><i class="bi bi-play-fill"></i> Запустить</button>
+                            </form>
+                            {% elif b.status == 'running' %}
+                            <form method="POST" action="{{ url_for('stop_broadcast', broadcast_id=b.id) }}" class="d-inline">
+                                <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-stop-fill"></i> Остановить</button>
+                            </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="5" class="text-center text-muted py-3">Рассылок пока нет</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+// Переключение вкладок без перезагрузки страницы — сама навигация всё равно ссылки с
+// ?tab=..., чтобы обновление/шаринг ссылки сохраняло активную вкладку (см. правило в CLAUDE.md
+// про сохранение состояния вкладок), JS только подменяет видимость без лишнего запроса.
+document.querySelectorAll('#bcTabs .nav-link').forEach((link) => {
+    link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const tab = link.dataset.tab;
+        document.querySelectorAll('#bcTabs .nav-link').forEach((l) => l.classList.remove('active'));
+        link.classList.add('active');
+        document.querySelectorAll('.bc-tab-pane').forEach((p) => { p.style.display = 'none'; });
+        document.getElementById(`bc-pane-${tab}`).style.display = '';
+        history.replaceState(null, '', link.href);
+    });
+});
+
+const CHANNEL_LABELS = {{ channel_labels|tojson }};
+const CHANNEL_SCAN_HINT = {
+    whatsapp: 'Откройте WhatsApp на телефоне → Связанные устройства → Привязка устройства, и отсканируйте код:',
+    telegram: 'Откройте Telegram на телефоне → Настройки → Устройства → Подключить устройство, и отсканируйте код:',
+    max: 'Откройте MAX на телефоне → Подключённые устройства → Подключить устройство, и отсканируйте код:',
+};
+
+function renderAccountCard(accountId, channel, data) {
+    const el = document.getElementById(`bc-account-status-${accountId}`);
+    if (!el) return;
+    if (data.status === 'connected') {
+        el.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center">
+                <div><i class="bi bi-check-circle-fill text-success me-1"></i>Подключено${data.phone ? ', номер <b>' + data.phone + '</b>' : ''}</div>
+                <form method="POST" action="/reports/broadcast/accounts/${accountId}/logout" onsubmit="return confirm('Отключить этот номер? Понадобится заново сканировать QR-код.');">
+                    <button type="submit" class="btn btn-sm btn-outline-secondary">Выйти</button>
+                </form>
+            </div>`;
+    } else if (data.status === 'qr' && data.qr) {
+        el.innerHTML = `
+            <div class="text-center">
+                <div class="mb-2 small">${CHANNEL_SCAN_HINT[channel] || 'Отсканируйте QR-код в приложении на телефоне:'}</div>
+                <img src="${data.qr}" alt="QR" style="max-width:220px;">
+            </div>`;
+    } else if (data.status === 'error') {
+        el.innerHTML = `<div class="text-danger"><i class="bi bi-exclamation-triangle-fill me-1"></i>Сервис недоступен: ${data.error || ''}</div>`;
+    } else if (data.status === 'disconnected') {
+        el.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center">
+                <div class="text-muted"><i class="bi bi-x-circle me-1"></i>Не подключено</div>
+                <form method="POST" action="/reports/broadcast/accounts/${accountId}/reconnect">
+                    <button type="submit" class="btn btn-sm btn-outline-primary">Подключить</button>
+                </form>
+            </div>`;
+    } else {
+        el.innerHTML = `<div class="text-muted"><span class="spinner-border spinner-border-sm me-1"></span>Подключение…</div>`;
+    }
+}
+
+function pollAccountsStatus() {
+    document.querySelectorAll('#bc-accounts-list [data-account-id]').forEach((card) => {
+        const accountId = card.dataset.accountId;
+        const channel = card.dataset.channel;
+        fetch(`/reports/broadcast/accounts/${accountId}/status`)
+            .then((r) => r.json())
+            .then((data) => renderAccountCard(accountId, channel, data))
+            .catch(() => {});
+    });
+}
+if (document.getElementById('bc-accounts-list')) {
+    pollAccountsStatus();
+    setInterval(pollAccountsStatus, 3000);
+}
+
+function bcAddVariant() {
+    const container = document.getElementById('bc-message-variants');
+    const n = container.querySelectorAll('.bc-variant-row').length + 1;
+    const row = document.createElement('div');
+    row.className = 'input-group mb-2 bc-variant-row';
+    row.innerHTML = `<textarea name="message_variants[]" class="form-control" rows="3" placeholder="Вариант ${n}"></textarea>
+        <button type="button" class="btn btn-outline-danger bc-variant-remove" onclick="bcRemoveVariant(this)" title="Убрать вариант">&times;</button>`;
+    container.appendChild(row);
+}
+
+function bcRemoveVariant(btn) {
+    const container = document.getElementById('bc-message-variants');
+    if (container.querySelectorAll('.bc-variant-row').length <= 1) return;
+    btn.closest('.bc-variant-row').remove();
+}
+
+const RUNNING_BROADCAST_IDS = [{% for b in broadcasts if b.status == 'running' %}{{ b.id }}{{ ',' if not loop.last }}{% endfor %}];
+
+function pollBroadcastStatus(id) {
+    fetch(`/reports/broadcast/${id}/status`)
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) return;
+            const statusEl = document.getElementById(`bc-status-${id}`);
+            const progressEl = document.getElementById(`bc-progress-${id}`);
+            if (statusEl) statusEl.textContent = data.status;
+            if (progressEl) progressEl.textContent = `${data.sent_count + data.failed_count + data.invalid_count}/${data.total_count}`;
+            if (data.status === 'running') {
+                setTimeout(() => pollBroadcastStatus(id), 4000);
+            } else {
+                location.reload();
+            }
+        })
+        .catch(() => {});
+}
+RUNNING_BROADCAST_IDS.forEach(id => setTimeout(() => pollBroadcastStatus(id), 4000));
+</script>
+
+{% endblock %}

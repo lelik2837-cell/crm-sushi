@@ -382,8 +382,8 @@
                         {% endif %}
                         {% if item_visible('whatsapp_broadcast') %}
                         <li>
-                            <a class="dropdown-item {% if request.endpoint and request.endpoint.startswith('whatsapp_') %}active{% endif %}" href="{{ url_for('whatsapp_broadcast_page') }}">
-                                <i class="bi bi-whatsapp me-2"></i>Рассылка WhatsApp
+                            <a class="dropdown-item {% if request.endpoint and request.endpoint.startswith('broadcast') %}active{% endif %}" href="{{ url_for('broadcast_page') }}">
+                                <i class="bi bi-megaphone me-2"></i>Рассылка
                             </a>
                         </li>
                         {% endif %}
