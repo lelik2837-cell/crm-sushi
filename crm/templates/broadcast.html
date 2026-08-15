@@ -236,7 +236,7 @@ const CHANNEL_LABELS = {{ channel_labels|tojson }};
 const CHANNEL_SCAN_HINT = {
     whatsapp: 'Откройте WhatsApp на телефоне → Связанные устройства → Привязка устройства, и отсканируйте код:',
     telegram: 'Откройте Telegram на телефоне → Настройки → Устройства → Подключить устройство, и отсканируйте код:',
-    max: 'Откройте MAX на телефоне → Подключённые устройства → Подключить устройство, и отсканируйте код:',
+    max: 'Откройте MAX на телефоне → в настройках профиля найдите «Подключённые устройства» (пункт может называться иначе) → «Подключить устройство», и отсканируйте код:',
 };
 
 function renderAccountCard(accountId, channel, data) {
@@ -257,8 +257,9 @@ function renderAccountCard(accountId, channel, data) {
                 <img src="${data.qr}" alt="QR" style="max-width:220px;">
             </div>`;
     } else if (data.status === 'awaiting_code') {
-        // MAX логинится телефоном + SMS-кодом, а не QR (см. max-service) — вместо
-        // картинки показываем поле ввода кода.
+        // Общий статус контракта на случай, если какому-то каналу понадобится вход по
+        // коду из SMS вместо QR — сейчас ни один подключённый канал его не использует
+        // (MAX подключён через QR, см. max-service), но UI готов, если понадобится.
         el.innerHTML = `
             <div>
                 <div class="mb-2 small">Введите код из SMS${data.phone ? ', отправленного на ' + data.phone : ''}:</div>

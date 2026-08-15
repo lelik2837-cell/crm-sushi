@@ -2,4 +2,5 @@ fastapi==0.115.6
 uvicorn[standard]==0.32.1
 python-multipart==0.0.20
 httpx==0.28.1
+qrcode[pil]==8.0
 maxapi-python==2.4.0

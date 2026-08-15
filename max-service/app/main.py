@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import io
 import json
 import logging
 import os
@@ -8,11 +9,12 @@ import shutil
 from typing import Optional
 
 import httpx
+import qrcode
 from fastapi import FastAPI, Form, UploadFile, File as FastAPIFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from pymax import ApiError, Client, ExtraConfig, Photo
+from pymax import ExtraConfig, Photo, QrAuthFlow, WebClient
 
 PORT = int(os.environ.get('PORT', 3000))
 AUTH_DIR = os.environ.get('AUTH_DIR', '/data/auth')
@@ -36,12 +38,12 @@ app = FastAPI()
 class AccountState:
     def __init__(self, account_id: str):
         self.account_id = account_id
-        self.client: Optional[Client] = None
-        self.status = 'disconnected'  # disconnected|connecting|awaiting_code|awaiting_password|connected|error
+        self.client: Optional[WebClient] = None
+        self.status = 'disconnected'  # disconnected|connecting|qr|awaiting_password|connected|error
         self.phone: Optional[str] = None
         self.error: Optional[str] = None
+        self.qr_url: Optional[str] = None
         self.password_hint: Optional[str] = None
-        self.code_queue: asyncio.Queue = asyncio.Queue()
         self.password_queue: asyncio.Queue = asyncio.Queue()
         self.session_task: Optional[asyncio.Task] = None
         self.campaign: Optional[dict] = None
@@ -73,19 +75,19 @@ def e164(phone: Optional[str]) -> str:
     return phone if phone.startswith('+') else f'+{phone}'
 
 
-class QueueSmsCodeProvider:
-    """Код приходит не из консоли, а через HTTP-эндпоинт /session/verify-code —
-    get_code() просто ждёт, пока туда что-то положат (см. docs/auth.rst PyMax,
-    пример MemorySmsCodeProvider — тот же приём на asyncio.Queue)."""
+class QueueQrHandler:
+    """QR-вход (WebClient) вместо телефон+SMS-код (Client): подтверждение делает уже
+    залогиненный MAX на телефоне пользователя, отсканировав код — так же, как WhatsApp Web.
+    Вход по SMS-коду у MAX на практике требует, чтобы на аккаунте заранее был установлен
+    пароль (иначе сервер отказывает уже после кода) — с QR этого ограничения нет, поэтому
+    выбран именно этот способ, а не Client из первой версии сервиса."""
 
     def __init__(self, state: AccountState):
         self.state = state
 
-    async def get_code(self, phone: str) -> str:
-        self.state.status = 'awaiting_code'
-        code = await self.state.code_queue.get()
-        self.state.status = 'connecting'
-        return code
+    async def show_qr(self, qr_url: str) -> None:
+        self.state.qr_url = qr_url
+        self.state.status = 'qr'
 
 
 class QueuePasswordProvider:
@@ -141,27 +143,27 @@ async def check_resume(state: AccountState) -> None:
 async def run_account(state: AccountState, phone: Optional[str]) -> None:
     state.status = 'connecting'
     state.error = None
+    state.qr_url = None
+    if phone and not state.phone:
+        state.phone = phone  # временная метка для UI, перезапишется реальным номером после входа
     work_dir = auth_dir_for(state.account_id)
-    phone_file = os.path.join(work_dir, 'phone.txt')
-    if phone:
-        with open(phone_file, 'w') as f:
-            f.write(phone)
-    elif os.path.exists(phone_file):
-        with open(phone_file) as f:
-            phone = f.read().strip()
 
-    client = Client(
-        phone=e164(phone),
+    # WebClient не принимает password_provider напрямую (в отличие от Client) — передаём
+    # свой QrAuthFlow явно, чтобы завести туда и обработчик QR, и обработчик пароля 2FA.
+    auth_flow = QrAuthFlow(
+        qr_provider=QueueQrHandler(state),
+        password_provider=QueuePasswordProvider(state),
+    )
+    client = WebClient(
         work_dir=work_dir,
         session_name='session.db',
-        sms_code_provider=QueueSmsCodeProvider(state),
-        password_provider=QueuePasswordProvider(state),
+        auth_flow=auth_flow,
         extra_config=ExtraConfig(proxy=PROXY_URL, telemetry=False, reconnect=True, log_level='WARNING'),
     )
     state.client = client
 
     @client.on_start()
-    async def _on_start(c: Client) -> None:
+    async def _on_start(c: WebClient) -> None:
         state.status = 'connected'
         state.error = None
         if c.me is not None and c.me.contact.phone:
@@ -237,10 +239,6 @@ class SessionStartBody(BaseModel):
     phone: Optional[str] = None
 
 
-class CodeBody(BaseModel):
-    code: str
-
-
 class PasswordBody(BaseModel):
     password: str
 
@@ -258,7 +256,7 @@ async def health():
 async def session_start(account_id: str, body: SessionStartBody = SessionStartBody()):
     state = get_account(account_id)
     async with state.lock:
-        if state.status in ('connecting', 'awaiting_code', 'awaiting_password', 'connected'):
+        if state.status in ('connecting', 'qr', 'awaiting_password', 'connected'):
             # Идемпотентно — не поднимаем вторую сессию поверх той же auth-директории.
             return {'ok': True, 'status': state.status}
         state.session_task = asyncio.create_task(run_account(state, body.phone))
@@ -274,18 +272,14 @@ async def session_status(account_id: str):
 
 @app.get('/accounts/{account_id}/session/qr')
 async def session_qr(account_id: str):
-    # MAX (PyMax Client) логинится по телефону + SMS-коду, а не по QR — эндпоинт
-    # оставлен только ради единообразия HTTP-контракта с WhatsApp/Telegram.
-    return {'qr': None}
-
-
-@app.post('/accounts/{account_id}/session/verify-code')
-async def session_verify_code(account_id: str, body: CodeBody):
     state = get_account(account_id)
-    if state.status != 'awaiting_code':
-        return JSONResponse({'error': 'not_awaiting_code'}, status_code=409)
-    await state.code_queue.put(body.code)
-    return {'ok': True}
+    if not state.qr_url:
+        return {'qr': None}
+    img = qrcode.make(state.qr_url)
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    data_url = 'data:image/png;base64,' + base64.b64encode(buf.getvalue()).decode()
+    return {'qr': data_url}
 
 
 @app.post('/accounts/{account_id}/session/verify-password')
@@ -398,7 +392,7 @@ async def campaign_status(account_id: str):
 async def restore_sessions() -> None:
     # Переживаем рестарт контейнера: поднимаем заново только аккаунты, у которых уже
     # есть сохранённая сессия (файл session.db) — на пустой auth-директории клиент
-    # заново запросил бы SMS "в никуда"; такие незавершённые аккаунты просто остаются
+    # заново показал бы QR "в никуда"; такие незавершённые аккаунты просто остаются
     # disconnected, пользователь переподключит их через вкладку «Номера».
     os.makedirs(AUTH_DIR, exist_ok=True)
     for entry in os.scandir(AUTH_DIR):
