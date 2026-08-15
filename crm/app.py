@@ -9279,6 +9279,42 @@ def broadcast_account_logout(account_id):
     return redirect(url_for('broadcast_page', tab='numbers'))
 
 
+@app.route('/reports/broadcast/accounts/<int:account_id>/verify-code', methods=['POST'])
+@login_required
+@menu_permission_required('whatsapp_broadcast')
+def broadcast_account_verify_code(account_id):
+    # Только для каналов с входом по телефон+SMS-код (сейчас — MAX, см. max-service):
+    # WhatsApp/Telegram используют QR и через этот роут не проходят.
+    code = request.form.get('code', '').strip()
+    with get_db() as conn:
+        acc = conn.execute('SELECT * FROM messenger_accounts WHERE id=?', (account_id,)).fetchone()
+    if not acc:
+        flash('Номер не найден', 'danger')
+        return redirect(url_for('broadcast_page', tab='numbers'))
+    try:
+        messenger_api.verify_code(acc['channel'], account_id, code)
+    except Exception as e:
+        flash(f'Не удалось подтвердить код: {e}', 'danger')
+    return redirect(url_for('broadcast_page', tab='numbers'))
+
+
+@app.route('/reports/broadcast/accounts/<int:account_id>/verify-password', methods=['POST'])
+@login_required
+@menu_permission_required('whatsapp_broadcast')
+def broadcast_account_verify_password(account_id):
+    password = request.form.get('password', '').strip()
+    with get_db() as conn:
+        acc = conn.execute('SELECT * FROM messenger_accounts WHERE id=?', (account_id,)).fetchone()
+    if not acc:
+        flash('Номер не найден', 'danger')
+        return redirect(url_for('broadcast_page', tab='numbers'))
+    try:
+        messenger_api.verify_password(acc['channel'], account_id, password)
+    except Exception as e:
+        flash(f'Не удалось подтвердить пароль: {e}', 'danger')
+    return redirect(url_for('broadcast_page', tab='numbers'))
+
+
 @app.route('/reports/broadcast/accounts/<int:account_id>/status')
 @login_required
 @menu_permission_required('whatsapp_broadcast')

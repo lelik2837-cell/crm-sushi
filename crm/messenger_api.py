@@ -50,6 +50,25 @@ def get_qr(channel, account_id, timeout=5):
     return resp.json().get('qr')
 
 
+def verify_code(channel, account_id, code, timeout=10):
+    """Только для каналов с телефон+SMS-кодом входа (сейчас — MAX, см. max-service):
+    передаёт код, который сервис ждёт в аккаунте со статусом 'awaiting_code'."""
+    resp = requests.post(f'{_base_url(channel)}/accounts/{account_id}/session/verify-code',
+                          json={'code': code}, timeout=timeout)
+    if not resp.ok:
+        raise RuntimeError(f'{resp.status_code} {resp.text[:400]}')
+    return resp.json()
+
+
+def verify_password(channel, account_id, password, timeout=10):
+    """Только для каналов, где аккаунт защищён паролем 2FA поверх кода (MAX)."""
+    resp = requests.post(f'{_base_url(channel)}/accounts/{account_id}/session/verify-password',
+                          json={'password': password}, timeout=timeout)
+    if not resp.ok:
+        raise RuntimeError(f'{resp.status_code} {resp.text[:400]}')
+    return resp.json()
+
+
 def logout(channel, account_id, timeout=10):
     resp = requests.post(f'{_base_url(channel)}/accounts/{account_id}/session/logout', timeout=timeout)
     log.info('logout channel=%s account_id=%s status=%s', channel, account_id, resp.status_code)

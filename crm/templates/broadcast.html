@@ -256,8 +256,34 @@ function renderAccountCard(accountId, channel, data) {
                 <div class="mb-2 small">${CHANNEL_SCAN_HINT[channel] || 'Отсканируйте QR-код в приложении на телефоне:'}</div>
                 <img src="${data.qr}" alt="QR" style="max-width:220px;">
             </div>`;
+    } else if (data.status === 'awaiting_code') {
+        // MAX логинится телефоном + SMS-кодом, а не QR (см. max-service) — вместо
+        // картинки показываем поле ввода кода.
+        el.innerHTML = `
+            <div>
+                <div class="mb-2 small">Введите код из SMS${data.phone ? ', отправленного на ' + data.phone : ''}:</div>
+                <form method="POST" action="/reports/broadcast/accounts/${accountId}/verify-code" class="d-flex gap-2">
+                    <input type="text" name="code" class="form-control form-control-sm" placeholder="Код из SMS" required autofocus>
+                    <button type="submit" class="btn btn-sm btn-primary">Подтвердить</button>
+                </form>
+            </div>`;
+    } else if (data.status === 'awaiting_password') {
+        el.innerHTML = `
+            <div>
+                <div class="mb-2 small">Нужен пароль двухфакторной защиты аккаунта${data.passwordHint ? ' (подсказка: ' + data.passwordHint + ')' : ''}:</div>
+                <form method="POST" action="/reports/broadcast/accounts/${accountId}/verify-password" class="d-flex gap-2">
+                    <input type="password" name="password" class="form-control form-control-sm" placeholder="Пароль" required autofocus>
+                    <button type="submit" class="btn btn-sm btn-primary">Подтвердить</button>
+                </form>
+            </div>`;
     } else if (data.status === 'error') {
-        el.innerHTML = `<div class="text-danger"><i class="bi bi-exclamation-triangle-fill me-1"></i>Сервис недоступен: ${data.error || ''}</div>`;
+        el.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center">
+                <div class="text-danger"><i class="bi bi-exclamation-triangle-fill me-1"></i>Ошибка: ${data.error || 'сервис недоступен'}</div>
+                <form method="POST" action="/reports/broadcast/accounts/${accountId}/reconnect">
+                    <button type="submit" class="btn btn-sm btn-outline-primary">Повторить</button>
+                </form>
+            </div>`;
     } else if (data.status === 'disconnected') {
         el.innerHTML = `
             <div class="d-flex justify-content-between align-items-center">
