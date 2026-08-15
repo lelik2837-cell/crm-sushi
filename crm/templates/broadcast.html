@@ -297,13 +297,24 @@ function renderAccountCard(accountId, channel, data) {
     }
 }
 
+// Пока статус не поменялся и это состояние ожидания ручного ввода (код из SMS / пароль
+// 2FA у MAX), карточку не перерисовываем — иначе очередной опрос раз в 3 сек стирает то,
+// что пользователь ещё не успел отправить (перетирался innerHTML с полем ввода).
+const FREEZE_ON_UNCHANGED = new Set(['awaiting_code', 'awaiting_password']);
+
 function pollAccountsStatus() {
     document.querySelectorAll('#bc-accounts-list [data-account-id]').forEach((card) => {
         const accountId = card.dataset.accountId;
         const channel = card.dataset.channel;
         fetch(`/reports/broadcast/accounts/${accountId}/status`)
             .then((r) => r.json())
-            .then((data) => renderAccountCard(accountId, channel, data))
+            .then((data) => {
+                if (data.status === card.dataset.lastStatus && FREEZE_ON_UNCHANGED.has(data.status)) {
+                    return;
+                }
+                card.dataset.lastStatus = data.status;
+                renderAccountCard(accountId, channel, data);
+            })
             .catch(() => {});
     });
 }
