@@ -2200,7 +2200,22 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_rating_req_pending ON order_rating_requests(status, send_after);
             CREATE INDEX IF NOT EXISTS idx_rating_req_phone ON order_rating_requests(phone, assigned_account_id, status);
+
+            -- Варианты текста запроса на оценку, чередуются по кругу между заявками одной
+            -- кампании (rating_campaigns.request_text остаётся — хранит первый вариант, как
+            -- broadcasts.message_text для message_variants — короткое значение для истории/API,
+            -- не источник истины при отправке).
+            CREATE TABLE IF NOT EXISTS rating_campaign_request_texts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                campaign_id INTEGER NOT NULL REFERENCES rating_campaigns(id) ON DELETE CASCADE,
+                variant_index INTEGER NOT NULL,
+                text TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_rating_req_texts_campaign ON rating_campaign_request_texts(campaign_id);
         ''')
+        _orr_cols = [r[1] for r in conn.execute("PRAGMA table_info(order_rating_requests)").fetchall()]
+        if 'variant_index' not in _orr_cols:
+            conn.execute("ALTER TABLE order_rating_requests ADD COLUMN variant_index INTEGER NOT NULL DEFAULT 0")
 
         conn.commit()
 
@@ -9270,6 +9285,13 @@ def broadcast_page():
             ''', (c['id'],)).fetchall()
             for c in rating_campaigns
         }
+        rating_campaign_variants = {
+            c['id']: [row['text'] for row in conn.execute(
+                'SELECT text FROM rating_campaign_request_texts WHERE campaign_id=? ORDER BY variant_index',
+                (c['id'],)
+            ).fetchall()] or [c['request_text']]
+            for c in rating_campaigns
+        }
         rating_requests = conn.execute('''
             SELECT rr.*, b.name AS branch_name
             FROM order_rating_requests rr
@@ -9284,8 +9306,39 @@ def broadcast_page():
         ''').fetchall()
     return render_template('broadcast.html', accounts=accounts, broadcasts=broadcasts,
                             rating_campaigns=rating_campaigns, rating_campaign_accounts=rating_campaign_accounts,
+                            rating_campaign_variants=rating_campaign_variants,
                             rating_requests=rating_requests, branches_without_campaign=branches_without_campaign,
                             active_tab=request.args.get('tab', 'numbers'))
+
+
+def _sorted_account_ids_by_priority():
+    """Порядок каскада — как в create_broadcast: по числу в поле "приоритет" каждого
+    чекбокса в форме, не по порядку чекбоксов в DOM."""
+    account_ids = [a for a in request.form.getlist('account_ids[]') if a]
+
+    def _priority_for(aid):
+        try:
+            return int(request.form.get(f'priority_{aid}', aid))
+        except ValueError:
+            return int(aid)
+    account_ids.sort(key=_priority_for)
+    return account_ids
+
+
+def _save_rating_campaign_variants_and_accounts(conn, campaign_id, request_variants, account_ids):
+    """Общая часть create/edit: переписывает варианты текста запроса и каскад аккаунтов
+    набело (DELETE+INSERT) — используется и при создании (для новой кампании ничего не
+    удаляет, таблицы пустые), и при редактировании."""
+    conn.execute('DELETE FROM rating_campaign_request_texts WHERE campaign_id=?', (campaign_id,))
+    conn.executemany(
+        'INSERT INTO rating_campaign_request_texts (campaign_id, variant_index, text) VALUES (?,?,?)',
+        [(campaign_id, i, v) for i, v in enumerate(request_variants)]
+    )
+    conn.execute('DELETE FROM rating_campaign_accounts WHERE campaign_id=?', (campaign_id,))
+    conn.executemany(
+        'INSERT INTO rating_campaign_accounts (campaign_id, account_id, priority) VALUES (?,?,?)',
+        [(campaign_id, aid, i) for i, aid in enumerate(account_ids)]
+    )
 
 
 @app.route('/reports/broadcast/rating-campaigns', methods=['POST'])
@@ -9298,24 +9351,16 @@ def create_rating_campaign():
     except ValueError:
         flash('Некорректная задержка отправки', 'danger')
         return redirect(url_for('broadcast_page', tab='rating'))
-    request_text = request.form.get('request_text', '').strip()
+    request_variants = [v.strip() for v in request.form.getlist('request_text_variants[]') if v.strip()]
     low_text = request.form.get('low_text', '').strip()
     mid_text = request.form.get('mid_text', '').strip()
     high_text = request.form.get('high_text', '').strip()
-    account_ids = [a for a in request.form.getlist('account_ids[]') if a]
+    account_ids = _sorted_account_ids_by_priority()
 
-    if not branch_id or not (request_text and low_text and mid_text and high_text) or not account_ids:
-        flash('Заполните филиал, все тексты сообщений и выберите хотя бы один номер-отправитель', 'danger')
+    if not branch_id or not request_variants or not (low_text and mid_text and high_text) or not account_ids:
+        flash('Заполните филиал, хотя бы один вариант текста запроса, все три ответных текста '
+              'и выберите хотя бы один номер-отправитель', 'danger')
         return redirect(url_for('broadcast_page', tab='rating'))
-
-    # Порядок каскада — как в create_broadcast: по числу в поле "приоритет", не по
-    # порядку чекбоксов в форме.
-    def _priority_for(aid):
-        try:
-            return int(request.form.get(f'priority_{aid}', aid))
-        except ValueError:
-            return int(aid)
-    account_ids.sort(key=_priority_for)
 
     with get_db() as conn:
         try:
@@ -9323,17 +9368,50 @@ def create_rating_campaign():
                 INSERT INTO rating_campaigns
                     (branch_id, delay_minutes, request_text, low_text, mid_text, high_text, created_by, created_at)
                 VALUES (?,?,?,?,?,?,?,?)
-            ''', (branch_id, delay_minutes, request_text, low_text, mid_text, high_text,
+            ''', (branch_id, delay_minutes, request_variants[0], low_text, mid_text, high_text,
                   session['user_id'], datetime.now().strftime('%Y-%m-%d %H:%M:%S'))).lastrowid
         except sqlite3.IntegrityError:
             flash('Для этого филиала кампания уже есть.', 'danger')
             return redirect(url_for('broadcast_page', tab='rating'))
-        conn.executemany(
-            'INSERT INTO rating_campaign_accounts (campaign_id, account_id, priority) VALUES (?,?,?)',
-            [(campaign_id, aid, i) for i, aid in enumerate(account_ids)]
-        )
+        _save_rating_campaign_variants_and_accounts(conn, campaign_id, request_variants, account_ids)
         conn.commit()
     flash('Кампания «Оценка заказа» создана.', 'success')
+    return redirect(url_for('broadcast_page', tab='rating'))
+
+
+@app.route('/reports/broadcast/rating-campaigns/<int:campaign_id>/edit', methods=['POST'])
+@login_required
+@menu_permission_required('whatsapp_broadcast')
+def edit_rating_campaign(campaign_id):
+    try:
+        delay_minutes = max(0, int(request.form.get('delay_minutes', 30)))
+    except ValueError:
+        flash('Некорректная задержка отправки', 'danger')
+        return redirect(url_for('broadcast_page', tab='rating'))
+    request_variants = [v.strip() for v in request.form.getlist('request_text_variants[]') if v.strip()]
+    low_text = request.form.get('low_text', '').strip()
+    mid_text = request.form.get('mid_text', '').strip()
+    high_text = request.form.get('high_text', '').strip()
+    account_ids = _sorted_account_ids_by_priority()
+
+    if not request_variants or not (low_text and mid_text and high_text) or not account_ids:
+        flash('Заполните хотя бы один вариант текста запроса, все три ответных текста '
+              'и выберите хотя бы один номер-отправитель', 'danger')
+        return redirect(url_for('broadcast_page', tab='rating'))
+
+    with get_db() as conn:
+        campaign = conn.execute('SELECT id FROM rating_campaigns WHERE id=?', (campaign_id,)).fetchone()
+        if not campaign:
+            flash('Кампания не найдена', 'danger')
+            return redirect(url_for('broadcast_page', tab='rating'))
+        conn.execute('''
+            UPDATE rating_campaigns
+            SET delay_minutes=?, request_text=?, low_text=?, mid_text=?, high_text=?
+            WHERE id=?
+        ''', (delay_minutes, request_variants[0], low_text, mid_text, high_text, campaign_id))
+        _save_rating_campaign_variants_and_accounts(conn, campaign_id, request_variants, account_ids)
+        conn.commit()
+    flash('Настройки «Оценки заказа» обновлены.', 'success')
     return redirect(url_for('broadcast_page', tab='rating'))
 
 
@@ -14985,12 +15063,15 @@ def _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename, create
             removed += dcur.rowcount
             existing_keys.discard(key)
 
-    # Оценка заказа: включённые кампании по филиалам подгружаем один раз на весь батч
-    # (не на каждую строку) — см. _maybe_create_rating_request.
+    # Оценка заказа: включённые кампании по филиалам и варианты текста запроса подгружаем
+    # один раз на весь батч (не на каждую строку) — см. _maybe_create_rating_request.
     rating_campaigns_by_branch = {
         row['branch_id']: row
         for row in conn.execute('SELECT * FROM rating_campaigns WHERE enabled=1').fetchall()
     }
+    rating_request_variant_counts = dict(conn.execute(
+        'SELECT campaign_id, COUNT(*) FROM rating_campaign_request_texts GROUP BY campaign_id'
+    ).fetchall())
 
     imported = updated = 0
     for r in frows:
@@ -15025,7 +15106,7 @@ def _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename, create
         else:
             updated += 1
 
-        _maybe_create_rating_request(conn, r, branch_id, rating_campaigns_by_branch)
+        _maybe_create_rating_request(conn, r, branch_id, rating_campaigns_by_branch, rating_request_variant_counts)
 
     conn.execute(
         'UPDATE orders_import_batches SET imported_count=?, updated_count=? WHERE id=?',
@@ -15034,18 +15115,24 @@ def _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename, create
     return imported, updated, removed
 
 
-def _maybe_create_rating_request(conn, r, branch_id, campaigns_by_branch):
+def _maybe_create_rating_request(conn, r, branch_id, campaigns_by_branch, variant_counts):
     """Если заказ пришёл со статусом "Выполнен" и на его филиале включена кампания оценки
     заказа (rating_campaigns) — заводим заявку на отправку. UNIQUE(campaign_id, order_number,
     order_date) в order_rating_requests сам защищает от повторной заявки при повторном приходе
     того же заказа в следующих выгрузках CSV (окно ORDERS_LOOKBACK_DAYS + сегодня) — здесь
     ничего не проверяем на "уже создавали или нет", просто INSERT ... ON CONFLICT DO NOTHING.
 
+    Варианты текста запроса чередуются по кругу: индекс варианта — остаток от деления числа
+    уже созданных заявок этой кампании на количество вариантов (variant_counts — предзагружено
+    один раз на батч в _ingest_orders_rows). Раз заявки создаются по одной по мере выполнения
+    заказов (не пачкой, как в ручной рассылке), считать общий COUNT(*) — единственный простой
+    способ распределять их по кругу без отдельного счётчика на кампании.
+
     Сравнение r['received_at'] с campaign['created_at'] — оба должны быть в одном часовом
     поясе (локальном, Asia/Novosibirsk): received_at приходит из CSV Гуляша уже локальным,
-    а created_at кампании нарочно пишется в create_rating_campaign() через datetime.now()
-    (не полагаемся на SQL DEFAULT CURRENT_TIMESTAMP — та функция всегда в UTC, сравнение
-    с локальным received_at было бы на 7 часов не в ту сторону)."""
+    а created_at кампании нарочно пишется в create_rating_campaign()/edit_rating_campaign()
+    через datetime.now() (не полагаемся на SQL DEFAULT CURRENT_TIMESTAMP — та функция всегда
+    в UTC, сравнение с локальным received_at было бы на 7 часов не в ту сторону)."""
     if _norm_status(r.get('status')) != 'выполнен' or branch_id is None:
         return
     campaign = campaigns_by_branch.get(branch_id)
@@ -15058,12 +15145,18 @@ def _maybe_create_rating_request(conn, r, branch_id, campaigns_by_branch):
     if not phone:
         return
     order_date = r['received_at'][:10]
+    num_variants = variant_counts.get(campaign['id'], 1)
+    already = conn.execute(
+        'SELECT COUNT(*) FROM order_rating_requests WHERE campaign_id=?', (campaign['id'],)
+    ).fetchone()[0]
+    variant_index = already % max(num_variants, 1)
     conn.execute('''
         INSERT INTO order_rating_requests
-            (campaign_id, order_number, order_date, phone, status, send_after)
-        VALUES (?,?,?,?, 'pending_send', datetime('now', ?))
+            (campaign_id, order_number, order_date, phone, status, send_after, variant_index)
+        VALUES (?,?,?,?, 'pending_send', datetime('now', ?), ?)
         ON CONFLICT(campaign_id, order_number, order_date) DO NOTHING
-    ''', (campaign['id'], r['order_number'], order_date, phone, f"+{campaign['delay_minutes']} minutes"))
+    ''', (campaign['id'], r['order_number'], order_date, phone,
+          f"+{campaign['delay_minutes']} minutes", variant_index))
 
 
 @app.route('/orders-report')
@@ -16202,9 +16295,11 @@ def _scheduled_rating_requests():
     try:
         with get_db() as conn:
             due = conn.execute('''
-                SELECT r.*, c.request_text AS request_text
+                SELECT r.*, COALESCE(rt.text, c.request_text) AS request_text
                 FROM order_rating_requests r
                 JOIN rating_campaigns c ON c.id = r.campaign_id
+                LEFT JOIN rating_campaign_request_texts rt
+                    ON rt.campaign_id = r.campaign_id AND rt.variant_index = r.variant_index
                 WHERE r.status='pending_send' AND r.send_after <= datetime('now')
             ''').fetchall()
             if not due:
