@@ -20,6 +20,11 @@
             <i class="bi bi-send me-1"></i>Ручная рассылка
         </a>
     </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'rating' %}active{% endif %}" href="{{ url_for('broadcast_page', tab='rating') }}" data-tab="rating">
+            <i class="bi bi-star me-1"></i>Оценка заказа
+        </a>
+    </li>
 </ul>
 
 <!-- ═══ Вкладка «Номера» ═══ -->
@@ -209,6 +214,149 @@
                     </tr>
                     {% else %}
                     <tr><td colspan="5" class="text-center text-muted py-3">Рассылок пока нет</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- ═══ Вкладка «Оценка заказа» ═══ -->
+<div class="bc-tab-pane" id="bc-pane-rating" style="{% if active_tab != 'rating' %}display:none;{% endif %}">
+
+    <div class="card mb-4">
+        <div class="card-header fw-semibold"><i class="bi bi-plus-lg me-2"></i>Добавить оценку заказа</div>
+        <div class="card-body">
+            {% if not connected_accounts %}
+            <div class="alert alert-warning">Нет ни одного подключённого номера — сначала подключите номер на вкладке «Номера».</div>
+            {% elif not branches_without_campaign %}
+            <div class="alert alert-secondary mb-0">Для всех активных филиалов кампания уже настроена. Чтобы изменить филиал, сначала отключите (или переиспользуйте) существующую кампанию ниже.</div>
+            {% else %}
+            <form method="POST" action="{{ url_for('create_rating_campaign') }}" class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label small fw-semibold">Филиал</label>
+                    <select name="branch_id" class="form-select" required>
+                        {% for b in branches_without_campaign %}
+                        <option value="{{ b.id }}">{{ b.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label small fw-semibold">Задержка после статуса «Выполнен», мин</label>
+                    <input type="number" name="delay_minutes" class="form-control" value="30" min="0" required>
+                </div>
+
+                <div class="col-12"><hr></div>
+
+                <div class="col-12">
+                    <label class="form-label small fw-semibold">Номера-отправители и порядок каскада</label>
+                    <div class="form-text mb-2">Как и в ручной рассылке — пробуются по очереди приоритета (1 — первым).</div>
+                    <div class="row g-2">
+                        {% for acc in connected_accounts %}
+                        <div class="col-md-4">
+                            <div class="input-group input-group-sm">
+                                <div class="input-group-text">
+                                    <input type="checkbox" name="account_ids[]" value="{{ acc.id }}" class="form-check-input mt-0" checked>
+                                </div>
+                                <span class="input-group-text flex-grow-1 justify-content-start">
+                                    <i class="bi {{ channel_icons.get(acc.channel, 'bi-chat') }} me-1"></i>
+                                    {{ channel_labels.get(acc.channel, acc.channel) }}{% if acc.label %} — {{ acc.label }}{% endif %}
+                                </span>
+                                <span class="input-group-text">приоритет</span>
+                                <input type="number" name="priority_{{ acc.id }}" class="form-control" value="{{ loop.index }}" min="1" style="max-width:70px;">
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <div class="col-12"><hr></div>
+
+                <div class="col-12">
+                    <label class="form-label small fw-semibold">Текст запроса на оценку</label>
+                    <textarea name="request_text" class="form-control" rows="2" placeholder="Спасибо за заказ! Оцените его от 1 до 5" required></textarea>
+                </div>
+                <div class="col-12">
+                    <label class="form-label small fw-semibold">Ответ на оценку 1-3</label>
+                    <textarea name="low_text" class="form-control" rows="2" placeholder="Жаль, что не всё понравилось — расскажите, что пошло не так?" required></textarea>
+                </div>
+                <div class="col-12">
+                    <label class="form-label small fw-semibold">Ответ на оценку 4</label>
+                    <textarea name="mid_text" class="form-control" rows="2" placeholder="Спасибо! Что можно улучшить, чтобы в следующий раз было на 5?" required></textarea>
+                </div>
+                <div class="col-12">
+                    <label class="form-label small fw-semibold">Ответ на оценку 5</label>
+                    <textarea name="high_text" class="form-control" rows="2" placeholder="Спасибо за высокую оценку, ждём вас снова!" required></textarea>
+                </div>
+
+                <div class="col-12">
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-plus-lg me-1"></i>Создать</button>
+                </div>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="row g-3 mb-4">
+        {% for c in rating_campaigns %}
+        <div class="col-md-6">
+            <div class="card h-100">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <b>{{ c.branch_name }}</b>
+                            {% if c.enabled %}<span class="badge bg-success ms-1">включена</span>{% else %}<span class="badge bg-secondary ms-1">выключена</span>{% endif %}
+                        </div>
+                        <form method="POST" action="{{ url_for('toggle_rating_campaign', campaign_id=c.id) }}">
+                            <button type="submit" class="btn btn-sm btn-outline-secondary">{% if c.enabled %}Выключить{% else %}Включить{% endif %}</button>
+                        </form>
+                    </div>
+                    <div class="small text-muted mb-2">Задержка: {{ c.delay_minutes }} мин. Отправители:
+                        {% for acc in rating_campaign_accounts.get(c.id, []) %}
+                            <i class="bi {{ channel_icons.get(acc.channel, 'bi-chat') }}"></i>{{ channel_labels.get(acc.channel, acc.channel) }}{% if acc.label %} ({{ acc.label }}){% endif %}{{ ', ' if not loop.last }}
+                        {% endfor %}
+                    </div>
+                    <div class="small"><b>Запрос:</b> {{ c.request_text }}</div>
+                    <div class="small"><b>1-3:</b> {{ c.low_text }}</div>
+                    <div class="small"><b>4:</b> {{ c.mid_text }}</div>
+                    <div class="small"><b>5:</b> {{ c.high_text }}</div>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="col-12 text-muted">Кампаний ещё нет.</div>
+        {% endfor %}
+    </div>
+
+    <!-- История заявок на оценку -->
+    <div class="card">
+        <div class="card-header fw-semibold"><i class="bi bi-clock-history me-2"></i>История</div>
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>Заказ</th>
+                        <th>Филиал</th>
+                        <th>Телефон</th>
+                        <th>Статус</th>
+                        <th>Оценка</th>
+                        <th>Отправлено</th>
+                        <th>Ответ</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for rr in rating_requests %}
+                    <tr>
+                        <td>{{ rr.order_number }} <span class="text-muted small">({{ rr.order_date }})</span></td>
+                        <td>{{ rr.branch_name }}</td>
+                        <td>{{ rr.phone }}</td>
+                        <td><span class="badge bg-secondary">{{ rr.status }}</span></td>
+                        <td>{{ rr.rating or '—' }}</td>
+                        <td class="text-nowrap">{{ rr.sent_at or '—' }}</td>
+                        <td class="text-nowrap">{{ rr.responded_at or '—' }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="7" class="text-center text-muted py-3">Заявок пока нет</td></tr>
                     {% endfor %}
                 </tbody>
             </table>

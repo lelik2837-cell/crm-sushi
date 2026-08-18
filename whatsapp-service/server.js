@@ -14,6 +14,10 @@ const WEBHOOK_URL = process.env.WEBHOOK_URL || '';
 const WEBHOOK_TOKEN = process.env.WEBHOOK_TOKEN || '';
 const RESUME_URL = process.env.RESUME_URL || '';
 const PROXY_URL = process.env.PROXY_URL || '';
+// Для входящих сообщений (нужны "Оценке заказа" — принять ответ клиента с баллом) отдельная
+// env-переменная не заводилась: путь выводится из WEBHOOK_URL, чтобы не требовать ещё одной
+// правки docker-compose/env-файлов на сервере сверх уже сделанных.
+const INBOUND_WEBHOOK_URL = WEBHOOK_URL.replace('/api/messenger-webhook', '/api/messenger-inbound');
 
 const logger = pino({ level: 'warn' });
 // WhatsApp/Meta недоступны напрямую с этого сервера (сеть режет соединения до
@@ -87,6 +91,20 @@ async function startAccountSock(state) {
 
   sock.ev.on('creds.update', saveCreds);
 
+  // Нужно "Оценке заказа" — принять ответный текст клиента (баллом от 1 до 5) на запрос
+  // об оценке заказа. Раньше сервис только отправлял, входящие никак не обрабатывались.
+  sock.ev.on('messages.upsert', ({ messages, type }) => {
+    if (type !== 'notify') return;
+    for (const msg of messages) {
+      if (msg.key?.fromMe) continue;
+      const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text;
+      const phone = msg.key?.remoteJid?.split('@')[0];
+      if (!text || !phone) continue;
+      sendInboundWebhook({ channel: 'whatsapp', account_id: state.accountId, phone, text })
+        .catch((err) => console.error('[whatsapp] inbound handling failed', err));
+    }
+  });
+
   sock.ev.on('connection.update', (update) => {
     const { connection, lastDisconnect, qr } = update;
 
@@ -137,6 +155,19 @@ async function sendWebhook(payload) {
     });
   } catch (err) {
     console.error('[whatsapp] webhook call failed', err);
+  }
+}
+
+async function sendInboundWebhook(payload) {
+  if (!WEBHOOK_URL) return;
+  try {
+    await fetch(`${INBOUND_WEBHOOK_URL}/${WEBHOOK_TOKEN}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    console.error('[whatsapp] inbound webhook call failed', err);
   }
 }
 
@@ -308,6 +339,27 @@ app.post('/accounts/:id/numbers/check', async (req, res) => {
       if (i + CHUNK < phones.length) await sleep(300);
     }
     res.json({ ok: true, results });
+  } catch (err) {
+    res.status(500).json({ error: String(err?.message || err) });
+  }
+});
+
+// Одно сообщение сразу, без очереди/пауз — в отличие от campaign/start (та под пачку
+// с рандомными интервалами). Нужно для событийных одиночных отправок ("Оценка заказа").
+app.post('/accounts/:id/message/send', async (req, res) => {
+  const state = getAccount(req.params.id);
+  if (state.status !== 'connected') {
+    res.status(409).json({ error: 'not_connected' });
+    return;
+  }
+  const { phone, text } = req.body || {};
+  if (!phone || !text) {
+    res.status(400).json({ error: 'bad_request' });
+    return;
+  }
+  try {
+    await state.sock.sendMessage(jidFor(phone), { text });
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: String(err?.message || err) });
   }

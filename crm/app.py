@@ -2157,6 +2157,51 @@ def init_db():
             );
         ''')
 
+        # Оценка заказа (авто-запрос оценки 1-5 после статуса "Выполнен" + ветвление
+        # ответного сообщения по баллу, по образцу Revvy) — переиспользует messenger_accounts/
+        # messenger_api.py, но триггерится событием (импорт заказов), а не кнопкой, и умеет
+        # принимать входящий ответ клиента (см. _ingest_orders_rows/_scheduled_rating_requests).
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS rating_campaigns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                branch_id INTEGER NOT NULL REFERENCES branches(id),
+                enabled INTEGER NOT NULL DEFAULT 1,
+                delay_minutes INTEGER NOT NULL DEFAULT 30,
+                request_text TEXT NOT NULL,
+                low_text TEXT NOT NULL,
+                mid_text TEXT NOT NULL,
+                high_text TEXT NOT NULL,
+                created_by INTEGER REFERENCES users(id),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(branch_id)
+            );
+            CREATE TABLE IF NOT EXISTS rating_campaign_accounts (
+                campaign_id INTEGER NOT NULL REFERENCES rating_campaigns(id) ON DELETE CASCADE,
+                account_id INTEGER NOT NULL REFERENCES messenger_accounts(id),
+                priority INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (campaign_id, account_id)
+            );
+            CREATE TABLE IF NOT EXISTS order_rating_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                campaign_id INTEGER NOT NULL REFERENCES rating_campaigns(id),
+                order_number TEXT NOT NULL,
+                order_date TEXT NOT NULL,
+                phone TEXT NOT NULL,
+                assigned_account_id INTEGER REFERENCES messenger_accounts(id),
+                status TEXT NOT NULL DEFAULT 'pending_send',
+                send_after TIMESTAMP NOT NULL,
+                sent_at TIMESTAMP,
+                rating INTEGER,
+                responded_at TIMESTAMP,
+                followup_status TEXT,
+                error TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(campaign_id, order_number, order_date)
+            );
+            CREATE INDEX IF NOT EXISTS idx_rating_req_pending ON order_rating_requests(status, send_after);
+            CREATE INDEX IF NOT EXISTS idx_rating_req_phone ON order_rating_requests(phone, assigned_account_id, status);
+        ''')
+
         conn.commit()
 
 
@@ -9212,8 +9257,94 @@ def broadcast_page():
         broadcasts = conn.execute(
             'SELECT * FROM broadcasts ORDER BY created_at DESC LIMIT 50'
         ).fetchall()
+        rating_campaigns = conn.execute('''
+            SELECT rc.*, b.name AS branch_name
+            FROM rating_campaigns rc JOIN branches b ON b.id = rc.branch_id
+            ORDER BY b.name
+        ''').fetchall()
+        rating_campaign_accounts = {
+            c['id']: conn.execute('''
+                SELECT a.*, rca.priority FROM rating_campaign_accounts rca
+                JOIN messenger_accounts a ON a.id = rca.account_id
+                WHERE rca.campaign_id=? ORDER BY rca.priority
+            ''', (c['id'],)).fetchall()
+            for c in rating_campaigns
+        }
+        rating_requests = conn.execute('''
+            SELECT rr.*, b.name AS branch_name
+            FROM order_rating_requests rr
+            JOIN rating_campaigns rc ON rc.id = rr.campaign_id
+            JOIN branches b ON b.id = rc.branch_id
+            ORDER BY rr.id DESC LIMIT 50
+        ''').fetchall()
+        branches_without_campaign = conn.execute('''
+            SELECT * FROM branches
+            WHERE is_active=1 AND id NOT IN (SELECT branch_id FROM rating_campaigns)
+            ORDER BY name
+        ''').fetchall()
     return render_template('broadcast.html', accounts=accounts, broadcasts=broadcasts,
+                            rating_campaigns=rating_campaigns, rating_campaign_accounts=rating_campaign_accounts,
+                            rating_requests=rating_requests, branches_without_campaign=branches_without_campaign,
                             active_tab=request.args.get('tab', 'numbers'))
+
+
+@app.route('/reports/broadcast/rating-campaigns', methods=['POST'])
+@login_required
+@menu_permission_required('whatsapp_broadcast')
+def create_rating_campaign():
+    branch_id = request.form.get('branch_id', type=int)
+    try:
+        delay_minutes = max(0, int(request.form.get('delay_minutes', 30)))
+    except ValueError:
+        flash('Некорректная задержка отправки', 'danger')
+        return redirect(url_for('broadcast_page', tab='rating'))
+    request_text = request.form.get('request_text', '').strip()
+    low_text = request.form.get('low_text', '').strip()
+    mid_text = request.form.get('mid_text', '').strip()
+    high_text = request.form.get('high_text', '').strip()
+    account_ids = [a for a in request.form.getlist('account_ids[]') if a]
+
+    if not branch_id or not (request_text and low_text and mid_text and high_text) or not account_ids:
+        flash('Заполните филиал, все тексты сообщений и выберите хотя бы один номер-отправитель', 'danger')
+        return redirect(url_for('broadcast_page', tab='rating'))
+
+    # Порядок каскада — как в create_broadcast: по числу в поле "приоритет", не по
+    # порядку чекбоксов в форме.
+    def _priority_for(aid):
+        try:
+            return int(request.form.get(f'priority_{aid}', aid))
+        except ValueError:
+            return int(aid)
+    account_ids.sort(key=_priority_for)
+
+    with get_db() as conn:
+        try:
+            campaign_id = conn.execute('''
+                INSERT INTO rating_campaigns
+                    (branch_id, delay_minutes, request_text, low_text, mid_text, high_text, created_by, created_at)
+                VALUES (?,?,?,?,?,?,?,?)
+            ''', (branch_id, delay_minutes, request_text, low_text, mid_text, high_text,
+                  session['user_id'], datetime.now().strftime('%Y-%m-%d %H:%M:%S'))).lastrowid
+        except sqlite3.IntegrityError:
+            flash('Для этого филиала кампания уже есть.', 'danger')
+            return redirect(url_for('broadcast_page', tab='rating'))
+        conn.executemany(
+            'INSERT INTO rating_campaign_accounts (campaign_id, account_id, priority) VALUES (?,?,?)',
+            [(campaign_id, aid, i) for i, aid in enumerate(account_ids)]
+        )
+        conn.commit()
+    flash('Кампания «Оценка заказа» создана.', 'success')
+    return redirect(url_for('broadcast_page', tab='rating'))
+
+
+@app.route('/reports/broadcast/rating-campaigns/<int:campaign_id>/toggle', methods=['POST'])
+@login_required
+@menu_permission_required('whatsapp_broadcast')
+def toggle_rating_campaign(campaign_id):
+    with get_db() as conn:
+        conn.execute('UPDATE rating_campaigns SET enabled = NOT enabled WHERE id=?', (campaign_id,))
+        conn.commit()
+    return redirect(url_for('broadcast_page', tab='rating'))
 
 
 @app.route('/reports/broadcast/accounts', methods=['POST'])
@@ -9582,6 +9713,61 @@ def messenger_webhook(token):
                     "UPDATE broadcasts SET status='completed', finished_at=CURRENT_TIMESTAMP WHERE id=? AND status='running'",
                     (broadcast_id,)
                 )
+        conn.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/messenger-inbound/<token>', methods=['POST'])
+def messenger_inbound(token):
+    """Входящее сообщение от клиента (сейчас единственный сценарий — ответ с оценкой заказа
+    1-5 на "Оценку заказа"). Присылается whatsapp-service/max-service на КАЖДОЕ входящее
+    сообщение подключённого аккаунта — если оно не похоже на ожидаемый ответ (нет цифры
+    1-5, или для этого телефона/аккаунта нет открытой заявки), просто молча игнорируем:
+    это не единственное, что может прийти на рабочий номер."""
+    if not _check_broadcast_token(token):
+        return jsonify({'error': 'forbidden'}), 403
+    data = request.get_json(silent=True) or {}
+    account_id, phone_raw, text = data.get('account_id'), data.get('phone'), data.get('text')
+    if not account_id or not phone_raw or not text:
+        return jsonify({'error': 'bad_request'}), 400
+    phone = _normalize_ru_phone(phone_raw)
+    if not phone:
+        return jsonify({'ok': True})
+    m = re.search(r'[1-5]', text)
+    if not m:
+        return jsonify({'ok': True})
+    rating = int(m.group())
+
+    with get_db() as conn:
+        req = conn.execute('''
+            SELECT r.*, c.low_text, c.mid_text, c.high_text
+            FROM order_rating_requests r JOIN rating_campaigns c ON c.id = r.campaign_id
+            WHERE r.phone=? AND r.assigned_account_id=? AND r.status='awaiting_response'
+            ORDER BY r.sent_at DESC LIMIT 1
+        ''', (phone, account_id)).fetchone()
+        if not req:
+            return jsonify({'ok': True})
+        acc = conn.execute('SELECT channel FROM messenger_accounts WHERE id=?', (account_id,)).fetchone()
+        conn.execute('''
+            UPDATE order_rating_requests SET status='responded', rating=?, responded_at=datetime('now')
+            WHERE id=?
+        ''', (rating, req['id']))
+        conn.commit()
+
+    followup_text = req['low_text'] if rating <= 3 else (req['mid_text'] if rating == 4 else req['high_text'])
+    followup_status = 'failed'
+    if acc:
+        # Отвечаем тем же аккаунтом, на который клиент только что написал — канал заведомо
+        # рабочий, раз ответ только что через него пришёл.
+        try:
+            messenger_api.send_message(acc['channel'], account_id, phone, followup_text)
+            followup_status = 'sent'
+        except Exception:
+            logging.exception('rating followup send failed account_id=%s', account_id)
+
+    with get_db() as conn:
+        conn.execute('UPDATE order_rating_requests SET followup_status=? WHERE id=?',
+                      (followup_status, req['id']))
         conn.commit()
     return jsonify({'ok': True})
 
@@ -14799,12 +14985,20 @@ def _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename, create
             removed += dcur.rowcount
             existing_keys.discard(key)
 
+    # Оценка заказа: включённые кампании по филиалам подгружаем один раз на весь батч
+    # (не на каждую строку) — см. _maybe_create_rating_request.
+    rating_campaigns_by_branch = {
+        row['branch_id']: row
+        for row in conn.execute('SELECT * FROM rating_campaigns WHERE enabled=1').fetchall()
+    }
+
     imported = updated = 0
     for r in frows:
         key = (r['order_number'], r['received_at'][:10])
         is_new = key not in existing_keys
         existing_keys.add(key)
         h = _orders_row_hash(r)
+        branch_id = branch_map.get(r['branch_raw'])
         conn.execute('''
             INSERT INTO orders_report
                 (order_number, branch_raw, branch_id, received_at, delivery_at, promised_minutes,
@@ -14821,7 +15015,7 @@ def _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename, create
                 new_client=excluded.new_client, status=excluded.status, phone=excluded.phone,
                 import_batch_id=excluded.import_batch_id
         ''', (
-            r['order_number'], r['branch_raw'], branch_map.get(r['branch_raw']),
+            r['order_number'], r['branch_raw'], branch_id,
             r['received_at'], r['delivery_at'], r['promised_minutes'], r['order_type_raw'], r['order_type'],
             r['ready_minutes'], r['delivery_minutes'], r['promo_code'], r['amount'],
             r['new_client'], r['status'], r['phone'], batch_id, h
@@ -14831,11 +15025,45 @@ def _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename, create
         else:
             updated += 1
 
+        _maybe_create_rating_request(conn, r, branch_id, rating_campaigns_by_branch)
+
     conn.execute(
         'UPDATE orders_import_batches SET imported_count=?, updated_count=? WHERE id=?',
         (imported, updated, batch_id)
     )
     return imported, updated, removed
+
+
+def _maybe_create_rating_request(conn, r, branch_id, campaigns_by_branch):
+    """Если заказ пришёл со статусом "Выполнен" и на его филиале включена кампания оценки
+    заказа (rating_campaigns) — заводим заявку на отправку. UNIQUE(campaign_id, order_number,
+    order_date) в order_rating_requests сам защищает от повторной заявки при повторном приходе
+    того же заказа в следующих выгрузках CSV (окно ORDERS_LOOKBACK_DAYS + сегодня) — здесь
+    ничего не проверяем на "уже создавали или нет", просто INSERT ... ON CONFLICT DO NOTHING.
+
+    Сравнение r['received_at'] с campaign['created_at'] — оба должны быть в одном часовом
+    поясе (локальном, Asia/Novosibirsk): received_at приходит из CSV Гуляша уже локальным,
+    а created_at кампании нарочно пишется в create_rating_campaign() через datetime.now()
+    (не полагаемся на SQL DEFAULT CURRENT_TIMESTAMP — та функция всегда в UTC, сравнение
+    с локальным received_at было бы на 7 часов не в ту сторону)."""
+    if _norm_status(r.get('status')) != 'выполнен' or branch_id is None:
+        return
+    campaign = campaigns_by_branch.get(branch_id)
+    if not campaign:
+        return
+    if not r.get('received_at') or r['received_at'] < campaign['created_at']:
+        # Заказ принят ещё до включения кампании — не дёргаем клиентов задним числом.
+        return
+    phone = _normalize_ru_phone(r.get('phone'))
+    if not phone:
+        return
+    order_date = r['received_at'][:10]
+    conn.execute('''
+        INSERT INTO order_rating_requests
+            (campaign_id, order_number, order_date, phone, status, send_after)
+        VALUES (?,?,?,?, 'pending_send', datetime('now', ?))
+        ON CONFLICT(campaign_id, order_number, order_date) DO NOTHING
+    ''', (campaign['id'], r['order_number'], order_date, phone, f"+{campaign['delay_minutes']} minutes"))
 
 
 @app.route('/orders-report')
@@ -15963,12 +16191,68 @@ def _scheduled_sber_sync():
     except Exception as e:
         print(f'[Сбербанк] авто-синхронизация exception: {e}')
 
+# ─── ОЦЕНКА ЗАКАЗА: ОТПРАВКА ГОТОВЫХ К ОТПРАВКЕ ЗАЯВОК РАЗ В МИНУТУ ─────────
+def _scheduled_rating_requests():
+    """Заявки, у которых наступило время отправки (send_after <= now, обе стороны в UTC —
+    send_after пишется через SQL datetime('now', '+N minutes') в _maybe_create_rating_request,
+    здесь сравниваем тем же datetime('now'), поэтому расхождение локальное/UTC время тут не
+    имеет значения, в отличие от сравнения с received_at из CSV Гуляша). Каскад по приоритету
+    аккаунтов кампании — тот же принцип, что в _assign_broadcast_recipients, но для одного
+    получателя и без отдельного шага массовой проверки номеров."""
+    try:
+        with get_db() as conn:
+            due = conn.execute('''
+                SELECT r.*, c.request_text AS request_text
+                FROM order_rating_requests r
+                JOIN rating_campaigns c ON c.id = r.campaign_id
+                WHERE r.status='pending_send' AND r.send_after <= datetime('now')
+            ''').fetchall()
+            if not due:
+                return
+            for req in due:
+                accounts = conn.execute('''
+                    SELECT a.* FROM rating_campaign_accounts ca
+                    JOIN messenger_accounts a ON a.id = ca.account_id
+                    WHERE ca.campaign_id=? AND a.status='connected'
+                    ORDER BY ca.priority
+                ''', (req['campaign_id'],)).fetchall()
+                sent_account_id, last_error = None, None
+                for acc in accounts:
+                    try:
+                        results = messenger_api.check_numbers(acc['channel'], acc['id'], [req['phone']])
+                        if results.get(req['phone']) is False:
+                            continue  # точно не зарегистрирован на этом канале — пробуем следующий аккаунт
+                    except Exception:
+                        pass  # проверка не выполнилась — пробуем отправить как есть (та же деградация, что в рассылке)
+                    try:
+                        messenger_api.send_message(acc['channel'], acc['id'], req['phone'], req['request_text'])
+                        sent_account_id = acc['id']
+                        break
+                    except Exception as e:
+                        last_error = str(e)
+                if sent_account_id:
+                    conn.execute('''
+                        UPDATE order_rating_requests
+                        SET status='awaiting_response', assigned_account_id=?, sent_at=datetime('now')
+                        WHERE id=?
+                    ''', (sent_account_id, req['id']))
+                else:
+                    conn.execute(
+                        "UPDATE order_rating_requests SET status='failed', error=? WHERE id=?",
+                        (last_error or 'нет подключённых аккаунтов', req['id'])
+                    )
+            conn.commit()
+    except Exception as e:
+        print(f'[Оценка заказа] exception: {e}')
+
+
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
     _scheduler = BackgroundScheduler(timezone='Asia/Novosibirsk')
     _scheduler.add_job(_scheduled_backup, 'cron', hour=3, minute=0)
     _scheduler.add_job(_scheduled_sber_sync, 'interval', hours=1,
                         next_run_time=datetime.now())
+    _scheduler.add_job(_scheduled_rating_requests, 'interval', minutes=1)
     _scheduler.start()
     print('[Backup] Планировщик запущен — бэкап каждый день в 03:00 НСК, Сбербанк — раз в час')
 except Exception as _e:

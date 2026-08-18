@@ -22,6 +22,9 @@ WEBHOOK_URL = os.environ.get('WEBHOOK_URL', '')
 WEBHOOK_TOKEN = os.environ.get('WEBHOOK_TOKEN', '')
 RESUME_URL = os.environ.get('RESUME_URL', '')
 PROXY_URL = os.environ.get('PROXY_URL') or None
+# Для входящих сообщений (нужны "Оценке заказа" — принять ответ клиента с баллом) отдельная
+# env-переменная не заводилась: путь выводится из WEBHOOK_URL, как и в whatsapp-service.
+INBOUND_WEBHOOK_URL = WEBHOOK_URL.replace('/api/messenger-webhook', '/api/messenger-inbound')
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger('max-service')
@@ -112,6 +115,16 @@ async def send_webhook(payload: dict) -> None:
         log.exception('webhook call failed')
 
 
+async def send_inbound_webhook(payload: dict) -> None:
+    if not WEBHOOK_URL:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=10) as http:
+            await http.post(f'{INBOUND_WEBHOOK_URL}/{WEBHOOK_TOKEN}', json=payload)
+    except Exception:
+        log.exception('inbound webhook call failed')
+
+
 async def check_resume(state: AccountState) -> None:
     if not RESUME_URL or not WEBHOOK_TOKEN or state.campaign:
         return
@@ -180,6 +193,27 @@ async def run_account(state: AccountState, phone: Optional[str]) -> None:
         if not reconnect:
             state.status = 'disconnected'
 
+    # Нужно "Оценке заказа" — принять ответный текст клиента (баллом от 1 до 5) на запрос
+    # об оценке заказа. Раньше сервис только отправлял, входящие никак не обрабатывались.
+    # message.sender — числовой ID пользователя, не телефон (см. pymax/types/domain/message.py),
+    # телефон приходится резолвить отдельным вызовом get_user().
+    @client.on_message()
+    async def _on_message(message, c: WebClient) -> None:
+        if not message.text or message.sender is None:
+            return
+        if c.me is not None and message.sender == c.me.contact.id:
+            return  # не реагируем на собственные исходящие
+        try:
+            user = await c.get_user(message.sender)
+        except Exception:
+            return
+        if user is None or not user.phone:
+            return
+        asyncio.create_task(send_inbound_webhook({
+            'channel': 'max', 'account_id': state.account_id,
+            'phone': str(user.phone), 'text': message.text,
+        }))
+
     try:
         await client.start()
     except Exception as e:
@@ -245,6 +279,11 @@ class PasswordBody(BaseModel):
 
 class PhonesBody(BaseModel):
     phones: list[str]
+
+
+class SendMessageBody(BaseModel):
+    phone: str
+    text: str
 
 
 @app.get('/health')
@@ -330,6 +369,23 @@ async def numbers_check(account_id: str, body: PhonesBody):
             results[phone] = False
         await asyncio.sleep(0.3)
     return {'ok': True, 'results': results}
+
+
+# Одно сообщение сразу, без очереди/пауз — в отличие от campaign/start (та под пачку
+# с рандомными интервалами). Нужно для событийных одиночных отправок ("Оценка заказа").
+@app.post('/accounts/{account_id}/message/send')
+async def message_send(account_id: str, body: SendMessageBody):
+    state = get_account(account_id)
+    if state.status != 'connected':
+        return JSONResponse({'error': 'not_connected'}, status_code=409)
+    try:
+        user = await state.client.search_by_phone(e164(body.phone))
+        chat_id = state.client.get_chat_id(
+            first_user_id=state.client.me.contact.id, second_user_id=user.id)
+        await state.client.send_message(chat_id=chat_id, text=body.text)
+        return {'ok': True}
+    except Exception as e:
+        return JSONResponse({'error': str(e)}, status_code=500)
 
 
 @app.post('/accounts/{account_id}/campaign/start')

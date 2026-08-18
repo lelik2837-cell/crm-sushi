@@ -90,6 +90,18 @@ def check_numbers(channel, account_id, phones, timeout=60):
     return resp.json().get('results', {})
 
 
+def send_message(channel, account_id, phone, text, timeout=15):
+    """Одно сообщение сразу, без пауз/очереди — в отличие от start_campaign (та рассчитана на
+    пачку получателей с рандомными интервалами). Используется для событийных одиночных
+    отправок — сейчас это «Оценка заказа» (запрос оценки и ответное сообщение по баллу)."""
+    resp = requests.post(f'{_base_url(channel)}/accounts/{account_id}/message/send',
+                          json={'phone': phone, 'text': text}, timeout=timeout)
+    log.info('send_message channel=%s account_id=%s status=%s', channel, account_id, resp.status_code)
+    if not resp.ok:
+        raise RuntimeError(f'{resp.status_code} {resp.text[:400]}')
+    return resp.json()
+
+
 def start_campaign(channel, account_id, broadcast_id, recipients, interval_min, interval_max,
                     batch_size, batch_pause_seconds, image_bytes=None, image_mime=None,
                     timeout=30):
