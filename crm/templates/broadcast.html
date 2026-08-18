@@ -4,6 +4,12 @@
 
 {% set channel_labels = {'whatsapp': 'WhatsApp', 'telegram': 'Telegram', 'max': 'MAX'} %}
 {% set channel_icons = {'whatsapp': 'bi-whatsapp', 'telegram': 'bi-telegram', 'max': 'bi-chat-dots'} %}
+{% set rating_status_info = {
+    'pending_send':      {'label': 'В очереди',              'class': 'bg-secondary'},
+    'awaiting_response': {'label': 'Отправлено, ждём ответ', 'class': 'bg-info text-dark'},
+    'responded':         {'label': 'Клиент ответил',         'class': 'bg-success'},
+    'failed':            {'label': 'Не отправлено',          'class': 'bg-danger'},
+} %}
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="fw-bold mb-0"><i class="bi bi-megaphone me-2"></i>Рассылка</h4>
@@ -390,7 +396,8 @@
                         <td>{{ rr.order_number }} <span class="text-muted small">({{ rr.order_date }})</span></td>
                         <td>{{ rr.branch_name }}</td>
                         <td>{{ rr.phone }}</td>
-                        <td><span class="badge bg-secondary">{{ rr.status }}</span></td>
+                        {% set st = rating_status_info.get(rr.status, {'label': rr.status, 'class': 'bg-secondary'}) %}
+                        <td><span class="badge {{ st.class }}">{{ st.label }}</span></td>
                         <td>{{ rr.rating or '—' }}</td>
                         <td class="text-nowrap">{{ rr.sent_at or '—' }}</td>
                         <td class="text-nowrap">{{ rr.responded_at or '—' }}</td>
