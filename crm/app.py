@@ -15290,27 +15290,36 @@ def rename_point_category(category_id):
     return redirect(url_for('points_accrual_page'))
 
 
+def _lookup_order_for_points(conn, order_number, order_date):
+    """Общий поиск заказа для «Начисления баллов» — используется и для подсказки в модалке
+    (points_order_lookup), и как обязательная проверка на сервере при сохранении
+    (create_point_accrual): начислить баллы можно только на заказ, реально найденный в архиве
+    (orders_report) — адреса доставки в архиве нет (Гуляш его не отдаёт в используемой
+    выгрузке), сумма/тип нужны только чтобы сотрудник на глаз сверил, что это тот самый заказ."""
+    return conn.execute('''
+        SELECT o.amount, o.order_type, b.name AS branch_name
+        FROM orders_report o LEFT JOIN branches b ON b.id = o.branch_id
+        WHERE o.order_number=? AND substr(o.received_at,1,10)=?
+        ORDER BY o.id DESC LIMIT 1
+    ''', (order_number, order_date)).fetchone()
+
+
 @app.route('/reports/points/order-lookup')
 @login_required
 @menu_permission_required('points_accrual')
 def points_order_lookup():
-    """Подтягивает сумму и тип заказа (доставка/самовывоз) из уже импортированного архива
-    заказов (orders_report) — только для того, чтобы сотрудник на глаз убедился, что вводит
-    баллы на тот самый заказ. Адрес доставки в архиве не хранится (Гуляш его не отдаёт в
-    используемой выгрузке) — пользователь решил ограничиться суммой и типом."""
     order_number = request.args.get('order_number', '').strip()
     order_date = request.args.get('order_date', '').strip()
     if not order_number or not order_date:
         return jsonify({'found': False})
     with get_db() as conn:
-        row = conn.execute('''
-            SELECT amount, order_type FROM orders_report
-            WHERE order_number=? AND substr(received_at,1,10)=?
-            ORDER BY id DESC LIMIT 1
-        ''', (order_number, order_date)).fetchone()
+        row = _lookup_order_for_points(conn, order_number, order_date)
     if not row:
         return jsonify({'found': False})
-    return jsonify({'found': True, 'amount': row['amount'], 'order_type': row['order_type'] or ''})
+    return jsonify({
+        'found': True, 'amount': row['amount'], 'order_type': row['order_type'] or '',
+        'branch_name': row['branch_name'] or '',
+    })
 
 
 @app.route('/reports/points', methods=['POST'])
@@ -15321,14 +15330,19 @@ def create_point_accrual():
     order_date = request.form.get('order_date', '').strip()
     category_id = request.form.get('category_id', type=int)
     points = request.form.get('points', type=int)
-    amount = request.form.get('amount', type=float)
-    order_type = request.form.get('order_type', '').strip()
 
     if not order_number or not order_date or not category_id or not points:
         flash('Заполните номер заказа, дату, причину и количество баллов', 'danger')
         return redirect(url_for('points_accrual_page'))
 
     with get_db() as conn:
+        # Начислить баллы можно только на заказ, реально найденный в архиве — сумму/тип
+        # берём из этого же поиска (тот же запрос, что отдаёт подсказку в модалке), а не из
+        # того, что мог прислать браузер, — так их нельзя подделать/разойтись с архивом.
+        order = _lookup_order_for_points(conn, order_number, order_date)
+        if not order:
+            flash('Заказ с таким номером и датой не найден в архиве заказов — начислить баллы можно только на реальный заказ.', 'danger')
+            return redirect(url_for('points_accrual_page'))
         cat = conn.execute('SELECT id FROM point_categories WHERE id=?', (category_id,)).fetchone()
         if not cat:
             flash('Причина не найдена', 'danger')
@@ -15336,7 +15350,7 @@ def create_point_accrual():
         conn.execute('''
             INSERT INTO point_accruals (order_number, order_date, amount, order_type, points, category_id, created_by)
             VALUES (?,?,?,?,?,?,?)
-        ''', (order_number, order_date, amount, order_type or None, points, category_id, session['user_id']))
+        ''', (order_number, order_date, order['amount'], order['order_type'], points, category_id, session['user_id']))
         conn.commit()
     flash('Баллы внесены.', 'success')
     return redirect(url_for('points_accrual_page'))
