@@ -2216,6 +2216,13 @@ def init_db():
         _orr_cols = [r[1] for r in conn.execute("PRAGMA table_info(order_rating_requests)").fetchall()]
         if 'variant_index' not in _orr_cols:
             conn.execute("ALTER TABLE order_rating_requests ADD COLUMN variant_index INTEGER NOT NULL DEFAULT 0")
+        if 'recipient_ref' not in _orr_cols:
+            # Идентификатор получателя для матчинга входящего ответа — НЕ обязательно телефон:
+            # для WhatsApp это он и есть (JID и так его несёт), а для MAX — числовой user_id
+            # отправителя входящего сообщения (get_user() по нему не всегда отдаёт телефон для
+            # незнакомых контактов из-за приватности MAX, поэтому матчить по телефону ненадёжно —
+            # см. _scheduled_rating_requests/messenger_inbound).
+            conn.execute("ALTER TABLE order_rating_requests ADD COLUMN recipient_ref TEXT")
 
         conn.commit()
 
@@ -9800,16 +9807,26 @@ def messenger_inbound(token):
     """Входящее сообщение от клиента (сейчас единственный сценарий — ответ с оценкой заказа
     1-5 на "Оценку заказа"). Присылается whatsapp-service/max-service на КАЖДОЕ входящее
     сообщение подключённого аккаунта — если оно не похоже на ожидаемый ответ (нет цифры
-    1-5, или для этого телефона/аккаунта нет открытой заявки), просто молча игнорируем:
-    это не единственное, что может прийти на рабочий номер."""
+    1-5, или для этого получателя/аккаунта нет открытой заявки), просто молча игнорируем:
+    это не единственное, что может прийти на рабочий номер.
+
+    Матчинг заявки — по recipient_ref, не по телефону из вебхука напрямую: WhatsApp шлёт
+    phone (JID и так его несёт), а MAX шлёт числовой sender_id — get_user() по нему не всегда
+    отдаёт телефон для незнакомых контактов (приватность MAX), из-за чего реальный ответ
+    клиента не находил заявку. Телефон для отправки follow-up берём из уже сохранённой
+    заявки (order_rating_requests.phone), а не из входящего вебхука — так это работает
+    независимо от того, смог ли канал отдать телефон отправителя."""
     if not _check_broadcast_token(token):
         return jsonify({'error': 'forbidden'}), 403
     data = request.get_json(silent=True) or {}
-    account_id, phone_raw, text = data.get('account_id'), data.get('phone'), data.get('text')
-    if not account_id or not phone_raw or not text:
+    account_id, text = data.get('account_id'), data.get('text')
+    if not account_id or not text:
         return jsonify({'error': 'bad_request'}), 400
-    phone = _normalize_ru_phone(phone_raw)
-    if not phone:
+    if data.get('sender_id'):
+        contact_ref = str(data['sender_id'])
+    else:
+        contact_ref = _normalize_ru_phone(data.get('phone'))
+    if not contact_ref:
         return jsonify({'ok': True})
     m = re.search(r'[1-5]', text)
     if not m:
@@ -9820,9 +9837,9 @@ def messenger_inbound(token):
         req = conn.execute('''
             SELECT r.*, c.low_text, c.mid_text, c.high_text
             FROM order_rating_requests r JOIN rating_campaigns c ON c.id = r.campaign_id
-            WHERE r.phone=? AND r.assigned_account_id=? AND r.status='awaiting_response'
+            WHERE r.recipient_ref=? AND r.assigned_account_id=? AND r.status='awaiting_response'
             ORDER BY r.sent_at DESC LIMIT 1
-        ''', (phone, account_id)).fetchone()
+        ''', (contact_ref, account_id)).fetchone()
         if not req:
             return jsonify({'ok': True})
         acc = conn.execute('SELECT channel FROM messenger_accounts WHERE id=?', (account_id,)).fetchone()
@@ -9838,7 +9855,7 @@ def messenger_inbound(token):
         # Отвечаем тем же аккаунтом, на который клиент только что написал — канал заведомо
         # рабочий, раз ответ только что через него пришёл.
         try:
-            messenger_api.send_message(acc['channel'], account_id, phone, followup_text)
+            messenger_api.send_message(acc['channel'], account_id, req['phone'], followup_text)
             followup_status = 'sent'
         except Exception:
             logging.exception('rating followup send failed account_id=%s', account_id)
@@ -16311,7 +16328,7 @@ def _scheduled_rating_requests():
                     WHERE ca.campaign_id=? AND a.status='connected'
                     ORDER BY ca.priority
                 ''', (req['campaign_id'],)).fetchall()
-                sent_account_id, last_error = None, None
+                sent_account_id, last_error, recipient_ref = None, None, None
                 for acc in accounts:
                     try:
                         results = messenger_api.check_numbers(acc['channel'], acc['id'], [req['phone']])
@@ -16320,17 +16337,20 @@ def _scheduled_rating_requests():
                     except Exception:
                         pass  # проверка не выполнилась — пробуем отправить как есть (та же деградация, что в рассылке)
                     try:
-                        messenger_api.send_message(acc['channel'], acc['id'], req['phone'], req['request_text'])
+                        result = messenger_api.send_message(acc['channel'], acc['id'], req['phone'], req['request_text'])
                         sent_account_id = acc['id']
+                        # Сервис может вернуть свой стабильный ID получателя (сейчас — только
+                        # MAX, см. messenger_inbound) — если нет, используем телефон как раньше.
+                        recipient_ref = (result or {}).get('recipient_ref') or req['phone']
                         break
                     except Exception as e:
                         last_error = str(e)
                 if sent_account_id:
                     conn.execute('''
                         UPDATE order_rating_requests
-                        SET status='awaiting_response', assigned_account_id=?, sent_at=datetime('now')
+                        SET status='awaiting_response', assigned_account_id=?, sent_at=datetime('now'), recipient_ref=?
                         WHERE id=?
-                    ''', (sent_account_id, req['id']))
+                    ''', (sent_account_id, recipient_ref, req['id']))
                 else:
                     conn.execute(
                         "UPDATE order_rating_requests SET status='failed', error=? WHERE id=?",

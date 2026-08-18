@@ -203,15 +203,13 @@ async def run_account(state: AccountState, phone: Optional[str]) -> None:
             return
         if c.me is not None and message.sender == c.me.contact.id:
             return  # не реагируем на собственные исходящие
-        try:
-            user = await c.get_user(message.sender)
-        except Exception:
-            return
-        if user is None or not user.phone:
-            return
+        # Раньше здесь резолвили телефон через get_user(message.sender) — на практике
+        # MAX не всегда отдаёт телефон для незнакомых контактов (приватность), из-за
+        # чего реальные ответы клиентов молча терялись. message.sender сам по себе уже
+        # стабильный ID отправителя — используем его напрямую, без доп. сетевого вызова.
         asyncio.create_task(send_inbound_webhook({
             'channel': 'max', 'account_id': state.account_id,
-            'phone': str(user.phone), 'text': message.text,
+            'sender_id': str(message.sender), 'text': message.text,
         }))
 
     try:
@@ -383,7 +381,9 @@ async def message_send(account_id: str, body: SendMessageBody):
         chat_id = state.client.get_chat_id(
             first_user_id=state.client.me.contact.id, second_user_id=user.id)
         await state.client.send_message(chat_id=chat_id, text=body.text)
-        return {'ok': True}
+        # recipient_ref — тот же ID, что придёт в message.sender у ответа этого пользователя
+        # (см. _on_message) — Flask сохраняет его, чтобы потом смочь сматчить входящий ответ.
+        return {'ok': True, 'recipient_ref': str(user.id)}
     except Exception as e:
         return JSONResponse({'error': str(e)}, status_code=500)
 
