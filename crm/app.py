@@ -9300,7 +9300,10 @@ def broadcast_page():
             for c in rating_campaigns
         }
         rating_requests = conn.execute('''
-            SELECT rr.*, b.name AS branch_name
+            SELECT rr.order_number, rr.order_date, rr.phone, rr.status, rr.rating,
+                   datetime(rr.sent_at, '+7 hours') AS sent_at,
+                   datetime(rr.responded_at, '+7 hours') AS responded_at,
+                   b.name AS branch_name
             FROM order_rating_requests rr
             JOIN rating_campaigns rc ON rc.id = rr.campaign_id
             JOIN branches b ON b.id = rc.branch_id
