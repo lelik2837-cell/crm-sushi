@@ -227,11 +227,20 @@
     </div>
 </div>
 
-{% macro rating_campaign_fields(prefix, connected_accounts, channel_icons, channel_labels, assigned_accounts=none, variants=none, low_text='', mid_text='', high_text='', delay_minutes=30) %}
+{% macro rating_campaign_fields(prefix, connected_accounts, channel_icons, channel_labels, assigned_accounts=none, variants=none, low_text='', mid_text='', high_text='', delay_minutes=30, send_time_from='09:00', send_time_to='21:00') %}
     {% set assigned_ids = (assigned_accounts or [])|map(attribute='id')|list %}
     <div class="col-md-4">
         <label class="form-label small fw-semibold">Задержка после статуса «Выполнен», мин</label>
         <input type="number" name="delay_minutes" class="form-control" value="{{ delay_minutes }}" min="0" required>
+    </div>
+    <div class="col-md-4">
+        <label class="form-label small fw-semibold">Отправлять запрос не раньше</label>
+        <input type="time" name="send_time_from" class="form-control" value="{{ send_time_from }}" required>
+    </div>
+    <div class="col-md-4">
+        <label class="form-label small fw-semibold">И не позже</label>
+        <input type="time" name="send_time_to" class="form-control" value="{{ send_time_to }}" required>
+        <div class="form-text">Если задержка выпадает на ночь — сообщение уйдёт утром, в начале этого окна.</div>
     </div>
 
     <div class="col-12"><hr></div>
@@ -345,13 +354,9 @@
                     </div>
                     <div class="small text-muted mb-2">Задержка: {{ c.delay_minutes }} мин. Отправители:
                         {% for acc in rating_campaign_accounts.get(c.id, []) %}
-                            <i class="bi {{ channel_icons.get(acc.channel, 'bi-chat') }}"></i>{{ channel_labels.get(acc.channel, acc.channel) }}{% if acc.label %} ({{ acc.label }}){% endif %}{{ ', ' if not loop.last }}
+                            <i class="bi {{ channel_icons.get(acc.channel, 'bi-chat') }}"></i>{{ channel_labels.get(acc.channel, acc.channel) }}{% if acc.label %} ({{ acc.label }}){% endif %}{% if acc.phone %} {{ acc.phone }}{% endif %}{{ ', ' if not loop.last }}
                         {% endfor %}
                     </div>
-                    <div class="small"><b>Запрос:</b> {{ rating_campaign_variants.get(c.id, [c.request_text])|join(' / ') }}</div>
-                    <div class="small"><b>1-3:</b> {{ c.low_text }}</div>
-                    <div class="small"><b>4:</b> {{ c.mid_text }}</div>
-                    <div class="small"><b>5:</b> {{ c.high_text }}</div>
 
                     <div class="collapse mt-3" id="rc-edit-{{ c.id }}">
                         <hr>
@@ -360,7 +365,8 @@
                                                        assigned_accounts=rating_campaign_accounts.get(c.id, []),
                                                        variants=rating_campaign_variants.get(c.id),
                                                        low_text=c.low_text, mid_text=c.mid_text, high_text=c.high_text,
-                                                       delay_minutes=c.delay_minutes) }}
+                                                       delay_minutes=c.delay_minutes,
+                                                       send_time_from=c.send_time_from, send_time_to=c.send_time_to) }}
                             <div class="col-12">
                                 <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-check-lg me-1"></i>Сохранить</button>
                             </div>

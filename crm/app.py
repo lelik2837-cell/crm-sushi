@@ -2167,6 +2167,8 @@ def init_db():
                 branch_id INTEGER NOT NULL REFERENCES branches(id),
                 enabled INTEGER NOT NULL DEFAULT 1,
                 delay_minutes INTEGER NOT NULL DEFAULT 30,
+                send_time_from TEXT NOT NULL DEFAULT '09:00',
+                send_time_to TEXT NOT NULL DEFAULT '21:00',
                 request_text TEXT NOT NULL,
                 low_text TEXT NOT NULL,
                 mid_text TEXT NOT NULL,
@@ -2223,6 +2225,14 @@ def init_db():
             # незнакомых контактов из-за приватности MAX, поэтому матчить по телефону ненадёжно —
             # см. _scheduled_rating_requests/messenger_inbound).
             conn.execute("ALTER TABLE order_rating_requests ADD COLUMN recipient_ref TEXT")
+        _rc_cols = [r[1] for r in conn.execute("PRAGMA table_info(rating_campaigns)").fetchall()]
+        if 'send_time_from' not in _rc_cols:
+            # Разрешённое время отправки запроса на оценку (не будить клиента ночью) — применяется
+            # только к самому запросу (_scheduled_rating_requests), не к ответному follow-up-сообщению
+            # (оно шлётся сразу же в ответ на реплику клиента, вне зависимости от времени суток).
+            conn.execute("ALTER TABLE rating_campaigns ADD COLUMN send_time_from TEXT NOT NULL DEFAULT '09:00'")
+        if 'send_time_to' not in _rc_cols:
+            conn.execute("ALTER TABLE rating_campaigns ADD COLUMN send_time_to TEXT NOT NULL DEFAULT '21:00'")
 
         conn.commit()
 
@@ -9351,6 +9361,22 @@ def _save_rating_campaign_variants_and_accounts(conn, campaign_id, request_varia
     )
 
 
+_TIME_HHMM_RE = re.compile(r'^([01]\d|2[0-3]):[0-5]\d$')
+
+
+def _parse_send_time_window():
+    """Разрешённое время отправки запроса на оценку (HH:MM-HH:MM), из формы создания/
+    редактирования кампании. Некорректные/пустые значения — тихо на дефолт 09:00-21:00,
+    а не отказ всей формы: это не критичное поле."""
+    time_from = request.form.get('send_time_from', '').strip()
+    time_to = request.form.get('send_time_to', '').strip()
+    if not _TIME_HHMM_RE.match(time_from):
+        time_from = '09:00'
+    if not _TIME_HHMM_RE.match(time_to):
+        time_to = '21:00'
+    return time_from, time_to
+
+
 @app.route('/reports/broadcast/rating-campaigns', methods=['POST'])
 @login_required
 @menu_permission_required('whatsapp_broadcast')
@@ -9365,6 +9391,7 @@ def create_rating_campaign():
     low_text = request.form.get('low_text', '').strip()
     mid_text = request.form.get('mid_text', '').strip()
     high_text = request.form.get('high_text', '').strip()
+    send_time_from, send_time_to = _parse_send_time_window()
     account_ids = _sorted_account_ids_by_priority()
 
     if not branch_id or not request_variants or not (low_text and mid_text and high_text) or not account_ids:
@@ -9376,9 +9403,10 @@ def create_rating_campaign():
         try:
             campaign_id = conn.execute('''
                 INSERT INTO rating_campaigns
-                    (branch_id, delay_minutes, request_text, low_text, mid_text, high_text, created_by, created_at)
-                VALUES (?,?,?,?,?,?,?,?)
-            ''', (branch_id, delay_minutes, request_variants[0], low_text, mid_text, high_text,
+                    (branch_id, delay_minutes, send_time_from, send_time_to,
+                     request_text, low_text, mid_text, high_text, created_by, created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
+            ''', (branch_id, delay_minutes, send_time_from, send_time_to, request_variants[0], low_text, mid_text, high_text,
                   session['user_id'], datetime.now().strftime('%Y-%m-%d %H:%M:%S'))).lastrowid
         except sqlite3.IntegrityError:
             flash('Для этого филиала кампания уже есть.', 'danger')
@@ -9402,6 +9430,7 @@ def edit_rating_campaign(campaign_id):
     low_text = request.form.get('low_text', '').strip()
     mid_text = request.form.get('mid_text', '').strip()
     high_text = request.form.get('high_text', '').strip()
+    send_time_from, send_time_to = _parse_send_time_window()
     account_ids = _sorted_account_ids_by_priority()
 
     if not request_variants or not (low_text and mid_text and high_text) or not account_ids:
@@ -9416,9 +9445,10 @@ def edit_rating_campaign(campaign_id):
             return redirect(url_for('broadcast_page', tab='rating'))
         conn.execute('''
             UPDATE rating_campaigns
-            SET delay_minutes=?, request_text=?, low_text=?, mid_text=?, high_text=?
+            SET delay_minutes=?, send_time_from=?, send_time_to=?,
+                request_text=?, low_text=?, mid_text=?, high_text=?
             WHERE id=?
-        ''', (delay_minutes, request_variants[0], low_text, mid_text, high_text, campaign_id))
+        ''', (delay_minutes, send_time_from, send_time_to, request_variants[0], low_text, mid_text, high_text, campaign_id))
         _save_rating_campaign_variants_and_accounts(conn, campaign_id, request_variants, account_ids)
         conn.commit()
     flash('Настройки «Оценки заказа» обновлены.', 'success')
@@ -16305,17 +16335,35 @@ def _scheduled_sber_sync():
         print(f'[Сбербанк] авто-синхронизация exception: {e}')
 
 # ─── ОЦЕНКА ЗАКАЗА: ОТПРАВКА ГОТОВЫХ К ОТПРАВКЕ ЗАЯВОК РАЗ В МИНУТУ ─────────
+def _next_allowed_send_at_utc(now_local, time_from):
+    """now_local — локальное время сервера (Asia/Novosibirsk, как и остальной планировщик).
+    Возвращает следующий момент начала окна send_time_from в виде строки UTC, пригодной для
+    записи в send_after (то же представление, что пишет SQL datetime('now', '+N minutes'))."""
+    hh, mm = (int(p) for p in time_from.split(':'))
+    candidate = now_local.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    if candidate <= now_local:
+        candidate += timedelta(days=1)
+    return (candidate - timedelta(hours=7)).strftime('%Y-%m-%d %H:%M:%S')
+
+
 def _scheduled_rating_requests():
     """Заявки, у которых наступило время отправки (send_after <= now, обе стороны в UTC —
     send_after пишется через SQL datetime('now', '+N minutes') в _maybe_create_rating_request,
     здесь сравниваем тем же datetime('now'), поэтому расхождение локальное/UTC время тут не
     имеет значения, в отличие от сравнения с received_at из CSV Гуляша). Каскад по приоритету
     аккаунтов кампании — тот же принцип, что в _assign_broadcast_recipients, но для одного
-    получателя и без отдельного шага массовой проверки номеров."""
+    получателя и без отдельного шага массовой проверки номеров.
+
+    Разрешённое время отправки (rating_campaigns.send_time_from/send_time_to) — не будить
+    клиента ночью: если send_after уже наступил, но текущее локальное время вне окна кампании,
+    заявка не отправляется, а send_after переносится на начало следующего окна. Применяется
+    только к самому запросу на оценку — ответное follow-up-сообщение (messenger_inbound) шлётся
+    сразу же, вне зависимости от времени суток, это прямой ответ в уже начатом диалоге."""
     try:
         with get_db() as conn:
             due = conn.execute('''
-                SELECT r.*, COALESCE(rt.text, c.request_text) AS request_text
+                SELECT r.*, COALESCE(rt.text, c.request_text) AS request_text,
+                       c.send_time_from, c.send_time_to
                 FROM order_rating_requests r
                 JOIN rating_campaigns c ON c.id = r.campaign_id
                 LEFT JOIN rating_campaign_request_texts rt
@@ -16324,7 +16372,15 @@ def _scheduled_rating_requests():
             ''').fetchall()
             if not due:
                 return
+            now_local = datetime.now()
+            current_hm = now_local.strftime('%H:%M')
             for req in due:
+                if not (req['send_time_from'] <= current_hm <= req['send_time_to']):
+                    conn.execute(
+                        'UPDATE order_rating_requests SET send_after=? WHERE id=?',
+                        (_next_allowed_send_at_utc(now_local, req['send_time_from']), req['id'])
+                    )
+                    continue
                 accounts = conn.execute('''
                     SELECT a.* FROM rating_campaign_accounts ca
                     JOIN messenger_accounts a ON a.id = ca.account_id
