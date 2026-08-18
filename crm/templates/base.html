@@ -387,6 +387,13 @@
                             </a>
                         </li>
                         {% endif %}
+                        {% if item_visible('points_accrual') %}
+                        <li>
+                            <a class="dropdown-item {% if request.endpoint and request.endpoint.startswith('points_accrual') %}active{% endif %}" href="{{ url_for('points_accrual_page') }}">
+                                <i class="bi bi-award me-2"></i>Начисление баллов
+                            </a>
+                        </li>
+                        {% endif %}
                         {% if item_visible('call_center') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='call_center' %}active{% endif %}" href="{{ url_for('call_center') }}">

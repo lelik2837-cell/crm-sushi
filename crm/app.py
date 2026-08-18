@@ -146,6 +146,7 @@ MENU_ITEMS = [
     ('purchases',             'Накладные',                'reports',  True),
     ('bank',                  'Банк',                     'reports',  True),
     ('whatsapp_broadcast',    'Рассылка',                 'reports',  False),
+    ('points_accrual',        'Начисление баллов',        'reports',  False),
     ('call_center',           'Колл-центр',               'reports',  False),
     ('contact_center_report', 'Контакт-центр',            'reports',  False),
     ('employees',             'Сотрудники',               'settings', True),
@@ -2233,6 +2234,31 @@ def init_db():
             conn.execute("ALTER TABLE rating_campaigns ADD COLUMN send_time_from TEXT NOT NULL DEFAULT '09:00'")
         if 'send_time_to' not in _rc_cols:
             conn.execute("ALTER TABLE rating_campaigns ADD COLUMN send_time_to TEXT NOT NULL DEFAULT '21:00'")
+
+        # Начисление баллов клиентам за косяки (перевёрнутые роллы и т.п.) — причины хранятся
+        # отдельным справочником (создаются/переименовываются прямо на странице), не enum'ом,
+        # чтобы можно было добавлять новые без правки кода.
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS point_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS point_accruals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_number TEXT NOT NULL,
+                order_date TEXT NOT NULL,
+                amount REAL,
+                order_type TEXT,
+                points INTEGER NOT NULL,
+                category_id INTEGER NOT NULL REFERENCES point_categories(id),
+                status TEXT NOT NULL DEFAULT 'not_accrued',
+                created_by INTEGER REFERENCES users(id),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                accrued_at TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_point_accruals_status ON point_accruals(status);
+        ''')
 
         conn.commit()
 
@@ -15207,6 +15233,145 @@ def _maybe_create_rating_request(conn, r, branch_id, campaigns_by_branch, varian
         ON CONFLICT(campaign_id, order_number, order_date) DO NOTHING
     ''', (campaign['id'], r['order_number'], order_date, phone,
           f"+{campaign['delay_minutes']} minutes", variant_index))
+
+
+# ─── НАЧИСЛЕНИЕ БАЛЛОВ (компенсация клиенту за косяки — перевёрнутые роллы и т.п.) ────
+
+@app.route('/reports/points')
+@login_required
+@menu_permission_required('points_accrual')
+def points_accrual_page():
+    with get_db() as conn:
+        categories = conn.execute('SELECT * FROM point_categories ORDER BY name').fetchall()
+        accruals = conn.execute('''
+            SELECT pa.*, pc.name AS category_name
+            FROM point_accruals pa JOIN point_categories pc ON pc.id = pa.category_id
+            ORDER BY pa.id DESC LIMIT 200
+        ''').fetchall()
+    return render_template('points_accrual.html', categories=categories, accruals=accruals)
+
+
+@app.route('/reports/points/categories', methods=['POST'])
+@login_required
+@menu_permission_required('points_accrual')
+def create_point_category():
+    name = request.form.get('name', '').strip()
+    if not name:
+        flash('Укажите название причины', 'danger')
+        return redirect(url_for('points_accrual_page'))
+    with get_db() as conn:
+        try:
+            conn.execute('INSERT INTO point_categories (name) VALUES (?)', (name,))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            flash('Такая причина уже есть.', 'danger')
+            return redirect(url_for('points_accrual_page'))
+    flash('Причина добавлена.', 'success')
+    return redirect(url_for('points_accrual_page'))
+
+
+@app.route('/reports/points/categories/<int:category_id>/rename', methods=['POST'])
+@login_required
+@menu_permission_required('points_accrual')
+def rename_point_category(category_id):
+    name = request.form.get('name', '').strip()
+    if not name:
+        flash('Укажите название причины', 'danger')
+        return redirect(url_for('points_accrual_page'))
+    with get_db() as conn:
+        try:
+            cur = conn.execute('UPDATE point_categories SET name=? WHERE id=?', (name, category_id))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            flash('Такая причина уже есть.', 'danger')
+            return redirect(url_for('points_accrual_page'))
+        if not cur.rowcount:
+            flash('Причина не найдена', 'danger')
+    return redirect(url_for('points_accrual_page'))
+
+
+@app.route('/reports/points/order-lookup')
+@login_required
+@menu_permission_required('points_accrual')
+def points_order_lookup():
+    """Подтягивает сумму и тип заказа (доставка/самовывоз) из уже импортированного архива
+    заказов (orders_report) — только для того, чтобы сотрудник на глаз убедился, что вводит
+    баллы на тот самый заказ. Адрес доставки в архиве не хранится (Гуляш его не отдаёт в
+    используемой выгрузке) — пользователь решил ограничиться суммой и типом."""
+    order_number = request.args.get('order_number', '').strip()
+    order_date = request.args.get('order_date', '').strip()
+    if not order_number or not order_date:
+        return jsonify({'found': False})
+    with get_db() as conn:
+        row = conn.execute('''
+            SELECT amount, order_type FROM orders_report
+            WHERE order_number=? AND substr(received_at,1,10)=?
+            ORDER BY id DESC LIMIT 1
+        ''', (order_number, order_date)).fetchone()
+    if not row:
+        return jsonify({'found': False})
+    return jsonify({'found': True, 'amount': row['amount'], 'order_type': row['order_type'] or ''})
+
+
+@app.route('/reports/points', methods=['POST'])
+@login_required
+@menu_permission_required('points_accrual')
+def create_point_accrual():
+    order_number = request.form.get('order_number', '').strip()
+    order_date = request.form.get('order_date', '').strip()
+    category_id = request.form.get('category_id', type=int)
+    points = request.form.get('points', type=int)
+    amount = request.form.get('amount', type=float)
+    order_type = request.form.get('order_type', '').strip()
+
+    if not order_number or not order_date or not category_id or not points:
+        flash('Заполните номер заказа, дату, причину и количество баллов', 'danger')
+        return redirect(url_for('points_accrual_page'))
+
+    with get_db() as conn:
+        cat = conn.execute('SELECT id FROM point_categories WHERE id=?', (category_id,)).fetchone()
+        if not cat:
+            flash('Причина не найдена', 'danger')
+            return redirect(url_for('points_accrual_page'))
+        conn.execute('''
+            INSERT INTO point_accruals (order_number, order_date, amount, order_type, points, category_id, created_by)
+            VALUES (?,?,?,?,?,?,?)
+        ''', (order_number, order_date, amount, order_type or None, points, category_id, session['user_id']))
+        conn.commit()
+    flash('Баллы внесены.', 'success')
+    return redirect(url_for('points_accrual_page'))
+
+
+@app.route('/reports/points/<int:accrual_id>/accrue', methods=['POST'])
+@login_required
+@menu_permission_required('points_accrual')
+def accrue_points(accrual_id):
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE point_accruals SET status='accrued', accrued_at=CURRENT_TIMESTAMP WHERE id=? AND status='not_accrued'",
+            (accrual_id,)
+        )
+        conn.commit()
+    return redirect(url_for('points_accrual_page'))
+
+
+@app.route('/reports/points/<int:accrual_id>/delete', methods=['POST'])
+@login_required
+@menu_permission_required('points_accrual')
+def delete_point_accrual(accrual_id):
+    with get_db() as conn:
+        row = conn.execute('SELECT status FROM point_accruals WHERE id=?', (accrual_id,)).fetchone()
+        if not row:
+            flash('Запись не найдена', 'danger')
+        elif row['status'] == 'accrued':
+            # Начисленные баллы не удаляем — это уже случившийся факт начисления клиенту,
+            # запись должна остаться для истории/сверки, а не тихо исчезнуть.
+            flash('Начисленные баллы удалить нельзя.', 'danger')
+        else:
+            conn.execute('DELETE FROM point_accruals WHERE id=?', (accrual_id,))
+            conn.commit()
+            flash('Запись удалена.', 'success')
+    return redirect(url_for('points_accrual_page'))
 
 
 @app.route('/orders-report')

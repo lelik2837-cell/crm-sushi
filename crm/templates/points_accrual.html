@@ -1,0 +1,163 @@
+{% extends 'base.html' %}
+{% block title %}Начисление баллов{% endblock %}
+
+{% block content %}
+{% set status_info = {
+    'not_accrued': {'label': 'Не начислено', 'class': 'text-secondary'},
+    'accrued':     {'label': 'Начислено',    'class': 'text-success fw-semibold'},
+} %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="fw-bold mb-0"><i class="bi bi-award me-2"></i>Начисление баллов</h4>
+</div>
+
+<!-- Причины (справочник, редактируемый прямо здесь) -->
+<div class="card mb-4">
+    <div class="card-header fw-semibold"><i class="bi bi-tags me-2"></i>Причины начисления</div>
+    <div class="card-body">
+        <div class="row g-2 mb-3">
+            {% for cat in categories %}
+            <div class="col-md-4">
+                <form method="POST" action="{{ url_for('rename_point_category', category_id=cat.id) }}" class="input-group input-group-sm">
+                    <input type="text" name="name" class="form-control" value="{{ cat.name }}">
+                    <button type="submit" class="btn btn-outline-secondary" title="Сохранить название"><i class="bi bi-check-lg"></i></button>
+                </form>
+            </div>
+            {% else %}
+            <div class="col-12 text-muted small">Причин ещё нет — добавьте первую ниже.</div>
+            {% endfor %}
+        </div>
+        <form method="POST" action="{{ url_for('create_point_category') }}" class="d-flex gap-2" style="max-width:400px;">
+            <input type="text" name="name" class="form-control form-control-sm" placeholder="Новая причина, например «Перевёрнутые роллы»" required>
+            <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap"><i class="bi bi-plus-lg"></i> Добавить</button>
+        </form>
+    </div>
+</div>
+
+<div class="mb-3">
+    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#paModal"
+            {% if not categories %}disabled title="Сначала добавьте хотя бы одну причину"{% endif %}>
+        <i class="bi bi-plus-lg me-1"></i>Внести баллы
+    </button>
+</div>
+
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-sm mb-0 align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th>Заказ</th>
+                    <th>Дата</th>
+                    <th>Баллы</th>
+                    <th>Причина</th>
+                    <th>Статус</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for a in accruals %}
+                <tr>
+                    <td>{{ a.order_number }}</td>
+                    <td class="text-nowrap">{{ a.order_date }}</td>
+                    <td>{{ a.points }}</td>
+                    <td>{{ a.category_name }}</td>
+                    {% set st = status_info.get(a.status, {'label': a.status, 'class': 'text-secondary'}) %}
+                    <td><span class="{{ st.class }}">{{ st.label }}</span></td>
+                    <td class="text-end text-nowrap">
+                        {% if a.status == 'not_accrued' %}
+                        <form method="POST" action="{{ url_for('accrue_points', accrual_id=a.id) }}" class="d-inline">
+                            <button type="submit" class="btn btn-sm btn-outline-success">Начислить</button>
+                        </form>
+                        <form method="POST" action="{{ url_for('delete_point_accrual', accrual_id=a.id) }}" class="d-inline" onsubmit="return confirm('Удалить эту запись?');">
+                            <button type="submit" class="btn btn-sm btn-outline-danger">Удалить</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr><td colspan="6" class="text-center text-muted py-3">Записей пока нет</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Модалка «Внести баллы» -->
+<div class="modal fade" id="paModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <form method="POST" action="{{ url_for('create_point_accrual') }}" class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Внести баллы</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label small fw-semibold">Номер заказа</label>
+                        <input type="text" name="order_number" id="pa-order-number" class="form-control" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-semibold">Дата заказа</label>
+                        <input type="date" name="order_date" id="pa-order-date" class="form-control" required>
+                    </div>
+                    <div class="col-12">
+                        <div id="pa-lookup-hint" class="form-text"></div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-semibold">Сумма заказа</label>
+                        <input type="number" step="0.01" name="amount" id="pa-amount" class="form-control" placeholder="Подтянется автоматически">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-semibold">Тип заказа</label>
+                        <input type="text" name="order_type" id="pa-order-type" class="form-control" placeholder="Доставка / самовывоз">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-semibold">Причина</label>
+                        <select name="category_id" class="form-select" required>
+                            {% for cat in categories %}
+                            <option value="{{ cat.id }}">{{ cat.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-semibold">Количество баллов</label>
+                        <input type="number" name="points" class="form-control" min="1" required>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отменить</button>
+                <button type="submit" class="btn btn-primary">Сохранить</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function paLookupOrder() {
+    const num = document.getElementById('pa-order-number').value.trim();
+    const date = document.getElementById('pa-order-date').value;
+    const hint = document.getElementById('pa-lookup-hint');
+    if (!num || !date) {
+        hint.textContent = '';
+        return;
+    }
+    fetch(`/reports/points/order-lookup?order_number=${encodeURIComponent(num)}&order_date=${encodeURIComponent(date)}`)
+        .then((r) => r.json())
+        .then((data) => {
+            if (data.found) {
+                document.getElementById('pa-amount').value = data.amount;
+                document.getElementById('pa-order-type').value = data.order_type;
+                hint.textContent = 'Заказ найден в архиве — сумма и тип подставлены автоматически.';
+                hint.className = 'form-text text-success';
+            } else {
+                hint.textContent = 'Заказ с таким номером и датой не найден в архиве — заполните сумму и тип вручную.';
+                hint.className = 'form-text text-muted';
+            }
+        })
+        .catch(() => {});
+}
+document.getElementById('pa-order-number').addEventListener('change', paLookupOrder);
+document.getElementById('pa-order-date').addEventListener('change', paLookupOrder);
+</script>
+{% endblock %}
