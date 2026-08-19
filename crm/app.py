@@ -5825,6 +5825,67 @@ def _export_shift_to_gdrive_xlsx(shift_id):
         print(f'[GDrive] shift {shift_id} xlsx error: {e}')
 
 
+def _export_shift_html_to_gdrive(shift_id, session_cookie_val, base_url):
+    """Сохранить HTML-снимок страницы смены (как после закрытия) в Google Drive."""
+    try:
+        import urllib.request
+
+        token = _gdrive_get_oauth_token()
+        if not token:
+            print(f'[GDrive] shift {shift_id} html: OAuth2 токен не получен')
+            return
+        folder_id = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
+        if not folder_id:
+            print(f'[GDrive] shift {shift_id} html: GOOGLE_DRIVE_FOLDER_ID не задан')
+            return
+
+        client = app.test_client()
+        if session_cookie_val:
+            client.set_cookie(app.config['SESSION_COOKIE_NAME'], session_cookie_val)
+        resp = client.get(f'/shift/{shift_id}', base_url=base_url)
+        if resp.status_code != 200:
+            print(f'[GDrive] shift {shift_id} html: страница вернула {resp.status_code}')
+            return
+        html = resp.get_data(as_text=True)
+        # Делаем корневые ссылки (стили, картинки) абсолютными, чтобы файл
+        # открывался как есть вне CRM — со стилями и логотипами с боевого сервера.
+        html = html.replace('href="/', f'href="{base_url}/').replace('src="/', f'src="{base_url}/')
+
+        with get_db() as conn:
+            shift = conn.execute(
+                'SELECT s.date, b.name as branch_name FROM shifts s JOIN branches b ON b.id=s.branch_id WHERE s.id=?',
+                (shift_id,)
+            ).fetchone()
+        branch_nm = (shift['branch_name'] if shift else 'branch').replace(' ', '_')
+        date_str = shift['date'] if shift else datetime.now().strftime('%Y-%m-%d')
+        filename = f'Смена_{branch_nm}_{date_str}_id{shift_id}.html'
+
+        html_bytes = html.encode('utf-8')
+        boundary = '---GDriveShiftHtmlBnd5521'
+        meta_json = _json_lib.dumps({'name': filename, 'parents': [folder_id]})
+        body = (
+            f'--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'
+            f'{meta_json}\r\n'
+            f'--{boundary}\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n'
+        ).encode('utf-8') + html_bytes + f'\r\n--{boundary}--'.encode('utf-8')
+
+        upload_req = urllib.request.Request(
+            'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+            data=body,
+            headers={
+                'Authorization': f'Bearer {token}',
+                'Content-Type': f'multipart/related; boundary="{boundary}"',
+            },
+            method='POST'
+        )
+        with urllib.request.urlopen(upload_req, timeout=60) as resp2:
+            result = _json_lib.loads(resp2.read())
+        print(f'[GDrive] shift {shift_id} html uploaded: {filename} id={result.get("id","?")}')
+
+    except Exception as e:
+        print(f'[GDrive] shift {shift_id} html error: {e}')
+
+
 @app.route('/shift/<int:shift_id>/close', methods=['POST'])
 @login_required
 def close_shift(shift_id):
@@ -5858,6 +5919,13 @@ def close_shift(shift_id):
         flash('Смена закрыта', 'success')
         threading.Thread(target=_export_shift_to_gsheet, args=(shift_id,), daemon=True).start()
         threading.Thread(target=_export_shift_to_gdrive_xlsx, args=(shift_id,), daemon=True).start()
+        session_cookie_val = request.cookies.get(app.config['SESSION_COOKIE_NAME'])
+        base_url = request.host_url.rstrip('/')
+        threading.Thread(
+            target=_export_shift_html_to_gdrive,
+            args=(shift_id, session_cookie_val, base_url),
+            daemon=True
+        ).start()
     except Exception as e:
         flash(f'Ошибка при закрытии смены: {e}', 'danger')
     return redirect(url_for('shift_view', shift_id=shift_id))
