@@ -5860,9 +5860,12 @@ def _export_shift_html_to_gdrive(shift_id, session_cookie_val, base_url):
             _set_shift_html_export_status(shift_id, False, 'GOOGLE_DRIVE_FOLDER_ID не задан на сервере')
             return
 
+        import urllib.parse as _up
+        cookie_domain = _up.urlparse(base_url).hostname or 'localhost'
+
         client = app.test_client()
         if session_cookie_val:
-            client.set_cookie(app.config['SESSION_COOKIE_NAME'], session_cookie_val)
+            client.set_cookie(app.config['SESSION_COOKIE_NAME'], session_cookie_val, domain=cookie_domain)
         resp = client.get(f'/shift/{shift_id}', base_url=base_url)
         if resp.status_code != 200:
             print(f'[GDrive] shift {shift_id} html: страница вернула {resp.status_code}')
