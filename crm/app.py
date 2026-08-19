@@ -5910,8 +5910,15 @@ def _export_shift_html_to_gdrive(shift_id, session_cookie_val, base_url):
         _set_shift_html_export_status(shift_id, True, f'Загружено: {filename}')
 
     except Exception as e:
-        print(f'[GDrive] shift {shift_id} html error: {e}')
-        _set_shift_html_export_status(shift_id, False, f'Ошибка: {e}')
+        import urllib.error as _ue
+        detail = str(e)
+        if isinstance(e, _ue.HTTPError):
+            try:
+                detail = f'{e} — {e.read().decode("utf-8", errors="replace")[:500]}'
+            except Exception:
+                pass
+        print(f'[GDrive] shift {shift_id} html error: {detail}')
+        _set_shift_html_export_status(shift_id, False, f'Ошибка: {detail}')
 
 
 @app.route('/shift/<int:shift_id>/close', methods=['POST'])
