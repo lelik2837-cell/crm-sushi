@@ -5826,7 +5826,7 @@ def _export_shift_to_gdrive_xlsx(shift_id):
 
 
 def _set_shift_html_export_status(shift_id, ok, msg):
-    """Записать результат последней попытки HTML-экспорта смены — видно в /settings/gsheet."""
+    """Записать результат последней попытки скриншот-экспорта смены — видно в /settings/gsheet."""
     try:
         value = _json_lib.dumps({
             'shift_id': shift_id,
@@ -5841,44 +5841,70 @@ def _set_shift_html_export_status(shift_id, ok, msg):
             )
             conn.commit()
     except Exception as e:
-        print(f'[GDrive] shift {shift_id} html: не удалось сохранить статус: {e}')
+        print(f'[GDrive] shift {shift_id} screenshot: не удалось сохранить статус: {e}')
 
 
 def _export_shift_html_to_gdrive(shift_id, session_cookie_val, base_url):
-    """Сохранить HTML-снимок страницы смены (как после закрытия) в Google Drive."""
+    """Сохранить PNG-скриншот страницы смены (как после закрытия) в Google Drive."""
     try:
         import urllib.request
+        import urllib.parse as _up
 
         token = _gdrive_get_oauth_token()
         if not token:
-            print(f'[GDrive] shift {shift_id} html: OAuth2 токен не получен')
+            print(f'[GDrive] shift {shift_id} screenshot: OAuth2 токен не получен')
             _set_shift_html_export_status(shift_id, False, 'OAuth2 токен не получен — авторизуйте Drive заново')
             return
         folder_id = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
         if not folder_id:
-            print(f'[GDrive] shift {shift_id} html: GOOGLE_DRIVE_FOLDER_ID не задан')
+            print(f'[GDrive] shift {shift_id} screenshot: GOOGLE_DRIVE_FOLDER_ID не задан')
             _set_shift_html_export_status(shift_id, False, 'GOOGLE_DRIVE_FOLDER_ID не задан на сервере')
             return
 
-        import urllib.parse as _up
         cookie_domain = _up.urlparse(base_url).hostname or 'localhost'
+        page_url = f'{base_url}/shift/{shift_id}'
 
-        client = app.test_client()
-        if session_cookie_val:
-            client.set_cookie(app.config['SESSION_COOKIE_NAME'], session_cookie_val, domain=cookie_domain)
-        resp = client.get(f'/shift/{shift_id}', base_url=base_url)
-        if resp.status_code != 200:
-            print(f'[GDrive] shift {shift_id} html: страница вернула {resp.status_code}')
-            loc = resp.headers.get('Location', '')
-            _set_shift_html_export_status(
-                shift_id, False,
-                f'Страница смены вернула код {resp.status_code}' + (f' (редирект на {loc})' if loc else '')
-            )
+        from playwright.sync_api import sync_playwright
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(args=['--no-sandbox', '--disable-dev-shm-usage'])
+                try:
+                    context = browser.new_context(viewport={'width': 1400, 'height': 1000})
+                    if session_cookie_val:
+                        context.add_cookies([{
+                            'name': app.config['SESSION_COOKIE_NAME'],
+                            'value': session_cookie_val,
+                            'domain': cookie_domain,
+                            'path': '/',
+                            'secure': base_url.startswith('https'),
+                        }])
+                    page = context.new_page()
+                    goto_resp = page.goto(page_url, wait_until='load', timeout=20000)
+                    if goto_resp is None or goto_resp.status != 200:
+                        status_code = goto_resp.status if goto_resp else '?'
+                        print(f'[GDrive] shift {shift_id} screenshot: страница вернула {status_code}')
+                        _set_shift_html_export_status(
+                            shift_id, False, f'Страница смены вернула код {status_code}'
+                        )
+                        return
+                    page.wait_for_timeout(300)
+                    # Плавающие/прилипающие панели (нижняя панель действий и т.п.) на full-page
+                    # скриншоте дублируются поверх контента — скрываем их перед съёмкой.
+                    page.evaluate('''
+                        document.querySelectorAll('*').forEach(el => {
+                            const cs = getComputedStyle(el);
+                            if (cs.position === 'fixed' || cs.position === 'sticky') {
+                                el.style.setProperty('display', 'none', 'important');
+                            }
+                        });
+                    ''')
+                    png_bytes = page.screenshot(full_page=True)
+                finally:
+                    browser.close()
+        except Exception as e:
+            print(f'[GDrive] shift {shift_id} screenshot render error: {e}')
+            _set_shift_html_export_status(shift_id, False, f'Ошибка рендера страницы: {e}')
             return
-        html = resp.get_data(as_text=True)
-        # Делаем корневые ссылки (стили, картинки) абсолютными, чтобы файл
-        # открывался как есть вне CRM — со стилями и логотипами с боевого сервера.
-        html = html.replace('href="/', f'href="{base_url}/').replace('src="/', f'src="{base_url}/')
 
         with get_db() as conn:
             shift = conn.execute(
@@ -5887,16 +5913,15 @@ def _export_shift_html_to_gdrive(shift_id, session_cookie_val, base_url):
             ).fetchone()
         branch_nm = (shift['branch_name'] if shift else 'branch').replace(' ', '_')
         date_str = shift['date'] if shift else datetime.now().strftime('%Y-%m-%d')
-        filename = f'Смена_{branch_nm}_{date_str}_id{shift_id}.html'
+        filename = f'Смена_{branch_nm}_{date_str}_id{shift_id}.png'
 
-        html_bytes = html.encode('utf-8')
-        boundary = '---GDriveShiftHtmlBnd5521'
+        boundary = '---GDriveShiftPngBnd7734'
         meta_json = _json_lib.dumps({'name': filename, 'parents': [folder_id]})
         body = (
             f'--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n'
             f'{meta_json}\r\n'
-            f'--{boundary}\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n'
-        ).encode('utf-8') + html_bytes + f'\r\n--{boundary}--'.encode('utf-8')
+            f'--{boundary}\r\nContent-Type: image/png\r\n\r\n'
+        ).encode('utf-8') + png_bytes + f'\r\n--{boundary}--'.encode('utf-8')
 
         upload_req = urllib.request.Request(
             'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
@@ -5909,7 +5934,7 @@ def _export_shift_html_to_gdrive(shift_id, session_cookie_val, base_url):
         )
         with urllib.request.urlopen(upload_req, timeout=60) as resp2:
             result = _json_lib.loads(resp2.read())
-        print(f'[GDrive] shift {shift_id} html uploaded: {filename} id={result.get("id","?")}')
+        print(f'[GDrive] shift {shift_id} screenshot uploaded: {filename} id={result.get("id","?")}')
         _set_shift_html_export_status(shift_id, True, f'Загружено: {filename}')
 
     except Exception as e:
@@ -5920,7 +5945,7 @@ def _export_shift_html_to_gdrive(shift_id, session_cookie_val, base_url):
                 detail = f'{e} — {e.read().decode("utf-8", errors="replace")[:500]}'
             except Exception:
                 pass
-        print(f'[GDrive] shift {shift_id} html error: {detail}')
+        print(f'[GDrive] shift {shift_id} screenshot error: {detail}')
         _set_shift_html_export_status(shift_id, False, f'Ошибка: {detail}')
 
 
