@@ -5825,6 +5825,25 @@ def _export_shift_to_gdrive_xlsx(shift_id):
         print(f'[GDrive] shift {shift_id} xlsx error: {e}')
 
 
+def _set_shift_html_export_status(shift_id, ok, msg):
+    """Записать результат последней попытки HTML-экспорта смены — видно в /settings/gsheet."""
+    try:
+        value = _json_lib.dumps({
+            'shift_id': shift_id,
+            'ok': ok,
+            'msg': msg,
+            'at': datetime.now().strftime('%d.%m.%Y %H:%M'),
+        })
+        with get_db() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO gsheet_settings (key, value) VALUES ('last_shift_html_export', ?)",
+                (value,)
+            )
+            conn.commit()
+    except Exception as e:
+        print(f'[GDrive] shift {shift_id} html: не удалось сохранить статус: {e}')
+
+
 def _export_shift_html_to_gdrive(shift_id, session_cookie_val, base_url):
     """Сохранить HTML-снимок страницы смены (как после закрытия) в Google Drive."""
     try:
@@ -5833,10 +5852,12 @@ def _export_shift_html_to_gdrive(shift_id, session_cookie_val, base_url):
         token = _gdrive_get_oauth_token()
         if not token:
             print(f'[GDrive] shift {shift_id} html: OAuth2 токен не получен')
+            _set_shift_html_export_status(shift_id, False, 'OAuth2 токен не получен — авторизуйте Drive заново')
             return
         folder_id = os.environ.get('GOOGLE_DRIVE_FOLDER_ID')
         if not folder_id:
             print(f'[GDrive] shift {shift_id} html: GOOGLE_DRIVE_FOLDER_ID не задан')
+            _set_shift_html_export_status(shift_id, False, 'GOOGLE_DRIVE_FOLDER_ID не задан на сервере')
             return
 
         client = app.test_client()
@@ -5845,6 +5866,11 @@ def _export_shift_html_to_gdrive(shift_id, session_cookie_val, base_url):
         resp = client.get(f'/shift/{shift_id}', base_url=base_url)
         if resp.status_code != 200:
             print(f'[GDrive] shift {shift_id} html: страница вернула {resp.status_code}')
+            loc = resp.headers.get('Location', '')
+            _set_shift_html_export_status(
+                shift_id, False,
+                f'Страница смены вернула код {resp.status_code}' + (f' (редирект на {loc})' if loc else '')
+            )
             return
         html = resp.get_data(as_text=True)
         # Делаем корневые ссылки (стили, картинки) абсолютными, чтобы файл
@@ -5881,9 +5907,11 @@ def _export_shift_html_to_gdrive(shift_id, session_cookie_val, base_url):
         with urllib.request.urlopen(upload_req, timeout=60) as resp2:
             result = _json_lib.loads(resp2.read())
         print(f'[GDrive] shift {shift_id} html uploaded: {filename} id={result.get("id","?")}')
+        _set_shift_html_export_status(shift_id, True, f'Загружено: {filename}')
 
     except Exception as e:
         print(f'[GDrive] shift {shift_id} html error: {e}')
+        _set_shift_html_export_status(shift_id, False, f'Ошибка: {e}')
 
 
 @app.route('/shift/<int:shift_id>/close', methods=['POST'])
@@ -11574,12 +11602,17 @@ def gsheet_settings():
             "SELECT value FROM gsheet_settings WHERE key='last_db_backup'"
         ).fetchone()
         last_db_backup = backup_row['value'] if backup_row else None
+        html_row = conn.execute(
+            "SELECT value FROM gsheet_settings WHERE key='last_shift_html_export'"
+        ).fetchone()
+        last_shift_html_export = _json_lib.loads(html_row['value']) if html_row else None
     return render_template('gsheet_settings.html', cfg=cfg, cols=GSHEET_COLS,
                            sheet_id=os.environ.get('GOOGLE_SHEET_ID', ''),
                            drive_folder_id=os.environ.get('GOOGLE_DRIVE_FOLDER_ID', ''),
                            has_creds=bool(os.environ.get('GOOGLE_CREDENTIALS_JSON')),
                            gdrive_authorized=gdrive_authorized,
-                           last_db_backup=last_db_backup)
+                           last_db_backup=last_db_backup,
+                           last_shift_html_export=last_shift_html_export)
 
 
 @app.route('/settings/gdrive-auth')

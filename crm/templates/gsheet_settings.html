@@ -131,6 +131,31 @@
         <div id="backup-result" class="mt-3" style="display:none;"></div>
     </div>
 </div>
+
+{# HTML-снимок смены при закрытии #}
+<div class="card mb-4">
+    <div class="card-header fw-semibold" style="background:#1a1a2e;color:#fff">
+        <i class="bi bi-file-earmark-code me-2"></i>HTML-снимок смены при закрытии
+    </div>
+    <div class="card-body">
+        <p class="text-muted small mb-2">
+            При закрытии смены страница с итогами автоматически сохраняется как HTML-файл
+            в ту же папку Google Drive — файл называется <code>Смена_Филиал_Дата_idНОМЕР.html</code>.
+        </p>
+        {% if last_shift_html_export %}
+        <p class="mb-0 small">
+            Последняя попытка ({{ last_shift_html_export.at }}, смена #{{ last_shift_html_export.shift_id }}):
+            {% if last_shift_html_export.ok %}
+            <span class="text-success">✅ {{ last_shift_html_export.msg }}</span>
+            {% else %}
+            <span class="text-danger">❌ {{ last_shift_html_export.msg }}</span>
+            {% endif %}
+        </p>
+        {% else %}
+        <p class="text-muted small mb-0">Ещё ни одна смена не закрывалась после включения этой функции.</p>
+        {% endif %}
+    </div>
+</div>
 <script>
 function doBackup() {
     const btn = document.getElementById('backup-btn');
