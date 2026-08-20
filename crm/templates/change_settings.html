@@ -110,9 +110,9 @@
     </div>
 
     <!-- Общая сумма размена за выбранный период и филиалы -->
-    <div class="card mb-3 p-3" style="border-left:4px solid #1e40af; max-width:320px;">
-        <div class="text-muted small">Размен всего за период</div>
-        <div class="fw-bold fs-5" style="color:#1e40af;">{{ grand_total | money }} ₽</div>
+    <div class="card mb-3 px-3 py-2 d-flex flex-row align-items-center gap-2" style="border-left:4px solid #1e40af; width:fit-content;">
+        <span class="text-muted small">Размен всего за период:</span>
+        <span class="fw-bold" style="color:#1e40af;">{{ grand_total | money }} ₽</span>
     </div>
 
     <!-- Таблица: строки = даты, столбцы = филиалы -->
