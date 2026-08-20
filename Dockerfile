@@ -12,6 +12,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . /app
 
+# Помечает контейнер unhealthy в `docker ps`, если /health не отвечает за 3с — но само
+# по себе Docker не перезапускает unhealthy-контейнеры без orchestrator/autoheal-компонента.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD python3 -c "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:'+os.environ['PORT']+'/health', timeout=3)"
+
 # --preload убран намеренно: APScheduler стартует при импорте app.py и заводит фоновый
 # поток — с --preload это происходит в master-процессе ДО fork() воркеров, а fork()
 # копирует только текущий поток ОС; если этот фоновый поток в момент форка держал

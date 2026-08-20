@@ -2634,6 +2634,18 @@ def _apply_all_change_schedules(conn):
 
 # ─── AUTH ─────────────────────────────────────────────────────────────────────
 
+@app.route('/health')
+def health_check():
+    """Без авторизации — для Docker HEALTHCHECK. Если воркер завис (deadlock), этот
+    запрос тоже не дойдёт до ответа, и Docker пометит контейнер unhealthy."""
+    try:
+        with get_db() as conn:
+            conn.execute('SELECT 1')
+        return jsonify({'status': 'ok'}), 200
+    except Exception as e:
+        return jsonify({'status': 'error', 'error': str(e)}), 503
+
+
 @app.route('/')
 def index():
     if 'user_id' in session:
@@ -16609,12 +16621,15 @@ def _run_once_across_workers(lock_name, fn):
     Лок — файловый (flock), а не threading.Lock: ОС сама снимает его при завершении
     процесса, даже аварийном, поэтому он не может остаться навсегда захваченным."""
     import fcntl
+    pid = os.getpid()
     lock_file = open(f'/tmp/{lock_name}.lock', 'w')
     try:
         fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
+        print(f'[Scheduler] {lock_name}: pid {pid} — уже выполняется в другом воркере, пропуск')
         lock_file.close()
         return
+    print(f'[Scheduler] {lock_name}: pid {pid} захватил блокировку, выполняю')
     try:
         fn()
     finally:
