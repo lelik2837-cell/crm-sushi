@@ -409,7 +409,9 @@ function saveEdit(cell) {
         span.className = 'change-val';
         span.style.cssText = 'font-size:13px; color:#374151;';
         span.textContent = formatted;
-        view.insertBefore(span, view.querySelector('.change-edit-btn'));
+        // .change-edit-btn не всегда прямой потомок view (в ячейках реальных смен он
+        // обёрнут вместе с кнопкой открыть/закрыть смену) — insertBefore с ним падает.
+        view.prepend(span);
       }
     } else {
       if (span) span.remove();
