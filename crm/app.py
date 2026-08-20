@@ -15738,12 +15738,13 @@ def change_settings():
         for bid, cell in cells.items():
             if cell.get('status') != 'future':
                 branch_totals[bid] = branch_totals.get(bid, 0) + (cell['change_amount'] or 0)
+    grand_total = sum(branch_totals.values())
 
     return render_template('change_settings.html',
         branches=branches, branch_groups=branch_groups_raw,
         branch_group_members=branch_group_members,
         sel_branches=sel_branches, grid=grid,
-        branch_totals=branch_totals, dates_list=dates_list,
+        branch_totals=branch_totals, grand_total=grand_total, dates_list=dates_list,
         schedules=schedules,
         date_from=date_from, date_to=date_to,
         branch_ids_filter=branch_ids_filter,
