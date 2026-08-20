@@ -227,20 +227,31 @@
     </div>
 </div>
 
-{% macro rating_campaign_fields(prefix, connected_accounts, channel_icons, channel_labels, assigned_accounts=none, variants=none, low_text='', mid_text='', high_text='', delay_minutes=30, send_time_from='09:00', send_time_to='21:00') %}
+{% macro rating_campaign_fields(prefix, connected_accounts, channel_icons, channel_labels, assigned_accounts=none, variants=none, low_text='', mid_text='', high_text='', delay_minutes=30, send_time_from='09:00', send_time_to='21:00', enforce_send_time=false) %}
     {% set assigned_ids = (assigned_accounts or [])|map(attribute='id')|list %}
     <div class="col-md-4">
         <label class="form-label small fw-semibold">Задержка после статуса «Выполнен», мин</label>
         <input type="number" name="delay_minutes" class="form-control" value="{{ delay_minutes }}" min="0" required>
     </div>
-    <div class="col-md-4">
-        <label class="form-label small fw-semibold">Отправлять запрос не раньше</label>
-        <input type="time" name="send_time_from" class="form-control" value="{{ send_time_from }}" required>
+    <div class="col-12">
+        <div class="form-check">
+            <input type="checkbox" class="form-check-input" id="{{ prefix }}-enforce-time" name="enforce_send_time"
+                   onchange="document.getElementById('{{ prefix }}-time-window').style.display = this.checked ? 'flex' : 'none'"
+                   {% if enforce_send_time %}checked{% endif %}>
+            <label class="form-check-label small fw-semibold" for="{{ prefix }}-enforce-time">Ограничивать время отправки</label>
+        </div>
+        <div class="form-text mb-2">По умолчанию выключено — запрос уходит сразу, в любое время суток.</div>
     </div>
-    <div class="col-md-4">
-        <label class="form-label small fw-semibold">И не позже</label>
-        <input type="time" name="send_time_to" class="form-control" value="{{ send_time_to }}" required>
-        <div class="form-text">Если задержка выпадает на ночь — сообщение уйдёт утром, в начале этого окна.</div>
+    <div class="col-12 row g-2" id="{{ prefix }}-time-window" style="display:{{ 'flex' if enforce_send_time else 'none' }};">
+        <div class="col-md-4">
+            <label class="form-label small fw-semibold">Отправлять запрос не раньше</label>
+            <input type="time" name="send_time_from" class="form-control" value="{{ send_time_from }}">
+        </div>
+        <div class="col-md-4">
+            <label class="form-label small fw-semibold">И не позже</label>
+            <input type="time" name="send_time_to" class="form-control" value="{{ send_time_to }}">
+            <div class="form-text">Если задержка выпадает на ночь — сообщение уйдёт утром, в начале этого окна.</div>
+        </div>
     </div>
 
     <div class="col-12"><hr></div>
@@ -366,7 +377,8 @@
                                                        variants=rating_campaign_variants.get(c.id),
                                                        low_text=c.low_text, mid_text=c.mid_text, high_text=c.high_text,
                                                        delay_minutes=c.delay_minutes,
-                                                       send_time_from=c.send_time_from, send_time_to=c.send_time_to) }}
+                                                       send_time_from=c.send_time_from, send_time_to=c.send_time_to,
+                                                       enforce_send_time=c.enforce_send_time) }}
                             <div class="col-12">
                                 <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-check-lg me-1"></i>Сохранить</button>
                             </div>
@@ -399,14 +411,14 @@
                 <tbody>
                     {% for rr in rating_requests %}
                     <tr>
-                        <td>{{ rr.order_number }} <span class="text-muted small">({{ rr.order_date }})</span></td>
+                        <td>{{ rr.order_number }} <span class="text-muted small">({{ rr.order_date | date_ru_short }})</span></td>
                         <td>{{ rr.branch_name }}</td>
-                        <td>{{ rr.phone }}</td>
+                        <td>{{ rr.phone | phone_fmt }}</td>
                         {% set st = rating_status_info.get(rr.status, {'label': rr.status, 'class': 'text-secondary'}) %}
                         <td><span class="{{ st.class }}">{{ st.label }}</span></td>
                         <td>{{ rr.rating or '—' }}</td>
-                        <td class="text-nowrap">{{ rr.sent_at or '—' }}</td>
-                        <td class="text-nowrap">{{ rr.responded_at or '—' }}</td>
+                        <td class="text-nowrap">{{ (rr.sent_at | datetime_ru_short) or '—' }}</td>
+                        <td class="text-nowrap">{{ (rr.responded_at | datetime_ru_short) or '—' }}</td>
                     </tr>
                     {% else %}
                     <tr><td colspan="7" class="text-center text-muted py-3">Заявок пока нет</td></tr>

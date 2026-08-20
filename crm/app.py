@@ -2170,6 +2170,7 @@ def init_db():
                 delay_minutes INTEGER NOT NULL DEFAULT 30,
                 send_time_from TEXT NOT NULL DEFAULT '09:00',
                 send_time_to TEXT NOT NULL DEFAULT '21:00',
+                enforce_send_time INTEGER NOT NULL DEFAULT 0,
                 request_text TEXT NOT NULL,
                 low_text TEXT NOT NULL,
                 mid_text TEXT NOT NULL,
@@ -2234,6 +2235,10 @@ def init_db():
             conn.execute("ALTER TABLE rating_campaigns ADD COLUMN send_time_from TEXT NOT NULL DEFAULT '09:00'")
         if 'send_time_to' not in _rc_cols:
             conn.execute("ALTER TABLE rating_campaigns ADD COLUMN send_time_to TEXT NOT NULL DEFAULT '21:00'")
+        if 'enforce_send_time' not in _rc_cols:
+            # Выключатель окна send_time_from/to — по умолчанию выключено (слать в любое
+            # время), чтобы не менять поведение уже существующих кампаний при апгрейде.
+            conn.execute("ALTER TABLE rating_campaigns ADD COLUMN enforce_send_time INTEGER NOT NULL DEFAULT 0")
 
         # Начисление баллов клиентам за косяки (перевёрнутые роллы и т.п.) — причины хранятся
         # отдельным справочником (создаются/переименовываются прямо на странице), не enum'ом,
@@ -9430,6 +9435,7 @@ def create_rating_campaign():
     mid_text = request.form.get('mid_text', '').strip()
     high_text = request.form.get('high_text', '').strip()
     send_time_from, send_time_to = _parse_send_time_window()
+    enforce_send_time = 1 if request.form.get('enforce_send_time') else 0
     account_ids = _sorted_account_ids_by_priority()
 
     if not branch_id or not request_variants or not (low_text and mid_text and high_text) or not account_ids:
@@ -9441,10 +9447,11 @@ def create_rating_campaign():
         try:
             campaign_id = conn.execute('''
                 INSERT INTO rating_campaigns
-                    (branch_id, delay_minutes, send_time_from, send_time_to,
+                    (branch_id, delay_minutes, send_time_from, send_time_to, enforce_send_time,
                      request_text, low_text, mid_text, high_text, created_by, created_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?)
-            ''', (branch_id, delay_minutes, send_time_from, send_time_to, request_variants[0], low_text, mid_text, high_text,
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            ''', (branch_id, delay_minutes, send_time_from, send_time_to, enforce_send_time,
+                  request_variants[0], low_text, mid_text, high_text,
                   session['user_id'], datetime.now().strftime('%Y-%m-%d %H:%M:%S'))).lastrowid
         except sqlite3.IntegrityError:
             flash('Для этого филиала кампания уже есть.', 'danger')
@@ -9469,6 +9476,7 @@ def edit_rating_campaign(campaign_id):
     mid_text = request.form.get('mid_text', '').strip()
     high_text = request.form.get('high_text', '').strip()
     send_time_from, send_time_to = _parse_send_time_window()
+    enforce_send_time = 1 if request.form.get('enforce_send_time') else 0
     account_ids = _sorted_account_ids_by_priority()
 
     if not request_variants or not (low_text and mid_text and high_text) or not account_ids:
@@ -9483,10 +9491,11 @@ def edit_rating_campaign(campaign_id):
             return redirect(url_for('broadcast_page', tab='rating'))
         conn.execute('''
             UPDATE rating_campaigns
-            SET delay_minutes=?, send_time_from=?, send_time_to=?,
+            SET delay_minutes=?, send_time_from=?, send_time_to=?, enforce_send_time=?,
                 request_text=?, low_text=?, mid_text=?, high_text=?
             WHERE id=?
-        ''', (delay_minutes, send_time_from, send_time_to, request_variants[0], low_text, mid_text, high_text, campaign_id))
+        ''', (delay_minutes, send_time_from, send_time_to, enforce_send_time,
+              request_variants[0], low_text, mid_text, high_text, campaign_id))
         _save_rating_campaign_variants_and_accounts(conn, campaign_id, request_variants, account_ids)
         conn.commit()
     flash('Настройки «Оценки заказа» обновлены.', 'success')
@@ -12208,6 +12217,48 @@ def date_fmt(value):
         return dt.strftime('%d.%m.%Y')
     except Exception:
         return value
+
+
+_MONTHS_RU_SHORT = ['', 'янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
+
+
+@app.template_filter('date_ru_short')
+def date_ru_short(value):
+    """YYYY-MM-DD (или с временем в начале) → «20 авг 2026»."""
+    if not value:
+        return ''
+    try:
+        dt = datetime.strptime(str(value)[:10], '%Y-%m-%d')
+        return f'{dt.day} {_MONTHS_RU_SHORT[dt.month]} {dt.year}'
+    except Exception:
+        return value
+
+
+@app.template_filter('datetime_ru_short')
+def datetime_ru_short(value):
+    """YYYY-MM-DD HH:MM:SS → «20 авг 2026, 14:35»."""
+    if not value:
+        return ''
+    try:
+        dt = datetime.strptime(str(value)[:19], '%Y-%m-%d %H:%M:%S')
+        return f'{dt.day} {_MONTHS_RU_SHORT[dt.month]} {dt.year}, {dt.strftime("%H:%M")}'
+    except Exception:
+        return value
+
+
+@app.template_filter('phone_fmt')
+def phone_fmt(value):
+    """Нормализует телефон к «+7-964-648-4344» независимо от формата хранения."""
+    if not value:
+        return ''
+    digits = re.sub(r'\D', '', str(value))
+    if len(digits) == 11 and digits[0] in ('7', '8'):
+        digits = '7' + digits[1:]
+    elif len(digits) == 10:
+        digits = '7' + digits
+    else:
+        return value
+    return f'+{digits[0]}-{digits[1:4]}-{digits[4:7]}-{digits[7:11]}'
 
 
 @app.context_processor
@@ -16549,14 +16600,16 @@ def _scheduled_rating_requests():
 
     Разрешённое время отправки (rating_campaigns.send_time_from/send_time_to) — не будить
     клиента ночью: если send_after уже наступил, но текущее локальное время вне окна кампании,
-    заявка не отправляется, а send_after переносится на начало следующего окна. Применяется
-    только к самому запросу на оценку — ответное follow-up-сообщение (messenger_inbound) шлётся
-    сразу же, вне зависимости от времени суток, это прямой ответ в уже начатом диалоге."""
+    заявка не отправляется, а send_after переносится на начало следующего окна. Действует
+    только если у кампании включён enforce_send_time (по умолчанию выключено — слать в любое
+    время). Применяется только к самому запросу на оценку — ответное follow-up-сообщение
+    (messenger_inbound) шлётся сразу же, вне зависимости от времени суток, это прямой ответ
+    в уже начатом диалоге."""
     try:
         with get_db() as conn:
             due = conn.execute('''
                 SELECT r.*, COALESCE(rt.text, c.request_text) AS request_text,
-                       c.send_time_from, c.send_time_to
+                       c.send_time_from, c.send_time_to, c.enforce_send_time
                 FROM order_rating_requests r
                 JOIN rating_campaigns c ON c.id = r.campaign_id
                 LEFT JOIN rating_campaign_request_texts rt
@@ -16568,7 +16621,7 @@ def _scheduled_rating_requests():
             now_local = datetime.now()
             current_hm = now_local.strftime('%H:%M')
             for req in due:
-                if not (req['send_time_from'] <= current_hm <= req['send_time_to']):
+                if req['enforce_send_time'] and not (req['send_time_from'] <= current_hm <= req['send_time_to']):
                     conn.execute(
                         'UPDATE order_rating_requests SET send_after=? WHERE id=?',
                         (_next_allowed_send_at_utc(now_local, req['send_time_from']), req['id'])
