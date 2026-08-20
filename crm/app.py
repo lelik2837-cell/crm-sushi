@@ -16601,13 +16601,36 @@ def _scheduled_rating_requests():
         print(f'[Оценка заказа] exception: {e}')
 
 
+def _run_once_across_workers(lock_name, fn):
+    """Гарантирует, что задача выполнится только в одном из нескольких gunicorn
+    worker-процессов — без --preload каждый worker заводит свой независимый
+    APScheduler, и без этой защиты все они выполнили бы одну и ту же задачу
+    одновременно (в частности, дублирующая отправка сообщений в _scheduled_rating_requests).
+    Лок — файловый (flock), а не threading.Lock: ОС сама снимает его при завершении
+    процесса, даже аварийном, поэтому он не может остаться навсегда захваченным."""
+    import fcntl
+    lock_file = open(f'/tmp/{lock_name}.lock', 'w')
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock_file.close()
+        return
+    try:
+        fn()
+    finally:
+        fcntl.flock(lock_file, fcntl.LOCK_UN)
+        lock_file.close()
+
+
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
     _scheduler = BackgroundScheduler(timezone='Asia/Novosibirsk')
-    _scheduler.add_job(_scheduled_backup, 'cron', hour=3, minute=0)
-    _scheduler.add_job(_scheduled_sber_sync, 'interval', hours=1,
-                        next_run_time=datetime.now())
-    _scheduler.add_job(_scheduled_rating_requests, 'interval', minutes=1)
+    _scheduler.add_job(lambda: _run_once_across_workers('sched_backup', _scheduled_backup),
+                        'cron', hour=3, minute=0)
+    _scheduler.add_job(lambda: _run_once_across_workers('sched_sber_sync', _scheduled_sber_sync),
+                        'interval', hours=1, next_run_time=datetime.now())
+    _scheduler.add_job(lambda: _run_once_across_workers('sched_rating_requests', _scheduled_rating_requests),
+                        'interval', minutes=1)
     _scheduler.start()
     print('[Backup] Планировщик запущен — бэкап каждый день в 03:00 НСК, Сбербанк — раз в час')
 except Exception as _e:
