@@ -12246,6 +12246,25 @@ def datetime_ru_short(value):
         return value
 
 
+@app.template_filter('sent_response_fmt')
+def sent_response_fmt(sent_at, responded_at):
+    """(sent_at, responded_at) → «25.08. (21:54 / 22:56)», или «25.08. (21:54 / -)» без
+    ответа, или «—», если сама заявка ещё не отправлена (sent_at пуст)."""
+    if not sent_at:
+        return '—'
+    try:
+        dt = datetime.strptime(str(sent_at)[:19], '%Y-%m-%d %H:%M:%S')
+    except Exception:
+        return sent_at
+    resp_part = '-'
+    if responded_at:
+        try:
+            resp_part = datetime.strptime(str(responded_at)[:19], '%Y-%m-%d %H:%M:%S').strftime('%H:%M')
+        except Exception:
+            pass
+    return f'{dt.strftime("%d.%m.")} ({dt.strftime("%H:%M")} / {resp_part})'
+
+
 @app.template_filter('phone_fmt')
 def phone_fmt(value):
     """Нормализует телефон к «+7-964-648-4344» независимо от формата хранения."""

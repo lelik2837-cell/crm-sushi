@@ -404,8 +404,7 @@
                         <th>Телефон</th>
                         <th>Статус</th>
                         <th>Оценка</th>
-                        <th>Отправлено</th>
-                        <th>Ответ</th>
+                        <th>Отправлено / Ответ</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -417,11 +416,10 @@
                         {% set st = rating_status_info.get(rr.status, {'label': rr.status, 'class': 'text-secondary'}) %}
                         <td><span class="{{ st.class }}">{{ st.label }}</span></td>
                         <td>{{ rr.rating or '—' }}</td>
-                        <td class="text-nowrap">{{ (rr.sent_at | datetime_ru_short) or '—' }}</td>
-                        <td class="text-nowrap">{{ (rr.responded_at | datetime_ru_short) or '—' }}</td>
+                        <td class="text-nowrap">{{ rr.sent_at | sent_response_fmt(rr.responded_at) }}</td>
                     </tr>
                     {% else %}
-                    <tr><td colspan="7" class="text-center text-muted py-3">Заявок пока нет</td></tr>
+                    <tr><td colspan="6" class="text-center text-muted py-3">Заявок пока нет</td></tr>
                     {% endfor %}
                 </tbody>
             </table>
