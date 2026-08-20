@@ -15647,8 +15647,9 @@ def orders_report_batch_delete(batch_id):
 def change_settings():
     WD_LABELS = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс']
     today_str = date.today().isoformat()
-    date_from = request.args.get('date_from', (date.today() - timedelta(days=6)).isoformat())
-    date_to   = request.args.get('date_to',   date.today().isoformat())
+    month_start = date.today().replace(day=1).isoformat()
+    date_from = request.args.get('date_from', month_start)
+    date_to   = request.args.get('date_to',   today_str)
     branch_ids_filter = request.args.getlist('branch_ids')
 
     # Build full date range list first

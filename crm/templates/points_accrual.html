@@ -9,29 +9,9 @@
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="fw-bold mb-0"><i class="bi bi-award me-2"></i>Начисление баллов</h4>
-</div>
-
-<!-- Причины (справочник, редактируемый прямо здесь) -->
-<div class="card mb-4">
-    <div class="card-header fw-semibold"><i class="bi bi-tags me-2"></i>Причины начисления</div>
-    <div class="card-body">
-        <div class="row g-2 mb-3">
-            {% for cat in categories %}
-            <div class="col-md-4">
-                <form method="POST" action="{{ url_for('rename_point_category', category_id=cat.id) }}" class="input-group input-group-sm">
-                    <input type="text" name="name" class="form-control" value="{{ cat.name }}">
-                    <button type="submit" class="btn btn-outline-secondary" title="Сохранить название"><i class="bi bi-check-lg"></i></button>
-                </form>
-            </div>
-            {% else %}
-            <div class="col-12 text-muted small">Причин ещё нет — добавьте первую ниже.</div>
-            {% endfor %}
-        </div>
-        <form method="POST" action="{{ url_for('create_point_category') }}" class="d-flex gap-2" style="max-width:400px;">
-            <input type="text" name="name" class="form-control form-control-sm" placeholder="Новая причина, например «Перевёрнутые роллы»" required>
-            <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap"><i class="bi bi-plus-lg"></i> Добавить</button>
-        </form>
-    </div>
+    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#paSettingsModal" title="Настройки">
+        <i class="bi bi-gear"></i>
+    </button>
 </div>
 
 <div class="mb-3">
@@ -122,6 +102,39 @@
                 <button type="submit" class="btn btn-primary" id="pa-submit" disabled>Сохранить</button>
             </div>
         </form>
+    </div>
+</div>
+
+<!-- Модалка «Настройки» — справочник причин начисления -->
+<div class="modal fade" id="paSettingsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-gear me-2"></i>Настройки — причины начисления</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-2 mb-3">
+                    {% for cat in categories %}
+                    <div class="col-md-6">
+                        <form method="POST" action="{{ url_for('rename_point_category', category_id=cat.id) }}" class="input-group input-group-sm">
+                            <input type="text" name="name" class="form-control" value="{{ cat.name }}">
+                            <button type="submit" class="btn btn-outline-secondary" title="Сохранить название"><i class="bi bi-check-lg"></i></button>
+                        </form>
+                    </div>
+                    {% else %}
+                    <div class="col-12 text-muted small">Причин ещё нет — добавьте первую ниже.</div>
+                    {% endfor %}
+                </div>
+                <form method="POST" action="{{ url_for('create_point_category') }}" class="d-flex gap-2">
+                    <input type="text" name="name" class="form-control form-control-sm" placeholder="Новая причина, например «Перевёрнутые роллы»" required>
+                    <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap"><i class="bi bi-plus-lg"></i> Добавить</button>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Закрыть</button>
+            </div>
+        </div>
     </div>
 </div>
 

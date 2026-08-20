@@ -1,6 +1,10 @@
 {% extends 'base.html' %}
 {% block title %}Настройка размена{% endblock %}
 {% block content %}
+{% set _MONTHS_RU_CHG = ['','Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'] %}
+{% set _cur_m_chg = date_from[5:7] | int %}
+{% set _cur_y_chg = date_from[:4] %}
+{% set _month_lbl_chg = _MONTHS_RU_CHG[_cur_m_chg] ~ ' ' ~ _cur_y_chg %}
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="fw-bold mb-0"><i class="bi bi-cash-coin me-2"></i>Размен</h4>
@@ -39,14 +43,17 @@
     <!-- Filter bar -->
     <div class="card mb-3">
       <div class="card-body py-3">
-        <form method="GET" action="{{ url_for('change_settings') }}" class="row g-2 align-items-end">
+        <form method="GET" action="{{ url_for('change_settings') }}" class="row g-2 align-items-end" id="chgFilterForm">
+          <input type="hidden" name="date_from" id="chg_df" value="{{ date_from }}">
+          <input type="hidden" name="date_to"   id="chg_dt" value="{{ date_to }}">
           <div class="col-sm-auto">
-            <label class="form-label small fw-semibold mb-1">С</label>
-            <input type="date" name="date_from" class="form-control form-control-sm" value="{{ date_from }}">
-          </div>
-          <div class="col-sm-auto">
-            <label class="form-label small fw-semibold mb-1">По</label>
-            <input type="date" name="date_to" class="form-control form-control-sm" value="{{ date_to }}">
+            <label class="form-label small fw-semibold mb-1">Период</label>
+            <div class="d-flex align-items-center gap-1" style="white-space:nowrap;">
+              <button type="button" class="btn btn-outline-secondary btn-sm px-2" style="font-size:15px;line-height:1;" onclick="shiftChgMonth(-1)" title="Предыдущий месяц">‹</button>
+              <button type="button" class="btn btn-outline-primary btn-sm px-2 fw-semibold" id="chgMonthLabel" onclick="setChgCurrentMonth()" title="Текущий месяц" style="white-space:nowrap;">{{ _month_lbl_chg }}</button>
+              <button type="button" class="btn btn-outline-secondary btn-sm px-2" style="font-size:15px;line-height:1;" onclick="shiftChgMonth(1)" title="Следующий месяц">›</button>
+              <input type="text" id="chgRangePicker" class="form-control form-control-sm" style="width:110px;cursor:pointer;" readonly placeholder="дд.мм — дд.мм">
+            </div>
           </div>
           <!-- Мультивыбор филиалов -->
           <div class="col-sm-auto">
@@ -440,6 +447,72 @@ document.addEventListener('DOMContentLoaded', () => {
     const tab = document.querySelector('[data-bs-target="#tab-schedule"]');
     if (tab) new bootstrap.Tab(tab).show();
   }
+});
+
+// ─── Период: месяц-навигатор + произвольный диапазон (как в P&L отчёте) ───────
+var _chgFp = null;
+var _FP_MONTHS_CHG = ['','Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+function _padzChg(n) { return n < 10 ? '0' + n : '' + n; }
+function _fmtDateStrChg(d) { return d.getFullYear() + '-' + _padzChg(d.getMonth() + 1) + '-' + _padzChg(d.getDate()); }
+
+function _setChgRange(df, dt) {
+  document.getElementById('chg_df').value = df;
+  document.getElementById('chg_dt').value = dt;
+  if (_chgFp) _chgFp.setDate([df, dt], false);
+  var m = parseInt(df.slice(5, 7));
+  var y = df.slice(0, 4);
+  var lbl = document.getElementById('chgMonthLabel');
+  if (lbl) lbl.textContent = _FP_MONTHS_CHG[m] + ' ' + y;
+}
+
+function shiftChgMonth(dir) {
+  var from = new Date(document.getElementById('chg_df').value + 'T00:00:00');
+  from.setMonth(from.getMonth() + dir);
+  from.setDate(1);
+  var to = new Date(from.getFullYear(), from.getMonth() + 1, 0);
+  _setChgRange(_fmtDateStrChg(from), _fmtDateStrChg(to));
+  document.getElementById('chgFilterForm').submit();
+}
+
+function setChgCurrentMonth() {
+  var now = new Date();
+  var from = new Date(now.getFullYear(), now.getMonth(), 1);
+  var to   = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  _setChgRange(_fmtDateStrChg(from), _fmtDateStrChg(to));
+  document.getElementById('chgFilterForm').submit();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  _chgFp = flatpickr('#chgRangePicker', {
+    mode: 'range',
+    dateFormat: 'Y-m-d',
+    defaultDate: [document.getElementById('chg_df').value, document.getElementById('chg_dt').value],
+    locale: {
+      weekdays: {
+        shorthand: ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'],
+        longhand:  ['Воскресенье','Понедельник','Вторник','Среда','Четверг','Пятница','Суббота']
+      },
+      months: {
+        shorthand: ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'],
+        longhand:  ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь']
+      },
+      firstDayOfWeek: 1,
+      rangeSeparator: ' — '
+    },
+    altInput: true,
+    altFormat: 'd.m',
+    onClose: function(dates) {
+      if (dates.length === 2) {
+        document.getElementById('chg_df').value = _fmtDateStrChg(dates[0]);
+        document.getElementById('chg_dt').value = _fmtDateStrChg(dates[1]);
+        var m = dates[0].getMonth() + 1;
+        var y = dates[0].getFullYear();
+        var lbl = document.getElementById('chgMonthLabel');
+        if (lbl) lbl.textContent = _FP_MONTHS_CHG[m] + ' ' + y;
+        document.getElementById('chgFilterForm').submit();
+      }
+    }
+  });
 });
 </script>
 

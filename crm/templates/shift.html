@@ -2639,5 +2639,19 @@ function saveBeznalTerminals() {
   }
   updateBeznalTotal();
 })();
+
+// Автообновление раз в минуту — чтобы изменения, внесённые другим пользователем,
+// появлялись без ручной перезагрузки. Не перезагружаем, если сейчас редактируется
+// поле или открыта модалка — иначе можно было бы сбросить незавершённый ввод.
+setInterval(() => {
+  const active = document.activeElement;
+  const isEditingField = active && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName)
+    && !active.readOnly && !active.disabled;
+  const closeModalOpen = document.getElementById('closeModal')?.style.display === 'flex';
+  const addCourierModalOpen = document.getElementById('addCourierModal')?.style.display === 'flex';
+  if (!isEditingField && !closeModalOpen && !addCourierModalOpen) {
+    location.reload();
+  }
+}, 60000);
 </script>
 {% endblock %}
