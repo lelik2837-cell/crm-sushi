@@ -1489,6 +1489,20 @@ function calcStaffTotal(row) {
   return { hours, km, orders, base, autoBonus, total };
 }
 
+// Запросы save-staff для одной и той же строки идут строго по очереди: при
+// медленной/нестабильной сети более ранний (но ещё не долетевший) запрос мог
+// применить UPDATE после более позднего и стереть только что введённые данные.
+const staffSaveQueue = new Map();
+function queueStaffSave(id, payload) {
+  const prev = staffSaveQueue.get(id) || Promise.resolve();
+  const run = prev.then(() => fetch(`/shift/${SHIFT_ID}/save-staff`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  }).then(r => r.json()));
+  staffSaveQueue.set(id, run.catch(() => {}));
+  return run;
+}
+
 function autoSaveStaffRow(row) {
   if (!row || !CAN_EDIT) return;
   const id = parseInt(row.dataset.id);
@@ -1508,10 +1522,7 @@ function autoSaveStaffRow(row) {
     base_pay: base, total_amount: total,
     is_paid: isPaid, paid_amount: isPaid ? total : 0,
   };
-  fetch(`/shift/${SHIFT_ID}/save-staff`, {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(data)
-  }).then(r => r.json()).then(d => {
+  queueStaffSave(id, data).then(d => {
     if (d.ok) {
       if (d.auto_bonuses) {
         applyAutoBonuses(d.auto_bonuses);
@@ -1711,10 +1722,7 @@ function deleteBonusRow(btn) {
   bonusRow.style.display = 'none';
   const id = parseInt(staffRow?.dataset.id || 0);
   if (!id) return;
-  fetch(`/shift/${SHIFT_ID}/save-staff`, {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ id, bonus_amount: 0, penalty_amount: 0, bonus_comment: '' })
-  }).then(r => r.json()).then(d => {
+  queueStaffSave(id, { id, bonus_amount: 0, penalty_amount: 0, bonus_comment: '' }).then(d => {
     if (d.ok && d.auto_bonuses) applyAutoBonuses(d.auto_bonuses);
     else updateKassa();
   });
@@ -1746,13 +1754,10 @@ function saveBonusRow(bonusRow) {
   const { base, autoBonus } = calcStaffTotal(staffRow);
   const newTotal = base + bonusAmt - penaltyAmt + autoBonus;
 
-  fetch(`/shift/${SHIFT_ID}/save-staff`, {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      id, bonus_amount: bonusAmt, penalty_amount: penaltyAmt,
-      bonus_comment: comment, base_pay: base, total_amount: newTotal
-    })
-  }).then(r => r.json()).then(d => {
+  queueStaffSave(id, {
+    id, bonus_amount: bonusAmt, penalty_amount: penaltyAmt,
+    bonus_comment: comment, base_pay: base, total_amount: newTotal
+  }).then(d => {
     if (d.ok) {
       if (d.auto_bonuses && d.auto_bonuses.length) {
         const entry = d.auto_bonuses.find(b => String(b.id) === String(id));
@@ -2461,15 +2466,11 @@ var _closeAttempted = false;
       var isPrem  = br.querySelector('.bonus-select').value !== 'fine';
       var comment = (br.querySelector('.bonus-comment') || {}).value || '';
       bonusPromises.push(
-        fetch('/shift/' + SHIFT_ID + '/save-staff', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({
-            id: sid,
-            bonus_amount:   isPrem ? amount : 0,
-            penalty_amount: isPrem ? 0 : amount,
-            bonus_comment: comment
-          })
+        queueStaffSave(sid, {
+          id: sid,
+          bonus_amount:   isPrem ? amount : 0,
+          penalty_amount: isPrem ? 0 : amount,
+          bonus_comment: comment
         }).catch(function() {})
       );
     });
