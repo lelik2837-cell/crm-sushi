@@ -9356,10 +9356,11 @@ def broadcast_page():
             SELECT rr.order_number, rr.order_date, rr.phone, rr.status, rr.rating,
                    datetime(rr.sent_at, '+7 hours') AS sent_at,
                    datetime(rr.responded_at, '+7 hours') AS responded_at,
-                   b.name AS branch_name
+                   b.name AS branch_name, ma.channel AS channel
             FROM order_rating_requests rr
             JOIN rating_campaigns rc ON rc.id = rr.campaign_id
             JOIN branches b ON b.id = rc.branch_id
+            LEFT JOIN messenger_accounts ma ON ma.id = rr.assigned_account_id
             ORDER BY rr.id DESC LIMIT 50
         ''').fetchall()
         branches_without_campaign = conn.execute('''
@@ -9572,6 +9573,29 @@ def broadcast_account_logout(account_id):
         flash('Номер отключён.', 'success')
     except Exception as e:
         flash(f'Не удалось отключить: {e}', 'danger')
+    return redirect(url_for('broadcast_page', tab='numbers'))
+
+
+@app.route('/reports/broadcast/accounts/<int:account_id>/delete', methods=['POST'])
+@login_required
+@menu_permission_required('whatsapp_broadcast')
+def broadcast_account_delete(account_id):
+    with get_db() as conn:
+        acc = conn.execute('SELECT * FROM messenger_accounts WHERE id=?', (account_id,)).fetchone()
+    if not acc:
+        flash('Номер не найден', 'danger')
+        return redirect(url_for('broadcast_page', tab='numbers'))
+    try:
+        messenger_api.logout(acc['channel'], account_id)
+    except Exception:
+        pass  # аккаунт удаляется в любом случае — очистка на стороне сервиса best-effort
+    with get_db() as conn:
+        try:
+            conn.execute('DELETE FROM messenger_accounts WHERE id=?', (account_id,))
+            conn.commit()
+            flash('Номер удалён из списка.', 'success')
+        except sqlite3.IntegrityError:
+            flash('Этот номер уже использовался в рассылке или «Оценке заказа» — удалить нельзя, можно только отключить.', 'danger')
     return redirect(url_for('broadcast_page', tab='numbers'))
 
 
