@@ -505,7 +505,17 @@ function renderAccountCard(accountId, channel, data) {
                 </form>
             </div>`;
     } else {
-        el.innerHTML = `<div class="text-muted"><span class="spinner-border spinner-border-sm me-1"></span>Подключение…</div>`;
+        // "connecting" (и любой ещё не описанный статус) может зависнуть надолго, если сервис
+        // не может достучаться до мессенджера (таймауты сети и т.п.) — без кнопки отмены
+        // пользователь был заперт в бесконечном спиннере. /logout безопасно сбрасывает попытку
+        // подключения независимо от текущего статуса (см. session_logout в сервисах).
+        el.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center">
+                <div class="text-muted"><span class="spinner-border spinner-border-sm me-1"></span>Подключение…</div>
+                <form method="POST" action="/reports/broadcast/accounts/${accountId}/logout" onsubmit="return confirm('Отменить попытку подключения?');">
+                    <button type="submit" class="btn btn-sm btn-outline-secondary">Отменить</button>
+                </form>
+            </div>`;
     }
 }
 
