@@ -371,17 +371,28 @@ async def session_verify_password(account_id: str, body: PasswordBody):
 @app.post('/accounts/{account_id}/session/logout')
 async def session_logout(account_id: str):
     state = get_account(account_id)
+    was_connected = state.status == 'connected'
     try:
-        if state.client:
-            try:
-                await state.client.log_out()
-            except Exception:
-                log.exception('logout call failed account_id=%s', account_id)
-        state.status = 'disconnected'
+        # Отменяем фоновую задачу сессии ДО log_out/disconnect — если она застряла внутри
+        # client.connect() (сеть до Telegram не отвечает, см. plan.md п.274), отмена обрывает
+        # retry-цикл сразу, а не ждёт, пока Telethon сам исчерпает все попытки. Без этого
+        # запрос сюда мог зависать дольше, чем 10-секундный HTTP-таймаут на стороне Flask.
         if state.session_task:
             state.session_task.cancel()
+        if state.client:
+            try:
+                # log_out() шлёт настоящий запрос auth.LogOutRequest — имеет смысл только если
+                # аккаунт был реально авторизован; иначе (сессия зависла на этапе connect/QR)
+                # достаточно просто разорвать ещё не до конца установленное соединение.
+                if was_connected:
+                    await asyncio.wait_for(state.client.log_out(), timeout=5)
+                else:
+                    await asyncio.wait_for(state.client.disconnect(), timeout=5)
+            except Exception:
+                log.exception('logout/disconnect call failed account_id=%s', account_id)
         shutil.rmtree(auth_dir_for(account_id), ignore_errors=True)
         os.makedirs(auth_dir_for(account_id), exist_ok=True)
+        state.status = 'disconnected'
         state.phone = None
         state.client = None
         state.error = None

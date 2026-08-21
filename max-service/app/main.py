@@ -332,13 +332,18 @@ async def session_verify_password(account_id: str, body: PasswordBody):
 async def session_logout(account_id: str):
     state = get_account(account_id)
     try:
-        if state.client:
-            try:
-                await state.client.logout()
-            except Exception:
-                log.exception('logout call failed account_id=%s', account_id)
+        # Отменяем фоновую задачу сессии ДО logout() — если она застряла в цикле
+        # переподключения (сеть до MAX не отвечает и т.п.), отмена обрывает её сразу, а не
+        # ждёт исчерпания всех попыток; иначе запрос сюда мог зависнуть дольше, чем
+        # HTTP-таймаут на стороне Flask (тот же баг обнаружен и исправлен в telegram-service,
+        # см. plan.md п.274).
         if state.session_task:
             state.session_task.cancel()
+        if state.client:
+            try:
+                await asyncio.wait_for(state.client.logout(), timeout=5)
+            except Exception:
+                log.exception('logout call failed account_id=%s', account_id)
         shutil.rmtree(auth_dir_for(account_id), ignore_errors=True)
         os.makedirs(auth_dir_for(account_id), exist_ok=True)
         state.status = 'disconnected'
