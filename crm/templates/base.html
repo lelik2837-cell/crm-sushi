@@ -408,6 +408,13 @@
                             </a>
                         </li>
                         {% endif %}
+                        {% if item_visible('guest_reviews_report') %}
+                        <li>
+                            <a class="dropdown-item {% if request.endpoint=='guest_reviews_report' %}active{% endif %}" href="{{ url_for('guest_reviews_report') }}">
+                                <i class="bi bi-emoji-frown me-2"></i>Отрицательные отзывы
+                            </a>
+                        </li>
+                        {% endif %}
                         {% if item_visible('call_center') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='call_center' %}active{% endif %}" href="{{ url_for('call_center') }}">

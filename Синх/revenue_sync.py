@@ -112,6 +112,26 @@ ORDERS_WEBHOOK_URL = os.environ.get("CRMPAPA_ORDERS_WEBHOOK_URL", "")
 # известного заказа не создаёт дубль на crmpapa.ru, а обновляет его строку.
 ORDERS_LOOKBACK_DAYS = int(os.environ.get("ORDERS_LOOKBACK_DAYS", "2"))
 
+# ---------------------------------------------------------------------------
+# Отрицательные отзывы (Гуляш: guests/guestsComments, кнопка «Сохранить в Excel»)
+# ---------------------------------------------------------------------------
+
+# Кнопка на странице отзывов Гуляша не отдаёт прямую ссылку — сама шлёт POST на этот путь
+# с параметрами фильтра в теле формы (обнаружено разбором реального запроса кнопки через
+# DevTools вместе с пользователем: адресная строка при переключении фильтра не меняется,
+# фильтр живёт только в форме). Ответ — не настоящий Excel, а HTML-таблица с расширением .xls.
+GUESTS_COMMENTS_PATH = "/guests/guestsComments/excel_admin"
+
+# Один вебхук на все филиалы — Настройки → API → «Синхронизация отрицательных отзывов»
+# на crmpapa.ru. Разбор HTML-таблицы целиком на стороне crmpapa.ru (см. _parse_guest_comments_html).
+REVIEWS_WEBHOOK_URL = os.environ.get("CRMPAPA_REVIEWS_WEBHOOK_URL", "")
+
+# Тот же смысл, что ORDERS_LOOKBACK_DAYS — с запасом, чтобы не потерять отзыв, если он
+# появился на Гуляше с задержкой относительно даты самого заказа. Отзывы неизменны после
+# публикации (в отличие от заказов), повторная загрузка того же отзыва просто не даёт
+# дубля на стороне crmpapa.ru (import_hash), а не обновляет его.
+REVIEWS_LOOKBACK_DAYS = int(os.environ.get("REVIEWS_LOOKBACK_DAYS", "3"))
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -307,6 +327,64 @@ def fetch_orders_csv(session: requests.Session, date_from: str, date_to: str, cu
     return resp.content
 
 
+def fetch_negative_reviews_html(session: requests.Session, date_from: str, date_to: str) -> bytes:
+    """date_from/date_to — строки в формате ДД.ММ.ГГГГ. GuestsComments[type_comment]=3 —
+    фильтр «только отрицательные» (тип отзыва на Гуляше кодируется буквой
+    П(оложительный)/Н(ейтральный)/О(трицательный), 3 соответствует «О» — подтверждено
+    пользователем на реальной странице). GuestsComments[status_comment] не передаём — по
+    подтверждению пользователя, статус на этой выгрузке значения не имеет."""
+    payload = {
+        "GuestsComments[project_id]": "1",
+        "GuestsComments[search_no_department]": "0",
+        "GuestsComments[date_s]": date_from,
+        "GuestsComments[date_do]": date_to,
+        "GuestsComments[type_comment]": "3",
+    }
+    resp = session.post(f"{BASE_URL}{GUESTS_COMMENTS_PATH}", data=payload, timeout=REQUEST_TIMEOUT)
+    resp.raise_for_status()
+
+    if b"<table" not in resp.content[:2000]:
+        raise RuntimeError(
+            "Ответ не похож на выгрузку отзывов (нет таблицы в начале ответа) — либо "
+            "истекла сессия и сайт вернул страницу логина, либо Гуляш поменял механизм "
+            "кнопки «Сохранить в Excel». "
+            f"Начало ответа: {resp.content[:300]!r}"
+        )
+    return resp.content
+
+
+def send_reviews_to_crmpapa(html_bytes: bytes, webhook_url: str) -> dict:
+    """Пересылает HTML-выгрузку как есть — разбор целиком на стороне crmpapa.ru
+    (см. _parse_guest_comments_html в app.py), тот же приём, что и для заказов."""
+    resp = requests.post(
+        webhook_url, data=html_bytes,
+        headers={"Content-Type": "application/vnd.ms-excel; charset=utf-8"},
+        timeout=60,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def sync_reviews(session: requests.Session) -> None:
+    if not REVIEWS_WEBHOOK_URL:
+        return  # отзывы не настроены — молча пропускаем, остальная синхронизация не страдает
+
+    today = datetime.now().date()
+    date_from = (today - timedelta(days=REVIEWS_LOOKBACK_DAYS)).strftime("%d.%m.%Y")
+    date_to = today.strftime("%d.%m.%Y")
+
+    html_bytes = fetch_negative_reviews_html(session, date_from, date_to)
+    result = send_reviews_to_crmpapa(html_bytes, REVIEWS_WEBHOOK_URL)
+
+    if result.get("ok"):
+        log.info(
+            "Отзывы %s–%s: новых %s (всего строк %s)",
+            date_from, date_to, result.get("imported"), result.get("rows"),
+        )
+    else:
+        log.error("Отзывы %s–%s: вебхук вернул ошибку: %s", date_from, date_to, result)
+
+
 # ---------------------------------------------------------------------------
 # Отправка на crmpapa.ru
 # ---------------------------------------------------------------------------
@@ -455,12 +533,14 @@ def get_sync_targets() -> dict:
 def run_once() -> None:
     targets = get_sync_targets()
     orders_enabled = bool(ORDERS_QUERY_TEMPLATE and ORDERS_WEBHOOK_URL)
+    reviews_enabled = bool(REVIEWS_WEBHOOK_URL)
 
-    if not targets and not orders_enabled:
+    if not targets and not orders_enabled and not reviews_enabled:
         log.error(
             "Не задано ни одной синхронизации. Укажите GOULASH_SYNC_MAP "
-            "(department_id=webhook_url;...) для выручки, либо GOULASH_ORDERS_QUERY_TEMPLATE "
-            "+ CRMPAPA_ORDERS_WEBHOOK_URL для заказов (см. README, раздел «Заказы»)."
+            "(department_id=webhook_url;...) для выручки, GOULASH_ORDERS_QUERY_TEMPLATE "
+            "+ CRMPAPA_ORDERS_WEBHOOK_URL для заказов, либо CRMPAPA_REVIEWS_WEBHOOK_URL "
+            "для отрицательных отзывов (см. README)."
         )
         return
 
@@ -485,6 +565,12 @@ def run_once() -> None:
             sync_orders(session)
         except Exception as exc:
             log.error("Ошибка синхронизации заказов: %s", exc)
+
+    if reviews_enabled:
+        try:
+            sync_reviews(session)
+        except Exception as exc:
+            log.error("Ошибка синхронизации отзывов: %s", exc)
 
 
 def main() -> None:

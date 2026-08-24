@@ -11,6 +11,7 @@ import sys
 import logging
 import smtplib
 import secrets
+from html import unescape
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from functools import wraps
@@ -147,6 +148,7 @@ MENU_ITEMS = [
     ('bank',                  'Банк',                     'reports',  True),
     ('whatsapp_broadcast',    'Рассылка',                 'reports',  False),
     ('points_accrual',        'Начисление баллов',        'reports',  False),
+    ('guest_reviews_report',  'Отрицательные отзывы',     'reports',  False),
     ('call_center',           'Колл-центр',               'reports',  False),
     ('contact_center_report', 'Контакт-центр',            'reports',  False),
     ('employees',             'Сотрудники',               'settings', True),
@@ -1421,6 +1423,48 @@ def init_db():
                 updated_count   INTEGER DEFAULT 0,
                 created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            -- Вебхук «Отрицательные отзывы» (Гуляш: guests/guestsComments, фильтр
+            -- type_comment=3 — только «О»/отрицательные) — та же схема токена/лога,
+            -- что и у заказов; branch_raw сопоставляется тем же branch_raw_map.
+            CREATE TABLE IF NOT EXISTS api_reviews_tokens (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                token       TEXT    NOT NULL UNIQUE,
+                description TEXT,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS api_reviews_log (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                token           TEXT,
+                method          TEXT,
+                path            TEXT,
+                body            TEXT,
+                status          TEXT DEFAULT 'received',
+                parsed_ok       INTEGER DEFAULT 0,
+                imported_count  INTEGER DEFAULT 0,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            -- Сами отрицательные отзывы (жалобы) — append-only: один и тот же отзыв,
+            -- повторно пришедший в перекрывающемся окне синхронизации, не дублируется
+            -- (import_hash), но и не обновляется — текст жалобы задним числом не меняется.
+            CREATE TABLE IF NOT EXISTS guest_reviews (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_number        TEXT,
+                review_at           TIMESTAMP,
+                branch_raw          TEXT,
+                branch_id           INTEGER,
+                review_type         TEXT,
+                content             TEXT,
+                guest_name          TEXT,
+                guest_phone         TEXT,
+                order_amount        REAL,
+                guilty              TEXT,
+                compensation_amount REAL,
+                penalty_amount      REAL,
+                import_hash         TEXT UNIQUE,
+                created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_guest_reviews_branch ON guest_reviews(branch_id);
+            CREATE INDEX IF NOT EXISTS idx_guest_reviews_review_at ON guest_reviews(review_at);
             CREATE TABLE IF NOT EXISTS wait_time_log (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 branch_id         INTEGER NOT NULL REFERENCES branches(id),
@@ -6579,9 +6623,16 @@ def branches():
         blist = conn.execute('SELECT * FROM branches ORDER BY name').fetchall()
         groups = get_branch_groups(conn)
         cards_rows = conn.execute('SELECT * FROM branch_cards ORDER BY branch_id, id').fetchall()
-        branches_raw = [r[0] for r in conn.execute(
-            'SELECT DISTINCT branch_raw FROM orders_report ORDER BY branch_raw'
-        ).fetchall()]
+        # Общий список несопоставленных/сопоставленных подразделений сразу из обеих
+        # Гуляш-выгрузок — «Отчёт по заказам» и «Отрицательные отзывы» используют разные
+        # варианты написания одного и того же филиала (например «КВАДРАТ» и «Квадрат»),
+        # так что сопоставлять их приходится отдельно, но в одном общем списке на странице.
+        branches_raw = [r[0] for r in conn.execute('''
+            SELECT branch_raw FROM orders_report
+            UNION
+            SELECT branch_raw FROM guest_reviews
+            ORDER BY branch_raw
+        ''').fetchall()]
         branch_raw_map = get_branch_raw_map(conn)
     cards_by_branch = {}
     for c in cards_rows:
@@ -6673,9 +6724,11 @@ def save_branch_raw_mapping():
                     (raw, int(bid))
                 )
                 conn.execute('UPDATE orders_report SET branch_id=? WHERE branch_raw=?', (int(bid), raw))
+                conn.execute('UPDATE guest_reviews SET branch_id=? WHERE branch_raw=?', (int(bid), raw))
             else:
                 conn.execute('DELETE FROM branch_raw_map WHERE branch_raw=?', (raw,))
                 conn.execute('UPDATE orders_report SET branch_id=NULL WHERE branch_raw=?', (raw,))
+                conn.execute('UPDATE guest_reviews SET branch_id=NULL WHERE branch_raw=?', (raw,))
         conn.commit()
     flash('Сопоставление подразделений сохранено', 'success')
     return redirect(url_for('branches'))
@@ -7144,6 +7197,12 @@ def settings():
         api_orders_log = conn.execute(
             'SELECT * FROM api_orders_log ORDER BY created_at DESC LIMIT 50'
         ).fetchall()
+        api_reviews_tokens = conn.execute(
+            'SELECT * FROM api_reviews_tokens ORDER BY created_at DESC'
+        ).fetchall()
+        api_reviews_log = conn.execute(
+            'SELECT * FROM api_reviews_log ORDER BY created_at DESC LIMIT 50'
+        ).fetchall()
         role_perms = {r: get_role_permissions(conn, r) for r in ROLE_CONFIGURABLE}
         salary_payout_rules = conn.execute('''
             SELECT spr.*, bg.name AS branch_group_name
@@ -7163,6 +7222,7 @@ def settings():
         api_revenue_tokens=api_revenue_tokens, api_revenue_log=api_revenue_log,
         api_waittime_tokens=api_waittime_tokens, api_waittime_log=api_waittime_log,
         api_orders_tokens=api_orders_tokens, api_orders_log=api_orders_log,
+        api_reviews_tokens=api_reviews_tokens, api_reviews_log=api_reviews_log,
         base_url=request.host_url.rstrip('/'),
         today=date.today().isoformat(),
         formula_vars=FORMULA_VARS, role_labels=ROLE_LABELS,
@@ -15492,6 +15552,244 @@ def delete_point_accrual(accrual_id):
             conn.commit()
             flash('Запись удалена.', 'success')
     return redirect(url_for('points_accrual_page'))
+
+
+# ─── ОТРИЦАТЕЛЬНЫЕ ОТЗЫВЫ (Гуляш: guests/guestsComments, выгрузка «Сохранить в Excel») ──
+# Кнопка на странице Гуляша на самом деле шлёт POST на .../guests/guestsComments/excel_admin
+# и получает в ответ не настоящий Excel, а HTML-таблицу (обнаружено разбором реального
+# запроса кнопки через DevTools вместе с пользователем — сама ссылка кнопки никак не
+# отражает применённый фильтр в адресной строке, только POST-параметры формы).
+# GuestsComments[type_comment]=3 — фильтр «только отрицательные»: тип отзыва на Гуляше
+# кодируется одной буквой П(оложительный)/Н(ейтральный)/О(трицательный), 3 соответствует «О».
+
+def _guest_reviews_col_indices():
+    """Порядок колонок в HTML-таблице выгрузки — фиксированный, задан самим Гуляшем
+    (см. <thead> в ответе excel_admin), нумерация с 0."""
+    return {
+        'date': 1, 'review_type': 5, 'order_number': 6, 'branch': 8, 'content': 9,
+        'feedback_count': 12, 'guest_name': 14, 'amount': 15, 'guilty': 17,
+        'compensation': 23, 'penalty': 24,
+    }
+
+
+def _to_float_ru(v):
+    v = (v or '').strip().replace(',', '.').replace(' ', '')
+    if not v:
+        return None
+    try:
+        return float(v)
+    except ValueError:
+        return None
+
+
+def _parse_guest_comments_html(html_bytes):
+    """Разбирает HTML-таблицу выгрузки отзывов (guests/guestsComments/excel_admin) —
+    та же логика кодировок, что и в _parse_orders_csv, но парсинг таблицы через
+    BeautifulSoup (уже используется в Синх/revenue_sync.py, здесь достаточно
+    минимального ручного разбора тегов, чтобы не заводить лишнюю зависимость в app.py)."""
+    text = None
+    for enc in ('utf-8-sig', 'cp1251', 'utf-8'):
+        try:
+            text = html_bytes.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        text = html_bytes.decode('utf-8', errors='replace')
+
+    if '<table' not in text:
+        raise RuntimeError(
+            'В ответе нет таблицы с отзывами — вероятно, истекла сессия Гуляша '
+            'и сервер вернул страницу логина вместо выгрузки.'
+        )
+
+    row_re = re.compile(r'<tr[^>]*>(.*?)</tr>', re.DOTALL | re.IGNORECASE)
+    cell_re = re.compile(r'<td[^>]*>(.*?)</td>', re.DOTALL | re.IGNORECASE)
+    phone_re = re.compile(r'data-phone="(\d+)"')
+    tag_re = re.compile(r'<[^>]+>')
+
+    def strip_tags(s):
+        return unescape(tag_re.sub('', s)).strip()
+
+    rows = row_re.findall(text)
+    if not rows:
+        return []
+
+    idx = _guest_reviews_col_indices()
+    max_idx = max(idx.values())
+    result = []
+    for tr in rows[1:]:  # первая строка — заголовок (<th>, не <td>)
+        cells = cell_re.findall(tr)
+        if len(cells) <= max_idx:
+            continue
+        order_number = strip_tags(cells[idx['order_number']])
+        if not order_number:
+            continue
+        review_at_raw = strip_tags(cells[idx['date']])
+        try:
+            review_at = datetime.strptime(review_at_raw, '%d.%m.%Y %H:%M:%S').strftime('%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            continue
+        phone_match = phone_re.search(cells[idx['feedback_count']])
+        result.append({
+            'order_number': order_number,
+            'review_at': review_at,
+            'review_type': strip_tags(cells[idx['review_type']]),
+            'branch_raw': strip_tags(cells[idx['branch']]),
+            'content': strip_tags(cells[idx['content']]),
+            'guest_name': strip_tags(cells[idx['guest_name']]) or None,
+            'guest_phone': phone_match.group(1) if phone_match else None,
+            'order_amount': _to_float_ru(strip_tags(cells[idx['amount']])),
+            'guilty': strip_tags(cells[idx['guilty']]) or None,
+            'compensation_amount': _to_float_ru(strip_tags(cells[idx['compensation']])),
+            'penalty_amount': _to_float_ru(strip_tags(cells[idx['penalty']])),
+        })
+    return result
+
+
+def _review_row_hash(r):
+    # В отличие от заказов (ключ — только номер+дата, повтор обновляет строку), у отзыва
+    # ключ включает и текст — один и тот же заказ теоретически может получить больше одной
+    # разных жалобы, а сам текст задним числом на Гуляше не меняется, обновлять нечего.
+    key = f"{r['order_number']}|{r['review_at']}|{r['content']}"
+    return hashlib.md5(key.encode('utf-8')).hexdigest()
+
+
+def _ingest_guest_reviews_rows(conn, frows, branch_map):
+    """INSERT OR IGNORE по import_hash — отзывы неизменны после публикации, повторный приход
+    того же отзыва в перекрывающемся окне синхронизации просто пропускается, а не обновляет
+    существующую строку (в отличие от _ingest_orders_rows, где повтор — это апдейт)."""
+    imported = 0
+    for r in frows:
+        h = _review_row_hash(r)
+        branch_id = branch_map.get(r['branch_raw'])
+        cur = conn.execute('''
+            INSERT OR IGNORE INTO guest_reviews
+                (order_number, review_at, branch_raw, branch_id, review_type, content,
+                 guest_name, guest_phone, order_amount, guilty, compensation_amount,
+                 penalty_amount, import_hash)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ''', (
+            r['order_number'], r['review_at'], r['branch_raw'], branch_id, r['review_type'],
+            r['content'], r['guest_name'], r['guest_phone'], r['order_amount'], r['guilty'],
+            r['compensation_amount'], r['penalty_amount'], h
+        ))
+        if cur.rowcount:
+            imported += 1
+    return imported
+
+
+@app.route('/api/reviews-webhook/<token>', methods=['POST'])
+def api_reviews_webhook(token):
+    body_bytes = request.get_data()
+    body_preview = body_bytes[:20000].decode('utf-8', errors='replace')
+    with get_db() as conn:
+        rec = conn.execute('SELECT * FROM api_reviews_tokens WHERE token=?', (token,)).fetchone()
+
+        conn.execute(
+            'INSERT INTO api_reviews_log (token, method, path, body) VALUES (?,?,?,?)',
+            (token, request.method, request.full_path, body_preview)
+        )
+        log_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+
+        if not rec:
+            conn.commit()
+            return jsonify({'ok': False, 'error': 'invalid token'}), 401
+
+        try:
+            frows = _parse_guest_comments_html(body_bytes)
+            branch_map = get_branch_raw_map(conn)
+            imported = _ingest_guest_reviews_rows(conn, frows, branch_map)
+            unmapped = sorted(set(r['branch_raw'] for r in frows) - set(branch_map))
+            status = f'новых отзывов {imported} из {len(frows)} строк'
+            if unmapped:
+                status += f' (не сопоставлены филиалы: {", ".join(unmapped)} — см. Филиалы)'
+            conn.execute('UPDATE api_reviews_log SET parsed_ok=1, status=?, imported_count=? WHERE id=?',
+                         (status, imported, log_id))
+            conn.commit()
+            return jsonify({'ok': True, 'imported': imported, 'rows': len(frows)})
+        except Exception as e:
+            conn.execute('UPDATE api_reviews_log SET status=? WHERE id=?',
+                         (f'ошибка: {str(e)[:200]}', log_id))
+            conn.commit()
+            return jsonify({'ok': False, 'error': str(e)}), 400
+
+
+@app.route('/settings/api/reviews-tokens/add', methods=['POST'])
+@login_required
+@menu_permission_required('settings_api')
+def api_reviews_token_add():
+    description = request.form.get('description', '').strip()
+    token = secrets.token_urlsafe(24)
+    with get_db() as conn:
+        conn.execute(
+            'INSERT INTO api_reviews_tokens (token, description) VALUES (?,?)',
+            (token, description or None)
+        )
+        conn.commit()
+    flash('Токен создан', 'success')
+    return redirect(url_for('settings') + '?tab=api')
+
+
+@app.route('/settings/api/reviews-tokens/<int:tid>/delete', methods=['POST'])
+@login_required
+@menu_permission_required('settings_api')
+def api_reviews_token_delete(tid):
+    with get_db() as conn:
+        conn.execute('DELETE FROM api_reviews_tokens WHERE id=?', (tid,))
+        conn.commit()
+    flash('Токен удалён', 'success')
+    return redirect(url_for('settings') + '?tab=api')
+
+
+@app.route('/settings/api/reviews-log/clear', methods=['POST'])
+@login_required
+@menu_permission_required('settings_api')
+def api_reviews_log_clear():
+    with get_db() as conn:
+        conn.execute('DELETE FROM api_reviews_log')
+        conn.commit()
+    flash('Лог очищен', 'success')
+    return redirect(url_for('settings') + '?tab=api')
+
+
+@app.route('/reports/guest-reviews')
+@login_required
+@menu_permission_required('guest_reviews_report')
+def guest_reviews_report():
+    with get_db() as conn:
+        branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+
+        bounds = conn.execute('SELECT MIN(review_at), MAX(review_at) FROM guest_reviews').fetchone()
+        data_min = (bounds[0] or '')[:10]
+        data_max = (bounds[1] or '')[:10]
+
+        today = date.today().isoformat()
+        month_start = date.today().replace(day=1).isoformat()
+        date_from = request.args.get('date_from', month_start)
+        date_to = request.args.get('date_to', today)
+        branch_flt = [int(b) for b in request.args.getlist('branch_ids') if b.isdigit()]
+
+        where = ['review_at >= ?', 'review_at <= ?']
+        params = [date_from + ' 00:00:00', date_to + ' 23:59:59']
+        if branch_flt:
+            ph = ','.join('?' * len(branch_flt))
+            where.append(f'branch_id IN ({ph})')
+            params.extend(branch_flt)
+        sql_where = ' AND '.join(where)
+
+        rows = conn.execute(f'''
+            SELECT gr.*, b.name AS branch_name
+            FROM guest_reviews gr
+            LEFT JOIN branches b ON b.id = gr.branch_id
+            WHERE {sql_where}
+            ORDER BY gr.review_at DESC
+            LIMIT 500
+        ''', params).fetchall()
+
+    return render_template('guest_reviews_report.html',
+        rows=rows, branches=branches, branch_flt=branch_flt,
+        date_from=date_from, date_to=date_to, data_min=data_min, data_max=data_max)
 
 
 @app.route('/orders-report')
