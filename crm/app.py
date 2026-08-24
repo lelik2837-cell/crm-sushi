@@ -506,6 +506,97 @@ def _parse_bank_csv(raw_bytes):
     return result
 
 
+def _is_xlsx_bytes(raw_bytes):
+    """.xlsx — на самом деле ZIP-архив (OOXML), в отличие от .xls-выгрузок некоторых других
+    систем, которые на деле HTML/CSV с обманным расширением (см. Гуляш) — здесь проверка
+    по magic-байтам ZIP, а не по расширению файла (пользователь мог переименовать/расширение
+    браузер мог не передать точно)."""
+    return raw_bytes[:4] == b'PK\x03\x04'
+
+
+def _parse_bank_xlsx(raw_bytes):
+    """Разбирает банковскую выписку в формате настоящего Excel (.xlsx — например Озон Банк).
+    В отличие от _parse_bank_csv (текстовые CSV/TSV-выписки, где просто ищем строку с
+    ключевыми словами в тексте), здесь бинарный OOXML-файл, читается через openpyxl.
+    Формат листа (проверено на реальной выписке Озон Банка): несколько строк метаданных
+    сверху (банк/период/клиент/ИНН/счёт/валюта/остатки), затем строка заголовков колонок
+    (Дата/Номер документа/Дебет/Кредит/Контрагент/Назначение платежа), затем сами операции.
+    Колонка «Контрагент» в этой выписке — одна ячейка вида «ИМЯ\\nИНН:XXXXXXXXXX», а не
+    отдельная колонка ИНН, как в некоторых CSV-выписках — ИНН вытаскивается регуляркой."""
+    import openpyxl
+    try:
+        # read_only=True (потоковый режим openpyxl) на выписке Озон Банка возвращал всего
+        # одну пустую строку — похоже, генератор файла пишет некорректные метаданные
+        # диапазона листа (<dimension>), на которые потоковый парсер полагается, а обычная
+        # загрузка в память — нет. Файлы выписок небольшие, читать в память безопасно.
+        wb = openpyxl.load_workbook(io.BytesIO(raw_bytes), data_only=True)
+    except Exception as e:
+        raise ValueError(f'Не удалось открыть файл как Excel-выписку: {e}')
+    ws = wb.active
+    all_rows = list(ws.iter_rows(values_only=True))
+
+    header_idx = None
+    for i, row in enumerate(all_rows[:30]):
+        cells = [str(c or '').strip().lower() for c in row]
+        if any('дата' in c for c in cells) and any('дебет' in c or 'кредит' in c for c in cells):
+            header_idx = i
+            break
+    if header_idx is None:
+        raise ValueError(
+            'Не найдена строка заголовков (Дата/Дебет/Кредит) — похоже, это не банковская '
+            'выписка или формат листа отличается от ожидаемого.'
+        )
+
+    header = [str(c or '').strip() for c in all_rows[header_idx]]
+    col = _map_csv_columns(header)
+    if not col.get('date'):
+        raise ValueError('Не удалось определить колонку с датой в выписке.')
+
+    def idx_of(name):
+        return header.index(name) if name and name in header else None
+
+    date_i, debit_i, credit_i = idx_of(col.get('date')), idx_of(col.get('debit')), idx_of(col.get('credit'))
+    amount_i, desc_i, ctr_i = idx_of(col.get('amount')), idx_of(col.get('description')), idx_of(col.get('counterparty'))
+    inn_re = re.compile(r'ИНН[:\s]*([0-9]{10,12})')
+
+    def cell(row, idx):
+        return row[idx] if idx is not None and idx < len(row) else None
+
+    result = []
+    for row in all_rows[header_idx + 1:]:
+        date_val = _parse_date_str(cell(row, date_i)) if cell(row, date_i) else None
+        if not date_val:
+            continue
+        if debit_i is not None or credit_i is not None:
+            d = _clean_num(cell(row, debit_i))
+            c = _clean_num(cell(row, credit_i))
+            if c:
+                amount = c
+            elif d:
+                amount = -d
+            else:
+                continue
+        elif amount_i is not None:
+            amount = _clean_num(cell(row, amount_i))
+            if amount is None:
+                continue
+        else:
+            continue
+
+        desc = str(cell(row, desc_i) or '').strip()
+        ctr_raw = str(cell(row, ctr_i) or '').strip()
+        inn_match = inn_re.search(ctr_raw)
+        ctr_name = ctr_raw.split('\n')[0].split('\r')[0].strip()
+        result.append({
+            'date': date_val, 'amount': amount, 'description': desc,
+            'counterparty': ctr_name, 'inn': inn_match.group(1) if inn_match else '',
+        })
+
+    if not result:
+        raise ValueError('Строки в выписке найдены, но ни одна операция не распознана — проверьте формат файла.')
+    return result
+
+
 def _bank_statement_account_ok(raw_bytes, account_number):
     """Проверка при загрузке выписки: номер счёта, указанный при создании счёта
     в CRM, должен где-то встречаться в файле выписки — иначе похоже, что выбран
@@ -519,6 +610,16 @@ def _bank_statement_account_ok(raw_bytes, account_number):
     digits = re.sub(r'\D', '', account_number or '')
     if len(digits) < 10:
         return True
+    if _is_xlsx_bytes(raw_bytes):
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(raw_bytes), data_only=True)  # см. _parse_bank_xlsx про read_only
+            text = ' '.join(
+                str(c) for ws in wb.worksheets for row in ws.iter_rows(values_only=True) for c in row if c
+            )
+        except Exception:
+            return True  # не смогли прочитать содержимое — не блокируем (fail-open)
+        return digits in re.sub(r'\D', '', text)
     enc = _detect_encoding(raw_bytes)
     text_digits = re.sub(r'\D', '', raw_bytes.decode(enc, errors='replace'))
     return digits in text_digits
@@ -12664,7 +12765,10 @@ def bank_upload():
         return redirect(url_for('bank'))
     raw = f.read()
     try:
-        txns = _parse_bank_csv(raw)
+        # .xlsx (настоящий бинарный Excel, например Озон Банк) отличаем по magic-байтам
+        # ZIP, а не по расширению имени файла — надёжнее, если браузер/пользователь его
+        # не сохранит. Остальные банки отдают текстовые CSV/TSV — старый разбор как есть.
+        txns = _parse_bank_xlsx(raw) if _is_xlsx_bytes(raw) else _parse_bank_csv(raw)
     except Exception as e:
         flash(f'Ошибка разбора файла: {e}', 'danger')
         return redirect(url_for('bank'))
