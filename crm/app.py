@@ -506,6 +506,75 @@ def _parse_bank_csv(raw_bytes):
     return result
 
 
+def _is_vtb_statement(raw_bytes):
+    """Определяем формат выписки ВТБ по характерному сочетанию заголовков колонок — у других
+    уже поддерживаемых банков «Наименование Получателя»+«Наименование Плательщика»+«Основание
+    платежа» одновременно не встречаются (это реквизиты обеих сторон перевода сразу, а не
+    привычные «Контрагент»/«Назначение платежа»)."""
+    enc = _detect_encoding(raw_bytes)
+    try:
+        head = raw_bytes.decode(enc, errors='ignore').lower()
+    except Exception:
+        return False
+    return ('наименование получателя' in head and 'наименование плательщика' in head
+            and 'основание платежа' in head)
+
+
+def _parse_bank_vtb_csv(raw_bytes):
+    """Выписка ВТБ — не одна колонка «Сумма операции»/пара «Приход»+«Расход», как у большинства
+    банков, а сумма уже СО ЗНАКОМ (колонка «Сумма») плюс сразу ДВЕ пары контрагент+ИНН —
+    «Получатель» и «Плательщик» — заполненные в каждой строке ОДНОВРЕМЕННО (реквизиты обеих
+    сторон перевода, а не только нужной). Направление платежа решает, какая пара — реальный
+    контрагент операции: при расходе (сумма < 0) деньги ушли получателю — контрагент это
+    Получатель; при поступлении (сумма > 0) деньги пришли от плательщика — контрагент это
+    Плательщик (проверено на реальной выписке: во всех строках одна из сторон — сам владелец
+    счёта, вторая — настоящий контрагент). Общий _parse_bank_csv так не умеет (жёстко берёт
+    одну колонку по ключевым словам) и на этом формате путает поля местами."""
+    enc = _detect_encoding(raw_bytes)
+    text = raw_bytes.decode(enc)
+    reader = csv.reader(io.StringIO(text), delimiter=';')
+    rows = list(reader)
+    if not rows:
+        raise ValueError('Файл пустой')
+    header = [h.strip().lower() for h in rows[0]]
+
+    def col_idx(name):
+        return header.index(name) if name in header else None
+
+    date_i, amount_i = col_idx('дата'), col_idx('сумма')
+    desc_i = col_idx('основание платежа')
+    recv_name_i, recv_inn_i = col_idx('наименование получателя'), col_idx('инн получателя')
+    payer_name_i, payer_inn_i = col_idx('наименование плательщика'), col_idx('инн плательщика')
+    if date_i is None or amount_i is None:
+        raise ValueError('Не найдены обязательные колонки «Дата»/«Сумма» — формат файла не похож на выписку ВТБ.')
+
+    def cell(row, idx):
+        return row[idx].strip() if idx is not None and idx < len(row) else ''
+
+    result = []
+    for row in rows[1:]:
+        if not row or not any(row):
+            continue
+        date_val = _parse_date_str(cell(row, date_i))
+        if not date_val:
+            continue
+        amount = _clean_num(cell(row, amount_i))
+        if amount is None:
+            continue
+        if amount < 0:
+            ctr, inn = cell(row, recv_name_i), cell(row, recv_inn_i)
+        else:
+            ctr, inn = cell(row, payer_name_i), cell(row, payer_inn_i)
+        result.append({
+            'date': date_val, 'amount': amount, 'description': cell(row, desc_i),
+            'counterparty': ctr, 'inn': re.sub(r'\D', '', inn),
+        })
+
+    if not result:
+        raise ValueError('Строки в выписке найдены, но ни одна операция не распознана.')
+    return result
+
+
 def _is_xlsx_bytes(raw_bytes):
     """.xlsx — на самом деле ZIP-архив (OOXML), в отличие от .xls-выгрузок некоторых других
     систем, которые на деле HTML/CSV с обманным расширением (см. Гуляш) — здесь проверка
@@ -12767,8 +12836,16 @@ def bank_upload():
     try:
         # .xlsx (настоящий бинарный Excel, например Озон Банк) отличаем по magic-байтам
         # ZIP, а не по расширению имени файла — надёжнее, если браузер/пользователь его
-        # не сохранит. Остальные банки отдают текстовые CSV/TSV — старый разбор как есть.
-        txns = _parse_bank_xlsx(raw) if _is_xlsx_bytes(raw) else _parse_bank_csv(raw)
+        # не сохранит. ВТБ — тоже текстовый CSV, но с сильно отличающейся структурой
+        # (сумма со знаком + отдельные Получатель/Плательщик вместо Приход/Расход/Контрагент,
+        # см. _is_vtb_statement) — общий разбор путает в нём поля местами, нужен свой.
+        # Остальные банки — прежний общий разбор CSV/TSV.
+        if _is_xlsx_bytes(raw):
+            txns = _parse_bank_xlsx(raw)
+        elif _is_vtb_statement(raw):
+            txns = _parse_bank_vtb_csv(raw)
+        else:
+            txns = _parse_bank_csv(raw)
     except Exception as e:
         flash(f'Ошибка разбора файла: {e}', 'danger')
         return redirect(url_for('bank'))
