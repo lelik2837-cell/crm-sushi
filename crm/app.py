@@ -15655,14 +15655,35 @@ def _review_row_hash(r):
     return hashlib.md5(key.encode('utf-8')).hexdigest()
 
 
+def _resolve_review_branch_id(conn, order_number):
+    """Гуляш пишет подразделение в отзывах иначе, чем в «Отчёте по заказам» (см. branch_raw_map),
+    так что ручное сопоставление branch_raw пришлось бы каждый раз делать отдельно — вместо
+    этого сначала пробуем найти тот же номер заказа в уже импортированном orders_report, где
+    branch_id для него, скорее всего, уже определён (окна синхронизации заказов/отзывов
+    пересекаются). Если заказа там нет (например, вышел из ORDERS_LOOKBACK_DAYS) — вызывающий
+    код падает обратно на branch_raw_map."""
+    row = conn.execute(
+        'SELECT branch_id FROM orders_report WHERE order_number=? AND branch_id IS NOT NULL '
+        'ORDER BY received_at DESC LIMIT 1',
+        (order_number,)
+    ).fetchone()
+    return row['branch_id'] if row else None
+
+
 def _ingest_guest_reviews_rows(conn, frows, branch_map):
     """INSERT OR IGNORE по import_hash — отзывы неизменны после публикации, повторный приход
     того же отзыва в перекрывающемся окне синхронизации просто пропускается, а не обновляет
-    существующую строку (в отличие от _ingest_orders_rows, где повтор — это апдейт)."""
+    существующую строку (в отличие от _ingest_orders_rows, где повтор — это апдейт).
+    Возвращает (imported, unresolved_raws) — branch_raw, для которых не нашлось branch_id
+    ни через заказ в orders_report, ни через branch_raw_map — их стоит показать пользователю,
+    чтобы сопоставить вручную на странице «Филиалы»."""
     imported = 0
+    unresolved_raws = set()
     for r in frows:
         h = _review_row_hash(r)
-        branch_id = branch_map.get(r['branch_raw'])
+        branch_id = _resolve_review_branch_id(conn, r['order_number']) or branch_map.get(r['branch_raw'])
+        if branch_id is None:
+            unresolved_raws.add(r['branch_raw'])
         cur = conn.execute('''
             INSERT OR IGNORE INTO guest_reviews
                 (order_number, review_at, branch_raw, branch_id, review_type, content,
@@ -15676,7 +15697,7 @@ def _ingest_guest_reviews_rows(conn, frows, branch_map):
         ))
         if cur.rowcount:
             imported += 1
-    return imported
+    return imported, unresolved_raws
 
 
 @app.route('/api/reviews-webhook/<token>', methods=['POST'])
@@ -15699,11 +15720,10 @@ def api_reviews_webhook(token):
         try:
             frows = _parse_guest_comments_html(body_bytes)
             branch_map = get_branch_raw_map(conn)
-            imported = _ingest_guest_reviews_rows(conn, frows, branch_map)
-            unmapped = sorted(set(r['branch_raw'] for r in frows) - set(branch_map))
+            imported, unresolved_raws = _ingest_guest_reviews_rows(conn, frows, branch_map)
             status = f'новых отзывов {imported} из {len(frows)} строк'
-            if unmapped:
-                status += f' (не сопоставлены филиалы: {", ".join(unmapped)} — см. Филиалы)'
+            if unresolved_raws:
+                status += f' (не удалось определить филиал: {", ".join(sorted(unresolved_raws))} — см. Филиалы)'
             conn.execute('UPDATE api_reviews_log SET parsed_ok=1, status=?, imported_count=? WHERE id=?',
                          (status, imported, log_id))
             conn.commit()
