@@ -149,6 +149,7 @@ MENU_ITEMS = [
     ('whatsapp_broadcast',    'Рассылка',                 'reports',  False),
     ('points_accrual',        'Начисление баллов',        'reports',  False),
     ('guest_reviews_report',  'Отрицательные отзывы',     'reports',  False),
+    ('uniform_issuance',      'Выдача формы',             'reports',  False),
     ('call_center',           'Колл-центр',               'reports',  False),
     ('contact_center_report', 'Контакт-центр',            'reports',  False),
     ('employees',             'Сотрудники',               'settings', True),
@@ -1635,6 +1636,43 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_guest_reviews_branch ON guest_reviews(branch_id);
             CREATE INDEX IF NOT EXISTS idx_guest_reviews_review_at ON guest_reviews(review_at);
+            -- Выдача формы (склад + выдача сотрудникам) — учёт по группе филиалов (branch_groups,
+            -- уже существующий общий механизм из "Филиалы", пользователь сам заводит там группы
+            -- по городам — новой сущности "город" заводить не стали, раз группа уже есть).
+            CREATE TABLE IF NOT EXISTS uniform_types (
+                id   INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE
+            );
+            -- Приход формы на склад — append-only, текущий остаток считается на лету
+            -- (SUM прихода MINUS SUM выдачи по той же группе+типу+размеру), отдельного
+            -- мутируемого поля "остаток" не заводили, чтобы не рассинхронизировалось.
+            CREATE TABLE IF NOT EXISTS uniform_stock_entries (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                branch_group_id INTEGER NOT NULL REFERENCES branch_groups(id),
+                type_id         INTEGER NOT NULL REFERENCES uniform_types(id),
+                size            TEXT NOT NULL DEFAULT '',
+                quantity        INTEGER NOT NULL,
+                cost_per_unit   REAL DEFAULT 0,
+                entry_date      DATE NOT NULL,
+                comment         TEXT,
+                created_by      INTEGER REFERENCES users(id),
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS uniform_issuances (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                branch_group_id INTEGER NOT NULL REFERENCES branch_groups(id),
+                employee_id     INTEGER NOT NULL REFERENCES employees(id),
+                type_id         INTEGER NOT NULL REFERENCES uniform_types(id),
+                size            TEXT NOT NULL DEFAULT '',
+                quantity        INTEGER NOT NULL,
+                issued_date     DATE NOT NULL,
+                comment         TEXT,
+                created_by      INTEGER REFERENCES users(id),
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_uniform_stock_group ON uniform_stock_entries(branch_group_id, type_id, size);
+            CREATE INDEX IF NOT EXISTS idx_uniform_issuances_group ON uniform_issuances(branch_group_id, type_id, size);
+            CREATE INDEX IF NOT EXISTS idx_uniform_issuances_employee ON uniform_issuances(employee_id);
             CREATE TABLE IF NOT EXISTS wait_time_log (
                 id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 branch_id         INTEGER NOT NULL REFERENCES branches(id),
@@ -16014,6 +16052,253 @@ def guest_reviews_report():
     return render_template('guest_reviews_report.html',
         rows=rows, branches=branches, branch_flt=branch_flt,
         date_from=date_from, date_to=date_to, data_min=data_min, data_max=data_max)
+
+
+# ─── ВЫДАЧА ФОРМЫ (склад + выдача сотрудникам, учёт по группе филиалов) ────────────
+# Группа филиалов — уже существующий общий механизм («Филиалы» → «Группы филиалов»,
+# используется также для ставок/выплат) — пользователь сам заводит там группы по городам,
+# отдельную сущность «город» заводить не стали.
+
+def _uniform_available_qty(conn, branch_group_id, type_id, size):
+    """Остаток = приход минус выдача по (группа, тип, размер) — считается на лету,
+    не хранится отдельным полем, чтобы не могло разойтись с историей."""
+    row = conn.execute('''
+        SELECT COALESCE((SELECT SUM(quantity) FROM uniform_stock_entries
+                          WHERE branch_group_id=? AND type_id=? AND size=?), 0)
+             - COALESCE((SELECT SUM(quantity) FROM uniform_issuances
+                          WHERE branch_group_id=? AND type_id=? AND size=?), 0) AS available
+    ''', (branch_group_id, type_id, size, branch_group_id, type_id, size)).fetchone()
+    return int(row['available'] or 0)
+
+
+def _uniform_stock_levels(conn, branch_group_id):
+    """Текущие остатки по группе филиалов, сгруппированные по (тип, размер) — для
+    сводной таблицы на вкладке «Склад»."""
+    rows = conn.execute('''
+        SELECT t.id AS type_id, t.name AS type_name, se.size AS size,
+               COALESCE(SUM(se.quantity), 0) AS in_stock
+        FROM uniform_stock_entries se
+        JOIN uniform_types t ON t.id = se.type_id
+        WHERE se.branch_group_id=?
+        GROUP BY se.type_id, se.size
+        ORDER BY t.name, se.size
+    ''', (branch_group_id,)).fetchall()
+    result = []
+    for r in rows:
+        issued = conn.execute(
+            'SELECT COALESCE(SUM(quantity),0) AS s FROM uniform_issuances WHERE branch_group_id=? AND type_id=? AND size=?',
+            (branch_group_id, r['type_id'], r['size'])
+        ).fetchone()['s']
+        result.append({
+            'type_id': r['type_id'], 'type_name': r['type_name'], 'size': r['size'],
+            'in_stock': int(r['in_stock']), 'issued': int(issued),
+            'available': int(r['in_stock']) - int(issued),
+        })
+    return result
+
+
+@app.route('/reports/uniform')
+@login_required
+@menu_permission_required('uniform_issuance')
+def uniform_page():
+    with get_db() as conn:
+        branch_groups = get_branch_groups(conn)
+        types = conn.execute('SELECT * FROM uniform_types ORDER BY name').fetchall()
+
+        group_flt = request.args.get('group_id', type=int)
+        if not group_flt and branch_groups:
+            group_flt = branch_groups[0]['id']
+
+        stock_levels, stock_history, issuance_history, employees_in_group = [], [], [], []
+        if group_flt:
+            stock_levels = _uniform_stock_levels(conn, group_flt)
+            stock_history = conn.execute('''
+                SELECT se.*, t.name AS type_name, u.full_name AS created_by_name
+                FROM uniform_stock_entries se
+                JOIN uniform_types t ON t.id = se.type_id
+                LEFT JOIN users u ON u.id = se.created_by
+                WHERE se.branch_group_id=?
+                ORDER BY se.entry_date DESC, se.id DESC LIMIT 200
+            ''', (group_flt,)).fetchall()
+            issuance_history = conn.execute('''
+                SELECT ui.*, t.name AS type_name, e.full_name AS employee_name, u.full_name AS created_by_name
+                FROM uniform_issuances ui
+                JOIN uniform_types t ON t.id = ui.type_id
+                JOIN employees e ON e.id = ui.employee_id
+                LEFT JOIN users u ON u.id = ui.created_by
+                WHERE ui.branch_group_id=?
+                ORDER BY ui.issued_date DESC, ui.id DESC LIMIT 200
+            ''', (group_flt,)).fetchall()
+            group = next((g for g in branch_groups if g['id'] == group_flt), None)
+            if group and group['branch_ids']:
+                ph = ','.join('?' * len(group['branch_ids']))
+                employees_in_group = conn.execute(f'''
+                    SELECT DISTINCT e.id, e.full_name FROM employees e
+                    JOIN employee_branches eb ON eb.employee_id = e.id
+                    WHERE eb.branch_id IN ({ph}) AND e.is_active=1
+                    ORDER BY e.full_name
+                ''', group['branch_ids']).fetchall()
+
+    return render_template('uniform.html',
+        branch_groups=branch_groups, types=types, group_flt=group_flt,
+        stock_levels=stock_levels, stock_history=stock_history,
+        issuance_history=issuance_history, employees_in_group=employees_in_group,
+        today=date.today().isoformat(),
+        active_tab=request.args.get('tab', 'stock'))
+
+
+@app.route('/reports/uniform/available')
+@login_required
+@menu_permission_required('uniform_issuance')
+def uniform_available_qty():
+    group_id = request.args.get('group_id', type=int)
+    type_id = request.args.get('type_id', type=int)
+    size = request.args.get('size', '').strip()
+    if not group_id or not type_id:
+        return jsonify({'available': None})
+    with get_db() as conn:
+        available = _uniform_available_qty(conn, group_id, type_id, size)
+    return jsonify({'available': available})
+
+
+@app.route('/reports/uniform/types', methods=['POST'])
+@login_required
+@menu_permission_required('uniform_issuance')
+def create_uniform_type():
+    name = request.form.get('name', '').strip()
+    tab, group_id = request.form.get('tab', 'stock'), request.form.get('group_id', type=int)
+    if not name:
+        flash('Укажите название типа формы', 'danger')
+        return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
+    with get_db() as conn:
+        try:
+            conn.execute('INSERT INTO uniform_types (name) VALUES (?)', (name,))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            flash('Такой тип формы уже есть.', 'danger')
+            return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
+    flash('Тип формы добавлен.', 'success')
+    return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
+
+
+@app.route('/reports/uniform/types/<int:type_id>/rename', methods=['POST'])
+@login_required
+@menu_permission_required('uniform_issuance')
+def rename_uniform_type(type_id):
+    name = request.form.get('name', '').strip()
+    tab, group_id = request.form.get('tab', 'stock'), request.form.get('group_id', type=int)
+    if not name:
+        flash('Укажите название', 'danger')
+        return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
+    with get_db() as conn:
+        try:
+            conn.execute('UPDATE uniform_types SET name=? WHERE id=?', (name, type_id))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            flash('Такой тип формы уже есть.', 'danger')
+            return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
+    flash('Название обновлено.', 'success')
+    return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
+
+
+@app.route('/reports/uniform/stock', methods=['POST'])
+@login_required
+@menu_permission_required('uniform_issuance')
+def add_uniform_stock():
+    tab = request.form.get('tab', 'stock')
+    group_id = request.form.get('group_id', type=int)
+    type_id = request.form.get('type_id', type=int)
+    size = request.form.get('size', '').strip()
+    quantity = request.form.get('quantity', type=int)
+    cost_per_unit = request.form.get('cost_per_unit', type=float) or 0
+    entry_date = request.form.get('entry_date', '').strip() or date.today().isoformat()
+    comment = request.form.get('comment', '').strip()
+
+    if not group_id or not type_id or not quantity or quantity <= 0:
+        flash('Заполните группу филиалов, тип формы и количество', 'danger')
+        return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
+
+    with get_db() as conn:
+        conn.execute('''
+            INSERT INTO uniform_stock_entries
+                (branch_group_id, type_id, size, quantity, cost_per_unit, entry_date, comment, created_by)
+            VALUES (?,?,?,?,?,?,?,?)
+        ''', (group_id, type_id, size, quantity, cost_per_unit, entry_date, comment or None, session['user_id']))
+        conn.commit()
+    flash('Приход формы добавлен.', 'success')
+    return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
+
+
+@app.route('/reports/uniform/stock/<int:entry_id>/delete', methods=['POST'])
+@login_required
+@menu_permission_required('uniform_issuance')
+def delete_uniform_stock(entry_id):
+    tab = request.form.get('tab', 'stock')
+    group_id = request.form.get('group_id', type=int)
+    with get_db() as conn:
+        entry = conn.execute('SELECT * FROM uniform_stock_entries WHERE id=?', (entry_id,)).fetchone()
+        if not entry:
+            flash('Запись не найдена', 'danger')
+            return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
+        # Нельзя удалить приход, если часть этой партии уже выдана сотрудникам — иначе
+        # остаток по (группа, тип, размер) ушёл бы в минус без явного объяснения почему.
+        available_after = _uniform_available_qty(conn, entry['branch_group_id'], entry['type_id'], entry['size']) - entry['quantity']
+        if available_after < 0:
+            flash('Нельзя удалить — часть этого прихода уже выдана сотрудникам.', 'danger')
+            return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
+        conn.execute('DELETE FROM uniform_stock_entries WHERE id=?', (entry_id,))
+        conn.commit()
+    flash('Запись прихода удалена.', 'success')
+    return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
+
+
+@app.route('/reports/uniform/issue', methods=['POST'])
+@login_required
+@menu_permission_required('uniform_issuance')
+def issue_uniform():
+    tab = request.form.get('tab', 'issue')
+    group_id = request.form.get('group_id', type=int)
+    employee_id = request.form.get('employee_id', type=int)
+    type_id = request.form.get('type_id', type=int)
+    size = request.form.get('size', '').strip()
+    quantity = request.form.get('quantity', type=int)
+    issued_date = request.form.get('issued_date', '').strip() or date.today().isoformat()
+    comment = request.form.get('comment', '').strip()
+
+    if not group_id or not employee_id or not type_id or not quantity or quantity <= 0:
+        flash('Заполните сотрудника, тип формы и количество', 'danger')
+        return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
+
+    with get_db() as conn:
+        available = _uniform_available_qty(conn, group_id, type_id, size)
+        if quantity > available:
+            type_row = conn.execute('SELECT name FROM uniform_types WHERE id=?', (type_id,)).fetchone()
+            flash(
+                f'На складе только {available} шт. «{type_row["name"] if type_row else ""}» '
+                f'размера «{size or "—"}» — выдать {quantity} нельзя.', 'danger'
+            )
+            return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
+        conn.execute('''
+            INSERT INTO uniform_issuances
+                (branch_group_id, employee_id, type_id, size, quantity, issued_date, comment, created_by)
+            VALUES (?,?,?,?,?,?,?,?)
+        ''', (group_id, employee_id, type_id, size, quantity, issued_date, comment or None, session['user_id']))
+        conn.commit()
+    flash('Форма выдана.', 'success')
+    return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
+
+
+@app.route('/reports/uniform/issuance/<int:issuance_id>/delete', methods=['POST'])
+@login_required
+@menu_permission_required('uniform_issuance')
+def delete_uniform_issuance(issuance_id):
+    tab = request.form.get('tab', 'issue')
+    group_id = request.form.get('group_id', type=int)
+    with get_db() as conn:
+        conn.execute('DELETE FROM uniform_issuances WHERE id=?', (issuance_id,))
+        conn.commit()
+    flash('Выдача отменена, форма вернулась на склад.', 'success')
+    return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
 
 
 @app.route('/orders-report')

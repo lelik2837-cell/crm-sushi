@@ -415,6 +415,13 @@
                             </a>
                         </li>
                         {% endif %}
+                        {% if item_visible('uniform_issuance') %}
+                        <li>
+                            <a class="dropdown-item {% if request.endpoint and request.endpoint.startswith('uniform') %}active{% endif %}" href="{{ url_for('uniform_page') }}">
+                                <i class="bi bi-bag-check me-2"></i>Выдача формы
+                            </a>
+                        </li>
+                        {% endif %}
                         {% if item_visible('call_center') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='call_center' %}active{% endif %}" href="{{ url_for('call_center') }}">

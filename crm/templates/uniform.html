@@ -1,0 +1,334 @@
+{% extends 'base.html' %}
+{% block title %}Выдача формы{% endblock %}
+{% block content %}
+
+<datalist id="uniform-sizes">
+    <option value="Универсальный">
+    <option value="XS">
+    <option value="S">
+    <option value="M">
+    <option value="L">
+    <option value="XL">
+    <option value="XXL">
+</datalist>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="fw-bold mb-0"><i class="bi bi-bag-check me-2"></i>Выдача формы</h4>
+</div>
+
+{% if not branch_groups %}
+<div class="alert alert-warning">
+    Ещё не заведено ни одной группы филиалов — учёт формы ведётся по группам (обычно по городам).
+    Зайдите на страницу <a href="{{ url_for('branches') }}">«Филиалы»</a> и создайте хотя бы одну группу,
+    включив в неё нужные филиалы.
+</div>
+{% else %}
+
+<!-- Выбор группы филиалов -->
+<form method="GET" class="d-flex align-items-center gap-2 mb-3" style="max-width:400px;">
+    <input type="hidden" name="tab" value="{{ active_tab }}">
+    <label class="form-label small fw-semibold mb-0 text-nowrap">Группа филиалов</label>
+    <select name="group_id" class="form-select form-select-sm" onchange="this.form.submit()">
+        {% for g in branch_groups %}
+        <option value="{{ g.id }}" {% if g.id == group_flt %}selected{% endif %}>{{ g.name }}</option>
+        {% endfor %}
+    </select>
+</form>
+
+<ul class="nav nav-tabs mb-3" id="unfTabs">
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'stock' %}active{% endif %}" href="{{ url_for('uniform_page', tab='stock', group_id=group_flt) }}">
+            <i class="bi bi-box-seam me-1"></i>Склад
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'issue' %}active{% endif %}" href="{{ url_for('uniform_page', tab='issue', group_id=group_flt) }}">
+            <i class="bi bi-person-check me-1"></i>Выдача
+        </a>
+    </li>
+</ul>
+
+<!-- ═══ Вкладка «Склад» ═══ -->
+<div class="unf-tab-pane" id="unf-pane-stock" style="{% if active_tab != 'stock' %}display:none;{% endif %}">
+
+    <!-- Типы формы (справочник) -->
+    <div class="card mb-3">
+        <div class="card-header fw-semibold"><i class="bi bi-tags me-2"></i>Типы формы</div>
+        <div class="card-body">
+            <div class="row g-2 mb-3">
+                {% for t in types %}
+                <div class="col-md-4">
+                    <form method="POST" action="{{ url_for('rename_uniform_type', type_id=t.id) }}" class="input-group input-group-sm">
+                        <input type="hidden" name="tab" value="stock">
+                        <input type="hidden" name="group_id" value="{{ group_flt }}">
+                        <input type="text" name="name" class="form-control" value="{{ t.name }}">
+                        <button type="submit" class="btn btn-outline-secondary" title="Сохранить название"><i class="bi bi-check-lg"></i></button>
+                    </form>
+                </div>
+                {% else %}
+                <div class="col-12 text-muted small">Типов формы ещё нет — добавьте первый ниже (например «Футболка», «Кепка»).</div>
+                {% endfor %}
+            </div>
+            <form method="POST" action="{{ url_for('create_uniform_type') }}" class="d-flex gap-2" style="max-width:400px;">
+                <input type="hidden" name="tab" value="stock">
+                <input type="hidden" name="group_id" value="{{ group_flt }}">
+                <input type="text" name="name" class="form-control form-control-sm" placeholder="Новый тип формы" required>
+                <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap"><i class="bi bi-plus-lg"></i> Добавить</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="mb-3">
+        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#stockModal"
+                {% if not types %}disabled title="Сначала добавьте хотя бы один тип формы"{% endif %}>
+            <i class="bi bi-plus-lg me-1"></i>Добавить приход
+        </button>
+    </div>
+
+    <!-- Текущие остатки -->
+    <div class="card mb-3">
+        <div class="card-header fw-semibold">Текущий остаток на складе</div>
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 align-middle">
+                <thead class="table-light">
+                    <tr><th>Тип</th><th>Размер</th><th class="text-end">Приход</th><th class="text-end">Выдано</th><th class="text-end">Остаток</th></tr>
+                </thead>
+                <tbody>
+                    {% for s in stock_levels %}
+                    <tr>
+                        <td>{{ s.type_name }}</td>
+                        <td>{{ s.size or '—' }}</td>
+                        <td class="text-end">{{ s.in_stock }}</td>
+                        <td class="text-end">{{ s.issued }}</td>
+                        <td class="text-end {{ 'text-danger fw-semibold' if s.available <= 0 else 'fw-semibold' }}">{{ s.available }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="5" class="text-center text-muted py-3">Прихода формы по этой группе ещё не было</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- История прихода -->
+    <div class="card">
+        <div class="card-header fw-semibold">История прихода</div>
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 align-middle">
+                <thead class="table-light">
+                    <tr><th>Дата</th><th>Тип</th><th>Размер</th><th class="text-end">Кол-во</th><th class="text-end">Цена/шт</th><th>Добавил</th><th></th></tr>
+                </thead>
+                <tbody>
+                    {% for e in stock_history %}
+                    <tr>
+                        <td class="text-nowrap">{{ e.entry_date }}</td>
+                        <td>{{ e.type_name }}</td>
+                        <td>{{ e.size or '—' }}</td>
+                        <td class="text-end">{{ e.quantity }}</td>
+                        <td class="text-end">{{ '%.0f'|format(e.cost_per_unit) if e.cost_per_unit else '—' }}</td>
+                        <td class="text-muted small">{{ e.created_by_name or '—' }}</td>
+                        <td class="text-end">
+                            <form method="POST" action="{{ url_for('delete_uniform_stock', entry_id=e.id) }}" onsubmit="return confirm('Удалить эту запись прихода?');">
+                                <input type="hidden" name="tab" value="stock">
+                                <input type="hidden" name="group_id" value="{{ group_flt }}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Удалить</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="7" class="text-center text-muted py-3">Записей пока нет</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- ═══ Вкладка «Выдача» ═══ -->
+<div class="unf-tab-pane" id="unf-pane-issue" style="{% if active_tab != 'issue' %}display:none;{% endif %}">
+
+    <div class="mb-3">
+        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#issueModal"
+                {% if not types or not employees_in_group %}disabled title="{% if not types %}Сначала добавьте тип формы{% else %}В этой группе филиалов нет сотрудников{% endif %}"{% endif %}>
+            <i class="bi bi-plus-lg me-1"></i>Выдать форму
+        </button>
+    </div>
+
+    <div class="card">
+        <div class="card-header fw-semibold">История выдачи</div>
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 align-middle">
+                <thead class="table-light">
+                    <tr><th>Дата</th><th>Сотрудник</th><th>Тип</th><th>Размер</th><th class="text-end">Кол-во</th><th>Выдал</th><th></th></tr>
+                </thead>
+                <tbody>
+                    {% for i in issuance_history %}
+                    <tr>
+                        <td class="text-nowrap">{{ i.issued_date }}</td>
+                        <td>{{ i.employee_name }}</td>
+                        <td>{{ i.type_name }}</td>
+                        <td>{{ i.size or '—' }}</td>
+                        <td class="text-end">{{ i.quantity }}</td>
+                        <td class="text-muted small">{{ i.created_by_name or '—' }}</td>
+                        <td class="text-end">
+                            <form method="POST" action="{{ url_for('delete_uniform_issuance', issuance_id=i.id) }}" onsubmit="return confirm('Отменить эту выдачу? Форма вернётся на склад.');">
+                                <input type="hidden" name="tab" value="issue">
+                                <input type="hidden" name="group_id" value="{{ group_flt }}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Отменить</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="7" class="text-center text-muted py-3">Выдач пока не было</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Модалка «Добавить приход» -->
+<div class="modal fade" id="stockModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <form method="POST" action="{{ url_for('add_uniform_stock') }}" class="modal-content">
+            <input type="hidden" name="tab" value="stock">
+            <input type="hidden" name="group_id" value="{{ group_flt }}">
+            <div class="modal-header">
+                <h5 class="modal-title">Добавить приход формы</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label small fw-semibold">Тип формы</label>
+                        <select name="type_id" class="form-select" required>
+                            {% for t in types %}
+                            <option value="{{ t.id }}">{{ t.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-semibold">Размер</label>
+                        <input type="text" name="size" class="form-control" list="uniform-sizes" placeholder="L, M, Универсальный...">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-semibold">Количество</label>
+                        <input type="number" name="quantity" class="form-control" min="1" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-semibold">Цена за штуку</label>
+                        <input type="number" step="0.01" name="cost_per_unit" class="form-control" placeholder="необязательно">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-semibold">Дата</label>
+                        <input type="date" name="entry_date" class="form-control" value="{{ today }}">
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label small fw-semibold">Комментарий</label>
+                        <input type="text" name="comment" class="form-control" placeholder="необязательно">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отменить</button>
+                <button type="submit" class="btn btn-primary">Сохранить</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Модалка «Выдать форму» -->
+<div class="modal fade" id="issueModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <form method="POST" action="{{ url_for('issue_uniform') }}" class="modal-content">
+            <input type="hidden" name="tab" value="issue">
+            <input type="hidden" name="group_id" value="{{ group_flt }}">
+            <div class="modal-header">
+                <h5 class="modal-title">Выдать форму сотруднику</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-3">
+                    <div class="col-12">
+                        <label class="form-label small fw-semibold">Сотрудник</label>
+                        <select name="employee_id" class="form-select" required>
+                            <option value="">— выбрать —</option>
+                            {% for e in employees_in_group %}
+                            <option value="{{ e.id }}">{{ e.full_name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-semibold">Тип формы</label>
+                        <select name="type_id" id="unf-issue-type" class="form-select" required onchange="unfUpdateAvailable()">
+                            <option value="">— выбрать —</option>
+                            {% for t in types %}
+                            <option value="{{ t.id }}">{{ t.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-semibold">Размер</label>
+                        <input type="text" name="size" id="unf-issue-size" class="form-control" list="uniform-sizes"
+                               placeholder="L, M, Универсальный..." onchange="unfUpdateAvailable()">
+                    </div>
+                    <div class="col-12">
+                        <div id="unf-available-hint" class="form-text"></div>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-semibold">Количество</label>
+                        <input type="number" name="quantity" class="form-control" min="1" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-semibold">Дата</label>
+                        <input type="date" name="issued_date" class="form-control" value="{{ today }}">
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label small fw-semibold">Комментарий</label>
+                        <input type="text" name="comment" class="form-control" placeholder="необязательно">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отменить</button>
+                <button type="submit" class="btn btn-primary">Выдать</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function unfUpdateAvailable() {
+    const typeId = document.getElementById('unf-issue-type').value;
+    const size = document.getElementById('unf-issue-size').value.trim();
+    const hint = document.getElementById('unf-available-hint');
+    if (!typeId) { hint.textContent = ''; return; }
+    fetch(`/reports/uniform/available?group_id={{ group_flt }}&type_id=${encodeURIComponent(typeId)}&size=${encodeURIComponent(size)}`)
+        .then((r) => r.json())
+        .then((data) => {
+            if (data.available === null) { hint.textContent = ''; return; }
+            hint.textContent = `В наличии: ${data.available} шт.`;
+            hint.className = data.available > 0 ? 'form-text text-success' : 'form-text text-danger fw-semibold';
+        })
+        .catch(() => {});
+}
+
+// Сабмит любой формы на этой странице не должен прыгать в начало страницы после
+// перезагрузки — сохраняем позицию скролла перед уходом (см. правило в CLAUDE.md
+// про сохранение состояния фильтров/вкладок при сабмите форм).
+document.querySelectorAll('.unf-tab-pane form, form[action*="uniform"]').forEach((form) => {
+    form.addEventListener('submit', () => {
+        sessionStorage.setItem('unf_scroll_y', String(window.scrollY));
+    });
+});
+(function restoreScroll() {
+    const savedScroll = sessionStorage.getItem('unf_scroll_y');
+    if (savedScroll) {
+        window.scrollTo(0, parseInt(savedScroll, 10));
+        sessionStorage.removeItem('unf_scroll_y');
+    }
+})();
+</script>
+
+{% endif %}
+{% endblock %}
