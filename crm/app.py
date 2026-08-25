@@ -5351,7 +5351,11 @@ def pay_salary_debt(shift_id):
         ''', (employee_id, month_start, month_end)).fetchone()
         remaining = float(remaining_row['remaining'] or 0)
         effective_limit = _payout_rule_limit_amount(conn, rule, employee_id, shift['date'])
-        if effective_limit:
+        # is not None, а не просто truthy — легитимный ноль (сотрудник ничего не должен
+        # именно за лимитный период правила) иначе давал бы max_allowed=remaining, то есть
+        # разрешал выплатить весь долг вместо нуля (см. тот же баг, исправленный в
+        # _payout_eligible_employees, plan.md п.282).
+        if effective_limit is not None:
             # Лимит — потолок на весь период по этому правилу, а не на одну выплату:
             # учитываем уже выплаченное этим же правилом за этот период этому сотруднику.
             already_row = conn.execute('''
