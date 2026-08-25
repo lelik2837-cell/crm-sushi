@@ -2692,10 +2692,16 @@ def _payout_period_bounds(rule_period, ref_date):
 def _payout_rule_limit_amount(conn, rule, employee_id, ref_date):
     """Эффективный лимит выплаты по правилу для сотрудника на дату ref_date:
     limit_type='amount' — фиксированная сумма (rule['limit_amount']);
-    limit_type='days' — не фиксированная сумма, а то, что сотрудник реально
-    заработал (total_amount по его сменам) с 1 по limit_days число текущего
-    (по ref_date) календарного месяца включительно — например «до 15 числа»;
-    'none' (или лимита нет) — без лимита, возвращает None."""
+    limit_type='days' — НЕ то, что сотрудник заработал за смены с 1 по limit_days число
+    текущего (по ref_date) календарного месяца, а то, что из этого заработка ЕЩЁ НЕ
+    ОПЛАЧЕНО (та же формула вычета is_paid/salary_payments, что и в основном запросе
+    _payout_eligible_employees) — иначе уже закрытые и оплаченные смены за начало месяца
+    всё равно попадали в лимит, и сотрудник с реально нулевым остатком за этот период
+    ошибочно оказывался «к выплате» на всю сумму, которую когда-то заработал в эти дни;
+    'none' (или лимита нет) — без лимита, возвращает None.
+    Возвращаемый 0 — это ЗАКОННЫЙ результат («в это окно ничего не должны»), а не
+    «лимита нет» — вызывающий код обязан отличать 0 от None (`is not None`, не просто
+    truthy-проверка), иначе такой сотрудник вместо exclusion получит весь remaining."""
     limit_type = rule['limit_type'] or 'amount'
     if limit_type == 'amount':
         return float(rule['limit_amount']) if rule['limit_amount'] else None
@@ -2706,34 +2712,38 @@ def _payout_rule_limit_amount(conn, rule, employee_id, ref_date):
         cutoff_start = date(d.year, d.month, 1).isoformat()
         cutoff_end = date(d.year, d.month, cutoff_day).isoformat()
         row = conn.execute('''
-            SELECT COALESCE(SUM(es.total_amount), 0) AS s
+            SELECT COALESCE(SUM(
+                es.total_amount
+                - CASE WHEN es.is_paid=1 THEN es.total_amount ELSE 0 END
+                - COALESCE((SELECT SUM(sp.amount) FROM salary_payments sp
+                             WHERE sp.employee_shift_id=es.id), 0)
+            ), 0) AS s
             FROM employee_shifts es JOIN shifts s ON s.id = es.shift_id
             WHERE es.employee_id=? AND s.date BETWEEN ? AND ?
         ''', (employee_id, cutoff_start, cutoff_end)).fetchone()
-        return float(row['s'] or 0)
+        return max(0.0, float(row['s'] or 0))
     return None
 
 
 def _active_payout_rules(conn, branch_id, ref_date):
-    """Правила выплат, у которых сегодня — именно день выплаты (day_of_month), а не
-    «наступил и позже» — раньше правило оставалось показанным во всех следующих сменах
-    до полного погашения задолженности, из-за чего в списке накапливалось вообще всё
-    (включая долг за только что отработанную сегодняшнюю смену) — по просьбе пользователя
-    список теперь появляется только в сам день выплаты. Если day_of_month больше, чем дней
-    в текущем месяце (например 31 в месяце с 30 днями) — выплата считается в последний
-    день месяца. Действует на филиал branch_id — либо правило без группы (действует
-    везде), либо branch_id входит в указанную у правила группу филиалов (branch_groups)."""
+    """Правила выплат, у которых уже наступила дата в месяце ref_date (действуют с этого
+    числа и по каждый следующий день, пока не будет погашена вся задолженность — так и
+    задумано: например 25-го выдали аванс не всем, кто был должен, и оставшиеся должны
+    продолжать появляться в списке 26-го, 27-го и так далее, а не пропадать после
+    единственного дня) и которые действуют на филиал branch_id — либо правило без группы
+    (действует везде), либо branch_id входит в указанную у правила группу филиалов
+    (branch_groups). Кто именно попадает в список — решает не эта функция, а лимит по
+    периоду в _payout_rule_limit_amount/_payout_eligible_employees (сотрудник с нулевым
+    непогашенным остатком именно за лимитный период исключается там)."""
     d = date.fromisoformat(ref_date) if isinstance(ref_date, str) else ref_date
-    last_day = calendar.monthrange(d.year, d.month)[1]
-    all_rules = conn.execute('''
+    rules = conn.execute('''
         SELECT * FROM salary_payout_rules
-        WHERE is_active=1
+        WHERE is_active=1 AND day_of_month<=?
           AND (branch_group_id IS NULL OR branch_group_id IN (
                 SELECT group_id FROM branch_group_members WHERE branch_id=?
               ))
         ORDER BY day_of_month, id
-    ''', (branch_id,)).fetchall()
-    rules = [r for r in all_rules if min(r['day_of_month'], last_day) == d.day]
+    ''', (d.day, branch_id)).fetchall()
     result = []
     for r in rules:
         month_start, month_end, label = _payout_period_bounds(r['period'], d)
@@ -2775,7 +2785,10 @@ def _payout_eligible_employees(conn, branch_id, ref_date):
         for r in rows:
             remaining = float(r['remaining'])
             effective_limit = _payout_rule_limit_amount(conn, rule, r['employee_id'], ref_date)
-            if effective_limit:
+            # is not None, а не просто truthy — effective_limit=0 у limit_type='days' означает
+            # «в это окно ничего не должны» (законный результат, сотрудника нужно исключить),
+            # а не «лимита нет» — иначе он попал бы в ветку else и получил весь remaining.
+            if effective_limit is not None:
                 # Лимит — это потолок на ВЕСЬ период по этому правилу (например «аванс
                 # не больше 10000»), а не разрешение заново на каждую выплату — поэтому
                 # учитываем уже выплаченное этим правилом за этот период у этого сотрудника.
