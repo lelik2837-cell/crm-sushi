@@ -2715,19 +2715,25 @@ def _payout_rule_limit_amount(conn, rule, employee_id, ref_date):
 
 
 def _active_payout_rules(conn, branch_id, ref_date):
-    """Правила выплат, у которых уже наступила дата в месяце ref_date (действуют
-    с этого числа и по каждый следующий день, пока не будет погашена вся задолженность)
-    и которые действуют на филиал branch_id — либо правило без группы (действует везде),
-    либо branch_id входит в указанную у правила группу филиалов (branch_groups)."""
+    """Правила выплат, у которых сегодня — именно день выплаты (day_of_month), а не
+    «наступил и позже» — раньше правило оставалось показанным во всех следующих сменах
+    до полного погашения задолженности, из-за чего в списке накапливалось вообще всё
+    (включая долг за только что отработанную сегодняшнюю смену) — по просьбе пользователя
+    список теперь появляется только в сам день выплаты. Если day_of_month больше, чем дней
+    в текущем месяце (например 31 в месяце с 30 днями) — выплата считается в последний
+    день месяца. Действует на филиал branch_id — либо правило без группы (действует
+    везде), либо branch_id входит в указанную у правила группу филиалов (branch_groups)."""
     d = date.fromisoformat(ref_date) if isinstance(ref_date, str) else ref_date
-    rules = conn.execute('''
+    last_day = calendar.monthrange(d.year, d.month)[1]
+    all_rules = conn.execute('''
         SELECT * FROM salary_payout_rules
-        WHERE is_active=1 AND day_of_month<=?
+        WHERE is_active=1
           AND (branch_group_id IS NULL OR branch_group_id IN (
                 SELECT group_id FROM branch_group_members WHERE branch_id=?
               ))
         ORDER BY day_of_month, id
-    ''', (d.day, branch_id)).fetchall()
+    ''', (branch_id,)).fetchall()
+    rules = [r for r in all_rules if min(r['day_of_month'], last_day) == d.day]
     result = []
     for r in rules:
         month_start, month_end, label = _payout_period_bounds(r['period'], d)

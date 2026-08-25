@@ -472,7 +472,7 @@
         <select id="debt-payout-select" class="field-select" style="flex:1; font-size:12px;" onchange="onDebtPayoutSelect()">
           <option value="">— выбрать сотрудника к выплате —</option>
           {% for it in payout_eligible %}
-          <option value="{{ it.employee_id }}:{{ it.rule_id }}">{{ it.name }} — {{ it.rule_name }} ({{ it.month_label }}): {{ it.remaining|int }} ₽</option>
+          <option value="{{ it.employee_id }}:{{ it.rule_id }}">{{ it.name }} — {{ it.rule_name }} ({{ it.month_label }}): к выплате {{ it.due|int }} ₽</option>
           {% endfor %}
         </select>
       </div>
