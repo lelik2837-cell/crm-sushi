@@ -75,6 +75,14 @@ WAITTIME_SYNC_MAP_RAW = os.environ.get("GOULASH_WAITTIME_SYNC_MAP", "")
 DEPARTMENT_ID = os.environ.get("GOULASH_DEPARTMENT_ID", "")
 CRMPAPA_WEBHOOK_URL = os.environ.get("CRMPAPA_WEBHOOK_URL", "")
 
+# Отправку выручки на crmpapa.ru можно выключить отдельно, не трогая GOULASH_SYNC_MAP —
+# он остаётся нужен как список department_id для опроса Гуляша (используется и временем
+# ожидания, см. WAITTIME_SYNC_MAP_RAW выше), просто сам fetch_department_data() продолжает
+# выполняться (нужен для времени ожидания), а POST на revenue-webhook — нет. Отдельная
+# синхронизация выручки признана избыточной (см. plan.md) — сегодняшняя выручка и так
+# считается на crmpapa.ru из уже импортированных заказов, а не из этого вебхука.
+REVENUE_SYNC_ENABLED = os.environ.get("REVENUE_SYNC_ENABLED", "1") not in ("0", "false", "False")
+
 POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "120"))  # по умолчанию 2 минуты
 
 # Таймаут на все запросы к goulash (в секундах). Без него зависший/недоступный сайт мог
@@ -553,7 +561,8 @@ def run_once() -> None:
     for department_id, webhook_url in targets.items():
         try:
             payload = fetch_department_data(session, department_id)
-            send_to_crmpapa(payload, webhook_url)
+            if REVENUE_SYNC_ENABLED:
+                send_to_crmpapa(payload, webhook_url)
             waittime_webhook_url = waittime_targets.get(department_id)
             if waittime_webhook_url:
                 send_waittime_to_crmpapa(payload, waittime_webhook_url)
@@ -581,6 +590,9 @@ def main() -> None:
         return
 
     log.info("Запуск в режиме периодического опроса каждые %s сек.", POLL_INTERVAL_SECONDS)
+    if not REVENUE_SYNC_ENABLED:
+        log.info("Отправка выручки на crmpapa.ru отключена (REVENUE_SYNC_ENABLED=0) — "
+                 "опрос Гуляша по филиалам продолжается (нужен для времени ожидания).")
     while True:
         try:
             run_once()
