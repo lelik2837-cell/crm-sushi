@@ -11595,6 +11595,31 @@ def pnl_report():
         """, [date_from, date_to] + b_args).fetchall():
             simple_taxi_cash_by_p[r['period']] = r['amount']
 
+        # Расходы наличными в сменах — разбивка по категориям (для разворота
+        # строки «Расходы наличными в сменах»), тот же список категорий, что и
+        # у «Расход по выпискам» — можно переиспользовать _build_cat_rows.
+        simple_cash_exp_by_cat = defaultdict(lambda: defaultdict(float))
+        for r in conn.execute(f"""
+            SELECT {pe} AS period, e.category AS cat, COALESCE(SUM(e.amount_cash),0) AS amount
+            FROM expenses e JOIN shifts s ON s.id=e.shift_id
+            WHERE s.date BETWEEN ? AND ? {bf}
+            GROUP BY period, e.category
+            HAVING SUM(e.amount_cash) != 0
+        """, [date_from, date_to] + b_args).fetchall():
+            simple_cash_exp_by_cat[r['cat'] or ''][r['period']] += r['amount']
+
+        # ФОТ — разбивка по ролям (для разворота строки «ФОТ»), тоже всегда
+        # целиком, независимо от cfg['include_salary'] — как и simple_fot_by_p.
+        simple_fot_by_role = defaultdict(lambda: defaultdict(float))
+        for r in conn.execute(f"""
+            SELECT {pe} AS period, COALESCE(es.role_snapshot, 'other') AS role,
+                   COALESCE(SUM(es.total_amount), 0) AS amount
+            FROM employee_shifts es JOIN shifts s ON s.id=es.shift_id
+            WHERE s.date BETWEEN ? AND ? {bf}
+            GROUP BY period, role
+        """, [date_from, date_to] + b_args).fetchall():
+            simple_fot_by_role[r['role']][r['period']] += r['amount']
+
         # Плюсы в кассу (наличными) — прибавляются к наличному приходу вместе
         # с выручкой (см. «Наличные» в простом P&L ниже).
         simple_cash_plus_by_p = {}
@@ -11643,6 +11668,8 @@ def pnl_report():
     all_p.update(simple_cash_exp_by_p, simple_fot_by_p, simple_taxi_cash_by_p,
                  simple_bank_income_by_p, simple_cash_plus_by_p)
     for d in list(simple_bank_exp_by_cat.values()) + list(simple_bank_income_by_cat.values()):
+        all_p.update(d)
+    for d in list(simple_cash_exp_by_cat.values()) + list(simple_fot_by_role.values()):
         all_p.update(d)
     periods = sorted(all_p) if group_by == 'month' else ['total']
 
@@ -11778,6 +11805,20 @@ def pnl_report():
     s_exp_fot_row   = _row('ФОТ', simple_fot_by_p)
     s_exp_taxi_row  = _row('Такси наличными', simple_taxi_cash_by_p)
     s_cash_exp_rows = [s_exp_shift_row, s_exp_fot_row, s_exp_taxi_row]
+
+    # Разворот «Расходы наличными в сменах» — по категориям (тот же справочник
+    # категорий и та же группировка по родителю, что и у «Расход по выпискам»).
+    s_exp_shift_cat_rows, s_exp_shift_cat_parent_totals = _build_cat_rows(simple_cash_exp_by_cat)
+
+    # Разворот «ФОТ» — по должностям, в привычном порядке ролей, прочие роли — следом.
+    _fot_role_order = ['admin', 'cook', 'sushi', 'courier', 'packer', 'cleaner']
+    s_exp_fot_role_rows = []
+    for role in _fot_role_order:
+        if role in simple_fot_by_role:
+            s_exp_fot_role_rows.append(_row(ROLE_LABELS.get(role, role), dict(simple_fot_by_role[role])))
+    for role, by_p in simple_fot_by_role.items():
+        if role and role not in _fot_role_order:
+            s_exp_fot_role_rows.append(_row(ROLE_LABELS.get(role, role), dict(by_p)))
     s_cash_exp_total_by_p = {}
     for row in s_cash_exp_rows:
         for p in periods:
@@ -11819,6 +11860,9 @@ def pnl_report():
         s_income_cash_row=s_income_cash_row,
         s_cash_rev_row=s_cash_rev_row, s_cash_plus_row=s_cash_plus_row,
         s_cash_exp_rows=s_cash_exp_rows, s_cash_exp_total_row=s_cash_exp_total_row,
+        s_exp_shift_row=s_exp_shift_row, s_exp_fot_row=s_exp_fot_row, s_exp_taxi_row=s_exp_taxi_row,
+        s_exp_shift_cat_rows=s_exp_shift_cat_rows, s_exp_shift_cat_parent_totals=s_exp_shift_cat_parent_totals,
+        s_exp_fot_role_rows=s_exp_fot_role_rows,
         s_bank_income_row=s_bank_income_row, s_bank_income_rows=s_bank_income_rows,
         s_bank_exp_rows=s_bank_exp_rows, s_bank_exp_total_row=s_bank_exp_total_row,
         s_bank_exp_parent_totals=s_bank_exp_parent_totals,

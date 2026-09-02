@@ -305,14 +305,59 @@
                 <i class="bi bi-arrow-down-circle me-1"></i>РАСХОД НАЛИЧНЫМИ (В СМЕНАХ)
             </td>
         </tr>
-        {% for row in s_cash_exp_rows %}
-        <tr>
-            <td class="fw-semibold">{{ row.label }}</td>
+        <tr style="cursor:pointer" onclick="toggleSimpleCashShiftExp()">
+            <td class="fw-semibold">
+                <i class="bi bi-chevron-right" id="simpleCashShiftExpChevron" style="transition:transform .2s"></i>
+                {{ s_exp_shift_row.label }}
+            </td>
             {% for p in periods %}
-            {{ cell(row.amounts.get(p,0)) }}{{ pctcell(row.amounts.get(p,0), s_total_income_row.amounts.get(p,0)) }}
+            {{ cell(s_exp_shift_row.amounts.get(p,0)) }}{{ pctcell(s_exp_shift_row.amounts.get(p,0), s_total_income_row.amounts.get(p,0)) }}
+            {% endfor %}
+        </tr>
+        {% for row in s_exp_shift_cat_rows %}
+        {% if row.is_new_parent %}
+        {% set pt = s_exp_shift_cat_parent_totals[row.parent_group_idx] %}
+        <tr class="simple-cash-shift-exp-detail {{ 'pnl-bexp-parent-a' if row.parent_group_idx % 2 == 0 else 'pnl-bexp-parent-b' }}" style="display:none">
+            <td class="ps-4 small fw-semibold text-muted">{{ row.parent_label }}</td>
+            {% for p in periods %}
+            {{ detail_cell(pt.amounts.get(p,0), s_total_income_row.amounts.get(p,0)) }}
+            {% endfor %}
+        </tr>
+        {% endif %}
+        <tr class="simple-cash-shift-exp-detail {{ 'pnl-bexp-child-a' if loop.index0 % 2 == 0 else 'pnl-bexp-child-b' }}" style="display:none">
+            <td class="ps-4 small text-muted">
+                <i class="bi bi-arrow-return-right me-1" style="font-size:.7rem"></i>{{ row.label }}
+            </td>
+            {% for p in periods %}
+            {{ detail_cell(row.amounts.get(p,0), s_total_income_row.amounts.get(p,0)) }}
             {% endfor %}
         </tr>
         {% endfor %}
+        <tr style="cursor:pointer" onclick="toggleSimpleFot()">
+            <td class="fw-semibold">
+                <i class="bi bi-chevron-right" id="simpleFotChevron" style="transition:transform .2s"></i>
+                {{ s_exp_fot_row.label }}
+            </td>
+            {% for p in periods %}
+            {{ cell(s_exp_fot_row.amounts.get(p,0)) }}{{ pctcell(s_exp_fot_row.amounts.get(p,0), s_total_income_row.amounts.get(p,0)) }}
+            {% endfor %}
+        </tr>
+        {% for row in s_exp_fot_role_rows %}
+        <tr class="simple-fot-detail {{ 'pnl-bexp-child-a' if loop.index0 % 2 == 0 else 'pnl-bexp-child-b' }}" style="display:none">
+            <td class="ps-4 small text-muted">
+                <i class="bi bi-arrow-return-right me-1" style="font-size:.7rem"></i>{{ row.label }}
+            </td>
+            {% for p in periods %}
+            {{ detail_cell(row.amounts.get(p,0), s_total_income_row.amounts.get(p,0)) }}
+            {% endfor %}
+        </tr>
+        {% endfor %}
+        <tr>
+            <td class="fw-semibold">{{ s_exp_taxi_row.label }}</td>
+            {% for p in periods %}
+            {{ cell(s_exp_taxi_row.amounts.get(p,0)) }}{{ pctcell(s_exp_taxi_row.amounts.get(p,0), s_total_income_row.amounts.get(p,0)) }}
+            {% endfor %}
+        </tr>
         <tr class="pnl-row-total" style="--pnl-row-bg:{{ cfg.colors.expense_total }}">
             <td class="fw-bold text-danger">{{ s_cash_exp_total_row.label }}</td>
             {% for p in periods %}
@@ -545,6 +590,24 @@ function toggleSimpleBankInc() {
 function toggleSimpleCashInc() {
     var rows = document.querySelectorAll('.simple-cash-inc-detail');
     var chv  = document.getElementById('simpleCashIncChevron');
+    var hidden = rows.length > 0 && rows[0].style.display === 'none';
+    rows.forEach(function(r) { r.style.display = hidden ? '' : 'none'; });
+    if (chv) chv.style.transform = hidden ? 'rotate(90deg)' : '';
+}
+
+// ── Разворот «Расходы наличными в сменах» по категориям ─────────────────────
+function toggleSimpleCashShiftExp() {
+    var rows = document.querySelectorAll('.simple-cash-shift-exp-detail');
+    var chv  = document.getElementById('simpleCashShiftExpChevron');
+    var hidden = rows.length > 0 && rows[0].style.display === 'none';
+    rows.forEach(function(r) { r.style.display = hidden ? '' : 'none'; });
+    if (chv) chv.style.transform = hidden ? 'rotate(90deg)' : '';
+}
+
+// ── Разворот «ФОТ» по должностям ─────────────────────────────────────────────
+function toggleSimpleFot() {
+    var rows = document.querySelectorAll('.simple-fot-detail');
+    var chv  = document.getElementById('simpleFotChevron');
     var hidden = rows.length > 0 && rows[0].style.display === 'none';
     rows.forEach(function(r) { r.style.display = hidden ? '' : 'none'; });
     if (chv) chv.style.transform = hidden ? 'rotate(90deg)' : '';
