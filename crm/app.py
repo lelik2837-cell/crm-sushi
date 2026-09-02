@@ -11362,11 +11362,17 @@ def _pnl_load_settings(conn):
 def pnl_report():
     from collections import defaultdict
 
-    today       = date.today().isoformat()
-    month_start = date.today().replace(day=1).isoformat()
+    today = date.today()
+    # По умолчанию — последние 3 месяца, включая текущий
+    default_start_m = today.month - 2
+    default_start_y = today.year
+    if default_start_m <= 0:
+        default_start_m += 12
+        default_start_y -= 1
+    default_from = date(default_start_y, default_start_m, 1).isoformat()
 
-    date_from  = request.args.get('date_from', month_start)
-    date_to    = request.args.get('date_to', today)
+    date_from  = request.args.get('date_from', default_from)
+    date_to    = request.args.get('date_to', today.isoformat())
     branch_ids = [b for b in request.args.getlist('branch_ids') if b.isdigit()]
     branch_ids = get_effective_branch_ids('pnl_report', branch_ids) or []
     group_by   = request.args.get('group_by', 'month')

@@ -22,13 +22,6 @@
 </td>
 {% endmacro %}
 
-{% macro detail_total_cell(total, base_total) %}
-<td class="text-end small text-muted table-secondary">{{ '{:,.0f}'.format(total) }} ₽</td>
-<td class="text-end small text-muted table-secondary">
-    {% if base_total and base_total > 0 and total %}{{ (total/base_total*100)|round(1) }}%{% else %}—{% endif %}
-</td>
-{% endmacro %}
-
 {% block content %}
 <style>
 .pnl-table td, .pnl-table th { border-right: 1px solid #dee2e6; }
@@ -191,7 +184,7 @@
 </div>
 
 {# ═══ ПРОСТОЙ P&L: ТАБЛИЦА ═══ #}
-{% set sn_cols = 1 + periods|length * 2 + (2 if periods|length > 1 else 0) %}
+{% set sn_cols = 1 + periods|length * 2 %}
 <div class="card">
     <div class="card-header bg-light fw-semibold d-flex justify-content-between">
         <span><i class="bi bi-table me-2"></i>Простой P&amp;L</span>
@@ -206,10 +199,6 @@
                 <th class="text-end" style="min-width:95px">{{ period_labels[p] }}</th>
                 <th class="text-end small" style="min-width:55px">%</th>
                 {% endfor %}
-                {% if periods|length > 1 %}
-                <th class="text-end table-secondary fw-bold" style="min-width:95px">Итого</th>
-                <th class="text-end table-secondary small" style="min-width:55px">%</th>
-                {% endif %}
             </tr>
         </thead>
         <tbody>
@@ -229,27 +218,18 @@
             {% for p in periods %}
             {{ cell(s_income_cash_row.amounts.get(p,0)) }}{{ pctcell(s_income_cash_row.amounts.get(p,0), s_total_income_row.amounts.get(p,0)) }}
             {% endfor %}
-            {% if periods|length > 1 %}
-            {{ cell(s_income_cash_row.total) }}{{ pctcell(s_income_cash_row.total, s_total_income_row.total) }}
-            {% endif %}
         </tr>
         <tr class="simple-cash-inc-detail" style="display:none;background:#fafafa">
             <td class="ps-4 small text-muted"><i class="bi bi-arrow-return-right me-1" style="font-size:.7rem"></i>{{ s_cash_rev_row.label }}</td>
             {% for p in periods %}
             {{ detail_cell(s_cash_rev_row.amounts.get(p,0), s_total_income_row.amounts.get(p,0)) }}
             {% endfor %}
-            {% if periods|length > 1 %}
-            {{ detail_total_cell(s_cash_rev_row.total, s_total_income_row.total) }}
-            {% endif %}
         </tr>
         <tr class="simple-cash-inc-detail" style="display:none;background:#fafafa">
             <td class="ps-4 small text-muted"><i class="bi bi-arrow-return-right me-1" style="font-size:.7rem"></i>{{ s_cash_plus_row.label }}</td>
             {% for p in periods %}
             {{ detail_cell(s_cash_plus_row.amounts.get(p,0), s_total_income_row.amounts.get(p,0)) }}
             {% endfor %}
-            {% if periods|length > 1 %}
-            {{ detail_total_cell(s_cash_plus_row.total, s_total_income_row.total) }}
-            {% endif %}
         </tr>
         <tr style="cursor:pointer" onclick="toggleSimpleBankInc()">
             <td class="fw-semibold">
@@ -259,9 +239,6 @@
             {% for p in periods %}
             {{ cell(s_bank_income_row.amounts.get(p,0)) }}{{ pctcell(s_bank_income_row.amounts.get(p,0), s_total_income_row.amounts.get(p,0)) }}
             {% endfor %}
-            {% if periods|length > 1 %}
-            {{ cell(s_bank_income_row.total) }}{{ pctcell(s_bank_income_row.total, s_total_income_row.total) }}
-            {% endif %}
         </tr>
         {% for row in s_bank_income_rows %}
         {% if row.is_new_parent %}
@@ -276,9 +253,6 @@
             {% for p in periods %}
             {{ detail_cell(row.amounts.get(p,0), s_total_income_row.amounts.get(p,0)) }}
             {% endfor %}
-            {% if periods|length > 1 %}
-            {{ detail_total_cell(row.total, s_total_income_row.total) }}
-            {% endif %}
         </tr>
         {% endfor %}
         <tr style="background:#c3e6cb">
@@ -287,10 +261,6 @@
             <td class="text-end fw-bold text-success">{{ '{:,.0f}'.format(s_total_income_row.amounts.get(p,0)) }} ₽</td>
             {{ pctcell(s_total_income_row.amounts.get(p,0), s_total_income_row.amounts.get(p,0)) }}
             {% endfor %}
-            {% if periods|length > 1 %}
-            <td class="text-end fw-bold text-success table-secondary">{{ '{:,.0f}'.format(s_total_income_row.total) }} ₽</td>
-            {{ pctcell(s_total_income_row.total, s_total_income_row.total) }}
-            {% endif %}
         </tr>
 
         {# ── РАСХОД НАЛИЧНЫМИ (в сменах) ── #}
@@ -306,9 +276,6 @@
             {% for p in periods %}
             {{ cell(row.amounts.get(p,0)) }}{{ pctcell(row.amounts.get(p,0), s_total_income_row.amounts.get(p,0)) }}
             {% endfor %}
-            {% if periods|length > 1 %}
-            {{ cell(row.total) }}{{ pctcell(row.total, s_total_income_row.total) }}
-            {% endif %}
         </tr>
         {% endfor %}
         <tr style="background:#f5c6cb">
@@ -317,10 +284,6 @@
             <td class="text-end fw-bold text-danger">{{ '{:,.0f}'.format(s_cash_exp_total_row.amounts.get(p,0)) }} ₽</td>
             {{ pctcell(s_cash_exp_total_row.amounts.get(p,0), s_total_income_row.amounts.get(p,0)) }}
             {% endfor %}
-            {% if periods|length > 1 %}
-            <td class="text-end fw-bold text-danger table-secondary">{{ '{:,.0f}'.format(s_cash_exp_total_row.total) }} ₽</td>
-            {{ pctcell(s_cash_exp_total_row.total, s_total_income_row.total) }}
-            {% endif %}
         </tr>
 
         {# ── РАСХОД ПО ВЫПИСКАМ (разворачиваемый по категориям) ── #}
@@ -339,10 +302,6 @@
             <td class="text-end fw-bold text-danger">{{ '{:,.0f}'.format(s_bank_exp_total_row.amounts.get(p,0)) }} ₽</td>
             {{ pctcell(s_bank_exp_total_row.amounts.get(p,0), s_total_income_row.amounts.get(p,0)) }}
             {% endfor %}
-            {% if periods|length > 1 %}
-            <td class="text-end fw-bold text-danger table-secondary">{{ '{:,.0f}'.format(s_bank_exp_total_row.total) }} ₽</td>
-            {{ pctcell(s_bank_exp_total_row.total, s_total_income_row.total) }}
-            {% endif %}
         </tr>
         {% for row in s_bank_exp_rows %}
         {% if row.is_new_parent %}
@@ -357,9 +316,6 @@
             {% for p in periods %}
             {{ detail_cell(pt.amounts.get(p,0), s_total_income_row.amounts.get(p,0)) }}
             {% endfor %}
-            {% if periods|length > 1 %}
-            {{ detail_total_cell(pt.total, s_total_income_row.total) }}
-            {% endif %}
         </tr>
         {% endif %}
         <tr class="simple-bank-exp-detail" style="display:none" data-parent-idx="{{ row.parent_group_idx }}">
@@ -369,9 +325,6 @@
             {% for p in periods %}
             {{ detail_cell(row.amounts.get(p,0), s_total_income_row.amounts.get(p,0)) }}
             {% endfor %}
-            {% if periods|length > 1 %}
-            {{ detail_total_cell(row.total, s_total_income_row.total) }}
-            {% endif %}
         </tr>
         {% endfor %}
 
@@ -382,10 +335,6 @@
             <td class="text-end fw-bold text-danger">{{ '{:,.0f}'.format(s_total_expense_row.amounts.get(p,0)) }} ₽</td>
             {{ pctcell(s_total_expense_row.amounts.get(p,0), s_total_income_row.amounts.get(p,0)) }}
             {% endfor %}
-            {% if periods|length > 1 %}
-            <td class="text-end fw-bold text-danger table-secondary">{{ '{:,.0f}'.format(s_total_expense_row.total) }} ₽</td>
-            {{ pctcell(s_total_expense_row.total, s_total_income_row.total) }}
-            {% endif %}
         </tr>
         <tr style="background:#cfe2ff">
             <td class="fw-bold fs-6"><i class="bi bi-trophy me-1"></i>{{ s_profit_row.label }}</td>
@@ -394,12 +343,6 @@
             <td class="text-end fw-bold {% if pr>=0 %}text-primary{% else %}text-danger{% endif %}">{{ '{:,.0f}'.format(pr) }} ₽</td>
             {{ pctcell(pr, s_total_income_row.amounts.get(p,0)) }}
             {% endfor %}
-            {% if periods|length > 1 %}
-            <td class="text-end fw-bold table-secondary {% if s_profit_grand>=0 %}text-primary{% else %}text-danger{% endif %}">
-                {{ '{:,.0f}'.format(s_profit_grand) }} ₽
-            </td>
-            {{ pctcell(s_profit_grand, s_total_income_row.total) }}
-            {% endif %}
         </tr>
 
         </tbody>
