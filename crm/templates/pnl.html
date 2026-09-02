@@ -27,12 +27,12 @@
 .pnl-table td, .pnl-table th { border-right: 1px solid #dee2e6; }
 .pnl-table td:last-child, .pnl-table th:last-child { border-right: none; }
 .pnl-table td.text-end, .pnl-table th.text-end { text-align: center !important; }
-.pnl-bexp-parent-a > td { background-color: #e8eaec !important; }
-.pnl-bexp-parent-b > td { background-color: #dadde0 !important; }
-.pnl-bexp-child-a  > td { background-color: #ffffff !important; }
-.pnl-bexp-child-b  > td { background-color: #f1f3f5 !important; }
+.pnl-bexp-parent-a > td { background-color: {{ cfg.colors.exp_parent_a }} !important; }
+.pnl-bexp-parent-b > td { background-color: {{ cfg.colors.exp_parent_b }} !important; }
+.pnl-bexp-child-a  > td { background-color: {{ cfg.colors.exp_child_a }} !important; }
+.pnl-bexp-child-b  > td { background-color: {{ cfg.colors.exp_child_b }} !important; }
 .pnl-row-total > td { background-color: var(--pnl-row-bg) !important; }
-.pnl-table tbody tr:hover > td, .pnl-table tbody tr:hover > th { background-color: #dde1e5 !important; }
+.pnl-table tbody tr:hover > td, .pnl-table tbody tr:hover > th { background-color: {{ cfg.colors.hover }} !important; }
 </style>
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="fw-bold mb-0"><i class="bi bi-calculator me-2"></i>P&amp;L Отчёт</h4>
@@ -113,6 +113,11 @@
                     <i class="bi bi-search me-1"></i>Применить
                 </button>
             </div>
+            <div class="col-sm-auto ms-sm-auto">
+                <button type="button" class="btn btn-outline-secondary btn-sm px-3" data-bs-toggle="modal" data-bs-target="#pnlSettingsModal">
+                    <i class="bi bi-gear me-1"></i>Настройки
+                </button>
+            </div>
         </form>
     </div>
 </div>
@@ -141,46 +146,73 @@
     </div>
 </div>
 
-{# ═══ ПРОСТОЙ P&L: НАСТРОЙКИ ═══ #}
-<div class="card mb-3">
-    <div class="card-header bg-light fw-semibold d-flex justify-content-between align-items-center" style="cursor:pointer"
-         data-bs-toggle="collapse" data-bs-target="#pnlSimpleSettings">
-        <span><i class="bi bi-gear me-2"></i>Не учитывать категорию из выписки</span>
-        <i class="bi bi-chevron-down small"></i>
-    </div>
-    <div class="collapse" id="pnlSimpleSettings">
-        <div class="card-body">
+{# ═══ ПРОСТОЙ P&L: НАСТРОЙКИ (модалка) ═══ #}
+{% set _pnl_color_fields = [
+    ('hover', 'Подсветка строки при наведении'),
+    ('exp_parent_a', 'Родительская категория расхода (оттенок 1)'),
+    ('exp_parent_b', 'Родительская категория расхода (оттенок 2)'),
+    ('exp_child_a', 'Категория расхода (оттенок 1)'),
+    ('exp_child_b', 'Категория расхода (оттенок 2)'),
+    ('income_total', 'ИТОГО ПРИХОД'),
+    ('expense_total', 'ИТОГО РАСХОД'),
+    ('profit', 'ПРИБЫЛЬ'),
+] %}
+<div class="modal fade" id="pnlSettingsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
             <form method="POST" action="{{ url_for('pnl_settings_simple_save') }}">
-                <input type="hidden" name="date_from" value="{{ date_from }}">
-                <input type="hidden" name="date_to"   value="{{ date_to }}">
-                <input type="hidden" name="group_by"  value="{{ group_by }}">
-                {% for bid in branch_ids %}<input type="hidden" name="branch_ids" value="{{ bid }}">{% endfor %}
-                <div class="text-muted small mb-2">
-                    Выбранные категории не будут считаться ни в приходе, ни в расходе по выпискам
-                    (например «Перераспределение средств» — внутренние переводы между своими счетами).
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-gear me-2"></i>Настройки P&amp;L</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
                 </div>
-                <select class="form-select form-select-sm mb-2" id="exclCatPicker" style="max-width:320px">
-                    <option value="">+ Добавить категорию…</option>
-                    {% for cat in all_cats %}
-                    <option value="{{ cat.code }}" data-label="{{ cat.label }}"
-                            {% if cat.code in cfg.simple_pnl_excluded_cats %}hidden{% endif %}>{{ cat.label }}</option>
-                    {% endfor %}
-                </select>
-                <div class="d-flex flex-wrap gap-2 mb-1" id="exclCatChips">
-                    {% for cat in all_cats %}
-                    {% if cat.code in cfg.simple_pnl_excluded_cats %}
-                    <span class="badge bg-secondary d-inline-flex align-items-center gap-1 py-2 px-2" data-code="{{ cat.code }}">
-                        {{ cat.label }}
-                        <input type="hidden" name="simple_excluded_cats" value="{{ cat.code }}">
-                        <i class="bi bi-x-lg excl-chip-remove" style="cursor:pointer;font-size:.7rem" role="button" title="Убрать"></i>
-                    </span>
-                    {% endif %}
-                    {% endfor %}
+                <div class="modal-body">
+                    <input type="hidden" name="date_from" value="{{ date_from }}">
+                    <input type="hidden" name="date_to"   value="{{ date_to }}">
+                    <input type="hidden" name="group_by"  value="{{ group_by }}">
+                    {% for bid in branch_ids %}<input type="hidden" name="branch_ids" value="{{ bid }}">{% endfor %}
+
+                    <h6 class="fw-semibold">Не учитывать категорию из выписки</h6>
+                    <div class="text-muted small mb-2">
+                        Выбранные категории не будут считаться ни в приходе, ни в расходе по выпискам
+                        (например «Перераспределение средств» — внутренние переводы между своими счетами).
+                    </div>
+                    <select class="form-select form-select-sm mb-2" id="exclCatPicker" style="max-width:320px">
+                        <option value="">+ Добавить категорию…</option>
+                        {% for cat in all_cats %}
+                        <option value="{{ cat.code }}" data-label="{{ cat.label }}"
+                                {% if cat.code in cfg.simple_pnl_excluded_cats %}hidden{% endif %}>{{ cat.label }}</option>
+                        {% endfor %}
+                    </select>
+                    <div class="d-flex flex-wrap gap-2 mb-1" id="exclCatChips">
+                        {% for cat in all_cats %}
+                        {% if cat.code in cfg.simple_pnl_excluded_cats %}
+                        <span class="badge bg-secondary d-inline-flex align-items-center gap-1 py-2 px-2" data-code="{{ cat.code }}">
+                            {{ cat.label }}
+                            <input type="hidden" name="simple_excluded_cats" value="{{ cat.code }}">
+                            <i class="bi bi-x-lg excl-chip-remove" style="cursor:pointer;font-size:.7rem" role="button" title="Убрать"></i>
+                        </span>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+                    <div class="text-muted small mb-3" id="exclCatEmpty" {% if cfg.simple_pnl_excluded_cats %}style="display:none"{% endif %}>Категории не исключены</div>
+
+                    <hr>
+                    <h6 class="fw-semibold">Цвета строк таблицы</h6>
+                    <div class="row g-3">
+                        {% for key, label in _pnl_color_fields %}
+                        <div class="col-6 col-md-3">
+                            <label class="form-label small d-block mb-1">{{ label }}</label>
+                            <input type="color" class="form-control form-control-color w-100" name="color_{{ key }}" value="{{ cfg.colors[key] }}">
+                        </div>
+                        {% endfor %}
+                    </div>
                 </div>
-                <div class="text-muted small mb-3" id="exclCatEmpty" {% if cfg.simple_pnl_excluded_cats %}style="display:none"{% endif %}>Категории не исключены</div>
-                <button type="submit" class="btn btn-primary btn-sm">
-                    <i class="bi bi-floppy me-1"></i>Сохранить
-                </button>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        <i class="bi bi-floppy me-1"></i>Сохранить
+                    </button>
+                </div>
             </form>
         </div>
     </div>
@@ -258,7 +290,7 @@
             {% endfor %}
         </tr>
         {% endfor %}
-        <tr class="pnl-row-total" style="--pnl-row-bg:#c3e6cb">
+        <tr class="pnl-row-total" style="--pnl-row-bg:{{ cfg.colors.income_total }}">
             <td class="fw-bold text-success">{{ s_total_income_row.label }}</td>
             {% for p in periods %}
             <td class="text-end fw-bold text-success">{{ '{:,.0f}'.format(s_total_income_row.amounts.get(p,0)) }} ₽</td>
@@ -281,7 +313,7 @@
             {% endfor %}
         </tr>
         {% endfor %}
-        <tr class="pnl-row-total" style="--pnl-row-bg:#f5c6cb">
+        <tr class="pnl-row-total" style="--pnl-row-bg:{{ cfg.colors.expense_total }}">
             <td class="fw-bold text-danger">{{ s_cash_exp_total_row.label }}</td>
             {% for p in periods %}
             <td class="text-end fw-bold text-danger">{{ '{:,.0f}'.format(s_cash_exp_total_row.amounts.get(p,0)) }} ₽</td>
@@ -333,14 +365,14 @@
         {% endfor %}
 
         {# ── ИТОГО РАСХОД / ПРИБЫЛЬ ── #}
-        <tr class="pnl-row-total" style="--pnl-row-bg:#f5c6cb">
+        <tr class="pnl-row-total" style="--pnl-row-bg:{{ cfg.colors.expense_total }}">
             <td class="fw-bold text-danger">{{ s_total_expense_row.label }}</td>
             {% for p in periods %}
             <td class="text-end fw-bold text-danger">{{ '{:,.0f}'.format(s_total_expense_row.amounts.get(p,0)) }} ₽</td>
             {{ pctcell(s_total_expense_row.amounts.get(p,0), s_total_income_row.amounts.get(p,0)) }}
             {% endfor %}
         </tr>
-        <tr class="pnl-row-total" style="--pnl-row-bg:#cfe2ff">
+        <tr class="pnl-row-total" style="--pnl-row-bg:{{ cfg.colors.profit }}">
             <td class="fw-bold fs-6"><i class="bi bi-trophy me-1"></i>{{ s_profit_row.label }}</td>
             {% for p in periods %}
             {% set pr = s_profit_row.amounts.get(p,0) %}

@@ -11325,6 +11325,21 @@ def _pnl_period_label(p):
 
 
 
+# Простой P&L: цвета строк таблицы по умолчанию, настраиваются в модалке «Настройки»
+# на странице отчёта и хранятся под ключом 'simple_pnl_colors' (JSON) в pnl_settings.
+PNL_COLOR_DEFAULTS = {
+    'hover':         '#fff3cd',  # подсветка строки при наведении — светло-жёлтый
+    'exp_parent_a':  '#e8eaec',  # родительская категория расхода, чередование 1
+    'exp_parent_b':  '#dadde0',  # родительская категория расхода, чередование 2
+    'exp_child_a':   '#ffffff',  # категория расхода, чередование 1
+    'exp_child_b':   '#f1f3f5',  # категория расхода, чередование 2
+    'income_total':  '#c3e6cb',  # ИТОГО ПРИХОД
+    'expense_total': '#f5c6cb',  # Итого расходы наличными / ИТОГО РАСХОД
+    'profit':        '#cfe2ff',  # ПРИБЫЛЬ
+}
+_HEX_COLOR_RE = re.compile(r'^#[0-9a-fA-F]{6}$')
+
+
 def _pnl_load_settings(conn):
     rows = conn.execute('SELECT key, value FROM pnl_settings').fetchall()
     cfg  = {r['key']: r['value'] for r in rows}
@@ -11343,6 +11358,15 @@ def _pnl_load_settings(conn):
     ).fetchall()]
 
     bi = _lst('bank_income_ctr_cats',  None)
+
+    saved_colors = _lst('simple_pnl_colors', {})
+    colors = dict(PNL_COLOR_DEFAULTS)
+    if isinstance(saved_colors, dict):
+        for k in PNL_COLOR_DEFAULTS:
+            v = saved_colors.get(k)
+            if v and _HEX_COLOR_RE.match(v):
+                colors[k] = v
+
     return {
         # Расход теперь один список категорий: сумма и наличных (из смен),
         # и банковских расходов по этой же категории — расходы в одном месте.
@@ -11353,6 +11377,7 @@ def _pnl_load_settings(conn):
         # Простой P&L: категории выписки, которые не считаются ни в приходе, ни в расходе
         # (например «Перераспределение средств» — внутренние переводы между счетами).
         'simple_pnl_excluded_cats': _lst('simple_pnl_excluded_cats', []),
+        'colors': colors,
     }
 
 
@@ -11807,10 +11832,18 @@ def pnl_report():
 @menu_permission_required('pnl_report')
 def pnl_settings_simple_save():
     excluded = request.form.getlist('simple_excluded_cats')
+    colors = {}
+    for key, default in PNL_COLOR_DEFAULTS.items():
+        val = request.form.get(f'color_{key}', '')
+        colors[key] = val if _HEX_COLOR_RE.match(val) else default
     with get_db() as conn:
         conn.execute(
             'INSERT OR REPLACE INTO pnl_settings (key, value) VALUES (?, ?)',
             ('simple_pnl_excluded_cats', _json.dumps(excluded))
+        )
+        conn.execute(
+            'INSERT OR REPLACE INTO pnl_settings (key, value) VALUES (?, ?)',
+            ('simple_pnl_colors', _json.dumps(colors))
         )
         conn.commit()
     flash('Настройки простого P&L сохранены', 'success')
