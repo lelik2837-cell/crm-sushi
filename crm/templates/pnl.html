@@ -29,7 +29,8 @@
 .pnl-table td.text-end, .pnl-table th.text-end { text-align: center !important; }
 .simple-bank-exp-detail:nth-of-type(odd)  { background: #ffffff; }
 .simple-bank-exp-detail:nth-of-type(even) { background: #f1f3f5; }
-.pnl-table tbody tr:hover { background: #dde1e5 !important; }
+.pnl-row-total > td { background-color: var(--pnl-row-bg) !important; }
+.pnl-table tbody tr:hover > td, .pnl-table tbody tr:hover > th { background-color: #dde1e5 !important; }
 </style>
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="fw-bold mb-0"><i class="bi bi-calculator me-2"></i>P&amp;L Отчёт</h4>
@@ -255,7 +256,7 @@
             {% endfor %}
         </tr>
         {% endfor %}
-        <tr style="background:#c3e6cb">
+        <tr class="pnl-row-total" style="--pnl-row-bg:#c3e6cb">
             <td class="fw-bold text-success">{{ s_total_income_row.label }}</td>
             {% for p in periods %}
             <td class="text-end fw-bold text-success">{{ '{:,.0f}'.format(s_total_income_row.amounts.get(p,0)) }} ₽</td>
@@ -278,7 +279,7 @@
             {% endfor %}
         </tr>
         {% endfor %}
-        <tr style="background:#f5c6cb">
+        <tr class="pnl-row-total" style="--pnl-row-bg:#f5c6cb">
             <td class="fw-bold text-danger">{{ s_cash_exp_total_row.label }}</td>
             {% for p in periods %}
             <td class="text-end fw-bold text-danger">{{ '{:,.0f}'.format(s_cash_exp_total_row.amounts.get(p,0)) }} ₽</td>
@@ -329,14 +330,14 @@
         {% endfor %}
 
         {# ── ИТОГО РАСХОД / ПРИБЫЛЬ ── #}
-        <tr style="background:#f5c6cb">
+        <tr class="pnl-row-total" style="--pnl-row-bg:#f5c6cb">
             <td class="fw-bold text-danger">{{ s_total_expense_row.label }}</td>
             {% for p in periods %}
             <td class="text-end fw-bold text-danger">{{ '{:,.0f}'.format(s_total_expense_row.amounts.get(p,0)) }} ₽</td>
             {{ pctcell(s_total_expense_row.amounts.get(p,0), s_total_income_row.amounts.get(p,0)) }}
             {% endfor %}
         </tr>
-        <tr style="background:#cfe2ff">
+        <tr class="pnl-row-total" style="--pnl-row-bg:#cfe2ff">
             <td class="fw-bold fs-6"><i class="bi bi-trophy me-1"></i>{{ s_profit_row.label }}</td>
             {% for p in periods %}
             {% set pr = s_profit_row.amounts.get(p,0) %}
