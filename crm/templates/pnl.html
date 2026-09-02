@@ -27,8 +27,10 @@
 .pnl-table td, .pnl-table th { border-right: 1px solid #dee2e6; }
 .pnl-table td:last-child, .pnl-table th:last-child { border-right: none; }
 .pnl-table td.text-end, .pnl-table th.text-end { text-align: center !important; }
-.simple-bank-exp-detail:nth-of-type(odd)  { background: #ffffff; }
-.simple-bank-exp-detail:nth-of-type(even) { background: #f1f3f5; }
+.pnl-bexp-parent-a > td { background-color: #e8eaec !important; }
+.pnl-bexp-parent-b > td { background-color: #dadde0 !important; }
+.pnl-bexp-child-a  > td { background-color: #ffffff !important; }
+.pnl-bexp-child-b  > td { background-color: #f1f3f5 !important; }
 .pnl-row-total > td { background-color: var(--pnl-row-bg) !important; }
 .pnl-table tbody tr:hover > td, .pnl-table tbody tr:hover > th { background-color: #dde1e5 !important; }
 </style>
@@ -307,8 +309,8 @@
         {% for row in s_bank_exp_rows %}
         {% if row.is_new_parent %}
         {% set pt = s_bank_exp_parent_totals[row.parent_group_idx] %}
-        <tr class="simple-bank-exp-detail" style="display:none;cursor:pointer"
-            onclick="toggleBankExpParent({{ row.parent_group_idx }})">
+        <tr class="simple-bank-exp-detail {{ 'pnl-bexp-parent-a' if row.parent_group_idx % 2 == 0 else 'pnl-bexp-parent-b' }}"
+            style="display:none;cursor:pointer" onclick="toggleBankExpParent({{ row.parent_group_idx }})">
             <td class="ps-3 small fw-semibold text-muted">
                 <i class="bi bi-chevron-right" id="expParentChevron{{ row.parent_group_idx }}"
                    style="transition:transform .2s;transform:rotate(90deg)"></i>
@@ -319,7 +321,8 @@
             {% endfor %}
         </tr>
         {% endif %}
-        <tr class="simple-bank-exp-detail" style="display:none" data-parent-idx="{{ row.parent_group_idx }}">
+        <tr class="simple-bank-exp-detail {{ 'pnl-bexp-child-a' if loop.index0 % 2 == 0 else 'pnl-bexp-child-b' }}"
+            style="display:none" data-parent-idx="{{ row.parent_group_idx }}">
             <td class="ps-4 small text-muted">
                 <i class="bi bi-arrow-return-right me-1" style="font-size:.7rem"></i>{{ row.label }}
             </td>
