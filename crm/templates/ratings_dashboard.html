@@ -79,12 +79,6 @@ var monthDate = new Date();
 var ratYear   = new Date().getFullYear();
 window.ratBranchIds = [];
 window.ratOnBranchChange = function () { loadRatings(); };
-{% if can_pick_other_branches('ratings_dashboard') %}
-var RAT_BRANCH_GROUPS = {{ branch_groups | tojson }};
-dashBpInitGroup('rat', RAT_BRANCH_GROUPS, function (g) {
-    return g.abbr === 'НК' || g.name.indexOf('Новокузнецк') !== -1 || g.name === 'НК';
-});
-{% endif %}
 
 var MONTHS_GEN = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
 var MONTHS_NOM = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
