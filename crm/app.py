@@ -16336,10 +16336,6 @@ def guest_reviews_report():
         branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
         branch_groups = get_branch_groups(conn)
 
-        bounds = conn.execute('SELECT MIN(review_at), MAX(review_at) FROM guest_reviews').fetchone()
-        data_min = (bounds[0] or '')[:10]
-        data_max = (bounds[1] or '')[:10]
-
         today = date.today().isoformat()
         date_from = request.args.get('date_from', today)
         date_to = request.args.get('date_to', today)
@@ -16373,8 +16369,7 @@ def guest_reviews_report():
 
     return render_template('guest_reviews_report.html',
         rows=rows, grouped_rows=grouped_rows, branches=branches, branch_groups=branch_groups,
-        branch_flt=branch_flt, date_from=date_from, date_to=date_to, data_min=data_min, data_max=data_max,
-        show_positive=show_positive)
+        branch_flt=branch_flt, date_from=date_from, date_to=date_to, show_positive=show_positive)
 
 
 # ─── ВЫДАЧА ФОРМЫ (склад + выдача сотрудникам, учёт по группе филиалов) ────────────
