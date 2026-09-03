@@ -3647,8 +3647,8 @@ def _orders_revenue_today(conn, bids):
     (delivery_at) сегодня — не с приёмом сегодня: предзаказ, принятый заранее с
     доставкой на другой день, в сегодняшнюю выручку не входит (см. блок
     «Предзаказы», /api/preorders-today), а старый заказ, принятый несколько дней
-    назад с доставкой сегодня — входит (тот же принцип, что и «Текущая смена» в
-    /orders-report, см. п.192). Возвращает done/in_progress/deferred (итого по всем
+    назад с доставкой сегодня — входит (тот же принцип, что и в /orders-report,
+    см. п.192/295). Возвращает done/in_progress/deferred (итого по всем
     филиалам) и разбивку по филиалам с тем же делением на статусы — сырой источник
     для _today_revenue_by_branch, сам по себе больше нигде не используется (не
     учитывает закрыта ли смена, см. ниже)."""
@@ -16514,32 +16514,6 @@ def orders_report():
         type_flt   = request.args.get('type', '')
         q          = request.args.get('q', '').strip()
 
-        # «Текущая смена» — вместо диапазона дат берём окно от факт. открытия смены
-        # выбранного филиала (shifts.opened_at) до сейчас; имеет смысл только для
-        # ровно одного филиала (у разных филиалов смены открываются в разное время).
-        current_shift = request.args.get('current_shift') == '1'
-        shift_opened_at = None
-        if current_shift:
-            if len(branch_flt) != 1:
-                flash('Для фильтра «Текущая смена» выберите ровно один филиал', 'warning')
-                current_shift = False
-            else:
-                # opened_at хранится в UTC (SQLite CURRENT_TIMESTAMP), а received_at в
-                # orders_report — уже в местном времени (Asia/Novosibirsk, как приходит
-                # из Гуляша, без конвертации) — переводим opened_at в те же +7ч, иначе
-                # сравнение с received_at будет со сдвигом на 7 часов.
-                open_shift = conn.execute('''
-                    SELECT date, datetime(opened_at, '+7 hours') AS opened_at FROM shifts
-                    WHERE branch_id=? AND status='open'
-                    ORDER BY date DESC LIMIT 1
-                ''', (branch_flt[0],)).fetchone()
-                if not open_shift:
-                    flash('У выбранного филиала сейчас нет открытой смены', 'warning')
-                    current_shift = False
-                else:
-                    date_from = date_to = open_shift['date']
-                    shift_opened_at = open_shift['opened_at']
-
         where  = []
         params = []
 
@@ -16547,16 +16521,6 @@ def orders_report():
             where.append('(order_number LIKE ? OR promo_code LIKE ?)')
             like = f'%{q}%'
             params.extend([like, like])
-        elif current_shift and shift_opened_at:
-            # «Текущая смена» — по дате/времени ДОСТАВКИ (delivery_at), не по времени
-            # приёма: предзаказ, принятый несколько дней назад с доставкой сегодня,
-            # должен попасть в текущую смену, а заказ, принятый сегодня с доставкой
-            # через день — не должен (см. п.192). delivery_at всегда заполнен —
-            # в _parse_orders_csv для него уже есть запасной вариант (received_at).
-            where.append('delivery_at >= ?')
-            params.append(shift_opened_at)
-            where.append('delivery_at <= ?')
-            params.append(date_to + ' 23:59:59')
         else:
             # По дате ДОСТАВКИ (delivery_at), не по времени приёма — иначе предзаказ,
             # принятый вчера с доставкой сегодня, не попадал бы в выбранную дату
@@ -16622,7 +16586,6 @@ def orders_report():
         branch_groups=branch_groups,
         date_from=date_from, date_to=date_to,
         branch_flt=branch_flt, type_flt=type_flt, q=q,
-        current_shift=current_shift, shift_opened_at=shift_opened_at,
         total_count=total_count, total_amount=stats[1] or 0,
         pickup_count=stats[2] or 0, delivery_count=stats[3] or 0,
         data_min=data_min, data_max=data_max,

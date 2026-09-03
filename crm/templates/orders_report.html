@@ -18,7 +18,6 @@
 <div class="card mb-3">
     <div class="card-body">
         <form method="GET" class="row g-2 align-items-end" id="ordersFilterForm">
-            <input type="hidden" name="current_shift" id="currentShiftFlag" value="{{ '1' if current_shift else '' }}">
             <div class="col-auto">
                 <label class="form-label small fw-semibold d-block">Дата</label>
                 <div class="d-flex align-items-center gap-1">
@@ -95,19 +94,12 @@
 
             <div class="col-auto">
                 <button type="submit" class="btn btn-primary btn-sm">Применить</button>
-                <button type="button" class="btn btn-outline-primary btn-sm ms-1" onclick="applyCurrentShiftFilter()">
-                    <i class="bi bi-clock-history me-1"></i>Текущая смена
-                </button>
                 <a href="{{ url_for('orders_report') }}" class="btn btn-outline-secondary btn-sm ms-1">Сброс</a>
             </div>
         </form>
         {% if q %}
         <div class="small text-primary mt-2">
             <i class="bi bi-info-circle me-1"></i>Поиск «{{ q }}» — показаны заказы за всё время (период «С / По» не применяется)
-        </div>
-        {% elif current_shift %}
-        <div class="small text-primary mt-2">
-            <i class="bi bi-clock-history me-1"></i>Текущая смена — заказы с {{ shift_opened_at[11:16] }} {{ date_from | datefmt }}
         </div>
         {% elif data_min %}
         <div class="small text-muted mt-2">Данные в базе: {{ data_min | datefmt }} — {{ data_max | datefmt }}</div>
@@ -271,7 +263,6 @@
     function submitOrdDates() {
         document.getElementById('ordDateFrom').value = fmtLocalDate(ordDateFrom);
         document.getElementById('ordDateTo').value = fmtLocalDate(ordDateTo);
-        document.getElementById('currentShiftFlag').value = '';
         document.getElementById('ordersFilterForm').submit();
     }
     window.navOrdDate = function (delta) {
@@ -319,15 +310,6 @@
             const label = document.getElementById('branch-btn-label');
             if (label) label.textContent = 'Все';
         }
-    };
-    window.applyCurrentShiftFilter = function () {
-        const checked = [...document.querySelectorAll('.branch-cb')].filter(c => c.checked);
-        if (checked.length !== 1) {
-            alert('Для фильтра «Текущая смена» выберите ровно один филиал в списке выше');
-            return;
-        }
-        document.getElementById('currentShiftFlag').value = '1';
-        document.getElementById('ordersFilterForm').submit();
     };
     window.selectOrdBranchGroup = function (btn) {
         const ids = (btn.dataset.branchIds || '').split(',').filter(Boolean);
