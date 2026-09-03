@@ -16213,6 +16213,7 @@ def api_reviews_log_clear():
 def guest_reviews_report():
     with get_db() as conn:
         branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        branch_groups = get_branch_groups(conn)
 
         bounds = conn.execute('SELECT MIN(review_at), MAX(review_at) FROM guest_reviews').fetchone()
         data_min = (bounds[0] or '')[:10]
@@ -16241,7 +16242,7 @@ def guest_reviews_report():
         ''', params).fetchall()
 
     return render_template('guest_reviews_report.html',
-        rows=rows, branches=branches, branch_flt=branch_flt,
+        rows=rows, branches=branches, branch_groups=branch_groups, branch_flt=branch_flt,
         date_from=date_from, date_to=date_to, data_min=data_min, data_max=data_max)
 
 

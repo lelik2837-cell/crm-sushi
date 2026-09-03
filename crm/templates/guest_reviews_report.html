@@ -26,13 +26,49 @@
                 <input type="hidden" name="date_to" id="rvDateTo" value="{{ date_to }}">
                 <input id="rvCalHidden" type="text" style="display:none;position:absolute;">
             </div>
-            <div class="col-md-4">
+            <div class="col-6 col-md-auto">
                 <label class="form-label small fw-semibold">Филиал</label>
-                <select name="branch_ids" class="form-select form-select-sm" multiple size="1" style="min-height:31px;">
-                    {% for b in branches %}
-                    <option value="{{ b.id }}" {% if b.id in branch_flt %}selected{% endif %}>{{ b.name }}</option>
-                    {% endfor %}
-                </select>
+                <div class="dropdown">
+                    <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle"
+                        data-bs-toggle="dropdown" data-bs-auto-close="outside"
+                        style="min-width:170px; text-align:left;">
+                        <span id="rvBranchBtnLabel">{% if branch_flt %}Выбрано: {{ branch_flt|length }}{% else %}Все{% endif %}</span>
+                    </button>
+                    <ul class="dropdown-menu p-2" style="min-width:230px; max-height:320px; overflow-y:auto;">
+                        {% if branch_groups %}
+                        <li class="text-muted px-1 mb-1" style="font-size:0.7rem;font-weight:600;letter-spacing:.5px;">ГРУППЫ</li>
+                        {% for g in branch_groups %}
+                        <li class="mb-1">
+                            <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1"
+                                    data-branch-ids="{{ g.branch_ids | join(',') }}"
+                                    onclick="selectRvBranchGroup(this)">
+                                <span class="fw-bold">{{ g.abbr or g.name[:3].upper() }}</span>
+                                <span class="text-muted ms-1 small">{{ g.name }} ({{ g.branch_ids | length }})</span>
+                            </button>
+                        </li>
+                        {% endfor %}
+                        <li><hr class="dropdown-divider my-1"></li>
+                        {% endif %}
+                        <li class="mb-1">
+                            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                                <input type="checkbox" id="rvBranchAllCb" onchange="toggleAllRvBranches(this)"
+                                    {% if not branch_flt %}checked{% endif %}>
+                                <span class="fw-semibold small">Все филиалы</span>
+                            </label>
+                        </li>
+                        <li><hr class="dropdown-divider my-1"></li>
+                        {% for b in branches %}
+                        <li>
+                            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                                <input type="checkbox" class="rv-branch-cb" name="branch_ids" value="{{ b.id }}"
+                                    {% if b.id in branch_flt %}checked{% endif %}
+                                    onchange="onRvBranchCbChange()">
+                                <span class="small">{{ b.name }}</span>
+                            </label>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>
             </div>
             <div class="col-auto">
                 <button type="submit" class="btn btn-primary btn-sm">Показать</button>
@@ -139,6 +175,33 @@
             });
         }
         rvCalPicker.open();
+    };
+
+    /* ── Мультивыбор филиалов ── */
+    window.onRvBranchCbChange = function () {
+        const cbs = document.querySelectorAll('.rv-branch-cb');
+        const checked = [...cbs].filter(c => c.checked);
+        const allCb = document.getElementById('rvBranchAllCb');
+        if (allCb) allCb.checked = checked.length === 0;
+        const label = document.getElementById('rvBranchBtnLabel');
+        if (label) label.textContent = checked.length === 0 ? 'Все' : 'Выбрано: ' + checked.length;
+    };
+    window.toggleAllRvBranches = function (cb) {
+        if (cb.checked) {
+            document.querySelectorAll('.rv-branch-cb').forEach(c => c.checked = false);
+            const label = document.getElementById('rvBranchBtnLabel');
+            if (label) label.textContent = 'Все';
+        }
+    };
+    window.selectRvBranchGroup = function (btn) {
+        const ids = (btn.dataset.branchIds || '').split(',').filter(Boolean);
+        document.querySelectorAll('.rv-branch-cb').forEach(function (cb) {
+            cb.checked = ids.indexOf(cb.value) !== -1;
+        });
+        const allCb = document.getElementById('rvBranchAllCb');
+        if (allCb) allCb.checked = false;
+        const label = document.getElementById('rvBranchBtnLabel');
+        if (label) label.textContent = 'Выбрано: ' + ids.length;
     };
 })();
 </script>
