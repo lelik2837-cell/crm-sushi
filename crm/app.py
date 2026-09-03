@@ -16128,13 +16128,18 @@ def _ingest_guest_reviews_rows(conn, frows, branch_map):
     никогда не INSERT'ятся заново — без точечного дозаполнения ниже так и остались бы пустыми
     навсегда, хотя в свежих выгрузках Гуляша (в пределах REVIEWS_LOOKBACK_DAYS) для них уже
     приходит настоящее значение.
-    Возвращает (imported, unresolved_raws) — branch_raw, для которых не нашлось branch_id
-    ни через заказ в orders_report, ни через branch_raw_map — их стоит показать пользователю,
-    чтобы сопоставить вручную на странице «Филиалы»."""
+    Возвращает (imported, backfilled, unresolved_raws, seen_hashes) — unresolved_raws — branch_raw,
+    для которых не нашлось branch_id ни через заказ в orders_report, ни через branch_raw_map (их
+    стоит показать пользователю, чтобы сопоставить вручную на странице «Филиалы»); seen_hashes —
+    import_hash всех строк из frows (и новых, и уже существовавших) — нужен вызывающему коду
+    для удаления пропавших отзывов, см. _remove_stale_guest_reviews."""
     imported = 0
+    backfilled = 0
     unresolved_raws = set()
+    seen_hashes = set()
     for r in frows:
         h = _review_row_hash(r)
+        seen_hashes.add(h)
         branch_id = _resolve_review_branch_id(conn, r['order_number']) or branch_map.get(r['branch_raw'])
         if branch_id is None:
             unresolved_raws.add(r['branch_raw'])
@@ -16152,11 +16157,34 @@ def _ingest_guest_reviews_rows(conn, frows, branch_map):
         if cur.rowcount:
             imported += 1
         elif r['sentiment'] is not None:
-            conn.execute(
+            ucur = conn.execute(
                 'UPDATE guest_reviews SET sentiment=? WHERE import_hash=? AND sentiment IS NULL',
                 (r['sentiment'], h)
             )
-    return imported, unresolved_raws
+            if ucur.rowcount:
+                backfilled += 1
+    return imported, backfilled, unresolved_raws, seen_hashes
+
+
+def _remove_stale_guest_reviews(conn, date_from, date_to, seen_hashes):
+    """Удаляет отзывы, которые раньше были импортированы в диапазон [date_from, date_to]
+    (включительно, по review_at, формат YYYY-MM-DD), но больше не пришли в свежей ВЫГРУЗКЕ,
+    охватывающей этот же диапазон целиком (seen_hashes — import_hash всех строк, разобранных
+    из текущего запроса). Вызывающий код (см. api_reviews_webhook) передаёт date_from/date_to
+    только тогда, когда Синх/revenue_sync.py (sync_reviews()) сумел получить от Гуляша ВСЕ
+    варианты тип/статус без единой ошибки за этот цикл — иначе одна неудавшаяся сетевая попытка
+    могла бы стереть настоящие, ещё не удалённые на Гуляше отзывы, которые просто не попали
+    в конкретный частично неудавшийся запрос. Возвращает количество удалённых строк."""
+    rows = conn.execute(
+        'SELECT id, import_hash FROM guest_reviews WHERE review_at >= ? AND review_at <= ?',
+        (date_from + ' 00:00:00', date_to + ' 23:59:59')
+    ).fetchall()
+    stale_ids = [row['id'] for row in rows if row['import_hash'] not in seen_hashes]
+    if not stale_ids:
+        return 0
+    ph = ','.join('?' * len(stale_ids))
+    conn.execute(f'DELETE FROM guest_reviews WHERE id IN ({ph})', stale_ids)
+    return len(stale_ids)
 
 
 @app.route('/api/reviews-webhook/<token>', methods=['POST'])
@@ -16179,14 +16207,31 @@ def api_reviews_webhook(token):
         try:
             frows = _parse_guest_comments_html(body_bytes)
             branch_map = get_branch_raw_map(conn)
-            imported, unresolved_raws = _ingest_guest_reviews_rows(conn, frows, branch_map)
+            imported, backfilled, unresolved_raws, seen_hashes = _ingest_guest_reviews_rows(conn, frows, branch_map)
+
+            # date_from/date_to (YYYY-MM-DD) — необязательные параметры: Синх/revenue_sync.py
+            # передаёт их, только когда текущая выгрузка гарантированно ПОЛНАЯ за этот диапазон
+            # (все варианты тип/статус получены без ошибок за этот цикл, см. sync_reviews()) —
+            # тогда можно безопасно удалить отзывы, пропавшие из выгрузки (см. вопрос пользователя
+            # 2026-09-04 «если отзыв удаляют он тут тоже удалится»). Без этих параметров (обычный
+            # POST, в т.ч. любой ручной/будущий) удаление не выполняется вовсе.
+            removed = 0
+            date_from = request.args.get('date_from', '')
+            date_to = request.args.get('date_to', '')
+            if re.match(r'^\d{4}-\d{2}-\d{2}$', date_from) and re.match(r'^\d{4}-\d{2}-\d{2}$', date_to):
+                removed = _remove_stale_guest_reviews(conn, date_from, date_to, seen_hashes)
+
             status = f'новых отзывов {imported} из {len(frows)} строк'
+            if backfilled:
+                status += f', дозаполнен тип у {backfilled}'
+            if removed:
+                status += f', удалено пропавших {removed}'
             if unresolved_raws:
                 status += f' (не удалось определить филиал: {", ".join(sorted(unresolved_raws))} — см. Филиалы)'
             conn.execute('UPDATE api_reviews_log SET parsed_ok=1, status=?, imported_count=? WHERE id=?',
                          (status, imported, log_id))
             conn.commit()
-            return jsonify({'ok': True, 'imported': imported, 'rows': len(frows)})
+            return jsonify({'ok': True, 'imported': imported, 'backfilled': backfilled, 'removed': removed, 'rows': len(frows)})
         except Exception as e:
             conn.execute('UPDATE api_reviews_log SET status=? WHERE id=?',
                          (f'ошибка: {str(e)[:200]}', log_id))

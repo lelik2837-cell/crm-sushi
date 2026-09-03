@@ -45,6 +45,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -386,11 +387,33 @@ def fetch_guest_reviews_html(session: requests.Session, date_from: str, date_to:
     return resp.content
 
 
-def send_reviews_to_crmpapa(html_bytes: bytes, webhook_url: str) -> dict:
+_TR_RE = re.compile(rb'<tr[^>]*>.*?</tr>', re.DOTALL | re.IGNORECASE)
+
+
+def _split_review_rows(html_bytes: bytes):
+    """Возвращает (header_tr, [data_tr, ...]) — сырые байтовые блоки <tr>...</tr> как есть, без
+    разбора содержимого (сам разбор колонок — на стороне CRM, см. _parse_guest_comments_html) —
+    первая строка ответа Гуляша всегда заголовок (<th>, не <td>), см. комментарий там же."""
+    trs = _TR_RE.findall(html_bytes)
+    if not trs:
+        return None, []
+    return trs[0], trs[1:]
+
+
+def send_reviews_to_crmpapa(html_bytes: bytes, webhook_url: str, complete_range: Optional[tuple] = None) -> dict:
     """Пересылает HTML-выгрузку как есть — разбор целиком на стороне crmpapa.ru
-    (см. _parse_guest_comments_html в app.py), тот же приём, что и для заказов."""
+    (см. _parse_guest_comments_html в app.py), тот же приём, что и для заказов.
+    complete_range=(date_from, date_to) в формате YYYY-MM-DD — если передан, добавляется в URL
+    вебхука query-параметрами: сигнал для CRM, что эта выгрузка ПОЛНАЯ за данный диапазон и по
+    ней безопасно удалять отзывы, пропавшие из неё (см. _remove_stale_guest_reviews в app.py и
+    sync_reviews() ниже — передаётся только когда все варианты тип/статус получены без ошибок)."""
+    url = webhook_url
+    if complete_range:
+        date_from, date_to = complete_range
+        sep = '&' if '?' in url else '?'
+        url = f"{url}{sep}date_from={date_from}&date_to={date_to}"
     resp = requests.post(
-        webhook_url, data=html_bytes,
+        url, data=html_bytes,
         headers={"Content-Type": "application/vnd.ms-excel; charset=utf-8"},
         timeout=60,
     )
@@ -409,9 +432,15 @@ def sync_reviews(session: requests.Session) -> None:
     # Перебираем все варианты типа отзыва (см. GUEST_REVIEW_TYPE_CODES — 1/2/3 плюс None, когда
     # тип у отзыва на Гуляше вовсе не проставлен) и для каждого — оба варианта статуса: без
     # параметра (старое поведение, гарантированно не хуже прежнего результата для «решён») и с
-    # пустой строкой (попытка снять фильтр по статусу и получить «не решён» тоже). Итого до
-    # 4×2=8 запросов на цикл опроса. Дубли между вариантами безопасны — _ingest_guest_reviews_rows
-    # на стороне CRM пропускает уже импортированные строки по import_hash, а не создаёт повторы.
+    # пустой строкой (попытка снять фильтр по статусу и получить «не решён» тоже). Итого до 4×2=8
+    # запросов за цикл — вместо 8 отдельных POST'ов на CRM (как было раньше) все строки из всех
+    # вариантов объединяются в ОДНУ выгрузку и отправляются ОДНИМ запросом: чтобы CRM могла надёжно
+    # определить полный набор отзывов за период и удалить те, что пропали (см. вопрос пользователя
+    # 2026-09-04 «если отзыв удаляют он тут тоже удалится» — раньше такой возможности не было, CRM
+    # только добавляла новые строки, никогда не видя картину целиком за один запрос).
+    header_tr = None
+    all_data_trs = []
+    all_ok = True
     for type_comment in GUEST_REVIEW_TYPE_CODES:
         for status_comment in (None, ""):
             label = f"тип {type_comment!r}, статус {status_comment!r}"
@@ -419,20 +448,50 @@ def sync_reviews(session: requests.Session) -> None:
                 html_bytes = fetch_guest_reviews_html(session, date_from, date_to, type_comment, status_comment)
             except Exception as exc:
                 log.error("Отзывы (%s) %s–%s: %s", label, date_from, date_to, exc)
+                all_ok = False
                 continue
-            try:
-                result = send_reviews_to_crmpapa(html_bytes, REVIEWS_WEBHOOK_URL)
-            except Exception as exc:
-                log.error("Отзывы (%s) %s–%s: не удалось отправить на CRM: %s", label, date_from, date_to, exc)
+            h_tr, d_trs = _split_review_rows(html_bytes)
+            if h_tr is None:
+                log.error("Отзывы (%s) %s–%s: не удалось разобрать строки из ответа", label, date_from, date_to)
+                all_ok = False
                 continue
+            if header_tr is None:
+                header_tr = h_tr
+            all_data_trs.extend(d_trs)
 
-            if result.get("ok"):
-                log.info(
-                    "Отзывы (%s) %s–%s: новых %s (всего строк %s)",
-                    label, date_from, date_to, result.get("imported"), result.get("rows"),
-                )
-            else:
-                log.error("Отзывы (%s) %s–%s: вебхук вернул ошибку: %s", label, date_from, date_to, result)
+    if header_tr is None:
+        log.error("Отзывы %s–%s: ни один из запросов не вернул данных — синхронизация пропущена за этот цикл",
+                   date_from, date_to)
+        return
+
+    merged_html = b"<table>" + header_tr + b"".join(all_data_trs) + b"</table>"
+
+    # complete_range передаём CRM только если ВСЕ варианты тип/статус получены без единой ошибки —
+    # иначе одна неудавшаяся сетевая попытка могла бы стереть настоящие, ещё не удалённые на
+    # Гуляше отзывы, которые просто не попали в этот частично неудавшийся цикл (см. докстринг
+    # send_reviews_to_crmpapa/_remove_stale_guest_reviews в app.py).
+    complete_range = None
+    if all_ok:
+        complete_range = (
+            (today - timedelta(days=REVIEWS_LOOKBACK_DAYS)).isoformat(),
+            today.isoformat(),
+        )
+
+    try:
+        result = send_reviews_to_crmpapa(merged_html, REVIEWS_WEBHOOK_URL, complete_range)
+    except Exception as exc:
+        log.error("Отзывы %s–%s: не удалось отправить объединённую выгрузку на CRM: %s", date_from, date_to, exc)
+        return
+
+    if result.get("ok"):
+        note = "" if complete_range else " (диапазон неполный из-за ошибок выше — удаление пропавших пропущено)"
+        log.info(
+            "Отзывы %s–%s: новых %s, дозаполнен тип у %s, удалено пропавших %s (всего строк в объединённой выгрузке %s)%s",
+            date_from, date_to, result.get("imported"), result.get("backfilled", 0),
+            result.get("removed", 0), result.get("rows"), note,
+        )
+    else:
+        log.error("Отзывы %s–%s: вебхук вернул ошибку: %s", date_from, date_to, result)
 
 
 # ---------------------------------------------------------------------------
