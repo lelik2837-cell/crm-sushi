@@ -73,6 +73,14 @@
             <div class="col-auto">
                 <button type="submit" class="btn btn-primary btn-sm">Показать</button>
             </div>
+            <div class="col-auto">
+                <label class="form-label small fw-semibold d-block">&nbsp;</label>
+                <div class="form-check">
+                    <input type="checkbox" class="form-check-input" id="rvShowPositive" name="show_positive" value="1"
+                        {% if show_positive %}checked{% endif %}>
+                    <label class="form-check-label small" for="rvShowPositive">Отображать положительные отзывы</label>
+                </div>
+            </div>
             {% if data_min and data_max %}
             <div class="col-auto text-muted small">Данные есть с {{ data_min | date_ru_short }} по {{ data_max | date_ru_short }}</div>
             {% endif %}

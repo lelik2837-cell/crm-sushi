@@ -16344,6 +16344,7 @@ def guest_reviews_report():
         date_from = request.args.get('date_from', today)
         date_to = request.args.get('date_to', today)
         branch_flt = [int(b) for b in request.args.getlist('branch_ids') if b.isdigit()]
+        show_positive = request.args.get('show_positive') == '1'
 
         where = ['review_at >= ?', 'review_at <= ?']
         params = [date_from + ' 00:00:00', date_to + ' 23:59:59']
@@ -16351,6 +16352,12 @@ def guest_reviews_report():
             ph = ','.join('?' * len(branch_flt))
             where.append(f'branch_id IN ({ph})')
             params.extend(branch_flt)
+        if not show_positive:
+            # По умолчанию положительные отзывы («П») скрыты — отчёт исторически про то, на что
+            # стоит обратить внимание (отрицательные/нейтральные/без типа), просьба пользователя
+            # 2026-09-04. Строки с sentiment IS NULL (тип не проставлен, см. п.302) не трогаем —
+            # они по-прежнему считаются «требующими внимания», а не положительными.
+            where.append("(sentiment IS NULL OR sentiment != 'П')")
         sql_where = ' AND '.join(where)
 
         rows = conn.execute(f'''
@@ -16366,7 +16373,8 @@ def guest_reviews_report():
 
     return render_template('guest_reviews_report.html',
         rows=rows, grouped_rows=grouped_rows, branches=branches, branch_groups=branch_groups,
-        branch_flt=branch_flt, date_from=date_from, date_to=date_to, data_min=data_min, data_max=data_max)
+        branch_flt=branch_flt, date_from=date_from, date_to=date_to, data_min=data_min, data_max=data_max,
+        show_positive=show_positive)
 
 
 # ─── ВЫДАЧА ФОРМЫ (склад + выдача сотрудникам, учёт по группе филиалов) ────────────
