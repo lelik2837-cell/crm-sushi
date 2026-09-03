@@ -142,7 +142,7 @@
                     <td class="text-nowrap">
                         <i class="bi bi-chevron-right gr-chevron" id="gr-chevron-{{ gi }}"></i>{{ g.latest_review_at | datetime_ru_short }}
                     </td>
-                    <td>{{ g.order_number }} <span class="badge bg-secondary">{{ g.reviews|length }}</span></td>
+                    <td>{{ g.order_number }}</td>
                     <td>{{ g.branch_name or g.branch_raw }}</td>
                     <td class="text-center">{{ sentiment_dot(g.worst_sentiment) }}</td>
                     <td>{{ g.categories | join(', ') }}</td>
