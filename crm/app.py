@@ -16277,6 +16277,57 @@ def api_reviews_log_clear():
     return redirect(url_for('settings') + '?tab=api')
 
 
+_GR_SENTIMENT_RANK = {'П': 2, 'Н': 1}  # ниже — «хуже»; 'О' и пусто/неизвестное — 0 (худшее)
+
+
+def _group_guest_reviews(rows):
+    """Заказ может получить несколько разных отзывов/жалоб (разные категории, разное время) —
+    группирует строки одного запроса (уже отсортированные по review_at DESC) по order_number,
+    чтобы показать их в отчёте одной строкой вместо нескольких (просьба пользователя 2026-09-04
+    «отзывы на один заказ... можешь их объединять вместе?»). Порядок групп — по первому появлению
+    order_number в исходном списке, то есть по самому свежему отзыву в группе (rows уже DESC).
+    Возвращает список словарей: order_number, reviews (исходные строки группы, в своём порядке),
+    worst_sentiment (самый «плохой» sentiment среди группы — 'О'/пусто побеждает 'Н', 'Н' побеждает
+    'П', используется для цвета строки/шарика, см. guest_reviews_report.html), categories
+    (уникальные review_type группы, в порядке появления), compensation_total (сумма
+    compensation_amount по группе, None если ни одной непустой), и «представительские» поля
+    (филиал/гость/сумма) — берутся из первого (самого свежего) отзыва группы, т.к. это один
+    и тот же заказ, они не должны отличаться между отзывами."""
+    groups = {}
+    order = []
+    for r in rows:
+        key = r['order_number']
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(r)
+
+    result = []
+    for key in order:
+        grp = groups[key]
+        primary = grp[0]
+        worst_sentiment = min(grp, key=lambda r: _GR_SENTIMENT_RANK.get(r['sentiment'], 0))['sentiment']
+        categories = []
+        for r in grp:
+            if r['review_type'] and r['review_type'] not in categories:
+                categories.append(r['review_type'])
+        comp_values = [r['compensation_amount'] for r in grp if r['compensation_amount']]
+        result.append({
+            'order_number': key,
+            'reviews': grp,
+            'worst_sentiment': worst_sentiment,
+            'categories': categories,
+            'compensation_total': sum(comp_values) if comp_values else None,
+            'branch_name': primary['branch_name'],
+            'branch_raw': primary['branch_raw'],
+            'guest_name': primary['guest_name'],
+            'guest_phone': primary['guest_phone'],
+            'order_amount': primary['order_amount'],
+            'latest_review_at': primary['review_at'],
+        })
+    return result
+
+
 @app.route('/reports/guest-reviews')
 @login_required
 @menu_permission_required('guest_reviews_report')
@@ -16311,9 +16362,11 @@ def guest_reviews_report():
             LIMIT 500
         ''', params).fetchall()
 
+    grouped_rows = _group_guest_reviews(rows)
+
     return render_template('guest_reviews_report.html',
-        rows=rows, branches=branches, branch_groups=branch_groups, branch_flt=branch_flt,
-        date_from=date_from, date_to=date_to, data_min=data_min, data_max=data_max)
+        rows=rows, grouped_rows=grouped_rows, branches=branches, branch_groups=branch_groups,
+        branch_flt=branch_flt, date_from=date_from, date_to=date_to, data_min=data_min, data_max=data_max)
 
 
 # ─── ВЫДАЧА ФОРМЫ (склад + выдача сотрудникам, учёт по группе филиалов) ────────────

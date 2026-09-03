@@ -85,8 +85,21 @@
 .gr-table > tbody > tr > td { border-left: 1px solid #e3e6ec; }
 .gr-table > thead > tr > th:first-child,
 .gr-table > tbody > tr > td:first-child { border-left: none; }
-.gr-dot { display:inline-block; width:11px; height:11px; border-radius:50%; }
+.gr-dot { display:inline-block; width:11px; height:11px; border-radius:50%; flex-shrink:0; }
+.gr-group-row { cursor:pointer; }
+.gr-detail-row > td:first-child { padding-left:28px; }
+.gr-chevron { display:inline-block; transition:transform .15s; margin-right:4px; }
+.gr-chevron.open { transform:rotate(90deg); }
 </style>
+
+{% macro sentiment_dot(sentiment) %}
+{% if sentiment == 'П' %}<span class="gr-dot" style="background:#28a745;" title="Положительный"></span>
+{% elif sentiment == 'Н' %}<span class="gr-dot" style="background:#ffc107;" title="Нейтральный"></span>
+{% else %}<span class="gr-dot" style="background:#dc3545;" title="{% if sentiment == 'О' %}Отрицательный{% else %}Тип не проставлен — считаем отрицательным{% endif %}"></span>
+{% endif %}
+{% endmacro %}
+
+{% macro sentiment_row_class(sentiment) %}{% if sentiment == 'П' %}table-success{% elif sentiment == 'Н' %}table-warning{% else %}table-danger{% endif %}{% endmacro %}
 
 <div class="card">
     <div class="card-header fw-semibold">Всего: {{ rows|length }} {{ 'за период (показаны последние 500)' if rows|length == 500 else '' }}</div>
@@ -106,26 +119,14 @@
                 </tr>
             </thead>
             <tbody>
-                {% for r in rows %}
-                {% if r.sentiment == 'П' %}
-                <tr class="table-success">
-                {% elif r.sentiment == 'Н' %}
-                <tr class="table-warning">
-                {% else %}
-                <tr class="table-danger">
-                {% endif %}
+                {% for g in grouped_rows %}
+                {% if g.reviews|length == 1 %}
+                {% set r = g.reviews[0] %}
+                <tr class="{{ sentiment_row_class(r.sentiment) }}">
                     <td class="text-nowrap">{{ r.review_at | datetime_ru_short }}</td>
                     <td>{{ r.order_number }}</td>
                     <td>{{ r.branch_name or r.branch_raw }}</td>
-                    <td class="text-center">
-                        {% if r.sentiment == 'П' %}
-                        <span class="gr-dot" style="background:#28a745;" title="Положительный"></span>
-                        {% elif r.sentiment == 'Н' %}
-                        <span class="gr-dot" style="background:#ffc107;" title="Нейтральный"></span>
-                        {% else %}
-                        <span class="gr-dot" style="background:#dc3545;" title="{% if r.sentiment == 'О' %}Отрицательный{% else %}Тип не проставлен — считаем отрицательным{% endif %}"></span>
-                        {% endif %}
-                    </td>
+                    <td class="text-center">{{ sentiment_dot(r.sentiment) }}</td>
                     <td>{{ r.review_type }}</td>
                     <td style="max-width:420px; white-space:pre-wrap;">{{ r.content }}</td>
                     <td class="text-nowrap">
@@ -135,6 +136,38 @@
                     <td class="text-nowrap">{{ '%.0f'|format(r.order_amount) if r.order_amount is not none else '—' }}</td>
                     <td class="text-nowrap">{{ '%.0f'|format(r.compensation_amount) if r.compensation_amount else '—' }}</td>
                 </tr>
+                {% else %}
+                {% set gi = loop.index0 %}
+                <tr class="gr-group-row {{ sentiment_row_class(g.worst_sentiment) }}" onclick="toggleGrGroup({{ gi }})">
+                    <td class="text-nowrap">
+                        <i class="bi bi-chevron-right gr-chevron" id="gr-chevron-{{ gi }}"></i>{{ g.latest_review_at | datetime_ru_short }}
+                    </td>
+                    <td>{{ g.order_number }} <span class="badge bg-secondary">{{ g.reviews|length }}</span></td>
+                    <td>{{ g.branch_name or g.branch_raw }}</td>
+                    <td class="text-center">{{ sentiment_dot(g.worst_sentiment) }}</td>
+                    <td>{{ g.categories | join(', ') }}</td>
+                    <td class="text-muted fst-italic">Показать {{ g.reviews|length }} отзыва(ов) по заказу</td>
+                    <td class="text-nowrap">
+                        {{ g.guest_name or '—' }}
+                        {% if g.guest_phone %}<span class="text-muted small">({{ g.guest_phone | phone_fmt }})</span>{% endif %}
+                    </td>
+                    <td class="text-nowrap">{{ '%.0f'|format(g.order_amount) if g.order_amount is not none else '—' }}</td>
+                    <td class="text-nowrap">{{ '%.0f'|format(g.compensation_total) if g.compensation_total else '—' }}</td>
+                </tr>
+                {% for r in g.reviews %}
+                <tr class="gr-detail-row gr-group-{{ gi }}" style="display:none">
+                    <td class="text-nowrap">{{ r.review_at | datetime_ru_short }}</td>
+                    <td></td>
+                    <td></td>
+                    <td class="text-center">{{ sentiment_dot(r.sentiment) }}</td>
+                    <td>{{ r.review_type }}</td>
+                    <td style="max-width:420px; white-space:pre-wrap;">{{ r.content }}</td>
+                    <td></td>
+                    <td></td>
+                    <td class="text-nowrap">{{ '%.0f'|format(r.compensation_amount) if r.compensation_amount else '—' }}</td>
+                </tr>
+                {% endfor %}
+                {% endif %}
                 {% else %}
                 <tr><td colspan="9" class="text-center text-muted py-3">Отзывов за этот период нет</td></tr>
                 {% endfor %}
@@ -228,6 +261,15 @@
         if (allCb) allCb.checked = false;
         const label = document.getElementById('rvBranchBtnLabel');
         if (label) label.textContent = 'Выбрано: ' + ids.length;
+    };
+
+    /* ── Группировка нескольких отзывов на один заказ (раскрытие деталей) ── */
+    window.toggleGrGroup = function (gi) {
+        const detailRows = document.querySelectorAll('.gr-group-' + gi);
+        const chevron = document.getElementById('gr-chevron-' + gi);
+        const opening = detailRows.length > 0 && detailRows[0].style.display === 'none';
+        detailRows.forEach(function (r) { r.style.display = opening ? '' : 'none'; });
+        if (chevron) chevron.classList.toggle('open', opening);
     };
 })();
 </script>
