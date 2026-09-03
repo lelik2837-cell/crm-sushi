@@ -2292,6 +2292,13 @@ def init_db():
         _oib_cols = [r[1] for r in conn.execute("PRAGMA table_info(orders_import_batches)").fetchall()]
         if 'updated_count' not in _oib_cols:
             conn.execute("ALTER TABLE orders_import_batches ADD COLUMN updated_count INTEGER DEFAULT 0")
+        _gr_cols = [r[1] for r in conn.execute("PRAGMA table_info(guest_reviews)").fetchall()]
+        if 'sentiment' not in _gr_cols:
+            # Буква П(оложительный)/Н(ейтральный)/О(трицательный) — колонка «Тип» в выгрузке
+            # Гуляша (см. _guest_reviews_col_indices), отдельная от «Тип отзыва»/review_type
+            # (детальная категория жалобы, напр. «Опоздание»). У части старых отзывов не
+            # проставлена вовсе (см. п.302 в plan.md) — тогда пусто, не заполняем задним числом.
+            conn.execute("ALTER TABLE guest_reviews ADD COLUMN sentiment TEXT")
 
         # Выплата задолженности по ЗП («выплатные дни») — правила настроек
         # (дата/период/лимит) + доработка журнала выплат под погашение долга
@@ -12743,12 +12750,12 @@ def date_ru_short(value):
 
 @app.template_filter('datetime_ru_short')
 def datetime_ru_short(value):
-    """YYYY-MM-DD HH:MM:SS → «20 авг 2026, 14:35»."""
+    """YYYY-MM-DD HH:MM:SS → «20 авг 2026 (14:35)»."""
     if not value:
         return ''
     try:
         dt = datetime.strptime(str(value)[:19], '%Y-%m-%d %H:%M:%S')
-        return f'{dt.day} {_MONTHS_RU_SHORT[dt.month]} {dt.year}, {dt.strftime("%H:%M")}'
+        return f'{dt.day} {_MONTHS_RU_SHORT[dt.month]} {dt.year} ({dt.strftime("%H:%M")})'
     except Exception:
         return value
 
@@ -16003,9 +16010,11 @@ def delete_point_accrual(accrual_id):
 
 def _guest_reviews_col_indices():
     """Порядок колонок в HTML-таблице выгрузки — фиксированный, задан самим Гуляшем
-    (см. <thead> в ответе excel_admin), нумерация с 0."""
+    (см. <thead> в ответе excel_admin), нумерация с 0. 'sentiment' (колонка «Тип», индекс 4) —
+    буква П/Н/О, не путать с 'review_type' (колонка «Тип отзыва», индекс 5 — детальная
+    категория жалобы вроде «Опоздание»/«Жалоба на качество блюд»)."""
     return {
-        'date': 1, 'review_type': 5, 'order_number': 6, 'branch': 8, 'content': 9,
+        'date': 1, 'sentiment': 4, 'review_type': 5, 'order_number': 6, 'branch': 8, 'content': 9,
         'feedback_count': 12, 'guest_name': 14, 'amount': 15, 'guilty': 17,
         'compensation': 23, 'penalty': 24,
     }
@@ -16073,6 +16082,7 @@ def _parse_guest_comments_html(html_bytes):
         result.append({
             'order_number': order_number,
             'review_at': review_at,
+            'sentiment': strip_tags(cells[idx['sentiment']]) or None,
             'review_type': strip_tags(cells[idx['review_type']]),
             'branch_raw': strip_tags(cells[idx['branch']]),
             'content': strip_tags(cells[idx['content']]),
@@ -16125,12 +16135,12 @@ def _ingest_guest_reviews_rows(conn, frows, branch_map):
             unresolved_raws.add(r['branch_raw'])
         cur = conn.execute('''
             INSERT OR IGNORE INTO guest_reviews
-                (order_number, review_at, branch_raw, branch_id, review_type, content,
+                (order_number, review_at, branch_raw, branch_id, sentiment, review_type, content,
                  guest_name, guest_phone, order_amount, guilty, compensation_amount,
                  penalty_amount, import_hash)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ''', (
-            r['order_number'], r['review_at'], r['branch_raw'], branch_id, r['review_type'],
+            r['order_number'], r['review_at'], r['branch_raw'], branch_id, r['sentiment'], r['review_type'],
             r['content'], r['guest_name'], r['guest_phone'], r['order_amount'], r['guilty'],
             r['compensation_amount'], r['penalty_amount'], h
         ))

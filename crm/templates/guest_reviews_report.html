@@ -80,15 +80,24 @@
     </div>
 </div>
 
+<style>
+.gr-table > thead > tr > th,
+.gr-table > tbody > tr > td { border-left: 1px solid #e3e6ec; }
+.gr-table > thead > tr > th:first-child,
+.gr-table > tbody > tr > td:first-child { border-left: none; }
+.gr-dot { display:inline-block; width:11px; height:11px; border-radius:50%; }
+</style>
+
 <div class="card">
     <div class="card-header fw-semibold">Всего: {{ rows|length }} {{ 'за период (показаны последние 500)' if rows|length == 500 else '' }}</div>
     <div class="table-responsive">
-        <table class="table table-sm mb-0 align-middle">
+        <table class="table table-sm mb-0 align-middle gr-table">
             <thead class="table-light">
                 <tr>
                     <th>Дата</th>
                     <th>Заказ</th>
                     <th>Филиал</th>
+                    <th class="text-center">Тип</th>
                     <th>Тип жалобы</th>
                     <th>Содержание</th>
                     <th>Гость</th>
@@ -98,10 +107,21 @@
             <tbody>
                 {% for r in rows %}
                 <tr>
-                    <td class="text-nowrap">{{ r.review_at[:16] }}</td>
+                    <td class="text-nowrap">{{ r.review_at | datetime_ru_short }}</td>
                     <td>{{ r.order_number }}</td>
                     <td>{{ r.branch_name or r.branch_raw }}</td>
-                    <td class="text-danger">{{ r.review_type }}</td>
+                    <td class="text-center">
+                        {% if r.sentiment == 'П' %}
+                        <span class="gr-dot" style="background:#28a745;" title="Положительный"></span>
+                        {% elif r.sentiment == 'О' %}
+                        <span class="gr-dot" style="background:#dc3545;" title="Отрицательный"></span>
+                        {% elif r.sentiment == 'Н' %}
+                        <span class="gr-dot" style="background:#ffc107;" title="Нейтральный"></span>
+                        {% else %}
+                        <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ r.review_type }}</td>
                     <td style="max-width:420px; white-space:pre-wrap;">{{ r.content }}</td>
                     <td class="text-nowrap">
                         {{ r.guest_name or '—' }}
@@ -110,7 +130,7 @@
                     <td class="text-nowrap">{{ '%.0f'|format(r.order_amount) if r.order_amount is not none else '—' }}</td>
                 </tr>
                 {% else %}
-                <tr><td colspan="7" class="text-center text-muted py-3">Отзывов за этот период нет</td></tr>
+                <tr><td colspan="8" class="text-center text-muted py-3">Отзывов за этот период нет</td></tr>
                 {% endfor %}
             </tbody>
         </table>
