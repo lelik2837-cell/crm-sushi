@@ -115,6 +115,8 @@ ACTION_LABELS = {
     'shift_close':    ('Закрытие',     'secondary'),
     'shift_reopen':   ('Переоткрытие', 'warning'),
     'salary_paid':    ('Выплата ЗП',   'primary'),
+    'salary_debt_paid': ('Погашение долга по ЗП', 'primary'),
+    'salary_debt_payment_deleted': ('Отмена погашения долга', 'danger'),
     'morning_cash_update': ('Утром в кассе', 'info'),
 }
 
@@ -4724,12 +4726,12 @@ def save_revenue(shift_id):
         return jsonify({'error': 'Нет доступа'}), 403
     data = request.json or {}
     with get_db() as conn:
+        old_rev = conn.execute(
+            'SELECT * FROM shift_revenue WHERE shift_id=?', (shift_id,)
+        ).fetchone()
         # Preserve change_amount if not sent (it's managed by the change settings page)
         if 'change_amount' not in data:
-            existing_rev = conn.execute(
-                'SELECT change_amount FROM shift_revenue WHERE shift_id=?', (shift_id,)
-            ).fetchone()
-            change_amount = float(existing_rev['change_amount'] or 0) if existing_rev else 0.0
+            change_amount = float(old_rev['change_amount'] or 0) if old_rev else 0.0
         else:
             change_amount = _f(data, 'change_amount')
         conn.execute('''
@@ -4749,10 +4751,28 @@ def save_revenue(shift_id):
             _f(data, 'morning_cash'), _f(data, 'kassa_nal'),
             shift_id
         ))
-        desc = (f"нал {_fmt_money(data.get('cash_amount'))}, "
-                f"безнал {_fmt_money(data.get('card_amount'))}, "
-                f"онлайн {_fmt_money(data.get('online_amount'))}, "
-                f"итого {_fmt_money(data.get('total_revenue'))}")
+        new_rev = {
+            'total_revenue': _f(data, 'total_revenue'), 'delivery_revenue': _f(data, 'delivery_revenue'),
+            'delivery_orders': _i(data, 'delivery_orders'), 'pickup_revenue': _f(data, 'pickup_revenue'),
+            'pickup_orders': _i(data, 'pickup_orders'), 'cash_amount': _f(data, 'cash_amount'),
+            'card_amount': _f(data, 'card_amount'), 'online_amount': _f(data, 'online_amount'),
+            'change_amount': change_amount, 'actual_cash': _f(data, 'actual_cash'),
+        }
+        desc = _diff_desc(old_rev, new_rev, [
+            ('cash_amount',      'Наличные',            'money'),
+            ('card_amount',      'Безнал',              'money'),
+            ('online_amount',    'Онлайн',              'money'),
+            ('total_revenue',    'Итого выручка',       'money'),
+            ('delivery_revenue', 'Доставка, выручка',   'money'),
+            ('delivery_orders',  'Доставка, заказы',    'int'),
+            ('pickup_revenue',   'Самовывоз, выручка',  'money'),
+            ('pickup_orders',    'Самовывоз, заказы',   'int'),
+            ('actual_cash',      'Факт в кассе',        'money'),
+            ('change_amount',    'Размен',              'money'),
+        ]) or (f"нал {_fmt_money(data.get('cash_amount'))}, "
+               f"безнал {_fmt_money(data.get('card_amount'))}, "
+               f"онлайн {_fmt_money(data.get('online_amount'))}, "
+               f"итого {_fmt_money(data.get('total_revenue'))}")
         log_action(conn, 'revenue_update', desc, shift_id=shift_id, upsert_by_shift=True)
         auto_bonuses = calculate_bonuses(conn, shift_id)
         conn.commit()
@@ -4863,16 +4883,34 @@ def save_expense(shift_id):
         pay_type = 'нал' if _f(data, 'amount_cash') > 0 else 'безнал'
         note = (data.get('description') or '').strip()
         if expense_id:
+            old_exp = conn.execute('SELECT * FROM expenses WHERE id=? AND shift_id=?', (expense_id, shift_id)).fetchone()
             conn.execute('''
                 UPDATE expenses SET category=?, description=?, amount_cash=?, amount_card=?, is_gulash=?
                 WHERE id=? AND shift_id=?
             ''', (data.get('category', 'other'), data.get('description', ''),
                   _f(data, 'amount_cash'), _f(data, 'amount_card'), 1 if data.get('is_gulash') else 0,
                   expense_id, shift_id))
-            desc = f"Изменён расход: {cat_label}"
-            if note:
-                desc += f" «{note}»"
-            desc += f", {_fmt_money(amount)} ({pay_type})"
+            desc = ''
+            if old_exp:
+                # Категория в old_exp хранится кодом, а не подписью — сравниваем подписи,
+                # иначе diff показывал бы «менялось», даже когда выбрана та же категория.
+                old_cat_label = cats.get(old_exp['category'], old_exp['category'])
+                desc = _diff_desc(
+                    {'category': old_cat_label, 'description': old_exp['description'],
+                     'amount_cash': old_exp['amount_cash'], 'amount_card': old_exp['amount_card']},
+                    {'category': cat_label, 'description': data.get('description', ''),
+                     'amount_cash': _f(data, 'amount_cash'), 'amount_card': _f(data, 'amount_card')},
+                    [
+                        ('category',     'Категория',       'text'),
+                        ('description',  'Комментарий',     'text'),
+                        ('amount_cash',  'Сумма наличными', 'money'),
+                        ('amount_card',  'Сумма безналом',  'money'),
+                    ])
+            if not desc:
+                desc = f"Изменён расход: {cat_label}"
+                if note:
+                    desc += f" «{note}»"
+                desc += f", {_fmt_money(amount)} ({pay_type})"
             log_action(conn, 'expense_update', desc, shift_id=shift_id, entity_id=expense_id)
         else:
             conn.execute('''
@@ -4974,9 +5012,32 @@ def save_staff(shift_id):
             ))
             name = data.get('full_name_snapshot', '')
             role_lbl = ROLE_LABELS.get(data.get('role_snapshot', ''), data.get('role_snapshot', ''))
-            log_action(conn, 'staff_update',
-                f"Обновлены данные: {name} ({role_lbl}), итого {_fmt_money(data.get('total_amount'))}",
-                shift_id=shift_id, entity_id=staff_id)
+            new_es = {
+                'shift_start': _pick('shift_start', ''), 'shift_end': _pick('shift_end', ''),
+                'hours_worked': _pickf('hours_worked'), 'km': _pickf('km'), 'orders': _picki('orders'),
+                'bonus_amount': bonus_amount, 'penalty_amount': penalty_amount, 'bonus_comment': bonus_comment,
+                'base_pay': base_pay, 'total_amount': total_amount, 'paid_amount': paid_amount_val,
+                'is_paid': is_paid_flag,
+            }
+            desc = _diff_desc(existing, new_es, [
+                ('shift_start',     'Начало смены',        'text'),
+                ('shift_end',       'Конец смены',         'text'),
+                ('hours_worked',    'Часы',                'hours'),
+                ('km',              'Километры',           'km'),
+                ('orders',          'Заказы',              'int'),
+                ('base_pay',        'Базовая оплата',      'money'),
+                ('bonus_amount',    'Премия',              'money'),
+                ('penalty_amount',  'Штраф',               'money'),
+                ('bonus_comment',   'Комментарий к премии/штрафу', 'text'),
+                ('total_amount',    'Итого начислено',     'money'),
+                ('paid_amount',     'Выплачено',           'money'),
+            ])
+            if int(existing['is_paid'] or 0) != is_paid_flag:
+                desc = (f"Отметка «Выплачено»: {'да' if existing['is_paid'] else 'нет'} → "
+                        f"{'да' if is_paid_flag else 'нет'}\n") + desc
+            if not desc:
+                desc = f"Обновлены данные: {name} ({role_lbl}), итого {_fmt_money(data.get('total_amount'))}"
+            log_action(conn, 'staff_update', desc, shift_id=shift_id, entity_id=staff_id)
             auto_bonuses = calculate_bonuses(conn, shift_id)
         else:
             emp_id = data.get('employee_id')
@@ -12517,17 +12578,65 @@ def _fmt_money(v):
         return '0 ₽'
 
 
+def _diff_desc(old, new_values, fields):
+    """Строит текст «Поле: было → стало» только по полям, которые реально изменились —
+    для истории изменений (change_log), чтобы по каждой ячейке было видно, что вписали.
+    old — sqlite3.Row/dict с состоянием ДО правки (может быть None — тогда всё «новое»
+    считается изменением из пустого/нулевого), new_values — dict с состоянием ПОСЛЕ
+    (обычно то же, что уходит в UPDATE). fields — список (key, label, kind),
+    kind: 'money' | 'int' | 'km' | 'hours' | 'text'."""
+    parts = []
+    for key, label, kind in fields:
+        old_v = old[key] if old is not None else None
+        new_v = new_values.get(key)
+        if kind == 'money':
+            old_n, new_n = round(float(old_v or 0), 2), round(float(new_v or 0), 2)
+            if old_n == new_n:
+                continue
+            parts.append(f"{label}: {_fmt_money(old_n)} → {_fmt_money(new_n)}")
+        elif kind == 'int':
+            old_n, new_n = int(old_v or 0), int(new_v or 0)
+            if old_n == new_n:
+                continue
+            parts.append(f"{label}: {old_n} → {new_n}")
+        elif kind == 'km':
+            old_n, new_n = round(float(old_v or 0), 2), round(float(new_v or 0), 2)
+            if old_n == new_n:
+                continue
+            parts.append(f"{label}: {old_n:g} км → {new_n:g} км")
+        elif kind == 'hours':
+            old_n, new_n = round(float(old_v or 0), 2), round(float(new_v or 0), 2)
+            if old_n == new_n:
+                continue
+            parts.append(f"{label}: {old_n:g} ч → {new_n:g} ч")
+        else:
+            old_s = (str(old_v) if old_v is not None else '').strip()
+            new_s = (str(new_v) if new_v is not None else '').strip()
+            if old_s == new_s:
+                continue
+            parts.append(f"{label}: «{old_s or '—'}» → «{new_s or '—'}»")
+    return '\n'.join(parts)
+
+
+_SHIFT_LIFECYCLE_ACTIONS = {'shift_open', 'shift_close', 'shift_reopen'}
+
+
 def log_action(conn, action, description, shift_id=None, entity_id=None, upsert_by_shift=False):
     if not session.get('user_id'):
         return
     branch_id = branch_name = shift_date = None
     if shift_id:
         row = conn.execute(
-            'SELECT s.branch_id, b.name, s.date FROM shifts s JOIN branches b ON b.id=s.branch_id WHERE s.id=?',
+            'SELECT s.branch_id, b.name, s.date, s.status FROM shifts s JOIN branches b ON b.id=s.branch_id WHERE s.id=?',
             (shift_id,)
         ).fetchone()
         if row:
             branch_id, branch_name, shift_date = row['branch_id'], row['name'], row['date']
+            # Владелец/управляющий может править уже закрытую смену «на месте», без
+            # переоткрытия (см. _can_edit_shift) — явно помечаем такую правку в истории,
+            # чтобы она была видна отдельно от обычных правок открытой смены.
+            if row['status'] == 'closed' and action not in _SHIFT_LIFECYCLE_ACTIONS:
+                description = '⚠ Правка уже закрытой смены.\n' + description
     if upsert_by_shift and shift_id:
         existing = conn.execute(
             'SELECT id FROM change_log WHERE shift_id=? AND action=? ORDER BY id DESC LIMIT 1',
