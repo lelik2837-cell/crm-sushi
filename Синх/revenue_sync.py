@@ -335,19 +335,38 @@ def fetch_orders_csv(session: requests.Session, date_from: str, date_to: str, cu
     return resp.content
 
 
-def fetch_negative_reviews_html(session: requests.Session, date_from: str, date_to: str) -> bytes:
-    """date_from/date_to — строки в формате ДД.ММ.ГГГГ. GuestsComments[type_comment]=3 —
-    фильтр «только отрицательные» (тип отзыва на Гуляше кодируется буквой
-    П(оложительный)/Н(ейтральный)/О(трицательный), 3 соответствует «О» — подтверждено
-    пользователем на реальной странице). GuestsComments[status_comment] не передаём — по
-    подтверждению пользователя, статус на этой выгрузке значения не имеет."""
+# Тип отзыва на Гуляше кодируется одной буквой П(оложительный)/Н(ейтральный)/О(трицательный);
+# 3 соответствует «О» — подтверждено пользователем на реальной странице, 1/2 — оставшиеся два
+# типа в неподтверждённом порядке. Раньше запрашивали только «3» (только отрицательные) — по
+# просьбе пользователя (2026-09-03) забираем теперь все три кода, порядок между 1 и 2 не важен,
+# так как нужны оба.
+GUEST_REVIEW_TYPE_CODES = ("1", "2", "3")
+
+
+def fetch_guest_reviews_html(session: requests.Session, date_from: str, date_to: str,
+                              type_comment: str, status_comment: Optional[str] = None) -> bytes:
+    """date_from/date_to — строки в формате ДД.ММ.ГГГГ. type_comment — код типа отзыва, см.
+    GUEST_REVIEW_TYPE_CODES. status_comment=None — параметр GuestsComments[status_comment]
+    не передаётся вовсе (исходное поведение); выяснилось (2026-09-03, со слов пользователя),
+    что в этом случае Гуляш отдаёт отзывы только со статусом «Вопрос решён» — вероятно, у
+    search-модели Гуляша есть дефолт атрибута на этот случай, а не «нет фильтра», как считалось
+    раньше. status_comment='' — передать параметр явно пустой строкой: по аналогии с
+    GOULASH_ORDERS_QUERY_TEMPLATE, где для ReceiptsAll[status_ordering] тот же приём (пустое
+    значение, а не отсутствие параметра) снимает фильтр по статусу заказа — расчёт на то, что
+    для GuestsComments сработает так же и в ответе будут отзывы в обоих статусах («решён» и
+    «не решён») сразу. Не подтверждено на реальной странице (в отличие от type_comment) — если
+    после деплоя статус «не решён» так и не появится, надёжный способ узнать точный код
+    статуса — DevTools → Network → Payload на кнопке «Сохранить в Excel» с выставленным вручную
+    на странице Гуляша фильтром "Статус"."""
     payload = {
         "GuestsComments[project_id]": "1",
         "GuestsComments[search_no_department]": "0",
         "GuestsComments[date_s]": date_from,
         "GuestsComments[date_do]": date_to,
-        "GuestsComments[type_comment]": "3",
+        "GuestsComments[type_comment]": type_comment,
     }
+    if status_comment is not None:
+        payload["GuestsComments[status_comment]"] = status_comment
     resp = session.post(f"{BASE_URL}{GUESTS_COMMENTS_PATH}", data=payload, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
 
@@ -381,16 +400,32 @@ def sync_reviews(session: requests.Session) -> None:
     date_from = (today - timedelta(days=REVIEWS_LOOKBACK_DAYS)).strftime("%d.%m.%Y")
     date_to = today.strftime("%d.%m.%Y")
 
-    html_bytes = fetch_negative_reviews_html(session, date_from, date_to)
-    result = send_reviews_to_crmpapa(html_bytes, REVIEWS_WEBHOOK_URL)
+    # Перебираем все типы отзывов (см. GUEST_REVIEW_TYPE_CODES) и для каждого — оба варианта
+    # статуса: без параметра (старое поведение, гарантированно не хуже прежнего результата для
+    # «решён») и с пустой строкой (попытка снять фильтр по статусу и получить «не решён» тоже).
+    # Дубли между вариантами безопасны — _ingest_guest_reviews_rows на стороне CRM пропускает
+    # уже импортированные строки по import_hash, а не создаёт повторы.
+    for type_comment in GUEST_REVIEW_TYPE_CODES:
+        for status_comment in (None, ""):
+            label = f"тип {type_comment}, статус {status_comment!r}"
+            try:
+                html_bytes = fetch_guest_reviews_html(session, date_from, date_to, type_comment, status_comment)
+            except Exception as exc:
+                log.error("Отзывы (%s) %s–%s: %s", label, date_from, date_to, exc)
+                continue
+            try:
+                result = send_reviews_to_crmpapa(html_bytes, REVIEWS_WEBHOOK_URL)
+            except Exception as exc:
+                log.error("Отзывы (%s) %s–%s: не удалось отправить на CRM: %s", label, date_from, date_to, exc)
+                continue
 
-    if result.get("ok"):
-        log.info(
-            "Отзывы %s–%s: новых %s (всего строк %s)",
-            date_from, date_to, result.get("imported"), result.get("rows"),
-        )
-    else:
-        log.error("Отзывы %s–%s: вебхук вернул ошибку: %s", date_from, date_to, result)
+            if result.get("ok"):
+                log.info(
+                    "Отзывы (%s) %s–%s: новых %s (всего строк %s)",
+                    label, date_from, date_to, result.get("imported"), result.get("rows"),
+                )
+            else:
+                log.error("Отзывы (%s) %s–%s: вебхук вернул ошибку: %s", label, date_from, date_to, result)
 
 
 # ---------------------------------------------------------------------------
