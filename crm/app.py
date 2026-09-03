@@ -16508,8 +16508,7 @@ def orders_report():
         data_max = (bounds[1] or '')[:10]
 
         today       = date.today().isoformat()
-        month_start = date.today().replace(day=1).isoformat()
-        date_from  = request.args.get('date_from', month_start)
+        date_from  = request.args.get('date_from', today)
         date_to    = request.args.get('date_to', today)
         branch_flt = [int(b) for b in request.args.getlist('branch_ids') if b.isdigit()]
         type_flt   = request.args.get('type', '')

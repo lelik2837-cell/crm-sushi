@@ -19,13 +19,18 @@
     <div class="card-body">
         <form method="GET" class="row g-2 align-items-end" id="ordersFilterForm">
             <input type="hidden" name="current_shift" id="currentShiftFlag" value="{{ '1' if current_shift else '' }}">
-            <div class="col-6 col-md-2">
-                <label class="form-label small fw-semibold">С</label>
-                <input type="date" name="date_from" value="{{ date_from }}" class="form-control form-control-sm" onchange="document.getElementById('currentShiftFlag').value=''">
-            </div>
-            <div class="col-6 col-md-2">
-                <label class="form-label small fw-semibold">По</label>
-                <input type="date" name="date_to" value="{{ date_to }}" class="form-control form-control-sm" onchange="document.getElementById('currentShiftFlag').value=''">
+            <div class="col-auto">
+                <label class="form-label small fw-semibold d-block">Дата</label>
+                <div class="d-flex align-items-center gap-1">
+                    <button type="button" class="btn btn-outline-secondary btn-sm px-2" onclick="navOrdDate(-1)" title="Предыдущий день">‹</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" id="ordDateBtn" onclick="openOrdCal()" style="min-width:150px;white-space:nowrap;" title="Выбрать даты">
+                        <i class="bi bi-calendar3 me-1"></i><span id="ordDateBtnLabel"></span>
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm px-2" onclick="navOrdDate(1)" title="Следующий день">›</button>
+                </div>
+                <input type="hidden" name="date_from" id="ordDateFrom" value="{{ date_from }}">
+                <input type="hidden" name="date_to" id="ordDateTo" value="{{ date_to }}">
+                <input id="ordCalHidden" type="text" style="display:none;position:absolute;">
             </div>
 
             <div class="col-6 col-md-auto">
@@ -242,6 +247,62 @@
 {% block scripts %}
 <script>
 (function () {
+    /* ── Дата: стрелки + мультивыбор через календарь ── */
+    function fmtLocalDate(d) {
+        return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
+    function fmtRuShort(d) {
+        return String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + d.getFullYear();
+    }
+    function parseLocalDate(s) {
+        var p = s.split('-');
+        return new Date(parseInt(p[0]), parseInt(p[1]) - 1, parseInt(p[2]));
+    }
+    var ordDateFrom = parseLocalDate(document.getElementById('ordDateFrom').value);
+    var ordDateTo   = parseLocalDate(document.getElementById('ordDateTo').value);
+
+    function updateOrdDateLabel() {
+        var label = document.getElementById('ordDateBtnLabel');
+        var sameDay = fmtLocalDate(ordDateFrom) === fmtLocalDate(ordDateTo);
+        label.textContent = sameDay ? fmtRuShort(ordDateFrom) : (fmtRuShort(ordDateFrom) + ' – ' + fmtRuShort(ordDateTo));
+    }
+    updateOrdDateLabel();
+
+    function submitOrdDates() {
+        document.getElementById('ordDateFrom').value = fmtLocalDate(ordDateFrom);
+        document.getElementById('ordDateTo').value = fmtLocalDate(ordDateTo);
+        document.getElementById('currentShiftFlag').value = '';
+        document.getElementById('ordersFilterForm').submit();
+    }
+    window.navOrdDate = function (delta) {
+        ordDateFrom.setDate(ordDateFrom.getDate() + delta);
+        ordDateTo.setDate(ordDateTo.getDate() + delta);
+        submitOrdDates();
+    };
+
+    var ordCalPicker = null;
+    window.openOrdCal = function () {
+        if (!ordCalPicker) {
+            ordCalPicker = flatpickr('#ordCalHidden', {
+                mode: 'range',
+                dateFormat: 'Y-m-d',
+                appendTo: document.body,
+                disableMobile: true,
+                defaultDate: [ordDateFrom, ordDateTo],
+                onClose: function (dates) {
+                    if (dates.length === 2) {
+                        ordDateFrom = dates[0]; ordDateTo = dates[1];
+                        submitOrdDates();
+                    } else if (dates.length === 1) {
+                        ordDateFrom = dates[0]; ordDateTo = dates[0];
+                        submitOrdDates();
+                    }
+                }
+            });
+        }
+        ordCalPicker.open();
+    };
+
     /* ── Мультивыбор подразделений ── */
     function onBranchCbChange() {
         const cbs = document.querySelectorAll('.branch-cb');
