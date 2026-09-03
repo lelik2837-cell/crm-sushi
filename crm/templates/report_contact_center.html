@@ -210,7 +210,7 @@
                 <tr style="background:#e7f5ec;">
                     <td class="small text-muted fst-italic">{{ pct_of_revenue_row.label }}</td>
                     {% for mo in months %}
-                    <td class="text-end small text-muted fst-italic">{% if pct_of_revenue_row.amounts[mo] %}{{ '%.1f'|format(pct_of_revenue_row.amounts[mo]) }}%{% else %}—{% endif %}</td>
+                    <td class="text-end small text-muted fst-italic">{% if pct_of_revenue_row.amounts[mo] %}{{ '%.2f'|format(pct_of_revenue_row.amounts[mo]) }}%{% else %}—{% endif %}</td>
                     {% endfor %}
                 </tr>
 
