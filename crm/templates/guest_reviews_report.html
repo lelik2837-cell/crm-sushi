@@ -102,23 +102,28 @@
                     <th>Содержание</th>
                     <th>Гость</th>
                     <th>Сумма</th>
+                    <th>Компенсация</th>
                 </tr>
             </thead>
             <tbody>
                 {% for r in rows %}
-                <tr>
+                {% if r.sentiment == 'П' %}
+                <tr class="table-success">
+                {% elif r.sentiment == 'Н' %}
+                <tr class="table-warning">
+                {% else %}
+                <tr class="table-danger">
+                {% endif %}
                     <td class="text-nowrap">{{ r.review_at | datetime_ru_short }}</td>
                     <td>{{ r.order_number }}</td>
                     <td>{{ r.branch_name or r.branch_raw }}</td>
                     <td class="text-center">
                         {% if r.sentiment == 'П' %}
                         <span class="gr-dot" style="background:#28a745;" title="Положительный"></span>
-                        {% elif r.sentiment == 'О' %}
-                        <span class="gr-dot" style="background:#dc3545;" title="Отрицательный"></span>
                         {% elif r.sentiment == 'Н' %}
                         <span class="gr-dot" style="background:#ffc107;" title="Нейтральный"></span>
                         {% else %}
-                        <span class="text-muted">—</span>
+                        <span class="gr-dot" style="background:#dc3545;" title="{% if r.sentiment == 'О' %}Отрицательный{% else %}Тип не проставлен — считаем отрицательным{% endif %}"></span>
                         {% endif %}
                     </td>
                     <td>{{ r.review_type }}</td>
@@ -128,9 +133,10 @@
                         {% if r.guest_phone %}<span class="text-muted small">({{ r.guest_phone | phone_fmt }})</span>{% endif %}
                     </td>
                     <td class="text-nowrap">{{ '%.0f'|format(r.order_amount) if r.order_amount is not none else '—' }}</td>
+                    <td class="text-nowrap">{{ '%.0f'|format(r.compensation_amount) if r.compensation_amount else '—' }}</td>
                 </tr>
                 {% else %}
-                <tr><td colspan="8" class="text-center text-muted py-3">Отзывов за этот период нет</td></tr>
+                <tr><td colspan="9" class="text-center text-muted py-3">Отзывов за этот период нет</td></tr>
                 {% endfor %}
             </tbody>
         </table>
