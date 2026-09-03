@@ -339,32 +339,38 @@ def fetch_orders_csv(session: requests.Session, date_from: str, date_to: str, cu
 # 3 соответствует «О» — подтверждено пользователем на реальной странице, 1/2 — оставшиеся два
 # типа в неподтверждённом порядке. Раньше запрашивали только «3» (только отрицательные) — по
 # просьбе пользователя (2026-09-03) забираем теперь все три кода, порядок между 1 и 2 не важен,
-# так как нужны оба.
-GUEST_REVIEW_TYPE_CODES = ("1", "2", "3")
+# так как нужны оба. Плюс None — вовсе без параметра type_comment: выяснилось (разбором реального
+# файла выгрузки, который пользователь скачал вручную), что у части отзывов на Гуляше эта буква
+# не проставлена вовсе (пустая колонка «Тип») — такие отзывы не совпадают ни с одним из 1/2/3 и
+# без варианта «без фильтра по типу» никогда бы не попали в CRM.
+GUEST_REVIEW_TYPE_CODES = (None, "1", "2", "3")
 
 
 def fetch_guest_reviews_html(session: requests.Session, date_from: str, date_to: str,
-                              type_comment: str, status_comment: Optional[str] = None) -> bytes:
+                              type_comment: Optional[str], status_comment: Optional[str] = None) -> bytes:
     """date_from/date_to — строки в формате ДД.ММ.ГГГГ. type_comment — код типа отзыва, см.
-    GUEST_REVIEW_TYPE_CODES. status_comment=None — параметр GuestsComments[status_comment]
-    не передаётся вовсе (исходное поведение); выяснилось (2026-09-03, со слов пользователя),
-    что в этом случае Гуляш отдаёт отзывы только со статусом «Вопрос решён» — вероятно, у
-    search-модели Гуляша есть дефолт атрибута на этот случай, а не «нет фильтра», как считалось
-    раньше. status_comment='' — передать параметр явно пустой строкой: по аналогии с
-    GOULASH_ORDERS_QUERY_TEMPLATE, где для ReceiptsAll[status_ordering] тот же приём (пустое
-    значение, а не отсутствие параметра) снимает фильтр по статусу заказа — расчёт на то, что
-    для GuestsComments сработает так же и в ответе будут отзывы в обоих статусах («решён» и
-    «не решён») сразу. Не подтверждено на реальной странице (в отличие от type_comment) — если
-    после деплоя статус «не решён» так и не появится, надёжный способ узнать точный код
-    статуса — DevTools → Network → Payload на кнопке «Сохранить в Excel» с выставленным вручную
-    на странице Гуляша фильтром "Статус"."""
+    GUEST_REVIEW_TYPE_CODES; None — параметр GuestsComments[type_comment] не передаётся вовсе
+    (нужно, чтобы забрать отзывы без проставленного типа — см. GUEST_REVIEW_TYPE_CODES).
+    status_comment=None — параметр GuestsComments[status_comment] не передаётся вовсе (исходное
+    поведение); выяснилось (2026-09-03, со слов пользователя), что в этом случае Гуляш отдаёт
+    отзывы только со статусом «Вопрос решён» — вероятно, у search-модели Гуляша есть дефолт
+    атрибута на этот случай, а не «нет фильтра», как считалось раньше. status_comment='' —
+    передать параметр явно пустой строкой: по аналогии с GOULASH_ORDERS_QUERY_TEMPLATE, где для
+    ReceiptsAll[status_ordering] тот же приём (пустое значение, а не отсутствие параметра)
+    снимает фильтр по статусу заказа — расчёт на то, что для GuestsComments сработает так же и
+    в ответе будут отзывы в обоих статусах («решён» и «не решён») сразу. Не подтверждено на
+    реальной странице (в отличие от type_comment) — если после деплоя статус «не решён» так и
+    не появится для отзывов с проставленным типом, надёжный способ узнать точный код статуса —
+    DevTools → Network → Payload на кнопке «Сохранить в Excel» с выставленным вручную на странице
+    Гуляша фильтром "Статус"."""
     payload = {
         "GuestsComments[project_id]": "1",
         "GuestsComments[search_no_department]": "0",
         "GuestsComments[date_s]": date_from,
         "GuestsComments[date_do]": date_to,
-        "GuestsComments[type_comment]": type_comment,
     }
+    if type_comment is not None:
+        payload["GuestsComments[type_comment]"] = type_comment
     if status_comment is not None:
         payload["GuestsComments[status_comment]"] = status_comment
     resp = session.post(f"{BASE_URL}{GUESTS_COMMENTS_PATH}", data=payload, timeout=REQUEST_TIMEOUT)
@@ -400,14 +406,15 @@ def sync_reviews(session: requests.Session) -> None:
     date_from = (today - timedelta(days=REVIEWS_LOOKBACK_DAYS)).strftime("%d.%m.%Y")
     date_to = today.strftime("%d.%m.%Y")
 
-    # Перебираем все типы отзывов (см. GUEST_REVIEW_TYPE_CODES) и для каждого — оба варианта
-    # статуса: без параметра (старое поведение, гарантированно не хуже прежнего результата для
-    # «решён») и с пустой строкой (попытка снять фильтр по статусу и получить «не решён» тоже).
-    # Дубли между вариантами безопасны — _ingest_guest_reviews_rows на стороне CRM пропускает
-    # уже импортированные строки по import_hash, а не создаёт повторы.
+    # Перебираем все варианты типа отзыва (см. GUEST_REVIEW_TYPE_CODES — 1/2/3 плюс None, когда
+    # тип у отзыва на Гуляше вовсе не проставлен) и для каждого — оба варианта статуса: без
+    # параметра (старое поведение, гарантированно не хуже прежнего результата для «решён») и с
+    # пустой строкой (попытка снять фильтр по статусу и получить «не решён» тоже). Итого до
+    # 4×2=8 запросов на цикл опроса. Дубли между вариантами безопасны — _ingest_guest_reviews_rows
+    # на стороне CRM пропускает уже импортированные строки по import_hash, а не создаёт повторы.
     for type_comment in GUEST_REVIEW_TYPE_CODES:
         for status_comment in (None, ""):
-            label = f"тип {type_comment}, статус {status_comment!r}"
+            label = f"тип {type_comment!r}, статус {status_comment!r}"
             try:
                 html_bytes = fetch_guest_reviews_html(session, date_from, date_to, type_comment, status_comment)
             except Exception as exc:
