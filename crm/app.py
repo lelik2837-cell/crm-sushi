@@ -16123,6 +16123,11 @@ def _ingest_guest_reviews_rows(conn, frows, branch_map):
     """INSERT OR IGNORE по import_hash — отзывы неизменны после публикации, повторный приход
     того же отзыва в перекрывающемся окне синхронизации просто пропускается, а не обновляет
     существующую строку (в отличие от _ingest_orders_rows, где повтор — это апдейт).
+    Исключение — sentiment (буква П/Н/О, колонка добавлена позже, см. п.302/303/305 в plan.md):
+    отзывы, импортированные до этой колонки, попали в базу с sentiment=NULL и по хэшу больше
+    никогда не INSERT'ятся заново — без точечного дозаполнения ниже так и остались бы пустыми
+    навсегда, хотя в свежих выгрузках Гуляша (в пределах REVIEWS_LOOKBACK_DAYS) для них уже
+    приходит настоящее значение.
     Возвращает (imported, unresolved_raws) — branch_raw, для которых не нашлось branch_id
     ни через заказ в orders_report, ни через branch_raw_map — их стоит показать пользователю,
     чтобы сопоставить вручную на странице «Филиалы»."""
@@ -16146,6 +16151,11 @@ def _ingest_guest_reviews_rows(conn, frows, branch_map):
         ))
         if cur.rowcount:
             imported += 1
+        elif r['sentiment'] is not None:
+            conn.execute(
+                'UPDATE guest_reviews SET sentiment=? WHERE import_hash=? AND sentiment IS NULL',
+                (r['sentiment'], h)
+            )
     return imported, unresolved_raws
 
 
