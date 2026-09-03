@@ -1,6 +1,11 @@
 {% extends 'base.html' %}
 {% block title %}Промокоды{% endblock %}
 {% block content %}
+<style>
+@media (max-width:991.98px) {
+  #p-all-btn { display:none !important; }
+}
+</style>
 
 <div class="row g-3 mb-4">
   <div class="col-12">
@@ -182,6 +187,9 @@ function togglePromoYearMenu(ev) {
         items += '<div class="p-year-opt" data-y="' + y + '" style="padding:7px 16px;font-size:13px;color:#1e293b;cursor:pointer;white-space:nowrap;' +
                  (active ? 'font-weight:700;background:#f1f5f9;' : '') + '">' + y + '</div>';
     }
+    items += '<div style="border-top:1px solid #e2e8f0;"></div>';
+    items += '<div class="p-year-opt" data-y="all" style="padding:7px 16px;font-size:13px;color:#1e293b;cursor:pointer;white-space:nowrap;' +
+             (promoPeriod === 'all' ? 'font-weight:700;background:#f1f5f9;' : '') + '">Всё</div>';
     menu.innerHTML = items;
     menu.style.display = 'block';
 }
@@ -191,8 +199,8 @@ document.addEventListener('click', function(e) {
     var opt = e.target.closest && e.target.closest('.p-year-opt');
     if (opt) {
         menu.style.display = 'none';
-        promoYear = parseInt(opt.dataset.y);
-        loadPromoCard('year');
+        if (opt.dataset.y === 'all') { loadPromoCard('all'); }
+        else { promoYear = parseInt(opt.dataset.y); loadPromoCard('year'); }
         return;
     }
     if (menu.style.display === 'block' && !menu.contains(e.target) && !(e.target.closest && e.target.closest('#p-year-caret'))) {
