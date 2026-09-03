@@ -138,8 +138,13 @@ REVIEWS_WEBHOOK_URL = os.environ.get("CRMPAPA_REVIEWS_WEBHOOK_URL", "")
 # Тот же смысл, что ORDERS_LOOKBACK_DAYS — с запасом, чтобы не потерять отзыв, если он
 # появился на Гуляше с задержкой относительно даты самого заказа. Отзывы неизменны после
 # публикации (в отличие от заказов), повторная загрузка того же отзыва просто не даёт
-# дубля на стороне crmpapa.ru (import_hash), а не обновляет его.
-REVIEWS_LOOKBACK_DAYS = int(os.environ.get("REVIEWS_LOOKBACK_DAYS", "3"))
+# дубля на стороне crmpapa.ru (import_hash), а не обновляет его. Заодно это же окно — единственный
+# способ дозаполнить sentiment у старых отзывов (см. п.305 в plan.md) и подхватить отзывы,
+# удалённые на Гуляше (см. п.306) — оба работают только для отзывов внутри этого окна, поэтому
+# по просьбе пользователя (2026-09-04) расширено с 3 до 30 дней. ВАЖНО: если на сервере в
+# /opt/env/worker.env уже явно задан REVIEWS_LOOKBACK_DAYS — этот дефолт его не переопределит,
+# нужно поправить значение прямо там.
+REVIEWS_LOOKBACK_DAYS = int(os.environ.get("REVIEWS_LOOKBACK_DAYS", "30"))
 
 logging.basicConfig(
     level=logging.INFO,
