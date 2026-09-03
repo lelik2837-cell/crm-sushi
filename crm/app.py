@@ -16502,7 +16502,7 @@ def orders_report():
         branch_groups = get_branch_groups(conn)
 
         bounds = conn.execute(
-            'SELECT MIN(received_at), MAX(received_at) FROM orders_report'
+            'SELECT MIN(delivery_at), MAX(delivery_at) FROM orders_report'
         ).fetchone()
         data_min = (bounds[0] or '')[:10]
         data_max = (bounds[1] or '')[:10]
@@ -16558,9 +16558,13 @@ def orders_report():
             where.append('delivery_at <= ?')
             params.append(date_to + ' 23:59:59')
         else:
-            where.append('received_at >= ?')
+            # По дате ДОСТАВКИ (delivery_at), не по времени приёма — иначе предзаказ,
+            # принятый вчера с доставкой сегодня, не попадал бы в выбранную дату
+            # «сегодня» (см. п.295/296). delivery_at всегда заполнен — в
+            # _parse_orders_csv для него уже есть запасной вариант (received_at).
+            where.append('delivery_at >= ?')
             params.append(date_from + ' 00:00:00')
-            where.append('received_at <= ?')
+            where.append('delivery_at <= ?')
             params.append(date_to + ' 23:59:59')
 
         if branch_flt:
