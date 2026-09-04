@@ -1,9 +1,9 @@
 {% extends 'base.html' %}
-{% block title %}Отрицательные отзывы{% endblock %}
+{% block title %}Отзывы{% endblock %}
 {% block content %}
 
 <div class="d-flex justify-content-between align-items-center mb-3">
-    <h4 class="fw-bold mb-0"><i class="bi bi-emoji-frown me-2"></i>Отрицательные отзывы</h4>
+    <h4 class="fw-bold mb-0"><i class="bi bi-star-half me-2"></i>Отзывы</h4>
     <a href="{{ url_for('branches') }}" class="btn btn-outline-secondary btn-sm">
         <i class="bi bi-link-45deg me-1"></i>Сопоставить филиалы
     </a>
@@ -106,6 +106,12 @@
 
 {% macro sentiment_row_class(sentiment) %}{% if sentiment == 'П' %}table-success{% elif sentiment == 'Н' %}table-warning{% else %}table-danger{% endif %}{% endmacro %}
 
+{% macro source_badge(source) %}
+{% if source == 'gulyash' %}<span class="badge bg-secondary" title="Пришёл с сайта/приложения (Гуляш)">Гуляш</span>
+{% elif source == 'revvy' %}<span class="badge bg-info text-dark" title="Пришёл из авто-рассылки после доставки (оценка заказа)">Ревви</span>
+{% endif %}
+{% endmacro %}
+
 <div class="card">
     <div class="card-header fw-semibold">Всего: {{ rows|length }} {{ 'за период (показаны последние 500)' if rows|length == 500 else '' }}</div>
     <div class="table-responsive">
@@ -116,6 +122,7 @@
                     <th>Заказ</th>
                     <th>Филиал</th>
                     <th class="text-center">Тип</th>
+                    <th class="text-center">Источник</th>
                     <th>Тип жалобы</th>
                     <th>Содержание</th>
                     <th>Гость</th>
@@ -132,6 +139,7 @@
                     <td>{{ r.order_number }}</td>
                     <td>{{ r.branch_name or r.branch_raw }}</td>
                     <td class="text-center">{{ sentiment_dot(r.sentiment) }}</td>
+                    <td class="text-center">{{ source_badge(r.source) }}</td>
                     <td>{{ r.review_type }}</td>
                     <td style="max-width:420px; white-space:pre-wrap;">{{ r.content }}</td>
                     <td class="text-nowrap">
@@ -150,6 +158,7 @@
                     <td>{{ g.order_number }}</td>
                     <td>{{ g.branch_name or g.branch_raw }}</td>
                     <td class="text-center">{{ sentiment_dot(g.worst_sentiment) }}</td>
+                    <td class="text-center">{% for s in g.sources %}{{ source_badge(s) }} {% endfor %}</td>
                     <td>{{ g.categories | join(', ') }}</td>
                     <td class="text-muted fst-italic">Показать {{ g.reviews|length }} отзыва(ов) по заказу</td>
                     <td class="text-nowrap">
@@ -165,6 +174,7 @@
                     <td></td>
                     <td></td>
                     <td class="text-center">{{ sentiment_dot(r.sentiment) }}</td>
+                    <td class="text-center">{{ source_badge(r.source) }}</td>
                     <td>{{ r.review_type }}</td>
                     <td style="max-width:420px; white-space:pre-wrap;">{{ r.content }}</td>
                     <td></td>
@@ -174,7 +184,7 @@
                 {% endfor %}
                 {% endif %}
                 {% else %}
-                <tr><td colspan="9" class="text-center text-muted py-3">Отзывов за этот период нет</td></tr>
+                <tr><td colspan="10" class="text-center text-muted py-3">Отзывов за этот период нет</td></tr>
                 {% endfor %}
             </tbody>
         </table>

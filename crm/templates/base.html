@@ -411,7 +411,7 @@
                         {% if item_visible('guest_reviews_report') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='guest_reviews_report' %}active{% endif %}" href="{{ url_for('guest_reviews_report') }}">
-                                <i class="bi bi-emoji-frown me-2"></i>Отрицательные отзывы
+                                <i class="bi bi-star-half me-2"></i>Отзывы
                             </a>
                         </li>
                         {% endif %}

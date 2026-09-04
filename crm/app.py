@@ -150,7 +150,7 @@ MENU_ITEMS = [
     ('bank',                  'Банк',                     'reports',  True),
     ('whatsapp_broadcast',    'Рассылка',                 'reports',  False),
     ('points_accrual',        'Начисление баллов',        'reports',  False),
-    ('guest_reviews_report',  'Отрицательные отзывы',     'reports',  False),
+    ('guest_reviews_report',  'Отзывы',                   'reports',  False),
     ('uniform_issuance',      'Выдача формы',             'reports',  False),
     ('call_center',           'Колл-центр',               'reports',  False),
     ('contact_center_report', 'Контакт-центр',            'reports',  False),
@@ -16294,18 +16294,27 @@ _GR_SENTIMENT_RANK = {'П': 2, 'Н': 1}  # ниже — «хуже»; 'О' и п
 
 
 def _group_guest_reviews(rows):
-    """Заказ может получить несколько разных отзывов/жалоб (разные категории, разное время) —
-    группирует строки одного запроса (уже отсортированные по review_at DESC) по order_number,
-    чтобы показать их в отчёте одной строкой вместо нескольких (просьба пользователя 2026-09-04
-    «отзывы на один заказ... можешь их объединять вместе?»). Порядок групп — по первому появлению
-    order_number в исходном списке, то есть по самому свежему отзыву в группе (rows уже DESC).
+    """Заказ может получить несколько разных отзывов/жалоб (разные категории, разное время,
+    и теперь ещё и разные источники — см. ниже) — группирует строки одного запроса (уже
+    отсортированные по review_at DESC) по order_number, чтобы показать их в отчёте одной строкой
+    вместо нескольких (просьба пользователя 2026-09-04 «отзывы на один заказ... можешь их
+    объединять вместе?»). Порядок групп — по первому появлению order_number в исходном списке,
+    то есть по самому свежему отзыву в группе (rows уже DESC).
+
+    С 2026-09-04 rows смешивает два источника (просьба пользователя «объединить»): сами отзывы
+    из Гуляша (source='gulyash', сайт/приложение) и оценки заказа 1-5 из авто-рассылки после
+    доставки (source='revvy', см. order_rating_requests/_maybe_create_rating_request) — если один
+    и тот же заказ засветился в обоих источниках, это одна группа с обоими source в 'sources'.
+
     Возвращает список словарей: order_number, reviews (исходные строки группы, в своём порядке),
     worst_sentiment (самый «плохой» sentiment среди группы — 'О'/пусто побеждает 'Н', 'Н' побеждает
     'П', используется для цвета строки/шарика, см. guest_reviews_report.html), categories
-    (уникальные review_type группы, в порядке появления), compensation_total (сумма
-    compensation_amount по группе, None если ни одной непустой), и «представительские» поля
-    (филиал/гость/сумма) — берутся из первого (самого свежего) отзыва группы, т.к. это один
-    и тот же заказ, они не должны отличаться между отзывами."""
+    (уникальные review_type группы, в порядке появления, без пустых — у оценок из рассылки
+    review_type нет), sources (уникальные source группы, в порядке появления — бейджи Гуляш/Ревви),
+    compensation_total (сумма compensation_amount по группе, None если ни одной непустой), и
+    «представительские» поля (филиал/гость/сумма) — берутся из первого непустого значения среди
+    отзывов группы (не строго из самого свежего: например, сумму заказа Гуляш обычно знает, а
+    оценка по рассылке — нет, и наоборот с телефоном)."""
     groups = {}
     order = []
     for r in rows:
@@ -16315,28 +16324,37 @@ def _group_guest_reviews(rows):
             order.append(key)
         groups[key].append(r)
 
+    def _first_present(grp, field):
+        for r in grp:
+            if r[field] not in (None, ''):
+                return r[field]
+        return None
+
     result = []
     for key in order:
         grp = groups[key]
-        primary = grp[0]
         worst_sentiment = min(grp, key=lambda r: _GR_SENTIMENT_RANK.get(r['sentiment'], 0))['sentiment']
         categories = []
+        sources = []
         for r in grp:
             if r['review_type'] and r['review_type'] not in categories:
                 categories.append(r['review_type'])
+            if r['source'] not in sources:
+                sources.append(r['source'])
         comp_values = [r['compensation_amount'] for r in grp if r['compensation_amount']]
         result.append({
             'order_number': key,
             'reviews': grp,
             'worst_sentiment': worst_sentiment,
             'categories': categories,
+            'sources': sources,
             'compensation_total': sum(comp_values) if comp_values else None,
-            'branch_name': primary['branch_name'],
-            'branch_raw': primary['branch_raw'],
-            'guest_name': primary['guest_name'],
-            'guest_phone': primary['guest_phone'],
-            'order_amount': primary['order_amount'],
-            'latest_review_at': primary['review_at'],
+            'branch_name': _first_present(grp, 'branch_name'),
+            'branch_raw': _first_present(grp, 'branch_raw'),
+            'guest_name': _first_present(grp, 'guest_name'),
+            'guest_phone': _first_present(grp, 'guest_phone'),
+            'order_amount': _first_present(grp, 'order_amount'),
+            'latest_review_at': grp[0]['review_at'],
         })
     return result
 
@@ -16354,9 +16372,10 @@ def guest_reviews_report():
         date_to = request.args.get('date_to', today)
         branch_flt = [int(b) for b in request.args.getlist('branch_ids') if b.isdigit()]
         show_positive = request.args.get('show_positive') == '1'
+        dt_from, dt_to = date_from + ' 00:00:00', date_to + ' 23:59:59'
 
         where = ['review_at >= ?', 'review_at <= ?']
-        params = [date_from + ' 00:00:00', date_to + ' 23:59:59']
+        params = [dt_from, dt_to]
         if branch_flt:
             ph = ','.join('?' * len(branch_flt))
             where.append(f'branch_id IN ({ph})')
@@ -16369,7 +16388,7 @@ def guest_reviews_report():
             where.append("(sentiment IS NULL OR sentiment != 'П')")
         sql_where = ' AND '.join(where)
 
-        rows = conn.execute(f'''
+        gr_rows = conn.execute(f'''
             SELECT gr.*, b.name AS branch_name
             FROM guest_reviews gr
             LEFT JOIN branches b ON b.id = gr.branch_id
@@ -16378,10 +16397,59 @@ def guest_reviews_report():
             LIMIT 500
         ''', params).fetchall()
 
-    grouped_rows = _group_guest_reviews(rows)
+        # Оценки заказа 1-5 из авто-рассылки после доставки (order_rating_requests, кампания
+        # "по образцу Revvy" — см. rating_campaigns) — просьба пользователя 2026-09-04 добавить их
+        # в этот же отчёт: 4-5 считаем положительной оценкой, 1-3 — отрицательной. Сумма заказа
+        # берётся из orders_report по номеру+дате заказа (order_date = дата приёмки, см.
+        # _maybe_create_rating_request) — своей суммы order_rating_requests не хранит.
+        where2 = ["rr.status='responded'", 'rr.rating IS NOT NULL', 'rr.responded_at >= ?', 'rr.responded_at <= ?']
+        params2 = [dt_from, dt_to]
+        if branch_flt:
+            ph2 = ','.join('?' * len(branch_flt))
+            where2.append(f'rc.branch_id IN ({ph2})')
+            params2.extend(branch_flt)
+        if not show_positive:
+            where2.append('rr.rating <= 3')
+        sql_where2 = ' AND '.join(where2)
+
+        rr_rows = conn.execute(f'''
+            SELECT rr.order_number, rr.phone, rr.rating, rr.responded_at,
+                   rc.branch_id AS branch_id, b.name AS branch_name,
+                   o.amount AS order_amount
+            FROM order_rating_requests rr
+            JOIN rating_campaigns rc ON rc.id = rr.campaign_id
+            LEFT JOIN branches b ON b.id = rc.branch_id
+            LEFT JOIN orders_report o
+                ON o.order_number = rr.order_number AND substr(o.received_at, 1, 10) = rr.order_date
+            WHERE {sql_where2}
+            ORDER BY rr.responded_at DESC
+            LIMIT 500
+        ''', params2).fetchall()
+
+    combined = [dict(r, source='gulyash') for r in gr_rows]
+    for r in rr_rows:
+        combined.append({
+            'order_number': r['order_number'],
+            'review_at': r['responded_at'],
+            'branch_id': r['branch_id'],
+            'branch_name': r['branch_name'],
+            'branch_raw': '',
+            'review_type': '',
+            'content': f"Оценка по рассылке: {r['rating']}/5",
+            'guest_name': None,
+            'guest_phone': r['phone'],
+            'order_amount': r['order_amount'],
+            'compensation_amount': None,
+            'sentiment': 'П' if r['rating'] >= 4 else 'О',
+            'source': 'revvy',
+        })
+    combined.sort(key=lambda r: r['review_at'] or '', reverse=True)
+    combined = combined[:500]
+
+    grouped_rows = _group_guest_reviews(combined)
 
     return render_template('guest_reviews_report.html',
-        rows=rows, grouped_rows=grouped_rows, branches=branches, branch_groups=branch_groups,
+        rows=combined, grouped_rows=grouped_rows, branches=branches, branch_groups=branch_groups,
         branch_flt=branch_flt, date_from=date_from, date_to=date_to, show_positive=show_positive)
 
 
