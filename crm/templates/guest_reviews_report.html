@@ -106,6 +106,15 @@
 
 {% macro sentiment_row_class(sentiment) %}{% if sentiment == 'П' %}table-success{% elif sentiment == 'Н' %}table-warning{% else %}table-danger{% endif %}{% endmacro %}
 
+{% macro phone_reveal_cell(order_number, phone, has_status) %}
+{% if phone %}
+<button type="button" class="btn btn-sm btn-outline-secondary py-0 gr-reveal-btn" data-order="{{ order_number }}" data-mark="{{ '1' if has_status else '0' }}" onclick="event.stopPropagation(); revealGrPhone(this)">
+    <i class="bi bi-eye me-1"></i>Посмотреть
+</button>
+{% else %}—
+{% endif %}
+{% endmacro %}
+
 {% macro status_badge(status) %}
 {% if status == 'new' %}<span class="badge bg-primary">{{ review_status_labels[status] }}</span>
 {% elif status == 'in_progress' %}<span class="badge bg-warning text-dark">{{ review_status_labels[status] }}</span>
@@ -151,10 +160,10 @@
                     <td class="text-center">{{ source_badge(r.source) }}</td>
                     <td>{{ r.review_type }}</td>
                     <td style="max-width:420px; white-space:pre-wrap;">{{ r.content }}</td>
-                    <td class="text-nowrap">{{ r.guest_phone | phone_fmt if r.guest_phone else '—' }}</td>
+                    <td class="text-nowrap">{{ phone_reveal_cell(g.order_number, g.guest_phone, g.status is not none) }}</td>
                     <td class="text-nowrap">{{ '%.0f'|format(r.order_amount) if r.order_amount is not none else '—' }}</td>
                     <td class="text-nowrap">{{ '%.0f'|format(r.compensation_amount) if r.compensation_amount else '—' }}</td>
-                    <td class="text-center">{{ status_badge(g.status) }}</td>
+                    <td class="text-center gr-status-cell">{{ status_badge(g.status) }}</td>
                 </tr>
                 {% else %}
                 {% set gi = loop.index0 %}
@@ -168,10 +177,10 @@
                     <td class="text-center">{% for s in g.sources %}{{ source_badge(s) }} {% endfor %}</td>
                     <td>{{ g.categories | join(', ') }}</td>
                     <td class="text-muted fst-italic">Показать {{ g.reviews|length }} отзыва(ов) по заказу</td>
-                    <td class="text-nowrap">{{ g.guest_phone | phone_fmt if g.guest_phone else '—' }}</td>
+                    <td class="text-nowrap">{{ phone_reveal_cell(g.order_number, g.guest_phone, g.status is not none) }}</td>
                     <td class="text-nowrap">{{ '%.0f'|format(g.order_amount) if g.order_amount is not none else '—' }}</td>
                     <td class="text-nowrap">{{ '%.0f'|format(g.compensation_total) if g.compensation_total else '—' }}</td>
-                    <td class="text-center">{{ status_badge(g.status) }}</td>
+                    <td class="text-center gr-status-cell">{{ status_badge(g.status) }}</td>
                 </tr>
                 {% for r in g.reviews %}
                 <tr class="gr-detail-row gr-group-{{ gi }}" style="display:none">
@@ -291,6 +300,40 @@
         const opening = detailRows.length > 0 && detailRows[0].style.display === 'none';
         detailRows.forEach(function (r) { r.style.display = opening ? '' : 'none'; });
         if (chevron) chevron.classList.toggle('open', opening);
+    };
+
+    /* ── Показать номер по клику (сам номер сервер отдаёт только по запросу) ──
+       Если у заказа применим статус (has_status/data-mark), заодно переводит
+       'new' -> 'in_progress' на сервере и обновляет бейдж статуса в этой же строке. */
+    var GR_STATUS_BADGE = {
+        new: { cls: 'bg-primary', label: 'Новый' },
+        in_progress: { cls: 'bg-warning text-dark', label: 'В работе' },
+        done: { cls: 'bg-success', label: 'Завершён' }
+    };
+    window.revealGrPhone = function (btn) {
+        btn.disabled = true;
+        fetch('{{ url_for("guest_reviews_reveal_phone") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                order_number: btn.dataset.order,
+                mark_in_progress: btn.dataset.mark === '1'
+            })
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            var cell = btn.closest('td');
+            cell.textContent = data.phone || '—';
+            if (data.status) {
+                var row = cell.closest('tr');
+                var statusCell = row.querySelector('.gr-status-cell');
+                var badge = GR_STATUS_BADGE[data.status];
+                if (statusCell && badge) {
+                    statusCell.innerHTML = '<span class="badge ' + badge.cls + '">' + badge.label + '</span>';
+                }
+            }
+        })
+        .catch(function () { btn.disabled = false; });
     };
 })();
 </script>

@@ -16498,6 +16498,54 @@ def guest_reviews_report():
         review_status_labels=REVIEW_STATUS_LABELS)
 
 
+@app.route('/reports/guest-reviews/reveal-phone', methods=['POST'])
+@login_required
+@menu_permission_required('guest_reviews_report')
+def guest_reviews_reveal_phone():
+    """Номер гостя в отчёте «Отзывы» скрыт по умолчанию — показывается по клику «Посмотреть»
+    (просьба пользователя 2026-09-04), и этим же кликом заказ переводится в статус 'in_progress'
+    (сотрудник начал разбираться) — но только у групп, где статус вообще применим (не у
+    положительных отзывов, см. mark_in_progress из шаблона: True только когда g.status не None),
+    и только из 'new' — повторный просмотр номера уже взятого в работу/завершённого обращения не
+    должен откатывать статус назад."""
+    data = request.get_json(silent=True) or {}
+    order_number = (data.get('order_number') or '').strip()
+    if not order_number:
+        return jsonify({'error': 'bad_request'}), 400
+
+    with get_db() as conn:
+        row = conn.execute('''
+            SELECT guest_phone FROM guest_reviews
+            WHERE order_number=? AND guest_phone IS NOT NULL AND guest_phone != ''
+            ORDER BY review_at DESC LIMIT 1
+        ''', (order_number,)).fetchone()
+        phone = row['guest_phone'] if row else None
+        if not phone:
+            row = conn.execute('''
+                SELECT phone FROM order_rating_requests
+                WHERE order_number=? AND phone IS NOT NULL AND phone != ''
+                ORDER BY responded_at DESC LIMIT 1
+            ''', (order_number,)).fetchone()
+            phone = row['phone'] if row else None
+
+        new_status = None
+        if data.get('mark_in_progress'):
+            conn.execute('''
+                INSERT INTO review_statuses (order_number, status, updated_by, updated_at)
+                VALUES (?, 'in_progress', ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(order_number) DO UPDATE SET
+                    status = CASE WHEN review_statuses.status = 'new' THEN 'in_progress' ELSE review_statuses.status END,
+                    updated_by = CASE WHEN review_statuses.status = 'new' THEN excluded.updated_by ELSE review_statuses.updated_by END,
+                    updated_at = CASE WHEN review_statuses.status = 'new' THEN excluded.updated_at ELSE review_statuses.updated_at END
+            ''', (order_number, session.get('user_id')))
+            conn.commit()
+            new_status = conn.execute(
+                'SELECT status FROM review_statuses WHERE order_number=?', (order_number,)
+            ).fetchone()['status']
+
+    return jsonify({'phone': phone_fmt(phone) if phone else None, 'status': new_status})
+
+
 # ─── ВЫДАЧА ФОРМЫ (склад + выдача сотрудникам, учёт по группе филиалов) ────────────
 # Группа филиалов — уже существующий общий механизм («Филиалы» → «Группы филиалов»,
 # используется также для ставок/выплат) — пользователь сам заводит там группы по городам,
