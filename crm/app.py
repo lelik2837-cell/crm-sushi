@@ -16154,6 +16154,48 @@ def _resolve_review_branch_id(conn, order_number):
     return row['branch_id'] if row else None
 
 
+def _lookup_order_dates(conn, needs):
+    """Дата самого заказа (не отзыва/оценки) для отчёта «Отзывы» — просьба пользователя
+    2026-09-04: номер заказа у Гуляша периодически переиспользуется для разных, не связанных
+    друг с другом заказов (см. _review_row_hash/_resolve_review_branch_id выше), поэтому один
+    только order_number не идентифицирует заказ однозначно, и объединять отзывы/оценки одного
+    заказа в отчёте («Заказ») нужно вместе с датой заказа, а не по одному номеру — иначе
+    случайно совпавшие номера разных заказов (например, за разные месяцы) схлопнутся в одну
+    строку. У guest_reviews своей даты заказа нет вообще (есть только review_at — когда
+    оставлен отзыв), поэтому она подбирается из orders_report по order_number+branch_id.
+    Раз номер может повторяться — среди всех совпадений берём то, чья дата ближе всего к дате
+    самого отзыва (near_dt), а не просто самое свежее (в отличие от _resolve_review_branch_id,
+    где для одной лишь цели определить филиал точная дата не имела значения).
+
+    needs — список (order_number, branch_id, near_dt); возвращает
+    {(order_number, branch_id, near_dt): 'YYYY-MM-DD' или None}."""
+    order_numbers = list({n for n, _, _ in needs})
+    if not order_numbers:
+        return {}
+    ph = ','.join('?' * len(order_numbers))
+    candidates = {}
+    for row in conn.execute(
+        f'SELECT order_number, branch_id, received_at FROM orders_report WHERE order_number IN ({ph})',
+        order_numbers
+    ).fetchall():
+        candidates.setdefault((row['order_number'], row['branch_id']), []).append(row['received_at'])
+
+    result = {}
+    for order_number, branch_id, near_dt in needs:
+        opts = candidates.get((order_number, branch_id)) or []
+        if not opts:
+            result[(order_number, branch_id, near_dt)] = None
+            continue
+        near_date_str = (near_dt or '')[:10]
+        try:
+            near = datetime.strptime(near_date_str, '%Y-%m-%d')
+            best = min(opts, key=lambda o: abs((datetime.strptime(o[:10], '%Y-%m-%d') - near).days))
+        except (ValueError, TypeError):
+            best = opts[0]
+        result[(order_number, branch_id, near_dt)] = best[:10]
+    return result
+
+
 def _ingest_guest_reviews_rows(conn, frows, branch_map):
     """INSERT OR IGNORE по import_hash — отзывы неизменны после публикации, повторный приход
     того же отзыва в перекрывающемся окне синхронизации просто пропускается, а не обновляет
@@ -16323,33 +16365,48 @@ REVIEW_STATUS_LABELS = {'new': 'Новый', 'in_progress': 'В работе', '
 def _group_guest_reviews(rows, status_by_order=None):
     """Заказ может получить несколько разных отзывов/жалоб (разные категории, разное время,
     и теперь ещё и разные источники — см. ниже) — группирует строки одного запроса (уже
-    отсортированные по review_at DESC) по order_number, чтобы показать их в отчёте одной строкой
+    отсортированные по review_at DESC) по заказу, чтобы показать их в отчёте одной строкой
     вместо нескольких (просьба пользователя 2026-09-04 «отзывы на один заказ... можешь их
-    объединять вместе?»). Порядок групп — по первому появлению order_number в исходном списке,
+    объединять вместе?»). Порядок групп — по первому появлению заказа в исходном списке,
     то есть по самому свежему отзыву в группе (rows уже DESC).
+
+    Ключ группировки — (order_number, order_date), а НЕ один order_number: Гуляш периодически
+    переиспользует один и тот же номер заказа для разных, не связанных друг с другом заказов
+    (см. _lookup_order_dates) — просьба пользователя 2026-09-04 «номера заказа периодически
+    повторяются», после того как без даты заказа два случайно совпавших по номеру, но разных
+    заказа схлопывались в одну группу. order_date уже проставлен в rows вызывающим кодом
+    (guest_reviews_report(): у Гуляш-строк — подбором из orders_report ближайшего по дате,
+    у оценок из рассылки — напрямую из order_rating_requests.order_date, она там всегда точная).
+    Ровно это же обеспечивает и обратный эффект — то, что несколько отзывов ОДНОГО реального
+    заказа, пришедших в разные дни (например, заказ от 2-го числа и дополнительный отзыв на
+    него от 4-го), по-прежнему объединяются: order_date для них общий (дата самого заказа),
+    несмотря на разный review_at.
 
     С 2026-09-04 rows смешивает два источника (просьба пользователя «объединить»): сами отзывы
     из Гуляша (source='gulyash', сайт/приложение) и оценки заказа 1-5 из авто-рассылки после
     доставки (source='revvy', см. order_rating_requests/_maybe_create_rating_request) — если один
     и тот же заказ засветился в обоих источниках, это одна группа с обоими source в 'sources'.
 
-    Возвращает список словарей: order_number, reviews (исходные строки группы, в своём порядке),
-    worst_sentiment (самый «плохой» sentiment среди группы — 'О'/пусто побеждает 'Н', 'Н' побеждает
-    'П', используется для цвета строки/шарика, см. guest_reviews_report.html), categories
-    (уникальные review_type группы, в порядке появления, без пустых — у оценок из рассылки
-    review_type нет), sources (уникальные source группы, в порядке появления — бейджи Гуляш/Ревви),
-    compensation_total (сумма compensation_amount по группе, None если ни одной непустой), и
-    «представительские» поля (филиал/гость/сумма) — берутся из первого непустого значения среди
-    отзывов группы (не строго из самого свежего: например, сумму заказа Гуляш обычно знает, а
-    оценка по рассылке — нет, и наоборот с телефоном), и status (статус отработки заказа из
-    review_statuses, по умолчанию 'new' — см. REVIEW_STATUS_LABELS) — только у групп, которые
+    Возвращает список словарей: order_number, order_date, reviews (исходные строки группы, в
+    своём порядке), worst_sentiment (самый «плохой» sentiment среди группы — 'О'/пусто побеждает
+    'Н', 'Н' побеждает 'П', используется для цвета строки/шарика, см. guest_reviews_report.html),
+    categories (уникальные review_type группы, в порядке появления, без пустых — у оценок из
+    рассылки review_type нет), sources (уникальные source группы, в порядке появления — бейджи
+    Гуляш/Ревви), compensation_total (сумма compensation_amount по группе, None если ни одной
+    непустой), и «представительские» поля (филиал/гость/сумма) — берутся из первого непустого
+    значения среди отзывов группы (не строго из самого свежего: например, сумму заказа Гуляш
+    обычно знает, а оценка по рассылке — нет, и наоборот с телефоном), и status (статус
+    отработки заказа из review_statuses, по умолчанию 'new' — см. REVIEW_STATUS_LABELS,
+    таблица по-прежнему ключуется одним order_number, не парой — коллизия статуса между
+    случайно совпавшими номерами заказов на этом шаге осознанно не устраняется, это тот же
+    редкий крайний случай, что и в _resolve_review_branch_id) — только у групп, которые
     считаются «требующими внимания» (worst_sentiment != 'П'), у положительных групп status=None,
     отрабатывать нечего."""
     status_by_order = status_by_order or {}
     groups = {}
     order = []
     for r in rows:
-        key = r['order_number']
+        key = (r['order_number'], r['order_date'])
         if key not in groups:
             groups[key] = []
             order.append(key)
@@ -16363,6 +16420,7 @@ def _group_guest_reviews(rows, status_by_order=None):
 
     result = []
     for key in order:
+        order_number, order_date = key
         grp = groups[key]
         worst_sentiment = min(grp, key=lambda r: _GR_SENTIMENT_RANK.get(r['sentiment'], 0))['sentiment']
         categories = []
@@ -16373,9 +16431,10 @@ def _group_guest_reviews(rows, status_by_order=None):
             if r['source'] not in sources:
                 sources.append(r['source'])
         comp_values = [r['compensation_amount'] for r in grp if r['compensation_amount']]
-        status = status_by_order.get(key, 'new') if worst_sentiment != 'П' else None
+        status = status_by_order.get(order_number, 'new') if worst_sentiment != 'П' else None
         result.append({
-            'order_number': key,
+            'order_number': order_number,
+            'order_date': order_date,
             'reviews': grp,
             'worst_sentiment': worst_sentiment,
             'categories': categories,
@@ -16430,6 +16489,14 @@ def guest_reviews_report():
             LIMIT 500
         ''', params).fetchall()
 
+        # Дата самого заказа (не отзыва) — просьба пользователя 2026-09-04: номер заказа у
+        # Гуляша периодически повторяется у разных заказов, поэтому объединять отзывы по
+        # одному лишь order_number ненадёжно (см. _lookup_order_dates/_group_guest_reviews).
+        # У guest_reviews своей даты заказа нет — подбирается из orders_report.
+        gr_order_dates = _lookup_order_dates(
+            conn, [(r['order_number'], r['branch_id'], r['review_at']) for r in gr_rows]
+        )
+
         # Оценки заказа 1-5 из авто-рассылки после доставки (order_rating_requests, кампания
         # "по образцу Revvy" — см. rating_campaigns) — просьба пользователя 2026-09-04 добавить их
         # в этот же отчёт: 4-5 считаем положительной оценкой, 1-3 — отрицательной. Сумма заказа
@@ -16452,7 +16519,7 @@ def guest_reviews_report():
         sql_where2 = ' AND '.join(where2)
 
         rr_rows = conn.execute(f'''
-            SELECT rr.order_number, rr.phone, rr.rating,
+            SELECT rr.order_number, rr.phone, rr.rating, rr.order_date,
                    datetime(rr.responded_at, '+7 hours') AS responded_at,
                    rc.branch_id AS branch_id, b.name AS branch_name,
                    o.amount AS order_amount
@@ -16466,10 +16533,15 @@ def guest_reviews_report():
             LIMIT 500
         ''', params2).fetchall()
 
-    combined = [dict(r, source='gulyash') for r in gr_rows]
+    combined = []
+    for r in gr_rows:
+        d = dict(r, source='gulyash')
+        d['order_date'] = gr_order_dates.get((r['order_number'], r['branch_id'], r['review_at']))
+        combined.append(d)
     for r in rr_rows:
         combined.append({
             'order_number': r['order_number'],
+            'order_date': r['order_date'],
             'review_at': r['responded_at'],
             'branch_id': r['branch_id'],
             'branch_name': r['branch_name'],
