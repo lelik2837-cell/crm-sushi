@@ -16402,7 +16402,13 @@ def guest_reviews_report():
         # в этот же отчёт: 4-5 считаем положительной оценкой, 1-3 — отрицательной. Сумма заказа
         # берётся из orders_report по номеру+дате заказа (order_date = дата приёмки, см.
         # _maybe_create_rating_request) — своей суммы order_rating_requests не хранит.
-        where2 = ["rr.status='responded'", 'rr.rating IS NOT NULL', 'rr.responded_at >= ?', 'rr.responded_at <= ?']
+        # responded_at пишется через datetime('now') (UTC, см. messenger_inbound) — переводим в
+        # локальное время (+7 часов, Asia/Novosibirsk) тем же способом, что и на странице
+        # «Рассылка» (broadcast_page, SELECT ... datetime(rr.responded_at, '+7 hours')), иначе
+        # и фильтр по дате день/день считает по чужому часовому поясу, и в самом отчёте оценки
+        # из рассылки показывались бы на ~7 часов раньше отзывов Гуляша с тем же временем визита.
+        where2 = ["rr.status='responded'", 'rr.rating IS NOT NULL',
+                  "datetime(rr.responded_at, '+7 hours') >= ?", "datetime(rr.responded_at, '+7 hours') <= ?"]
         params2 = [dt_from, dt_to]
         if branch_flt:
             ph2 = ','.join('?' * len(branch_flt))
@@ -16413,7 +16419,8 @@ def guest_reviews_report():
         sql_where2 = ' AND '.join(where2)
 
         rr_rows = conn.execute(f'''
-            SELECT rr.order_number, rr.phone, rr.rating, rr.responded_at,
+            SELECT rr.order_number, rr.phone, rr.rating,
+                   datetime(rr.responded_at, '+7 hours') AS responded_at,
                    rc.branch_id AS branch_id, b.name AS branch_name,
                    o.amount AS order_amount
             FROM order_rating_requests rr
