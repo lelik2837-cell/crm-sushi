@@ -2181,6 +2181,19 @@ def init_db():
                 "INSERT OR REPLACE INTO api_settings (key, value) VALUES ('role_perms_visibility_fix_v1', '1')"
             )
 
+        # Одноразовая корректировка: открыть управляющему (director) раздел
+        # «Выдача формы» — по просьбе владельца, дальнейшие изменения через
+        # Настройки → Роли и доступ этот сид не трогает.
+        if not conn.execute(
+            "SELECT 1 FROM api_settings WHERE key='role_perms_director_uniform_v1'"
+        ).fetchone():
+            conn.execute(
+                "UPDATE role_menu_permissions SET visible=1 WHERE role='director' AND item_code='uniform_issuance'"
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO api_settings (key, value) VALUES ('role_perms_director_uniform_v1', '1')"
+            )
+
         # Одноразовая корректировка: смены, где "Итого выручка" не заполнилась
         # (0/пусто) при импорте, хотя нал+безнал+онлайн реально были внесены —
         # пересчитываем total_revenue из частей, если их сумма больше 1.
