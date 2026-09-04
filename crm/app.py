@@ -16363,6 +16363,14 @@ def api_reviews_log_clear():
 
 _GR_SENTIMENT_RANK = {'П': 2, 'Н': 1}  # ниже — «хуже»; 'О' и пусто/неизвестное — 0 (худшее)
 
+# Насколько далеко от выбранного периода досматривать отзывы/оценки того же order_number,
+# чтобы полностью собрать группу заказа (см. guest_reviews_report()) — например, гость
+# дополнил отзыв через пару дней, а сотрудник смотрит только один день. Не «без ограничения
+# по всей истории», потому что номер заказа у Гуляша периодически повторяется у разных, не
+# связанных заказов (см. _lookup_order_dates) — то же значение, что и REVIEWS_LOOKBACK_DAYS
+# по умолчанию в Синх/revenue_sync.py, чтобы не завести ещё одно магическое число с иным смыслом.
+_ORDER_MERGE_WINDOW_DAYS = 30
+
 # Статус отработки жалобы (просьба пользователя 2026-09-04) — только отображение, без
 # редактирования на этом шаге (см. review_statuses/guest_reviews_report.html); отсутствие
 # записи в review_statuses для заказа = 'new'.
@@ -16561,6 +16569,73 @@ def guest_reviews_report():
         })
     combined.sort(key=lambda r: r['review_at'] or '', reverse=True)
     combined = combined[:500]
+
+    # Заказ мог получить второй (дополняющий) отзыв или оценку через несколько дней — просьба
+    # пользователя 2026-09-04 «нужно чтобы по одному заказу показывалось всё в группировке, и
+    # если пришёл ещё отзыв 4 сентября — он отображается и 4-го, и 2-го»: фильтр выше — по
+    # review_at/responded_at (дате самого отзыва/оценки), а не по заказу, так что второй отзыв
+    # просто не попадал в выборку, если смотреть только один день, и объединять было нечего —
+    # это не баг группировки (см. п.321), а следствие фильтра по датам. Раз заказ хотя бы одним
+    # отзывом уже попал в выборку — досматриваем ВСЕ его остальные отзывы/оценки в пределах
+    # ±_ORDER_MERGE_WINDOW_DAYS от выбранного периода (не по всей истории без разбора — номер
+    # заказа у Гуляша периодически повторяется у разных заказов, см. _lookup_order_dates).
+    # show_positive/branch_flt на эту досборку не влияют — раз заказ уже показан, он должен
+    # быть показан полностью, а не обрезан тем же фильтром, который его сюда и привёл.
+    order_numbers_in_view = list({r['order_number'] for r in combined})
+    if order_numbers_in_view:
+        wide_from = (datetime.strptime(date_from, '%Y-%m-%d') - timedelta(days=_ORDER_MERGE_WINDOW_DAYS)).strftime('%Y-%m-%d 00:00:00')
+        wide_to = (datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=_ORDER_MERGE_WINDOW_DAYS)).strftime('%Y-%m-%d 23:59:59')
+        with get_db() as conn:
+            ph_ord = ','.join('?' * len(order_numbers_in_view))
+            extra_gr = conn.execute(f'''
+                SELECT gr.*, b.name AS branch_name
+                FROM guest_reviews gr
+                LEFT JOIN branches b ON b.id = gr.branch_id
+                WHERE gr.order_number IN ({ph_ord})
+                  AND NOT (gr.review_at >= ? AND gr.review_at <= ?)
+                  AND gr.review_at >= ? AND gr.review_at <= ?
+            ''', order_numbers_in_view + [dt_from, dt_to, wide_from, wide_to]).fetchall()
+            extra_gr_order_dates = _lookup_order_dates(
+                conn, [(r['order_number'], r['review_at']) for r in extra_gr]
+            )
+            for r in extra_gr:
+                d = dict(r, source='gulyash')
+                d['order_date'] = extra_gr_order_dates.get((r['order_number'], r['review_at']))
+                combined.append(d)
+
+            extra_rr = conn.execute(f'''
+                SELECT rr.order_number, rr.phone, rr.rating, rr.order_date,
+                       datetime(rr.responded_at, '+7 hours') AS responded_at,
+                       rc.branch_id AS branch_id, b.name AS branch_name,
+                       o.amount AS order_amount
+                FROM order_rating_requests rr
+                JOIN rating_campaigns rc ON rc.id = rr.campaign_id
+                LEFT JOIN branches b ON b.id = rc.branch_id
+                LEFT JOIN orders_report o
+                    ON o.order_number = rr.order_number AND substr(o.received_at, 1, 10) = rr.order_date
+                WHERE rr.order_number IN ({ph_ord})
+                  AND rr.status='responded' AND rr.rating IS NOT NULL
+                  AND NOT (datetime(rr.responded_at, '+7 hours') >= ? AND datetime(rr.responded_at, '+7 hours') <= ?)
+                  AND datetime(rr.responded_at, '+7 hours') >= ? AND datetime(rr.responded_at, '+7 hours') <= ?
+            ''', order_numbers_in_view + [dt_from, dt_to, wide_from, wide_to]).fetchall()
+            for r in extra_rr:
+                combined.append({
+                    'order_number': r['order_number'],
+                    'order_date': r['order_date'],
+                    'review_at': r['responded_at'],
+                    'branch_id': r['branch_id'],
+                    'branch_name': r['branch_name'],
+                    'branch_raw': '',
+                    'review_type': '',
+                    'content': f"Оценка по рассылке: {r['rating']}/5",
+                    'guest_name': None,
+                    'guest_phone': r['phone'],
+                    'order_amount': r['order_amount'],
+                    'compensation_amount': None,
+                    'sentiment': 'П' if r['rating'] >= 4 else 'О',
+                    'source': 'revvy',
+                })
+        combined.sort(key=lambda r: r['review_at'] or '', reverse=True)
 
     with get_db() as conn:
         order_numbers = list({r['order_number'] for r in combined})
