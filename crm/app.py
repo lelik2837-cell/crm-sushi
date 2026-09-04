@@ -11320,6 +11320,15 @@ def expenses_report():
     cat_filter  = request.args.get('category', '')
     pay_filter  = request.args.get('pay_type', '')   # 'cash' | 'card' | ''
 
+    # Подпись периода над стрелками месяца (просьба пользователя 2026-09-04: сделать
+    # навигацию по месяцам, как в «Старой выручке»/revenue_manual, а не сдвигом диапазона
+    # на день) — считаем по месяцу date_from, а не date_to: при переключении стрелкой на
+    # соседний месяц JS всегда шлёт полный календарный месяц (1-е число — последний день).
+    _RU_MONTHS = ['', 'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+                  'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь']
+    _df_month = datetime.strptime(date_from, '%Y-%m-%d')
+    month_lbl = f"{_RU_MONTHS[_df_month.month]} {_df_month.year}"
+
     with get_db() as conn:
         branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
         all_cats = conn.execute('SELECT * FROM expense_categories ORDER BY sort_order, label').fetchall()
@@ -11392,7 +11401,7 @@ def expenses_report():
     return render_template('expenses_report.html',
         rows=rows, tot=tot, by_cat=by_cat,
         branches=branches, all_cats=all_cats, filter_cats=filter_cats, cat_map=cat_map,
-        date_from=date_from, date_to=date_to,
+        date_from=date_from, date_to=date_to, month_lbl=month_lbl,
         branch_ids=branch_ids, cat_filter=cat_filter, pay_filter=pay_filter,
         branch_groups=get_branch_groups(conn))
 

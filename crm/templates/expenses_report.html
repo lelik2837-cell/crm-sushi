@@ -11,17 +11,15 @@
     <div class="card-body py-3">
         <form method="GET" action="{{ url_for('expenses_report') }}" class="row g-2 align-items-end" id="exp-filter-form">
             <div class="col-sm-auto">
-                <label class="form-label small fw-semibold mb-1 d-block">Дата</label>
-                <div class="d-flex align-items-center gap-1">
-                    <button type="button" class="btn btn-outline-secondary btn-sm px-2" onclick="navExpDate(-1)" title="Предыдущий день">‹</button>
-                    <button type="button" class="btn btn-outline-secondary btn-sm" id="expDateBtn" onclick="openExpCal()" style="min-width:150px;white-space:nowrap;" title="Выбрать даты">
-                        <i class="bi bi-calendar3 me-1"></i><span id="expDateBtnLabel"></span>
-                    </button>
-                    <button type="button" class="btn btn-outline-secondary btn-sm px-2" onclick="navExpDate(1)" title="Следующий день">›</button>
+                <label class="form-label small fw-semibold mb-1 d-block">Период</label>
+                <div class="d-flex align-items-center gap-1" style="white-space:nowrap;">
+                    <button type="button" class="btn btn-outline-secondary btn-sm px-2" onclick="shiftExpMonth(-1)" title="Предыдущий месяц">‹</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm px-2" style="min-width:130px;" id="expMonthLabel">{{ month_lbl }}</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm px-2" onclick="shiftExpMonth(1)" title="Следующий месяц">›</button>
+                    <input type="text" id="expRangePicker" class="form-control form-control-sm" style="width:115px;" readonly placeholder="дд.мм — дд.мм" title="Свой диапазон дат">
                 </div>
                 <input type="hidden" name="date_from" id="expDateFrom" value="{{ date_from }}">
                 <input type="hidden" name="date_to" id="expDateTo" value="{{ date_to }}">
-                <input id="expCalHidden" type="text" style="display:none;position:absolute;">
             </div>
 
             <!-- Мультивыбор филиалов -->
@@ -238,62 +236,45 @@
 
 {% block scripts %}
 <script>
-/* ── Дата: стрелки + мультивыбор через календарь (как в «Отзывах»), по умолчанию текущий месяц ── */
-(function () {
-    function fmtLocalDate(d) {
-        return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-    }
-    function fmtRuShort(d) {
-        return String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + d.getFullYear();
-    }
-    function parseLocalDate(s) {
-        var p = s.split('-');
-        return new Date(parseInt(p[0]), parseInt(p[1]) - 1, parseInt(p[2]));
-    }
-    var expDateFrom = parseLocalDate(document.getElementById('expDateFrom').value);
-    var expDateTo   = parseLocalDate(document.getElementById('expDateTo').value);
+/* ── Период: навигация по месяцам (как в «Старой выручке», см. revenue_manual.html) —
+   стрелки сдвигают на целый календарный месяц (1-е число — последний день), плюс
+   отдельное поле для ручного выбора произвольного диапазона, если месяц не подходит. */
+var EXP_DF = "{{ date_from }}";
+var EXP_DT = "{{ date_to }}";
 
-    function updateExpDateLabel() {
-        var label = document.getElementById('expDateBtnLabel');
-        var sameDay = fmtLocalDate(expDateFrom) === fmtLocalDate(expDateTo);
-        label.textContent = sameDay ? fmtRuShort(expDateFrom) : (fmtRuShort(expDateFrom) + ' – ' + fmtRuShort(expDateTo));
-    }
-    updateExpDateLabel();
+function _submitExpRange(df, dt) {
+    document.getElementById('expDateFrom').value = df;
+    document.getElementById('expDateTo').value = dt;
+    document.getElementById('exp-filter-form').submit();
+}
 
-    function submitExpDates() {
-        document.getElementById('expDateFrom').value = fmtLocalDate(expDateFrom);
-        document.getElementById('expDateTo').value = fmtLocalDate(expDateTo);
-        document.getElementById('exp-filter-form').submit();
-    }
-    window.navExpDate = function (delta) {
-        expDateFrom.setDate(expDateFrom.getDate() + delta);
-        expDateTo.setDate(expDateTo.getDate() + delta);
-        submitExpDates();
-    };
+function shiftExpMonth(dir) {
+    var parts = EXP_DF.split('-');
+    var y = parseInt(parts[0]), m = parseInt(parts[1]) - 1;
+    m += dir;
+    if (m > 11) { m = 0;  y++; }
+    if (m < 0)  { m = 11; y--; }
+    var first   = y + '-' + String(m + 1).padStart(2, '0') + '-01';
+    var lastDay = new Date(y, m + 1, 0).getDate();
+    var last    = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
+    _submitExpRange(first, last);
+}
 
-    var expCalPicker = null;
-    window.openExpCal = function () {
-        if (!expCalPicker) {
-            expCalPicker = flatpickr('#expCalHidden', {
-                mode: 'range',
-                dateFormat: 'Y-m-d',
-                appendTo: document.body,
-                disableMobile: true,
-                defaultDate: [expDateFrom, expDateTo],
-                onClose: function (dates) {
-                    if (dates.length === 2) {
-                        expDateFrom = dates[0]; expDateTo = dates[1];
-                        submitExpDates();
-                    } else if (dates.length === 1) {
-                        expDateFrom = dates[0]; expDateTo = dates[0];
-                        submitExpDates();
-                    }
-                }
-            });
+flatpickr('#expRangePicker', {
+    mode: 'range',
+    dateFormat: 'Y-m-d',
+    altInput: true,
+    altFormat: 'd.m',
+    defaultDate: [EXP_DF, EXP_DT],
+    onChange: function (sel) {
+        if (sel.length === 2) {
+            var fmt = function (d) {
+                return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+            };
+            _submitExpRange(fmt(sel[0]), fmt(sel[1]));
         }
-        expCalPicker.open();
-    };
-})();
+    }
+});
 
 function onBranchCbChange() {
     const cbs = document.querySelectorAll('.branch-cb');
