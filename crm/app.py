@@ -1638,6 +1638,19 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_guest_reviews_branch ON guest_reviews(branch_id);
             CREATE INDEX IF NOT EXISTS idx_guest_reviews_review_at ON guest_reviews(review_at);
+            -- Статус отработки отзыва/жалобы (новый/в работе/завершён) — просьба пользователя
+            -- 2026-09-04, пока только отображение (см. guest_reviews_report.html), сохранение
+            -- статуса добавится отдельно. Ключ — order_number, а не id строки guest_reviews:
+            -- отчёт объединяет отзывы из разных источников (Гуляш + оценки из рассылки) в одну
+            -- строку по заказу (см. _group_guest_reviews), и статус тоже общий на весь заказ,
+            -- а не отдельный на каждый источник. Отсутствие строки для order_number == статус
+            -- по умолчанию 'new' (см. guest_reviews_report()).
+            CREATE TABLE IF NOT EXISTS review_statuses (
+                order_number TEXT PRIMARY KEY,
+                status       TEXT NOT NULL DEFAULT 'new',
+                updated_by   INTEGER REFERENCES users(id),
+                updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
             -- Выдача формы (склад + выдача сотрудникам) — учёт по группе филиалов (branch_groups,
             -- уже существующий общий механизм из "Филиалы", пользователь сам заводит там группы
             -- по городам — новой сущности "город" заводить не стали, раз группа уже есть).
@@ -16292,8 +16305,13 @@ def api_reviews_log_clear():
 
 _GR_SENTIMENT_RANK = {'П': 2, 'Н': 1}  # ниже — «хуже»; 'О' и пусто/неизвестное — 0 (худшее)
 
+# Статус отработки жалобы (просьба пользователя 2026-09-04) — только отображение, без
+# редактирования на этом шаге (см. review_statuses/guest_reviews_report.html); отсутствие
+# записи в review_statuses для заказа = 'new'.
+REVIEW_STATUS_LABELS = {'new': 'Новый', 'in_progress': 'В работе', 'done': 'Завершён'}
 
-def _group_guest_reviews(rows):
+
+def _group_guest_reviews(rows, status_by_order=None):
     """Заказ может получить несколько разных отзывов/жалоб (разные категории, разное время,
     и теперь ещё и разные источники — см. ниже) — группирует строки одного запроса (уже
     отсортированные по review_at DESC) по order_number, чтобы показать их в отчёте одной строкой
@@ -16314,7 +16332,11 @@ def _group_guest_reviews(rows):
     compensation_total (сумма compensation_amount по группе, None если ни одной непустой), и
     «представительские» поля (филиал/гость/сумма) — берутся из первого непустого значения среди
     отзывов группы (не строго из самого свежего: например, сумму заказа Гуляш обычно знает, а
-    оценка по рассылке — нет, и наоборот с телефоном)."""
+    оценка по рассылке — нет, и наоборот с телефоном), и status (статус отработки заказа из
+    review_statuses, по умолчанию 'new' — см. REVIEW_STATUS_LABELS) — только у групп, которые
+    считаются «требующими внимания» (worst_sentiment != 'П'), у положительных групп status=None,
+    отрабатывать нечего."""
+    status_by_order = status_by_order or {}
     groups = {}
     order = []
     for r in rows:
@@ -16342,12 +16364,14 @@ def _group_guest_reviews(rows):
             if r['source'] not in sources:
                 sources.append(r['source'])
         comp_values = [r['compensation_amount'] for r in grp if r['compensation_amount']]
+        status = status_by_order.get(key, 'new') if worst_sentiment != 'П' else None
         result.append({
             'order_number': key,
             'reviews': grp,
             'worst_sentiment': worst_sentiment,
             'categories': categories,
             'sources': sources,
+            'status': status,
             'compensation_total': sum(comp_values) if comp_values else None,
             'branch_name': _first_present(grp, 'branch_name'),
             'branch_raw': _first_present(grp, 'branch_raw'),
@@ -16453,11 +16477,25 @@ def guest_reviews_report():
     combined.sort(key=lambda r: r['review_at'] or '', reverse=True)
     combined = combined[:500]
 
-    grouped_rows = _group_guest_reviews(combined)
+    with get_db() as conn:
+        order_numbers = list({r['order_number'] for r in combined})
+        status_by_order = {}
+        if order_numbers:
+            ph = ','.join('?' * len(order_numbers))
+            status_by_order = {
+                row['order_number']: row['status']
+                for row in conn.execute(
+                    f'SELECT order_number, status FROM review_statuses WHERE order_number IN ({ph})',
+                    order_numbers
+                ).fetchall()
+            }
+
+    grouped_rows = _group_guest_reviews(combined, status_by_order)
 
     return render_template('guest_reviews_report.html',
         rows=combined, grouped_rows=grouped_rows, branches=branches, branch_groups=branch_groups,
-        branch_flt=branch_flt, date_from=date_from, date_to=date_to, show_positive=show_positive)
+        branch_flt=branch_flt, date_from=date_from, date_to=date_to, show_positive=show_positive,
+        review_status_labels=REVIEW_STATUS_LABELS)
 
 
 # ─── ВЫДАЧА ФОРМЫ (склад + выдача сотрудникам, учёт по группе филиалов) ────────────

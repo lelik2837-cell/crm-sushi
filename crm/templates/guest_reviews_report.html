@@ -106,6 +106,14 @@
 
 {% macro sentiment_row_class(sentiment) %}{% if sentiment == 'П' %}table-success{% elif sentiment == 'Н' %}table-warning{% else %}table-danger{% endif %}{% endmacro %}
 
+{% macro status_badge(status) %}
+{% if status == 'new' %}<span class="badge bg-primary">{{ review_status_labels[status] }}</span>
+{% elif status == 'in_progress' %}<span class="badge bg-warning text-dark">{{ review_status_labels[status] }}</span>
+{% elif status == 'done' %}<span class="badge bg-success">{{ review_status_labels[status] }}</span>
+{% else %}—
+{% endif %}
+{% endmacro %}
+
 {% macro source_badge(source) %}
 {% if source == 'gulyash' %}<span class="badge bg-secondary" title="Пришёл с сайта/приложения (Гуляш)">Гуляш</span>
 {% elif source == 'revvy' %}<span class="badge bg-info text-dark" title="Пришёл из авто-рассылки после доставки (оценка заказа)">Ревви</span>
@@ -128,6 +136,7 @@
                     <th>Телефон</th>
                     <th>Сумма</th>
                     <th>Компенсация</th>
+                    <th class="text-center">Статус</th>
                 </tr>
             </thead>
             <tbody>
@@ -145,6 +154,7 @@
                     <td class="text-nowrap">{{ r.guest_phone | phone_fmt if r.guest_phone else '—' }}</td>
                     <td class="text-nowrap">{{ '%.0f'|format(r.order_amount) if r.order_amount is not none else '—' }}</td>
                     <td class="text-nowrap">{{ '%.0f'|format(r.compensation_amount) if r.compensation_amount else '—' }}</td>
+                    <td class="text-center">{{ status_badge(g.status) }}</td>
                 </tr>
                 {% else %}
                 {% set gi = loop.index0 %}
@@ -161,6 +171,7 @@
                     <td class="text-nowrap">{{ g.guest_phone | phone_fmt if g.guest_phone else '—' }}</td>
                     <td class="text-nowrap">{{ '%.0f'|format(g.order_amount) if g.order_amount is not none else '—' }}</td>
                     <td class="text-nowrap">{{ '%.0f'|format(g.compensation_total) if g.compensation_total else '—' }}</td>
+                    <td class="text-center">{{ status_badge(g.status) }}</td>
                 </tr>
                 {% for r in g.reviews %}
                 <tr class="gr-detail-row gr-group-{{ gi }}" style="display:none">
@@ -174,11 +185,12 @@
                     <td></td>
                     <td></td>
                     <td class="text-nowrap">{{ '%.0f'|format(r.compensation_amount) if r.compensation_amount else '—' }}</td>
+                    <td></td>
                 </tr>
                 {% endfor %}
                 {% endif %}
                 {% else %}
-                <tr><td colspan="10" class="text-center text-muted py-3">Отзывов за этот период нет</td></tr>
+                <tr><td colspan="11" class="text-center text-muted py-3">Отзывов за этот период нет</td></tr>
                 {% endfor %}
             </tbody>
         </table>
