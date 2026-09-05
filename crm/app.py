@@ -9781,7 +9781,9 @@ def _rating_broadcast_stats(conn, date_from, date_to, branch_ids):
         entry['sent'] += r['sent_count']
         entry['responded'] += r['responded_count']
         ch = r['channel'] or 'unknown'
-        entry['by_channel'][ch] = entry['by_channel'].get(ch, 0) + r['sent_count']
+        ch_entry = entry['by_channel'].setdefault(ch, {'sent': 0, 'responded': 0})
+        ch_entry['sent'] += r['sent_count']
+        ch_entry['responded'] += r['responded_count']
 
     days = sorted(by_day.values(), key=lambda d: d['day'])
     for d in days:
@@ -9789,10 +9791,18 @@ def _rating_broadcast_stats(conn, date_from, date_to, branch_ids):
 
     total_sent = sum(d['sent'] for d in days)
     total_responded = sum(d['responded'] for d in days)
+    # По каждому каналу — сколько отправлено (+ доля от всех отправленных за период) и сколько
+    # из них ответили (+ доля ответивших именно в этом канале) — просьба пользователя 2026-09-05
+    # показать это на плитках вместо одной лишь доли от общего числа отправленных.
     channel_totals = {}
     for d in days:
-        for ch, cnt in d['by_channel'].items():
-            channel_totals[ch] = channel_totals.get(ch, 0) + cnt
+        for ch, vals in d['by_channel'].items():
+            ct = channel_totals.setdefault(ch, {'sent': 0, 'responded': 0})
+            ct['sent'] += vals['sent']
+            ct['responded'] += vals['responded']
+    for ct in channel_totals.values():
+        ct['share'] = round(ct['sent'] / total_sent * 100, 1) if total_sent else 0
+        ct['response_rate'] = round(ct['responded'] / ct['sent'] * 100, 1) if ct['sent'] else 0
 
     return {
         'days': days,
@@ -9864,14 +9874,18 @@ def broadcast_page():
     # пустую колонку «Telegram: 0%», если Telegram в этом CRM ни разу не подключали.
     active_channels = [ch for ch in BROADCAST_CHANNEL_ORDER if any(a['channel'] == ch for a in accounts)]
 
+    # Один график вместо двух (просьба пользователя 2026-09-05) — «Отправлено» по каналам
+    # (столбцы) и «Ответили» (линия) в одной оси величин (штуки), не % — иначе пришлось бы
+    # заводить вторую ось, а это прямой антипаттерн по dataviz-skill (никогда две оси Y).
+    # Прятать/показывать серии — штатным кликом по легенде Chart.js, без своего JS-тумблера.
     stats_chart = {
         'labels': [d['day'][5:] for d in rating_stats['days']],  # 'MM-DD' короче для оси
         'channels': [
             {'channel': ch, 'label': BROADCAST_CHANNEL_LABELS.get(ch, ch),
-             'data': [d['by_channel'].get(ch, 0) for d in rating_stats['days']]}
+             'data': [d['by_channel'].get(ch, {}).get('sent', 0) for d in rating_stats['days']]}
             for ch in active_channels
         ],
-        'response_rate': [d['response_rate'] for d in rating_stats['days']],
+        'responded': [d['responded'] for d in rating_stats['days']],
     }
 
     return render_template('broadcast.html', accounts=accounts, broadcasts=broadcasts,

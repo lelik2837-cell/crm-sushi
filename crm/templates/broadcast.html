@@ -517,66 +517,66 @@
                 <div class="fs-3 fw-bold">{{ rating_stats.total_sent }}</div>
             </div></div>
         </div>
-        <div class="col-md-3 col-6">
-            <div class="card h-100"><div class="card-body">
-                <div class="text-muted small">Ответили</div>
-                <div class="fs-3 fw-bold">{{ rating_stats.total_responded }} <span class="fs-6 text-muted">({{ rating_stats.response_rate }}%)</span></div>
-            </div></div>
-        </div>
         {% for ch in active_channels %}
-        {% set cnt = rating_stats.channel_totals.get(ch, 0) %}
+        {% set ct = rating_stats.channel_totals.get(ch, {'sent': 0, 'responded': 0, 'share': 0, 'response_rate': 0}) %}
         <div class="col-md-3 col-6">
             <div class="card h-100"><div class="card-body">
-                <div class="text-muted small"><i class="bi {{ channel_icons.get(ch, 'bi-chat') }} me-1"></i>{{ channel_labels.get(ch, ch) }}</div>
-                <div class="fs-3 fw-bold">{{ cnt }} <span class="fs-6 text-muted">({{ '%.0f'|format(cnt / rating_stats.total_sent * 100) }}%)</span></div>
+                <div class="text-muted small mb-1"><i class="bi {{ channel_icons.get(ch, 'bi-chat') }} me-1"></i>{{ channel_labels.get(ch, ch) }}</div>
+                <div>Отправлено: <b>{{ ct.sent }}</b> <span class="text-muted small">({{ ct.share }}%)</span></div>
+                <div>Ответили: <b>{{ ct.responded }}</b> <span class="text-muted small">({{ ct.response_rate }}%)</span></div>
             </div></div>
         </div>
         {% endfor %}
-    </div>
-
-    <div class="row g-3 mb-3">
-        <div class="col-lg-7">
-            <div class="card h-100">
-                <div class="card-header fw-semibold">Отправлено по дням</div>
-                <div class="card-body"><canvas id="bcStatsSentChart" height="220"></canvas></div>
-            </div>
-        </div>
-        <div class="col-lg-5">
-            <div class="card h-100">
-                <div class="card-header fw-semibold">Доля ответивших, %</div>
-                <div class="card-body"><canvas id="bcStatsResponseChart" height="220"></canvas></div>
-            </div>
+        <div class="col-md-3 col-6">
+            <div class="card h-100"><div class="card-body">
+                <div class="text-muted small">Ответили всего</div>
+                <div class="fs-3 fw-bold">{{ rating_stats.total_responded }} <span class="fs-6 text-muted">({{ rating_stats.response_rate }}%)</span></div>
+            </div></div>
         </div>
     </div>
 
-    <div class="card">
-        <div class="card-header fw-semibold">По дням</div>
-        <div class="table-responsive">
-            <table class="table table-sm mb-0 align-middle">
-                <thead class="table-light">
-                    <tr>
-                        <th>Дата</th>
-                        <th class="text-end">Отправлено</th>
-                        {% for ch in active_channels %}
-                        <th class="text-end">{{ channel_labels.get(ch, ch) }}</th>
+    <!-- Ширина графика и таблицы намеренно ограничена (max-width) — просьба пользователя
+         2026-09-05 не растягивать их на весь экран на большом мониторе. -->
+    <div class="mb-3" style="max-width:900px;">
+        <div class="card">
+            <div class="card-header fw-semibold">
+                Оценка заказа по дням
+                <span class="text-muted small fw-normal">— клик по подписи в легенде скрывает/показывает ряд</span>
+            </div>
+            <div class="card-body"><canvas id="bcStatsChart" height="260"></canvas></div>
+        </div>
+    </div>
+
+    <div style="max-width:900px;">
+        <div class="card">
+            <div class="card-header fw-semibold">По дням</div>
+            <div class="table-responsive">
+                <table class="table table-sm mb-0 align-middle" style="width:auto;">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Дата</th>
+                            <th class="text-end">Отправлено</th>
+                            {% for ch in active_channels %}
+                            <th class="text-end">{{ channel_labels.get(ch, ch) }}</th>
+                            {% endfor %}
+                            <th class="text-end">Ответили</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for d in rating_stats.days | reverse %}
+                        <tr>
+                            <td class="text-nowrap">{{ d.day | date_ru_short }}</td>
+                            <td class="text-end">{{ d.sent }}</td>
+                            {% for ch in active_channels %}
+                            {% set cnt = d.by_channel.get(ch, {}).get('sent', 0) %}
+                            <td class="text-end text-nowrap">{{ cnt }} <span class="text-muted small">({{ '%.0f'|format(cnt / d.sent * 100) if d.sent else 0 }}%)</span></td>
+                            {% endfor %}
+                            <td class="text-end text-nowrap">{{ d.responded }} <span class="text-muted small">({{ d.response_rate }}%)</span></td>
+                        </tr>
                         {% endfor %}
-                        <th class="text-end">Ответили</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for d in rating_stats.days | reverse %}
-                    <tr>
-                        <td class="text-nowrap">{{ d.day | date_ru_short }}</td>
-                        <td class="text-end">{{ d.sent }}</td>
-                        {% for ch in active_channels %}
-                        {% set cnt = d.by_channel.get(ch, 0) %}
-                        <td class="text-end text-nowrap">{{ cnt }} <span class="text-muted small">({{ '%.0f'|format(cnt / d.sent * 100) if d.sent else 0 }}%)</span></td>
-                        {% endfor %}
-                        <td class="text-end text-nowrap">{{ d.responded }} <span class="text-muted small">({{ d.response_rate }}%)</span></td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
     {% endif %}
@@ -871,31 +871,50 @@ document.querySelectorAll('.bc-tab-pane form').forEach((form) => {
     };
 })();
 
-/* ── Вкладка «Статистика»: графики (Chart.js) ── */
+/* ── Вкладка «Статистика»: один график (Chart.js), просьба пользователя 2026-09-05 —
+   столбцы «Отправлено» по каналам + линия «Ответили», всё в одной оси величин (штуки),
+   без второй оси (dual-axis — антипаттерн). Показать/скрыть ряд — штатный клик по легенде
+   Chart.js, отдельный переключатель заводить не пришлось. ── */
 (function () {
-    var sentCanvas = document.getElementById('bcStatsSentChart');
-    if (!sentCanvas) return; // нет данных за период — canvas не отрисован (см. rating_stats.total_sent == 0)
+    var canvas = document.getElementById('bcStatsChart');
+    if (!canvas) return; // нет данных за период — canvas не отрисован (см. rating_stats.total_sent == 0)
     var chartData = {{ stats_chart | tojson }};
-    // Цвета — фиксированный порядок (categorical, см. dataviz-skill): WhatsApp/Telegram/MAX,
-    // те же 3 слота валидированной палитры, что и на других графиках проекта не используются
-    // (здесь единственный многосерийный график в CRM), поэтому заведены явно, а не переиспользованы.
+    // Цвета — фиксированный порядок (categorical, см. dataviz-skill): WhatsApp/Telegram/MAX —
+    // слоты 1-3 валидированной палитры; «Ответили» — слот 4 (жёлтый), безопасен здесь, т.к.
+    // это столбцы+линия (adjacent-пары), а не диаграмма рассеяния/малые множители
+    // (all-pairs), где слот 4 уже не проходит проверку рядом с оранжевым.
     var CHANNEL_COLORS = { whatsapp: '#2a78d6', telegram: '#eb6834', max: '#1baf7a' };
+    var RESPONDED_COLOR = '#eda100';
 
-    new Chart(sentCanvas.getContext('2d'), {
-        type: 'bar',
-        data: {
-            labels: chartData.labels,
-            datasets: chartData.channels.map(function (c) {
-                return {
-                    label: c.label,
-                    data: c.data,
-                    backgroundColor: CHANNEL_COLORS[c.channel] || '#94a3b8',
-                    borderRadius: 4,
-                    borderSkipped: false,
-                    maxBarThickness: 24,
-                };
-            })
-        },
+    var datasets = chartData.channels.map(function (c) {
+        return {
+            type: 'bar',
+            label: c.label,
+            data: c.data,
+            backgroundColor: CHANNEL_COLORS[c.channel] || '#94a3b8',
+            borderRadius: 4,
+            borderSkipped: false,
+            maxBarThickness: 24,
+            stack: 'sent'
+        };
+    });
+    datasets.push({
+        type: 'line',
+        label: 'Ответили',
+        data: chartData.responded,
+        borderColor: RESPONDED_COLOR,
+        backgroundColor: RESPONDED_COLOR,
+        borderWidth: 2,
+        pointRadius: 3,
+        pointBackgroundColor: RESPONDED_COLOR,
+        pointBorderColor: '#fff',
+        pointBorderWidth: 2,
+        fill: false,
+        tension: 0.2
+    });
+
+    new Chart(canvas.getContext('2d'), {
+        data: { labels: chartData.labels, datasets: datasets },
         options: {
             responsive: true,
             interaction: { mode: 'index', intersect: false },
@@ -904,35 +923,8 @@ document.querySelectorAll('.bc-tab-pane form').forEach((form) => {
                 y: { stacked: true, beginAtZero: true, grid: { color: '#e1e0d9' }, ticks: { precision: 0 } }
             },
             plugins: {
-                legend: { display: chartData.channels.length > 1, position: 'top' }
+                legend: { display: true, position: 'top' }
             }
-        }
-    });
-
-    new Chart(document.getElementById('bcStatsResponseChart').getContext('2d'), {
-        type: 'line',
-        data: {
-            labels: chartData.labels,
-            datasets: [{
-                label: 'Ответили, %',
-                data: chartData.response_rate,
-                borderColor: '#2a78d6',
-                backgroundColor: 'rgba(42,120,214,0.1)',
-                borderWidth: 2,
-                pointRadius: 3,
-                pointBackgroundColor: '#2a78d6',
-                fill: true,
-                tension: 0.2
-            }]
-        },
-        options: {
-            responsive: true,
-            interaction: { mode: 'index', intersect: false },
-            scales: {
-                x: { grid: { display: false } },
-                y: { beginAtZero: true, max: 100, grid: { color: '#e1e0d9' }, ticks: { callback: function (v) { return v + '%'; } } }
-            },
-            plugins: { legend: { display: false } }
         }
     });
 })();
