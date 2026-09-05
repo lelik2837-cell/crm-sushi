@@ -49,7 +49,8 @@
                 </div>
                 <div class="col-md-3">
                     <label class="form-label small fw-semibold">Номер телефона</label>
-                    <input type="text" name="phone" class="form-control" placeholder="+7 999 123-45-67" required>
+                    <input type="text" name="phone" class="form-control" value="+7" maxlength="16"
+                        oninput="onPhonePlus7Input(this)" onfocus="onPhonePlus7Focus(this)" onclick="onPhonePlus7Focus(this)" required>
                 </div>
                 <div class="col-md-3">
                     <label class="form-label small fw-semibold">Метка (необязательно)</label>

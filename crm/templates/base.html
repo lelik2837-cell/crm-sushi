@@ -618,6 +618,27 @@ function onPhoneInput(el) {
   el.value = out;
 }
 
+// Маска телефона с фиксированным «+7» впереди: вводятся только оставшиеся 10 цифр, сам
+// форматируется как +7 900 000-00-00 (используется там, где принято показывать номер с +7,
+// например «Рассылка → Номера», в отличие от onPhoneInput с ведущей 8 для сотрудников).
+function onPhonePlus7Input(el) {
+  let d = (el.value || '').replace(/\D/g, '');
+  if (d.length > 0 && (d[0] === '7' || d[0] === '8')) d = d.slice(1);
+  d = d.slice(0, 10);
+  let out = '+7';
+  if (d.length > 0) out += ' ' + d.slice(0, 3);
+  if (d.length > 3) out += ' ' + d.slice(3, 6);
+  if (d.length > 6) out += '-' + d.slice(6, 8);
+  if (d.length > 8) out += '-' + d.slice(8, 10);
+  el.value = out;
+}
+// Ставит курсор в конец значения — чтобы клик/фокус в любом месте инпута с маской «+7» не
+// давал случайно печатать посреди префикса.
+function onPhonePlus7Focus(el) {
+  const pos = el.value.length;
+  el.setSelectionRange(pos, pos);
+}
+
 // ── Единая кнопка выбора филиалов на карточках дашборда (см. _dash_branch_picker.html) ──
 // Состояние хранится в window[prefix + 'BranchIds']; страница-хост слушает изменения
 // через window[prefix + 'OnBranchChange'] и читает выбор через dashBpSuffix(prefix).
