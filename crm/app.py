@@ -2527,6 +2527,34 @@ def init_db():
             # время), чтобы не менять поведение уже существующих кампаний при апгрейде.
             conn.execute("ALTER TABLE rating_campaigns ADD COLUMN enforce_send_time INTEGER NOT NULL DEFAULT 0")
 
+        # Разовые правки к «Оценке заказа» (просьба пользователя 2026-09-05: не отправлять
+        # разом накопившуюся за время простоя очередь при подключении номера) — см.
+        # _maybe_create_rating_request/rating_campaigns_ready_since/broadcast_account_status.
+        if not conn.execute(
+            "SELECT 1 FROM api_settings WHERE key='rating_backlog_fix_v1'"
+        ).fetchone():
+            # 1) У уже подключённых номеров, где connected_at ещё не проставлен (заведены до
+            # этой правки — раньше поле писалось только один раз, при самом первом подключении,
+            # а могло и вовсе не заполниться) — считаем точкой отсчёта «подключён с этого
+            # момента», чтобы дальше новые заказы нормально создавали заявки (без этого шага
+            # кампания с connected_at=NULL считалась бы «без подключённого номера» и
+            # переставала бы вообще заводить заявки — реальная регрессия для уже работающих
+            # кампаний).
+            conn.execute(
+                "UPDATE messenger_accounts SET connected_at=? WHERE status='connected' AND connected_at IS NULL",
+                (datetime.now().strftime('%Y-%m-%d %H:%M:%S'),)
+            )
+            # 2) Уже накопившаяся к моменту деплоя очередь 'pending_send' — не должна уйти
+            # разом на первом же тике планировщика после этой правки.
+            conn.execute('''
+                UPDATE order_rating_requests
+                SET status='skipped', error='Накопилось до подключения номера — не отправлено'
+                WHERE status='pending_send'
+            ''')
+            conn.execute(
+                "INSERT OR REPLACE INTO api_settings (key, value) VALUES ('rating_backlog_fix_v1', '1')"
+            )
+
         # Начисление баллов клиентам за косяки (перевёрнутые роллы и т.п.) — причины хранятся
         # отдельным справочником (создаются/переименовываются прямо на странице), не enum'ом,
         # чтобы можно было добавлять новые без правки кода.
@@ -10042,11 +10070,25 @@ def broadcast_account_status(account_id):
     new_status = status.get('status')
     if new_status and new_status != acc['status']:
         with get_db() as conn:
-            conn.execute('''
-                UPDATE messenger_accounts SET status=?, phone=COALESCE(?, phone),
-                    connected_at=CASE WHEN ?='connected' AND connected_at IS NULL THEN CURRENT_TIMESTAMP ELSE connected_at END
-                WHERE id=?
-            ''', (new_status, status.get('phone'), new_status, account_id))
+            if new_status == 'connected':
+                # connected_at перезаписывается на КАЖДОЕ подключение (не только на первое,
+                # как было раньше) — просьба пользователя 2026-09-05: после переподключения
+                # номера, простоявшего отключённым какое-то время, заявки на оценку заказа не
+                # должны копиться и не должны уходить разом при подключении (см.
+                # _maybe_create_rating_request/rating_campaigns_ready_since) — граница
+                # «подключён с какого момента» должна сдвигаться на каждое новое подключение.
+                # Пишем локальным datetime.now(), а не SQL CURRENT_TIMESTAMP (тот всегда в
+                # UTC) — сравнивается с received_at заказов, который уже локальный, см.
+                # аналогичный приём в rating_campaigns.created_at.
+                conn.execute('''
+                    UPDATE messenger_accounts SET status=?, phone=COALESCE(?, phone), connected_at=?
+                    WHERE id=?
+                ''', (new_status, status.get('phone'), datetime.now().strftime('%Y-%m-%d %H:%M:%S'), account_id))
+            else:
+                conn.execute(
+                    'UPDATE messenger_accounts SET status=?, phone=COALESCE(?, phone) WHERE id=?',
+                    (new_status, status.get('phone'), account_id)
+                )
             conn.commit()
     return jsonify(status)
 
@@ -15790,6 +15832,16 @@ def _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename, create
     rating_request_variant_counts = dict(conn.execute(
         'SELECT campaign_id, COUNT(*) FROM rating_campaign_request_texts GROUP BY campaign_id'
     ).fetchall())
+    # {campaign_id: connected_at самого раннего из сейчас подключённых аккаунтов} — просьба
+    # пользователя 2026-09-05 не копить очередь, пока у кампании нет подключённого номера
+    # (см. _maybe_create_rating_request).
+    rating_campaigns_ready_since = dict(conn.execute('''
+        SELECT rca.campaign_id, MIN(a.connected_at)
+        FROM rating_campaign_accounts rca
+        JOIN messenger_accounts a ON a.id = rca.account_id
+        WHERE a.status='connected' AND a.connected_at IS NOT NULL
+        GROUP BY rca.campaign_id
+    ''').fetchall())
 
     imported = updated = 0
     for r in frows:
@@ -15824,7 +15876,10 @@ def _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename, create
         else:
             updated += 1
 
-        _maybe_create_rating_request(conn, r, branch_id, rating_campaigns_by_branch, rating_request_variant_counts)
+        _maybe_create_rating_request(
+            conn, r, branch_id, rating_campaigns_by_branch,
+            rating_request_variant_counts, rating_campaigns_ready_since
+        )
 
     conn.execute(
         'UPDATE orders_import_batches SET imported_count=?, updated_count=? WHERE id=?',
@@ -15833,7 +15888,7 @@ def _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename, create
     return imported, updated, removed
 
 
-def _maybe_create_rating_request(conn, r, branch_id, campaigns_by_branch, variant_counts):
+def _maybe_create_rating_request(conn, r, branch_id, campaigns_by_branch, variant_counts, campaigns_ready_since):
     """Если заказ пришёл со статусом "Выполнен" и на его филиале включена кампания оценки
     заказа (rating_campaigns) — заводим заявку на отправку. UNIQUE(campaign_id, order_number,
     order_date) в order_rating_requests сам защищает от повторной заявки при повторном приходе
@@ -15850,7 +15905,17 @@ def _maybe_create_rating_request(conn, r, branch_id, campaigns_by_branch, varian
     поясе (локальном, Asia/Novosibirsk): received_at приходит из CSV Гуляша уже локальным,
     а created_at кампании нарочно пишется в create_rating_campaign()/edit_rating_campaign()
     через datetime.now() (не полагаемся на SQL DEFAULT CURRENT_TIMESTAMP — та функция всегда
-    в UTC, сравнение с локальным received_at было бы на 7 часов не в ту сторону)."""
+    в UTC, сравнение с локальным received_at было бы на 7 часов не в ту сторону).
+
+    campaigns_ready_since (просьба пользователя 2026-09-05 «не отправлять скопившееся, а
+    только то, что поменяет статус после подключения») — {campaign_id: connected_at самого
+    раннего из СЕЙЧАС подключённых аккаунтов кампании, локальное время}, предзагружено в
+    _ingest_orders_rows (см. broadcast_account_status — там же connected_at перезаписывается
+    на каждое новое подключение, а не только на первое, чтобы переподключение после долгого
+    простоя тоже сдвигало эту границу). Если у кампании сейчас нет ни одного подключённого
+    аккаунта, или заказ выполнен раньше, чем аккаунт подключился — заявка вообще не заводится
+    (а не откладывается «на потом») — иначе при первом же подключении номера разом уйдёт вся
+    накопившаяся за время простоя очередь."""
     if _norm_status(r.get('status')) != 'выполнен' or branch_id is None:
         return
     campaign = campaigns_by_branch.get(branch_id)
@@ -15858,6 +15923,11 @@ def _maybe_create_rating_request(conn, r, branch_id, campaigns_by_branch, varian
         return
     if not r.get('received_at') or r['received_at'] < campaign['created_at']:
         # Заказ принят ещё до включения кампании — не дёргаем клиентов задним числом.
+        return
+    ready_since = campaigns_ready_since.get(campaign['id'])
+    if not ready_since or r['received_at'] < ready_since:
+        # У кампании сейчас нет подключённого номера (или заказ выполнен до подключения) —
+        # заявку не заводим, чтобы не копить очередь, которая разом уйдёт при подключении.
         return
     phone = _normalize_ru_phone(r.get('phone'))
     if not phone:
