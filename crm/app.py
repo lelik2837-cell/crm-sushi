@@ -9734,10 +9734,84 @@ def _assign_broadcast_recipients(phones, accounts):
     return assignment, set(remaining), check_failed_accounts
 
 
+# Порядок каналов фиксированный (не «как встретится в БД») — используется и для
+# категориальных цветов на графике вкладки «Статистика» (см. broadcast.html), и для
+# порядка колонок в таблице разбивки — устойчивый порядок важен для того, чтобы цвет
+# канала не «прыгал» при смене периода/филиала.
+BROADCAST_CHANNEL_ORDER = ['whatsapp', 'telegram', 'max']
+BROADCAST_CHANNEL_LABELS = {'whatsapp': 'WhatsApp', 'telegram': 'Telegram', 'max': 'MAX'}
+
+
+def _rating_broadcast_stats(conn, date_from, date_to, branch_ids):
+    """Статистика по дням для вкладки «Статистика» (Рассылка → Оценка заказа, просьба
+    пользователя 2026-09-05): сколько заявок на оценку заказа реально ОТПРАВЛЕНО по дням
+    (sent_at IS NOT NULL — то есть дошли до отправки, `failed` не в счёт, см.
+    _scheduled_rating_requests, там sent_at ставится только при успешной отправке),
+    разбивка по каналу отправки (messenger_accounts.channel через assigned_account_id) и
+    доля ответивших (status='responded').
+
+    sent_at/responded_at пишутся через datetime('now') (UTC) — переводим в локальное время
+    (+7 часов), тем же способом, что и в остальном коде вкладки «Рассылка» (см. rating_requests
+    в broadcast_page()) и в отчёте «Отзывы» (см. п.314/319 в plan.md — тот же класс бага)."""
+    where = ["rr.sent_at IS NOT NULL",
+             "date(datetime(rr.sent_at, '+7 hours')) >= ?", "date(datetime(rr.sent_at, '+7 hours')) <= ?"]
+    params = [date_from, date_to]
+    if branch_ids:
+        ph = ','.join('?' * len(branch_ids))
+        where.append(f'rc.branch_id IN ({ph})')
+        params.extend(branch_ids)
+    sql_where = ' AND '.join(where)
+
+    rows = conn.execute(f'''
+        SELECT date(datetime(rr.sent_at, '+7 hours')) AS day,
+               ma.channel AS channel,
+               COUNT(*) AS sent_count,
+               SUM(CASE WHEN rr.status='responded' THEN 1 ELSE 0 END) AS responded_count
+        FROM order_rating_requests rr
+        JOIN rating_campaigns rc ON rc.id = rr.campaign_id
+        LEFT JOIN messenger_accounts ma ON ma.id = rr.assigned_account_id
+        WHERE {sql_where}
+        GROUP BY day, channel
+        ORDER BY day
+    ''', params).fetchall()
+
+    by_day = {}
+    for r in rows:
+        entry = by_day.setdefault(r['day'], {'day': r['day'], 'sent': 0, 'responded': 0, 'by_channel': {}})
+        entry['sent'] += r['sent_count']
+        entry['responded'] += r['responded_count']
+        ch = r['channel'] or 'unknown'
+        entry['by_channel'][ch] = entry['by_channel'].get(ch, 0) + r['sent_count']
+
+    days = sorted(by_day.values(), key=lambda d: d['day'])
+    for d in days:
+        d['response_rate'] = round(d['responded'] / d['sent'] * 100, 1) if d['sent'] else 0
+
+    total_sent = sum(d['sent'] for d in days)
+    total_responded = sum(d['responded'] for d in days)
+    channel_totals = {}
+    for d in days:
+        for ch, cnt in d['by_channel'].items():
+            channel_totals[ch] = channel_totals.get(ch, 0) + cnt
+
+    return {
+        'days': days,
+        'total_sent': total_sent,
+        'total_responded': total_responded,
+        'response_rate': round(total_responded / total_sent * 100, 1) if total_sent else 0,
+        'channel_totals': channel_totals,
+    }
+
+
 @app.route('/reports/broadcast')
 @login_required
 @menu_permission_required('whatsapp_broadcast')
 def broadcast_page():
+    today = date.today().isoformat()
+    stats_date_from = request.args.get('date_from', (date.today() - timedelta(days=29)).isoformat())
+    stats_date_to = request.args.get('date_to', today)
+    stats_branch_ids = [int(b) for b in request.args.getlist('branch_ids') if b.isdigit()]
+
     with get_db() as conn:
         accounts = conn.execute(
             'SELECT * FROM messenger_accounts ORDER BY created_at DESC'
@@ -9781,10 +9855,33 @@ def broadcast_page():
             WHERE is_active=1 AND id NOT IN (SELECT branch_id FROM rating_campaigns)
             ORDER BY name
         ''').fetchall()
+        branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        branch_groups = get_branch_groups(conn)
+        rating_stats = _rating_broadcast_stats(conn, stats_date_from, stats_date_to, stats_branch_ids)
+
+    # Показываем канал в разбивке/на графике, только если для него вообще когда-либо заводился
+    # номер-отправитель (просьба пользователя 2026-09-05 «если канал подключён») — не плодить
+    # пустую колонку «Telegram: 0%», если Telegram в этом CRM ни разу не подключали.
+    active_channels = [ch for ch in BROADCAST_CHANNEL_ORDER if any(a['channel'] == ch for a in accounts)]
+
+    stats_chart = {
+        'labels': [d['day'][5:] for d in rating_stats['days']],  # 'MM-DD' короче для оси
+        'channels': [
+            {'channel': ch, 'label': BROADCAST_CHANNEL_LABELS.get(ch, ch),
+             'data': [d['by_channel'].get(ch, 0) for d in rating_stats['days']]}
+            for ch in active_channels
+        ],
+        'response_rate': [d['response_rate'] for d in rating_stats['days']],
+    }
+
     return render_template('broadcast.html', accounts=accounts, broadcasts=broadcasts,
                             rating_campaigns=rating_campaigns, rating_campaign_accounts=rating_campaign_accounts,
                             rating_campaign_variants=rating_campaign_variants,
                             rating_requests=rating_requests, branches_without_campaign=branches_without_campaign,
+                            branches=branches, branch_groups=branch_groups,
+                            rating_stats=rating_stats, active_channels=active_channels, stats_chart=stats_chart,
+                            stats_date_from=stats_date_from, stats_date_to=stats_date_to,
+                            stats_branch_ids=stats_branch_ids,
                             active_tab=request.args.get('tab', 'numbers'))
 
 

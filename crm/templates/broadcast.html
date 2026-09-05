@@ -32,6 +32,11 @@
             <i class="bi bi-star me-1"></i>Оценка заказа
         </a>
     </li>
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'stats' %}active{% endif %}" href="{{ url_for('broadcast_page', tab='stats') }}" data-tab="stats">
+            <i class="bi bi-graph-up me-1"></i>Статистика
+        </a>
+    </li>
 </ul>
 
 <!-- ═══ Вкладка «Номера» ═══ -->
@@ -432,6 +437,152 @@
     </div>
 </div>
 
+<!-- ═══ Вкладка «Статистика» ═══ -->
+<div class="bc-tab-pane" id="bc-pane-stats" style="{% if active_tab != 'stats' %}display:none;{% endif %}">
+
+    <div class="card mb-3">
+        <div class="card-body py-3">
+            <form method="GET" action="{{ url_for('broadcast_page') }}" class="row g-2 align-items-end" id="bcStatsFilterForm">
+                <input type="hidden" name="tab" value="stats">
+                <div class="col-auto">
+                    <label class="form-label small fw-semibold d-block">Период</label>
+                    <div class="d-flex align-items-center gap-1">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="bcStatsSetRange(7)">7 дней</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="bcStatsSetRange(30)">30 дней</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="bcStatsSetRange(90)">90 дней</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="bcStatsDateBtn" onclick="openBcStatsCal()" style="min-width:150px;white-space:nowrap;" title="Свой период">
+                            <i class="bi bi-calendar3 me-1"></i><span id="bcStatsDateBtnLabel"></span>
+                        </button>
+                    </div>
+                    <input type="hidden" name="date_from" id="bcStatsDateFrom" value="{{ stats_date_from }}">
+                    <input type="hidden" name="date_to" id="bcStatsDateTo" value="{{ stats_date_to }}">
+                    <input id="bcStatsCalHidden" type="text" style="display:none;position:absolute;">
+                </div>
+                <div class="col-auto">
+                    <label class="form-label small fw-semibold">Филиалы</label>
+                    <div class="dropdown">
+                        <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle"
+                            data-bs-toggle="dropdown" data-bs-auto-close="outside" style="min-width:160px; text-align:left;">
+                            <span id="bcStatsBranchBtnLabel">{% if stats_branch_ids %}Выбрано: {{ stats_branch_ids|length }}{% else %}Все филиалы{% endif %}</span>
+                        </button>
+                        <ul class="dropdown-menu p-2" style="min-width:220px; max-height:320px; overflow-y:auto;">
+                            {% if branch_groups %}
+                            <li class="text-muted px-1 mb-1" style="font-size:0.7rem;font-weight:600;letter-spacing:.5px;">ГРУППЫ</li>
+                            {% for g in branch_groups %}
+                            <li class="mb-1">
+                                <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1"
+                                        data-branch-ids="{{ g.branch_ids | join(',') }}" onclick="selectBcStatsBranchGroup(this)">
+                                    <span class="fw-bold">{{ g.abbr or g.name[:3].upper() }}</span>
+                                    <span class="text-muted ms-1 small">{{ g.name }} ({{ g.branch_ids | length }})</span>
+                                </button>
+                            </li>
+                            {% endfor %}
+                            <li><hr class="dropdown-divider my-1"></li>
+                            {% endif %}
+                            <li class="mb-1">
+                                <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                                    <input type="checkbox" id="bcStatsBranchAllCb" onchange="toggleAllBcStatsBranches(this)"
+                                        {% if not stats_branch_ids %}checked{% endif %}>
+                                    <span class="fw-semibold small">Все филиалы</span>
+                                </label>
+                            </li>
+                            <li><hr class="dropdown-divider my-1"></li>
+                            {% for b in branches %}
+                            <li>
+                                <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                                    <input type="checkbox" class="bc-stats-branch-cb" name="branch_ids" value="{{ b.id }}"
+                                        {% if b.id in stats_branch_ids %}checked{% endif %} onchange="onBcStatsBranchCbChange()">
+                                    <span class="small">{{ b.name }}</span>
+                                </label>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-auto">
+                    <button type="submit" class="btn btn-primary btn-sm">Показать</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    {% if rating_stats.total_sent == 0 %}
+    <div class="alert alert-secondary">Нет отправленных оценок заказа за выбранный период.</div>
+    {% else %}
+
+    <div class="row g-3 mb-3">
+        <div class="col-md-3 col-6">
+            <div class="card h-100"><div class="card-body">
+                <div class="text-muted small">Отправлено за период</div>
+                <div class="fs-3 fw-bold">{{ rating_stats.total_sent }}</div>
+            </div></div>
+        </div>
+        <div class="col-md-3 col-6">
+            <div class="card h-100"><div class="card-body">
+                <div class="text-muted small">Ответили</div>
+                <div class="fs-3 fw-bold">{{ rating_stats.total_responded }} <span class="fs-6 text-muted">({{ rating_stats.response_rate }}%)</span></div>
+            </div></div>
+        </div>
+        {% for ch in active_channels %}
+        {% set cnt = rating_stats.channel_totals.get(ch, 0) %}
+        <div class="col-md-3 col-6">
+            <div class="card h-100"><div class="card-body">
+                <div class="text-muted small"><i class="bi {{ channel_icons.get(ch, 'bi-chat') }} me-1"></i>{{ channel_labels.get(ch, ch) }}</div>
+                <div class="fs-3 fw-bold">{{ cnt }} <span class="fs-6 text-muted">({{ '%.0f'|format(cnt / rating_stats.total_sent * 100) }}%)</span></div>
+            </div></div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="row g-3 mb-3">
+        <div class="col-lg-7">
+            <div class="card h-100">
+                <div class="card-header fw-semibold">Отправлено по дням</div>
+                <div class="card-body"><canvas id="bcStatsSentChart" height="220"></canvas></div>
+            </div>
+        </div>
+        <div class="col-lg-5">
+            <div class="card h-100">
+                <div class="card-header fw-semibold">Доля ответивших, %</div>
+                <div class="card-body"><canvas id="bcStatsResponseChart" height="220"></canvas></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header fw-semibold">По дням</div>
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>Дата</th>
+                        <th class="text-end">Отправлено</th>
+                        {% for ch in active_channels %}
+                        <th class="text-end">{{ channel_labels.get(ch, ch) }}</th>
+                        {% endfor %}
+                        <th class="text-end">Ответили</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for d in rating_stats.days | reverse %}
+                    <tr>
+                        <td class="text-nowrap">{{ d.day | date_ru_short }}</td>
+                        <td class="text-end">{{ d.sent }}</td>
+                        {% for ch in active_channels %}
+                        {% set cnt = d.by_channel.get(ch, 0) %}
+                        <td class="text-end text-nowrap">{{ cnt }} <span class="text-muted small">({{ '%.0f'|format(cnt / d.sent * 100) if d.sent else 0 }}%)</span></td>
+                        {% endfor %}
+                        <td class="text-end text-nowrap">{{ d.responded }} <span class="text-muted small">({{ d.response_rate }}%)</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
 // Переключение вкладок без перезагрузки страницы — сама навигация всё равно ссылки с
 // ?tab=..., чтобы обновление/шаринг ссылки сохраняло активную вкладку (см. правило в CLAUDE.md
@@ -637,6 +788,153 @@ document.querySelectorAll('.bc-tab-pane form').forEach((form) => {
         window.scrollTo(0, parseInt(savedScroll, 10));
         sessionStorage.removeItem('bc_scroll_y');
     }
+})();
+
+/* ── Вкладка «Статистика»: период + филиалы ── */
+(function () {
+    function fmtLocalDate(d) {
+        return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
+    function fmtRuShort(d) {
+        return String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + d.getFullYear();
+    }
+    function parseLocalDate(s) {
+        var p = s.split('-');
+        return new Date(parseInt(p[0]), parseInt(p[1]) - 1, parseInt(p[2]));
+    }
+    var elFrom = document.getElementById('bcStatsDateFrom');
+    if (!elFrom) return; // вкладки «Статистика» ещё нет на странице (на всякий случай)
+    var bcDateFrom = parseLocalDate(elFrom.value);
+    var bcDateTo = parseLocalDate(document.getElementById('bcStatsDateTo').value);
+
+    function updateBcStatsDateLabel() {
+        document.getElementById('bcStatsDateBtnLabel').textContent = fmtRuShort(bcDateFrom) + ' – ' + fmtRuShort(bcDateTo);
+    }
+    updateBcStatsDateLabel();
+
+    function submitBcStats() {
+        document.getElementById('bcStatsDateFrom').value = fmtLocalDate(bcDateFrom);
+        document.getElementById('bcStatsDateTo').value = fmtLocalDate(bcDateTo);
+        document.getElementById('bcStatsFilterForm').submit();
+    }
+    window.bcStatsSetRange = function (days) {
+        bcDateTo = new Date();
+        bcDateFrom = new Date();
+        bcDateFrom.setDate(bcDateFrom.getDate() - (days - 1));
+        submitBcStats();
+    };
+
+    var bcStatsCalPicker = null;
+    window.openBcStatsCal = function () {
+        if (!bcStatsCalPicker) {
+            bcStatsCalPicker = flatpickr('#bcStatsCalHidden', {
+                mode: 'range',
+                dateFormat: 'Y-m-d',
+                appendTo: document.body,
+                disableMobile: true,
+                defaultDate: [bcDateFrom, bcDateTo],
+                onClose: function (dates) {
+                    if (dates.length === 2) {
+                        bcDateFrom = dates[0]; bcDateTo = dates[1];
+                        submitBcStats();
+                    } else if (dates.length === 1) {
+                        bcDateFrom = dates[0]; bcDateTo = dates[0];
+                        submitBcStats();
+                    }
+                }
+            });
+        }
+        bcStatsCalPicker.open();
+    };
+
+    window.onBcStatsBranchCbChange = function () {
+        var cbs = document.querySelectorAll('.bc-stats-branch-cb');
+        var checked = [...cbs].filter(function (c) { return c.checked; });
+        var allCb = document.getElementById('bcStatsBranchAllCb');
+        if (allCb) allCb.checked = checked.length === 0;
+        var label = document.getElementById('bcStatsBranchBtnLabel');
+        if (label) label.textContent = checked.length === 0 ? 'Все филиалы' : 'Выбрано: ' + checked.length;
+    };
+    window.toggleAllBcStatsBranches = function (cb) {
+        if (cb.checked) {
+            document.querySelectorAll('.bc-stats-branch-cb').forEach(function (c) { c.checked = false; });
+            document.getElementById('bcStatsBranchBtnLabel').textContent = 'Все филиалы';
+        }
+    };
+    window.selectBcStatsBranchGroup = function (btn) {
+        var ids = (btn.dataset.branchIds || '').split(',').filter(Boolean);
+        document.querySelectorAll('.bc-stats-branch-cb').forEach(function (cb) {
+            cb.checked = ids.indexOf(cb.value) !== -1;
+        });
+        document.getElementById('bcStatsBranchAllCb').checked = false;
+        document.getElementById('bcStatsBranchBtnLabel').textContent = 'Выбрано: ' + ids.length;
+    };
+})();
+
+/* ── Вкладка «Статистика»: графики (Chart.js) ── */
+(function () {
+    var sentCanvas = document.getElementById('bcStatsSentChart');
+    if (!sentCanvas) return; // нет данных за период — canvas не отрисован (см. rating_stats.total_sent == 0)
+    var chartData = {{ stats_chart | tojson }};
+    // Цвета — фиксированный порядок (categorical, см. dataviz-skill): WhatsApp/Telegram/MAX,
+    // те же 3 слота валидированной палитры, что и на других графиках проекта не используются
+    // (здесь единственный многосерийный график в CRM), поэтому заведены явно, а не переиспользованы.
+    var CHANNEL_COLORS = { whatsapp: '#2a78d6', telegram: '#eb6834', max: '#1baf7a' };
+
+    new Chart(sentCanvas.getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels: chartData.labels,
+            datasets: chartData.channels.map(function (c) {
+                return {
+                    label: c.label,
+                    data: c.data,
+                    backgroundColor: CHANNEL_COLORS[c.channel] || '#94a3b8',
+                    borderRadius: 4,
+                    borderSkipped: false,
+                    maxBarThickness: 24,
+                };
+            })
+        },
+        options: {
+            responsive: true,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                x: { stacked: true, grid: { display: false } },
+                y: { stacked: true, beginAtZero: true, grid: { color: '#e1e0d9' }, ticks: { precision: 0 } }
+            },
+            plugins: {
+                legend: { display: chartData.channels.length > 1, position: 'top' }
+            }
+        }
+    });
+
+    new Chart(document.getElementById('bcStatsResponseChart').getContext('2d'), {
+        type: 'line',
+        data: {
+            labels: chartData.labels,
+            datasets: [{
+                label: 'Ответили, %',
+                data: chartData.response_rate,
+                borderColor: '#2a78d6',
+                backgroundColor: 'rgba(42,120,214,0.1)',
+                borderWidth: 2,
+                pointRadius: 3,
+                pointBackgroundColor: '#2a78d6',
+                fill: true,
+                tension: 0.2
+            }]
+        },
+        options: {
+            responsive: true,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                x: { grid: { display: false } },
+                y: { beginAtZero: true, max: 100, grid: { color: '#e1e0d9' }, ticks: { callback: function (v) { return v + '%'; } } }
+            },
+            plugins: { legend: { display: false } }
+        }
+    });
 })();
 </script>
 
