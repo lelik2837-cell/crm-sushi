@@ -1,0 +1,471 @@
+{% extends 'base.html' %}
+{% block title %}Опоздания{% endblock %}
+{% block content %}
+
+<div class="row g-3 mb-4">
+  <div class="col-12 col-lg-7">
+    <div id="lt-card" style="background:linear-gradient(135deg,#5c1015 0%,#7f1d1d 50%,#9f1239 100%); border-radius:20px; padding:28px 28px 24px; color:#fff; position:relative;">
+
+      <!-- Row 1: period buttons + calendar + branch selector -->
+      <div style="display:flex; gap:6px; margin-bottom:10px; align-items:center; flex-wrap:wrap;">
+        <div class="lt-nav" data-period="today" style="display:flex; align-items:center; gap:1px; background:rgba(255,255,255,.12); border:1.5px solid rgba(255,255,255,.35); border-radius:16px; padding:2px;">
+          <button onclick="navLatToday(-1)" title="Предыдущий день"
+            style="width:19px; height:19px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; line-height:1;">‹</button>
+          <button onclick="selectLatToday()" id="lt-today-btn"
+            style="border:none; background:transparent; color:#fff; cursor:pointer; font-size:10px; font-weight:700; padding:2px 5px; letter-spacing:.2px; white-space:nowrap;">Сегодня</button>
+          <button onclick="navLatToday(1)" title="Следующий день"
+            style="width:19px; height:19px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; line-height:1;">›</button>
+        </div>
+        <div class="lt-nav" data-period="month" style="display:flex; align-items:center; gap:1px; background:rgba(255,255,255,.25); border:1.5px solid rgba(255,255,255,.9); border-radius:16px; padding:2px;">
+          <button onclick="navLatMonth(-1)" title="Предыдущий месяц"
+            style="width:19px; height:19px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; line-height:1;">‹</button>
+          <button onclick="selectLatMonth()" id="lt-month-btn"
+            style="border:none; background:transparent; color:#fff; cursor:pointer; font-size:10px; font-weight:700; padding:2px 5px; letter-spacing:.2px; white-space:nowrap;">Месяц</button>
+          <button onclick="navLatMonth(1)" title="Следующий месяц"
+            style="width:19px; height:19px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; line-height:1;">›</button>
+        </div>
+        <div style="position:relative;">
+          <div class="lt-nav" data-period="year" style="display:flex; align-items:center; gap:1px; background:rgba(255,255,255,.12); border:1.5px solid rgba(255,255,255,.35); border-radius:16px; padding:2px;">
+            <button onclick="loadLatCard('year')" id="lt-year-btn"
+              style="border:none; background:transparent; color:#fff; cursor:pointer; font-size:10px; font-weight:700; padding:2px 3px 2px 6px; letter-spacing:.2px; white-space:nowrap;">Год</button>
+            <button onclick="toggleLatYearMenu(event)" id="lt-year-caret" title="Выбрать год"
+              style="width:16px; height:19px; border:none; background:transparent; color:#fff; cursor:pointer; padding:0 4px 0 0; display:flex; align-items:center; justify-content:center;">
+              <svg viewBox="0 0 8 5" width="8" height="5" fill="currentColor"><path d="M0 0l4 5 4-5z"/></svg>
+            </button>
+          </div>
+          <div id="lt-year-menu" style="display:none; position:absolute; top:calc(100% + 4px); left:0; background:#fff; border-radius:10px; min-width:88px; overflow:hidden; z-index:30; box-shadow:0 6px 20px rgba(0,0,0,.25);"></div>
+        </div>
+        <button id="lt-cal-btn" onclick="openLatCal()" title="Выбрать период" style="width:26px; height:26px; flex-shrink:0; border-radius:50%; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); cursor:pointer; padding:0; display:inline-flex; align-items:center; justify-content:center;">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><path d="M3.5 0a.5.5 0 0 1 .5.5V1h8V.5a.5.5 0 0 1 1 0V1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h1V.5a.5.5 0 0 1 .5-.5zM1 4v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4H1z"/></svg>
+        </button>
+        <input id="lt-cal-hidden" type="text" style="display:none; position:absolute;">
+
+        <!-- Branch selector -->
+        <div style="margin-left:auto;">
+          {% set bs_prefix = 'lt' %}
+          {% include '_dash_branch_picker.html' %}
+        </div>
+      </div>
+
+      <!-- Row 2: Все/Предзаказ/Текущий -->
+      <div style="display:flex; gap:6px; margin-bottom:20px; align-items:center; flex-wrap:wrap;">
+        <div style="display:flex; align-items:center; gap:1px; background:rgba(255,255,255,.12); border:1.5px solid rgba(255,255,255,.35); border-radius:14px; padding:2px; flex-shrink:0;">
+          <button id="lt-kind-all" onclick="setLatKind('all')"
+            style="border:none; border-radius:12px; background:rgba(255,255,255,.28); color:#fff; cursor:pointer; font-size:9.5px; font-weight:700; padding:3px 7px; letter-spacing:.1px; white-space:nowrap;">Все</button>
+          <button id="lt-kind-preorder" onclick="setLatKind('preorder')"
+            style="border:none; border-radius:12px; background:transparent; color:#fff; cursor:pointer; font-size:9.5px; font-weight:700; padding:3px 7px; letter-spacing:.1px; white-space:nowrap;">Предзаказ</button>
+          <button id="lt-kind-current" onclick="setLatKind('current')"
+            style="border:none; border-radius:12px; background:transparent; color:#fff; cursor:pointer; font-size:9.5px; font-weight:700; padding:3px 7px; letter-spacing:.1px; white-space:nowrap;">По ожиданию</button>
+        </div>
+      </div>
+
+      <!-- Label -->
+      <div id="lt-label-title" style="font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; opacity:.7; margin-bottom:6px;">Доля опоздавших заказов</div>
+
+      <!-- Big number -->
+      <div id="lt-total" style="font-size:clamp(32px,6vw,52px); font-weight:800; letter-spacing:-1px; line-height:1.05; margin-bottom:2px;">—</div>
+      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px;">
+        <div id="lt-period-label" style="font-size:14px; opacity:.6;">опоздавших</div>
+      </div>
+      <div id="lt-count-label" style="font-size:12px; opacity:.55; margin-bottom:14px;"></div>
+
+      <!-- Divider -->
+      <div style="border-top:1px solid rgba(255,255,255,.2); margin-bottom:14px;"></div>
+
+      <!-- Branch list -->
+      <div id="lt-branches" style="display:flex; flex-direction:column; gap:8px;">
+        <div style="opacity:.5; font-size:13px;">Загрузка...</div>
+      </div>
+
+      <!-- Day chart (month mode) -->
+      <div id="lt-day-wrap" style="display:none; margin-top:14px; border-top:1px solid rgba(255,255,255,.2); padding-top:14px;">
+        <canvas id="lt-day-canvas" height="130"></canvas>
+      </div>
+
+      <!-- Year chart (year/custom-long mode) -->
+      <div id="lt-year-wrap" style="display:none;">
+        <canvas id="lt-year-canvas" height="180"></canvas>
+        <div id="lt-month-detail" style="display:none; margin-top:16px; border-top:1px solid rgba(255,255,255,.2); padding-top:14px;">
+          <div id="lt-month-title" style="font-size:12px; font-weight:700; letter-spacing:.5px; opacity:.8; margin-bottom:10px; text-transform:uppercase;"></div>
+          <div id="lt-month-branches" style="display:flex; flex-direction:column; gap:7px;"></div>
+          <div id="lt-year-day-wrap" style="display:none; margin-top:14px; border-top:1px solid rgba(255,255,255,.15); padding-top:12px;">
+            <canvas id="lt-year-day-canvas" height="120"></canvas>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-5">
+    <div style="background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 100%); border:1.5px solid #e2e8f0; border-radius:14px; padding:18px 20px; box-shadow:0 2px 10px rgba(0,0,0,0.06); height:100%;">
+      <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:10px;">О расчёте</div>
+      <ul style="font-size:12.5px; color:#475569; padding-left:18px; margin-bottom:0; line-height:1.7;">
+        <li>Источник данных — <a href="{{ url_for('orders_report') }}">Отчёт по заказам</a> (загружайте выгрузку туда). Учитывается только доставка, самовывоз не входит.</li>
+        <li><strong>Предзаказ</strong> (оформлен на конкретное время) — вовремя, если доставлен в пределах ±15 минут от заявленного времени; и раньше, и позже этого окна считается опозданием.</li>
+        <li><strong>По ожиданию</strong> (обещанное время от приёма звонка) — вовремя, если доставлен не позже обещанного времени + 15 минут; раньше обещанного — не опоздание.</li>
+        <li>Заказы без факта доставки (ещё не завершены) в расчёт не входят.</li>
+        <li>Период считается по дате доставки, а не по дате приёма заказа — предзаказ, принятый заранее, попадает в день, на который его доставили.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+function fmtLocalDate(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function isSameDay(a, b) { return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate(); }
+function fmtNum1(n) { var r = Math.round(n * 10) / 10; return (r % 1 === 0) ? String(Math.round(r)) : String(r).replace('.', ','); }
+
+var MONTHS_RU_FULL = ['', 'Январь','Февраль','Март','Апрель','Май','Июнь',
+                      'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+var MONTHS_RU_GEN  = ['', 'января','февраля','марта','апреля','мая','июня',
+                      'июля','августа','сентября','октября','ноября','декабря'];
+
+var LAT_KIND_LABELS = {
+    all:      { title: 'Доля опоздавших заказов',            unit: '% опоздавших' },
+    preorder: { title: 'Доля опоздавших предзаказов',         unit: '% опоздавших' },
+    current:  { title: 'Доля опоздавших заказов по ожиданию', unit: '% опоздавших' },
+};
+
+var latKind        = 'all';
+var latPeriod      = 'today';
+var latChart       = null;
+var latDayChart    = null;
+var latYearDayChart = null;
+var latYear        = new Date().getFullYear();
+var latCustomFrom  = null;
+var latCustomTo    = null;
+var latTodayDate   = new Date();
+var latMonthDate   = (function() { var d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); })();
+window.ltBranchIds = [];
+window.ltOnBranchChange = function () { loadLatCard(latPeriod); };
+
+function updateLatKindButtons() {
+    ['all', 'preorder', 'current'].forEach(function(k) {
+        var el = document.getElementById('lt-kind-' + k);
+        if (el) el.style.background = (latKind === k) ? 'rgba(255,255,255,.28)' : 'transparent';
+    });
+    var lbl = LAT_KIND_LABELS[latKind];
+    document.getElementById('lt-label-title').textContent = lbl.title;
+}
+function setLatKind(kind) {
+    if (latKind === kind) return;
+    latKind = kind;
+    updateLatKindButtons();
+    loadLatCard(latPeriod);
+}
+
+function selectLatToday() { latTodayDate = new Date(); loadLatCard('today'); }
+function selectLatMonth() { var d = new Date(); latMonthDate = new Date(d.getFullYear(), d.getMonth(), 1); loadLatCard('month'); }
+function navLatToday(delta) { latTodayDate.setDate(latTodayDate.getDate() + delta); loadLatCard('today'); }
+function navLatMonth(delta) { latMonthDate = new Date(latMonthDate.getFullYear(), latMonthDate.getMonth() + delta, 1); loadLatCard('month'); }
+
+function toggleLatYearMenu(ev) {
+    ev.stopPropagation();
+    var menu = document.getElementById('lt-year-menu');
+    if (!menu) return;
+    if (menu.style.display === 'block') { menu.style.display = 'none'; return; }
+    buildLatYearMenu();
+    menu.style.display = 'block';
+}
+function buildLatYearMenu() {
+    var menu = document.getElementById('lt-year-menu');
+    if (!menu) return;
+    var curYear = new Date().getFullYear();
+    var items = '';
+    for (var y = curYear; y >= curYear - 4; y--) {
+        var active = latPeriod === 'year' && latYear === y;
+        items += '<div class="lt-year-opt" data-y="' + y + '" style="padding:7px 16px;font-size:13px;color:#1e293b;cursor:pointer;white-space:nowrap;' +
+                 (active ? 'font-weight:700;background:#f1f5f9;' : '') + '">' + y + '</div>';
+    }
+    menu.innerHTML = items;
+}
+document.addEventListener('click', function(e) {
+    var menu = document.getElementById('lt-year-menu');
+    if (!menu) return;
+    var opt = e.target.closest && e.target.closest('.lt-year-opt');
+    if (opt) {
+        menu.style.display = 'none';
+        latYear = parseInt(opt.dataset.y);
+        loadLatCard('year');
+        return;
+    }
+    if (menu.style.display === 'block' && !menu.contains(e.target) && !(e.target.closest && e.target.closest('#lt-year-caret'))) {
+        menu.style.display = 'none';
+    }
+});
+
+function _latBranchSuffix() { return dashBpSuffix('lt'); }
+
+var latCalPicker = null;
+function openLatCal() {
+    if (!latCalPicker) {
+        latCalPicker = flatpickr('#lt-cal-hidden', {
+            mode: 'range',
+            dateFormat: 'Y-m-d',
+            appendTo: document.body,
+            disableMobile: true,
+            onClose: function(dates) {
+                if (dates.length === 2) {
+                    latCustomFrom = fmtLocalDate(dates[0]);
+                    latCustomTo   = fmtLocalDate(dates[1]);
+                    loadLatCard('custom');
+                }
+            }
+        });
+    }
+    latCalPicker.open();
+}
+
+function latUnitLabel(count) {
+    if (!count) return 'заказов';
+    var n = count % 100;
+    if (n >= 11 && n <= 14) return 'заказов';
+    var last = n % 10;
+    if (last === 1) return 'заказ';
+    if (last >= 2 && last <= 4) return 'заказа';
+    return 'заказов';
+}
+
+function branchLatListHtml(branches) {
+    if (!branches || !branches.length) return '<div style="opacity:.5;font-size:13px;">Нет данных</div>';
+    var maxVal = Math.max.apply(null, branches.map(function(b) { return b.pct || 0; })) || 1;
+    return branches.filter(function(b){ return b.count > 0; }).map(function(b) {
+        var barW = Math.min(100, Math.round((b.pct || 0) / maxVal * 100));
+        return '<div style="display:flex;align-items:center;gap:8px;">' +
+            '<span style="font-size:11px;font-weight:700;background:rgba(255,255,255,.18);border-radius:6px;padding:2px 7px;letter-spacing:.5px;min-width:36px;text-align:center;">' + b.abbr + '</span>' +
+            '<div style="flex:1;">' +
+              '<div style="display:flex;justify-content:space-between;margin-bottom:3px;">' +
+                '<span style="font-size:12px;opacity:.85;font-weight:500;">' + b.name + '</span>' +
+                '<span style="font-size:12px;font-weight:700;">' + fmtNum1(b.pct) + '% <span style="opacity:.6;font-weight:500;">(' + b.late_count + '/' + b.count + ')</span></span>' +
+              '</div>' +
+              '<div style="height:3px;background:rgba(255,255,255,.15);border-radius:2px;">' +
+                '<div style="height:100%;width:' + barW + '%;background:rgba(255,255,255,.7);border-radius:2px;"></div>' +
+              '</div>' +
+            '</div></div>';
+    }).join('');
+}
+
+function showLatMonthDetail(monthIdx, monthYear, monthLabel) {
+    var y = monthYear;
+    var m = String(monthIdx).padStart(2, '0');
+    var lastDay = new Date(y, monthIdx, 0).getDate();
+    var dateFrom = y + '-' + m + '-01';
+    var dateTo   = y + '-' + m + '-' + String(lastDay).padStart(2, '0');
+
+    var yDayWrap = document.getElementById('lt-year-day-wrap');
+    if (latYearDayChart) { latYearDayChart.destroy(); latYearDayChart = null; }
+    if (yDayWrap) { yDayWrap.style.display = ''; }
+
+    var detail   = document.getElementById('lt-month-detail');
+    var titleEl  = document.getElementById('lt-month-title');
+    var branchEl = document.getElementById('lt-month-branches');
+    detail.style.display = '';
+    titleEl.textContent   = monthLabel + ' ' + y;
+    branchEl.innerHTML    = '<div style="opacity:.5;font-size:12px;">Загрузка…</div>';
+
+    var qs = '&kind=' + latKind + _latBranchSuffix();
+    fetch('/api/lateness-summary?date_from=' + dateFrom + '&date_to=' + dateTo + qs)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.ok) return;
+            branchEl.innerHTML = branchLatListHtml(d.branches);
+        });
+
+    fetch('/api/lateness-days?date_from=' + dateFrom + '&date_to=' + dateTo + qs)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.ok) return;
+            latYearDayChart = makeLatChart('lt-year-day-canvas', d.days, 'date');
+        });
+}
+
+function makeLatChart(canvasId, items, labelMode) {
+    var DOW = ['вс','пн','вт','ср','чт','пт','сб'];
+    var canvas = document.getElementById(canvasId);
+    var labels = labelMode === 'date' ? items.map(function(d) { return d.date.slice(8); }) : items.map(function(m) { return m.label; });
+    return new Chart(canvas, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: items.map(function(x){ return x.value; }),
+                backgroundColor: 'rgba(255,255,255,0.5)',
+                hoverBackgroundColor: 'rgba(255,255,255,0.9)',
+                borderRadius: 4, borderSkipped: false,
+            }]
+        },
+        options: {
+            responsive: true,
+            animation: { duration: 350 },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        title: function(ctx) {
+                            if (labelMode !== 'date') return ctx[0].label;
+                            var raw = items[ctx[0].dataIndex].date;
+                            var d = new Date(raw + 'T00:00:00');
+                            return raw.split('-').reverse().join('.') + ', ' + DOW[d.getDay()];
+                        },
+                        label: function(ctx) {
+                            var it = items[ctx.dataIndex];
+                            return fmtNum1(ctx.parsed.y) + '% (' + it.late_count + '/' + it.count + ')';
+                        }
+                    },
+                    backgroundColor: 'rgba(0,0,0,.7)', titleColor: '#fff', bodyColor: '#fff',
+                }
+            },
+            scales: {
+                x: { ticks: { color: 'rgba(255,255,255,.65)', font: { size: 10, weight: '600' } }, grid: { display: false }, border: { color: 'rgba(255,255,255,.15)' } },
+                y: { beginAtZero: true, ticks: { color: 'rgba(255,255,255,.5)', font: { size: 9 } }, grid: { color: 'rgba(255,255,255,.08)' }, border: { display: false } }
+            },
+            onClick: labelMode === 'date' ? undefined : function(evt, elements) {
+                if (!elements.length) return;
+                var idx = elements[0].index;
+                var month = items[idx];
+                if (!month.count) return;
+                showLatMonthDetail(month.month, month.year, MONTHS_RU_FULL[month.month]);
+            }
+        }
+    });
+}
+
+function loadLatCard(period) {
+    if (period) latPeriod = period;
+    var calActive = latPeriod === 'custom';
+    document.querySelectorAll('.lt-nav').forEach(function(nav) {
+        var active = !calActive && nav.dataset.period === latPeriod;
+        nav.style.background  = active ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.12)';
+        nav.style.borderColor = active ? 'rgba(255,255,255,.9)'  : 'rgba(255,255,255,.35)';
+    });
+    var calBtn = document.getElementById('lt-cal-btn');
+    if (calBtn) {
+        calBtn.style.background  = calActive ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.12)';
+        calBtn.style.borderColor = calActive ? 'rgba(255,255,255,.9)'  : 'rgba(255,255,255,.35)';
+    }
+
+    document.getElementById('lt-total').textContent = '…';
+    document.getElementById('lt-count-label').textContent = '';
+
+    var branchesWrap = document.getElementById('lt-branches');
+    var yearWrap      = document.getElementById('lt-year-wrap');
+    var dayWrap       = document.getElementById('lt-day-wrap');
+    var monthDetail   = document.getElementById('lt-month-detail');
+
+    var todayBtn = document.getElementById('lt-today-btn');
+    if (todayBtn) {
+        var now = new Date();
+        todayBtn.textContent = isSameDay(latTodayDate, now) ? 'Сегодня' : (latTodayDate.getDate() + ' ' + MONTHS_RU_GEN[latTodayDate.getMonth() + 1]);
+    }
+    var monthBtn = document.getElementById('lt-month-btn');
+    if (monthBtn) {
+        var curYear = new Date().getFullYear();
+        monthBtn.textContent = MONTHS_RU_FULL[latMonthDate.getMonth() + 1] + (latMonthDate.getFullYear() !== curYear ? ' ' + latMonthDate.getFullYear() : '');
+    }
+
+    if (latPeriod !== 'month') {
+        dayWrap.style.display = 'none';
+        if (latDayChart) { latDayChart.destroy(); latDayChart = null; }
+    }
+    if (latPeriod !== 'year') {
+        document.getElementById('lt-year-day-wrap').style.display = 'none';
+        if (latYearDayChart) { latYearDayChart.destroy(); latYearDayChart = null; }
+    }
+
+    var unit = LAT_KIND_LABELS[latKind].unit;
+    var qsKind = '&kind=' + latKind + _latBranchSuffix();
+
+    var isCustomMonthly = latPeriod === 'custom' && latCustomFrom && latCustomTo &&
+        Math.round((new Date(latCustomTo) - new Date(latCustomFrom)) / 86400000) > 35;
+
+    if (latPeriod === 'year' || isCustomMonthly) {
+        branchesWrap.style.display = 'none';
+        yearWrap.style.display     = '';
+        monthDetail.style.display  = 'none';
+        if (latChart) { latChart.destroy(); latChart = null; }
+
+        var yearFrom, yearTo, periodLabel;
+        if (latPeriod === 'year') {
+            var curYear2 = new Date().getFullYear();
+            yearFrom = latYear + '-01-01';
+            yearTo   = latYear === curYear2 ? fmtLocalDate(new Date()) : latYear + '-12-31';
+            periodLabel = 'за ' + latYear;
+        } else {
+            yearFrom = latCustomFrom;
+            yearTo   = latCustomTo;
+            var fmtLabelM = function(s) { return s.split('-').reverse().join('.'); };
+            periodLabel = fmtLabelM(yearFrom) + ' — ' + fmtLabelM(yearTo);
+        }
+        document.getElementById('lt-period-label').textContent = unit + ' ' + periodLabel;
+
+        fetch('/api/lateness-summary?date_from=' + yearFrom + '&date_to=' + yearTo + qsKind)
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (!d.ok) return;
+                document.getElementById('lt-total').textContent = d.count ? fmtNum1(d.pct) + '%' : '—';
+                document.getElementById('lt-count-label').textContent = d.count ? (d.late_count + ' из ' + d.count + ' ' + latUnitLabel(d.count)) : 'нет заказов за период';
+            });
+        fetch('/api/lateness-months?date_from=' + yearFrom + '&date_to=' + yearTo + qsKind)
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (!d.ok) return;
+                latChart = makeLatChart('lt-year-canvas', d.months, 'month');
+            });
+        return;
+    }
+
+    // today / month / custom (short, ≤35 days)
+    branchesWrap.style.display = '';
+    yearWrap.style.display     = 'none';
+    if (latChart) { latChart.destroy(); latChart = null; }
+    branchesWrap.innerHTML = '<div style="opacity:.5;font-size:13px;">Загрузка…</div>';
+
+    var fmtLabel = function(s) { return s.split('-').reverse().join('.'); };
+    var dateTo, dateFrom;
+    if (latPeriod === 'custom' && latCustomFrom && latCustomTo) {
+        dateFrom = latCustomFrom; dateTo = latCustomTo;
+        document.getElementById('lt-period-label').textContent = unit + ' · ' + fmtLabel(dateFrom) + ' — ' + fmtLabel(dateTo);
+    } else if (latPeriod === 'today') {
+        dateFrom = dateTo = fmtLocalDate(latTodayDate);
+        document.getElementById('lt-period-label').textContent = unit;
+    } else {
+        var y = latMonthDate.getFullYear();
+        var m = latMonthDate.getMonth();
+        var lastDay = new Date(y, m + 1, 0).getDate();
+        dateFrom = y + '-' + String(m + 1).padStart(2, '0') + '-01';
+        dateTo   = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
+        document.getElementById('lt-period-label').textContent = unit;
+    }
+
+    fetch('/api/lateness-summary?date_from=' + dateFrom + '&date_to=' + dateTo + qsKind)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.ok) return;
+            document.getElementById('lt-total').textContent = d.count ? fmtNum1(d.pct) + '%' : '—';
+            document.getElementById('lt-count-label').textContent = d.count ? (d.late_count + ' из ' + d.count + ' ' + latUnitLabel(d.count)) : 'нет заказов за период';
+            branchesWrap.innerHTML = branchLatListHtml(d.branches);
+        });
+
+    if (latPeriod === 'month') {
+        dayWrap.style.display = '';
+        fetch('/api/lateness-days?date_from=' + dateFrom + '&date_to=' + dateTo + qsKind)
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (!d.ok) return;
+                if (latDayChart) { latDayChart.destroy(); }
+                latDayChart = makeLatChart('lt-day-canvas', d.days, 'date');
+            });
+    }
+}
+
+updateLatKindButtons();
+loadLatCard('month');
+</script>
+{% endblock %}

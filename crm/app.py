@@ -135,6 +135,7 @@ MENU_ITEMS = [
     ('lfl_dashboard',         'LFL',                      'dash',     True),
     ('ratings_dashboard',     'Рейтинги',                 'dash',     True),
     ('wait_dashboard',        'Ожидание',                 'dash',     True),
+    ('lateness_dashboard',    'Опоздания',                'dash',     True),
     ('promo_dashboard',       'Промокоды',                'dash',     True),
     ('shifts_archive',        'Смены',                    'reports',  True),
     ('reports_shifts',        'Выручка',                  'reports',  True),
@@ -4246,6 +4247,189 @@ def api_wait_months():
         agg = _wait_months_query(conn, col, where, date_from, date_to, bf, bparams)
     months = _wait_months_list(agg, date_from, date_to)
     return jsonify({'ok': True, 'mode': mode, 'metric': metric,
+                    'total_count': sum(x['count'] for x in months), 'months': months})
+
+
+# ─── ОПОЗДАНИЯ (доля опоздавших заказов доставки из «Отчёта по заказам») ────
+#
+# Опоздание считается по-разному для двух типов заказов доставки (тип определяется
+# тем, заполнено ли promised_minutes — см. колонку «Оформлен на» в Отчёте по заказам):
+#   Предварит. (предзаказ, оформлен на конкретное время delivery_at) — вовремя,
+#       если фактическая доставка (received_at + delivery_minutes) попадает в окно
+#       delivery_at ± 15 минут; и раньше, и позже этого окна — опоздание.
+#   Текущий (по ожиданию, есть обещанное время promised_minutes от приёма) — вовремя,
+#       если фактическая доставка не позже promised_minutes + 15 минут от приёма;
+#       раньше обещанного — не опоздание.
+# Самовывоз в отчёт не входит (нет понятия «доставки»), как и заказы без факта
+# доставки (delivery_minutes ещё NULL — заказ не завершён, судить об опоздании нечем).
+# Период считается по дате ДОСТАВКИ (delivery_at), не по дате приёма — так же, как
+# в /orders-report, иначе предзаказ, принятый заранее, попал бы не в тот день.
+
+_LATENESS_BASE_WHERE = "order_type LIKE 'Доставка%' AND delivery_minutes IS NOT NULL"
+
+_LATENESS_LATE_EXPR = """CASE
+    WHEN promised_minutes IS NOT NULL AND promised_minutes != 0
+        THEN CASE WHEN delivery_minutes > promised_minutes + 15 THEN 1 ELSE 0 END
+    ELSE
+        CASE WHEN ABS((julianday(datetime(received_at, '+' || delivery_minutes || ' minutes')) - julianday(delivery_at)) * 1440.0) > 15 THEN 1 ELSE 0 END
+END"""
+
+
+def _lateness_kind_where(kind):
+    """kind: 'all' | 'preorder' (Предварит.) | 'current' (Текущий, по ожиданию)."""
+    if kind == 'preorder':
+        return "AND (promised_minutes IS NULL OR promised_minutes = 0)"
+    if kind == 'current':
+        return "AND promised_minutes IS NOT NULL AND promised_minutes != 0"
+    return ''
+
+
+def _lateness_where(kind):
+    return f"{_LATENESS_BASE_WHERE} {_lateness_kind_where(kind)}"
+
+
+def _lateness_branch_filter():
+    raw = request.args.get('branch_ids', '')
+    ids = [int(x) for x in raw.split(',') if x.isdigit()]
+    if not ids:
+        return '', []
+    ph = ','.join('?' * len(ids))
+    return f'AND branch_id IN ({ph})', ids
+
+
+@app.route('/lateness-dashboard')
+@login_required
+@menu_permission_required('lateness_dashboard')
+def lateness_dashboard():
+    with get_db() as conn:
+        branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        branch_groups = get_branch_groups(conn)
+    return render_template('lateness_dashboard.html', branches=branches, branch_groups=branch_groups)
+
+
+@app.route('/api/lateness-summary')
+@login_required
+@menu_permission_required('lateness_dashboard')
+def api_lateness_summary():
+    date_from = request.args.get('date_from', date.today().isoformat())
+    date_to   = request.args.get('date_to',   date.today().isoformat())
+    kind = request.args.get('kind', 'all')
+    bf, bparams = _lateness_branch_filter()
+    where = _lateness_where(kind)
+
+    with get_db() as conn:
+        total = conn.execute(f'''
+            SELECT COUNT(*) AS cnt, COALESCE(SUM({_LATENESS_LATE_EXPR}),0) AS late_cnt
+            FROM orders_report
+            WHERE {where} AND delivery_at >= ? AND delivery_at < date(?, '+1 day') {bf}
+        ''', [date_from, date_to] + bparams).fetchone()
+        branch_rows = conn.execute(f'''
+            SELECT branch_raw AS name, COUNT(*) AS cnt, COALESCE(SUM({_LATENESS_LATE_EXPR}),0) AS late_cnt
+            FROM orders_report
+            WHERE {where} AND delivery_at >= ? AND delivery_at < date(?, '+1 day') {bf}
+            GROUP BY branch_raw ORDER BY name
+        ''', [date_from, date_to] + bparams).fetchall()
+
+    cnt = total['cnt'] or 0
+    late_cnt = total['late_cnt'] or 0
+    return jsonify({
+        'ok': True, 'kind': kind,
+        'count': cnt, 'late_count': late_cnt,
+        'pct': round(late_cnt / cnt * 100, 1) if cnt > 0 else 0,
+        'branches': [{
+            'name': r['name'], 'abbr': (r['name'] or '')[:3].upper(),
+            'count': r['cnt'], 'late_count': r['late_cnt'],
+            'pct': round(r['late_cnt'] / r['cnt'] * 100, 1) if r['cnt'] > 0 else 0,
+        } for r in branch_rows],
+    })
+
+
+@app.route('/api/lateness-days')
+@login_required
+@menu_permission_required('lateness_dashboard')
+def api_lateness_days():
+    date_from = request.args.get('date_from', date.today().isoformat())
+    date_to   = request.args.get('date_to',   date.today().isoformat())
+    kind = request.args.get('kind', 'all')
+    bf, bparams = _lateness_branch_filter()
+    where = _lateness_where(kind)
+
+    with get_db() as conn:
+        rows = conn.execute(f'''
+            SELECT DATE(delivery_at) AS d, COUNT(*) AS cnt, COALESCE(SUM({_LATENESS_LATE_EXPR}),0) AS late_cnt
+            FROM orders_report
+            WHERE {where} AND DATE(delivery_at) BETWEEN ? AND ? {bf}
+            GROUP BY d
+        ''', [date_from, date_to] + bparams).fetchall()
+    by_day = {r['d']: r for r in rows}
+
+    days = []
+    _d    = datetime.strptime(date_from, '%Y-%m-%d').date()
+    _dend = datetime.strptime(date_to, '%Y-%m-%d').date()
+    while _d <= _dend:
+        ds = _d.isoformat()
+        r  = by_day.get(ds)
+        cnt = r['cnt'] if r else 0
+        late_cnt = r['late_cnt'] if r else 0
+        days.append({
+            'date': ds, 'count': cnt, 'late_count': late_cnt,
+            'value': round(late_cnt / cnt * 100, 1) if cnt > 0 else 0,
+        })
+        _d += timedelta(days=1)
+    return jsonify({'ok': True, 'kind': kind, 'days': days})
+
+
+def _lateness_months_query(conn, where, date_from, date_to, bf, bparams):
+    rows = conn.execute(f'''
+        SELECT CAST(strftime('%Y', delivery_at) AS INTEGER) AS year,
+               CAST(strftime('%m', delivery_at) AS INTEGER) AS month,
+               COUNT(*) AS cnt, COALESCE(SUM({_LATENESS_LATE_EXPR}),0) AS late_cnt
+        FROM orders_report
+        WHERE {where} AND DATE(delivery_at) BETWEEN ? AND ? {bf}
+        GROUP BY year, month ORDER BY year, month
+    ''', [date_from, date_to] + bparams).fetchall()
+    return {(r['year'], r['month']): r for r in rows}
+
+
+def _lateness_months_list(agg, date_from, date_to):
+    labels = ['', 'Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн',
+              'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
+    start = date.fromisoformat(date_from)
+    end   = date.fromisoformat(date_to)
+    months_list = []
+    y, m = start.year, start.month
+    while (y < end.year) or (y == end.year and m <= end.month):
+        label = labels[m] + " '" + str(y)[-2:]
+        r = agg.get((y, m))
+        cnt = r['cnt'] if r else 0
+        late_cnt = r['late_cnt'] if r else 0
+        months_list.append({
+            'year': y, 'month': m, 'label': label,
+            'count': cnt, 'late_count': late_cnt,
+            'value': round(late_cnt / cnt * 100, 1) if cnt > 0 else 0,
+        })
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return months_list
+
+
+@app.route('/api/lateness-months')
+@login_required
+@menu_permission_required('lateness_dashboard')
+def api_lateness_months():
+    date_from = request.args.get('date_from')
+    date_to   = request.args.get('date_to', date.today().isoformat())
+    kind = request.args.get('kind', 'all')
+    bf, bparams = _lateness_branch_filter()
+    where = _lateness_where(kind)
+    if not date_from:
+        return jsonify({'ok': False, 'error': 'date_from required'}), 400
+    with get_db() as conn:
+        agg = _lateness_months_query(conn, where, date_from, date_to, bf, bparams)
+    months = _lateness_months_list(agg, date_from, date_to)
+    return jsonify({'ok': True, 'kind': kind,
                     'total_count': sum(x['count'] for x in months), 'months': months})
 
 

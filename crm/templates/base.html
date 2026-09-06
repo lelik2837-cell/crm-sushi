@@ -234,6 +234,14 @@
                     </a>
                 </li>
                 {% endif %}
+                {% if item_visible('lateness_dashboard') %}
+                <li>
+                    <a class="dropdown-item {% if request.endpoint=='lateness_dashboard' %}active{% endif %}"
+                       href="{{ url_for('lateness_dashboard') }}">
+                        <i class="bi bi-exclamation-octagon me-2"></i>Опоздания
+                    </a>
+                </li>
+                {% endif %}
                 {% if item_visible('promo_dashboard') %}
                 <li>
                     <a class="dropdown-item {% if request.endpoint=='promo_dashboard' %}active{% endif %}"
@@ -250,7 +258,7 @@
         <div class="collapse navbar-collapse" id="nav">
             <ul class="navbar-nav me-auto">
                 {% if group_has_visible_item('dash') %}
-                {% set dash_active = request.endpoint in ('dashboard', 'fot_dashboard', 'lfl_dashboard', 'ratings_dashboard', 'wait_dashboard', 'promo_dashboard') %}
+                {% set dash_active = request.endpoint in ('dashboard', 'fot_dashboard', 'lfl_dashboard', 'ratings_dashboard', 'wait_dashboard', 'lateness_dashboard', 'promo_dashboard') %}
                 <li class="nav-item dropdown d-none d-lg-flex">
                     <a class="nav-link nav-link-dashboard dropdown-toggle {% if dash_active %}active{% endif %}"
                        href="#" data-bs-toggle="dropdown" aria-expanded="false">
@@ -289,6 +297,13 @@
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='wait_dashboard' %}active{% endif %}" href="{{ url_for('wait_dashboard') }}">
                                 <i class="bi bi-stopwatch me-2"></i>Ожидание
+                            </a>
+                        </li>
+                        {% endif %}
+                        {% if item_visible('lateness_dashboard') %}
+                        <li>
+                            <a class="dropdown-item {% if request.endpoint=='lateness_dashboard' %}active{% endif %}" href="{{ url_for('lateness_dashboard') }}">
+                                <i class="bi bi-exclamation-octagon me-2"></i>Опоздания
                             </a>
                         </li>
                         {% endif %}
