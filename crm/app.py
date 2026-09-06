@@ -2468,6 +2468,13 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_messenger_messages_thread
                 ON messenger_messages(account_id, contact_ref, created_at);
         ''')
+        _mm_cols = [r[1] for r in conn.execute("PRAGMA table_info(messenger_messages)").fetchall()]
+        if 'image_deleted_at' not in _mm_cols:
+            # Фото не хранится бессрочно — просьба пользователя 2026-09-06: старше 6 месяцев
+            # удалять сам блоб (см. _scheduled_dialog_image_cleanup), а сообщение оставлять в
+            # переписке с пометкой «удалено» вместо картинки. NULL — фото либо не было, либо
+            # ещё не удалено; заполнено — когда именно удалили (для показа в /reports/dialogs).
+            conn.execute("ALTER TABLE messenger_messages ADD COLUMN image_deleted_at TIMESTAMP")
 
         # Оценка заказа (авто-запрос оценки 1-5 после статуса "Выполнен" + ветвление
         # ответного сообщения по баллу, по образцу Revvy) — переиспользует messenger_accounts/
@@ -10806,6 +10813,7 @@ def api_dialogs_threads():
         ph = ','.join('?' * len(ids))
         last_rows = {r['id']: r for r in conn.execute(f'''
             SELECT id, direction, text, image_blob IS NOT NULL AS has_image,
+                   image_deleted_at IS NOT NULL AS image_deleted,
                    datetime(created_at, '+7 hours') AS created_at
             FROM messenger_messages WHERE id IN ({ph})
         ''', ids).fetchall()}
@@ -10819,6 +10827,12 @@ def api_dialogs_threads():
             continue
         last = last_rows.get(t['last_id'])
         acc = accounts.get(t['account_id'])
+        if last and last['has_image']:
+            preview = 'Фото'
+        elif last and last['image_deleted']:
+            preview = 'Фото (удалено)'
+        else:
+            preview = (last['text'] if last else '') or ''
         result.append({
             'account_id': t['account_id'],
             'contact_ref': t['contact_ref'],
@@ -10828,7 +10842,7 @@ def api_dialogs_threads():
             'label': label,
             'msg_count': t['msg_count'],
             'last_at': datetime_ru_short(last['created_at']) if last else '',
-            'last_preview': ('Фото' if last and last['has_image'] else (last['text'] if last else '')) or '',
+            'last_preview': preview,
             'last_direction': last['direction'] if last else None,
         })
     return jsonify({'ok': True, 'threads': result})
@@ -10843,6 +10857,7 @@ def api_dialogs_thread_messages(account_id, contact_ref):
         if after_id:
             rows = conn.execute('''
                 SELECT id, direction, text, image_blob IS NOT NULL AS has_image,
+                       image_deleted_at IS NOT NULL AS image_deleted,
                        datetime(created_at, '+7 hours') AS created_at
                 FROM messenger_messages
                 WHERE account_id=? AND contact_ref=? AND id > ?
@@ -10851,6 +10866,7 @@ def api_dialogs_thread_messages(account_id, contact_ref):
         else:
             rows = list(reversed(conn.execute('''
                 SELECT id, direction, text, image_blob IS NOT NULL AS has_image,
+                       image_deleted_at IS NOT NULL AS image_deleted,
                        datetime(created_at, '+7 hours') AS created_at
                 FROM messenger_messages
                 WHERE account_id=? AND contact_ref=?
@@ -10860,6 +10876,7 @@ def api_dialogs_thread_messages(account_id, contact_ref):
     messages = [{
         'id': r['id'], 'direction': r['direction'], 'text': r['text'],
         'has_image': bool(r['has_image']),
+        'image_deleted': bool(r['image_deleted']),
         'image_url': url_for('api_messenger_message_image', message_id=r['id']) if r['has_image'] else None,
         'created_at': datetime_ru_short(r['created_at']),
     } for r in rows]
@@ -18783,6 +18800,27 @@ def _scheduled_rating_requests():
         print(f'[Оценка заказа] exception: {e}')
 
 
+def _scheduled_dialog_image_cleanup():
+    """Просьба пользователя 2026-09-06: фото в «Диалогах» не хранить бессрочно — старше
+    6 месяцев удалять сам блоб (иначе crm.db растёт бесконечно от накопленных вложений), а
+    сообщение оставлять в переписке как есть — раз здесь есть image_blob для UPDATE, значит
+    фото ещё не было удалено (image_deleted_at ставится тем же запросом); текст (если у фото
+    была подпись) не трогаем — /reports/dialogs сам показывает «Фото (удалено)» вместо
+    картинки по одному только image_deleted_at, см. api_dialogs_threads/api_dialogs_thread_messages."""
+    try:
+        with get_db() as conn:
+            cur = conn.execute('''
+                UPDATE messenger_messages
+                SET image_blob = NULL, image_mime = NULL, image_deleted_at = datetime('now')
+                WHERE image_blob IS NOT NULL AND created_at < datetime('now', '-6 months')
+            ''')
+            conn.commit()
+            if cur.rowcount:
+                print(f'[Диалоги] удалено фото старше 6 месяцев: {cur.rowcount}')
+    except Exception as e:
+        print(f'[Диалоги] очистка фото: exception: {e}')
+
+
 def _run_once_across_workers(lock_name, fn):
     """Гарантирует, что задача выполнится только в одном из нескольких gunicorn
     worker-процессов — без --preload каждый worker заводит свой независимый
@@ -18816,8 +18854,11 @@ try:
                         'interval', hours=1, next_run_time=datetime.now())
     _scheduler.add_job(lambda: _run_once_across_workers('sched_rating_requests', _scheduled_rating_requests),
                         'interval', minutes=1)
+    _scheduler.add_job(lambda: _run_once_across_workers('sched_dialog_image_cleanup', _scheduled_dialog_image_cleanup),
+                        'cron', hour=3, minute=30)
     _scheduler.start()
-    print('[Backup] Планировщик запущен — бэкап каждый день в 03:00 НСК, Сбербанк — раз в час')
+    print('[Backup] Планировщик запущен — бэкап каждый день в 03:00 НСК, Сбербанк — раз в час, '
+          'очистка фото в Диалогах старше 6 месяцев — раз в день в 03:30')
 except Exception as _e:
     print(f'[Backup] Планировщик не запустился: {_e}')
 

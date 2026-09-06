@@ -143,10 +143,12 @@
         var inner = '';
         if (m.has_image) {
             inner += '<img class="dlg-bubble-img mb-1" src="' + m.image_url + '" onclick="dlgShowImage(\'' + m.image_url + '\')">';
+        } else if (m.image_deleted) {
+            inner += '<div class="dlg-bubble-text text-muted fst-italic">Фото (удалено, хранится 6 месяцев)</div>';
         }
         if (m.text) {
             inner += '<div class="dlg-bubble-text">' + escapeHtml(m.text) + '</div>';
-        } else if (!m.has_image) {
+        } else if (!m.has_image && !m.image_deleted) {
             inner += '<div class="dlg-bubble-text text-muted fst-italic">(пусто)</div>';
         }
         return '<div class="dlg-bubble-row ' + dir + '"><div class="dlg-bubble">' + inner +
