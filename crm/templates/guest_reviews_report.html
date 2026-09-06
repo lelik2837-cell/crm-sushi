@@ -131,8 +131,8 @@
 
 {% macro dialog_button(r) %}
 {% if r.source == 'revvy' and r.rating_request_id %}
-<button type="button" class="btn btn-sm btn-outline-secondary py-0 ms-2" onclick="event.stopPropagation(); openRvDialog({{ r.rating_request_id }})">
-    <i class="bi bi-chat-left-text me-1"></i>Переписка
+<button type="button" class="btn btn-sm btn-outline-secondary p-0 ms-2" style="width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;" title="Переписка" onclick="event.stopPropagation(); openRvDialog({{ r.rating_request_id }})">
+    <i class="bi bi-chat-left-text" style="font-size:12px;"></i>
 </button>
 {% endif %}
 {% endmacro %}
