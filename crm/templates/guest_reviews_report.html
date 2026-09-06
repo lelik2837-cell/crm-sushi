@@ -129,6 +129,14 @@
 {% endif %}
 {% endmacro %}
 
+{% macro dialog_button(r) %}
+{% if r.source == 'revvy' and r.rating_request_id %}
+<button type="button" class="btn btn-sm btn-outline-secondary py-0 ms-2" onclick="event.stopPropagation(); openRvDialog({{ r.rating_request_id }})">
+    <i class="bi bi-chat-left-text me-1"></i>Переписка
+</button>
+{% endif %}
+{% endmacro %}
+
 <div class="card">
     <div class="card-header fw-semibold">Всего: {{ rows|length }} {{ 'за период (показаны последние 500)' if rows|length == 500 else '' }}</div>
     <div class="table-responsive">
@@ -161,7 +169,7 @@
                     <td class="text-center">{{ sentiment_dot(r.sentiment) }}</td>
                     <td class="text-center">{{ source_badge(r.source) }}</td>
                     <td>{{ r.review_type }}</td>
-                    <td style="max-width:420px; white-space:pre-wrap;">{{ r.content }}</td>
+                    <td style="max-width:420px; white-space:pre-wrap;">{{ r.content }}{{ dialog_button(r) }}</td>
                     <td class="text-nowrap">{{ phone_reveal_cell(g.order_number, g.guest_phone, g.status is not none) }}</td>
                     <td class="text-nowrap">{{ '%.0f'|format(r.order_amount) if r.order_amount is not none else '—' }}</td>
                     <td class="text-nowrap">{{ '%.0f'|format(r.compensation_amount) if r.compensation_amount else '—' }}</td>
@@ -194,7 +202,7 @@
                     <td class="text-center">{{ sentiment_dot(r.sentiment) }}</td>
                     <td class="text-center">{{ source_badge(r.source) }}</td>
                     <td>{{ r.review_type }}</td>
-                    <td style="max-width:420px; white-space:pre-wrap;">{{ r.content }}</td>
+                    <td style="max-width:420px; white-space:pre-wrap;">{{ r.content }}{{ dialog_button(r) }}</td>
                     <td></td>
                     <td></td>
                     <td class="text-nowrap">{{ '%.0f'|format(r.compensation_amount) if r.compensation_amount else '—' }}</td>
@@ -207,6 +215,21 @@
                 {% endfor %}
             </tbody>
         </table>
+    </div>
+</div>
+
+<!-- Модалка «История переписки» (оценка заказа из авто-рассылки, источник «Ревви») -->
+<div class="modal fade" id="rvDialogModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-chat-left-text me-2"></i>История переписки</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="rvDialogBody" style="min-height:120px;">
+                <div class="text-muted text-center py-4">Загрузка…</div>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -338,6 +361,63 @@
             }
         })
         .catch(function () { btn.disabled = false; });
+    };
+
+    /* ── «История переписки» (модалка) для отзыва источника «Ревви» ──
+       Реконструированный обмен: текст запроса → ответ клиента (дословный текст, если
+       сохранён — см. response_text/messenger_inbound) → наш follow-up по оценке. */
+    function escapeHtml(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function rvBubble(align, text, meta) {
+        var isRight = align === 'right';
+        return '<div style="display:flex;justify-content:' + (isRight ? 'flex-end' : 'flex-start') + ';margin-bottom:10px;">' +
+            '<div style="max-width:80%;">' +
+                '<div style="background:' + (isRight ? '#0d6efd' : '#e9ecef') + ';color:' + (isRight ? '#fff' : '#212529') + ';' +
+                    'border-radius:12px;padding:8px 12px;white-space:pre-wrap;font-size:13.5px;">' + escapeHtml(text) + '</div>' +
+                '<div class="text-muted small mt-1" style="text-align:' + (isRight ? 'right' : 'left') + ';">' + meta + '</div>' +
+            '</div>' +
+        '</div>';
+    }
+    var rvDialogModal = null;
+    window.openRvDialog = function (reqId) {
+        if (!rvDialogModal) rvDialogModal = new bootstrap.Modal(document.getElementById('rvDialogModal'));
+        var body = document.getElementById('rvDialogBody');
+        body.innerHTML = '<div class="text-muted text-center py-4">Загрузка…</div>';
+        rvDialogModal.show();
+        fetch('/api/rating-request/' + reqId + '/dialog')
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (!d.ok) {
+                    body.innerHTML = '<div class="text-danger text-center py-4">Не удалось загрузить переписку</div>';
+                    return;
+                }
+                var header = '<div class="text-muted small mb-3">Заказ ' + escapeHtml(d.order_number) +
+                    (d.phone ? ' · ' + escapeHtml(d.phone) : '') +
+                    (d.channel ? ' · ' + escapeHtml(d.channel) : '') + '</div>';
+
+                var html = header;
+                html += rvBubble('right', d.request_text || '(текст запроса не найден)', d.sent_at ? escapeHtml(d.sent_at) : '');
+
+                var clientText = d.response_text ? d.response_text : ('Оценка: ' + d.rating + '/5 (дословный текст ответа не сохранён — заявка отвечена до включения этой возможности)');
+                var clientMeta = (d.responded_at ? escapeHtml(d.responded_at) : '') +
+                    (d.response_text ? ' · оценка ' + d.rating + '/5' : '');
+                html += rvBubble('left', clientText, clientMeta);
+
+                if (d.followup_text) {
+                    var followupMeta = d.followup_status === 'failed'
+                        ? '<span class="text-danger">не доставлено</span>'
+                        : (d.responded_at ? escapeHtml(d.responded_at) : '');
+                    html += rvBubble('right', d.followup_text, followupMeta);
+                }
+
+                body.innerHTML = html;
+            })
+            .catch(function () {
+                body.innerHTML = '<div class="text-danger text-center py-4">Не удалось загрузить переписку</div>';
+            });
     };
 })();
 </script>

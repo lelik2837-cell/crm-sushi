@@ -2515,6 +2515,12 @@ def init_db():
             # незнакомых контактов из-за приватности MAX, поэтому матчить по телефону ненадёжно —
             # см. _scheduled_rating_requests/messenger_inbound).
             conn.execute("ALTER TABLE order_rating_requests ADD COLUMN recipient_ref TEXT")
+        if 'response_text' not in _orr_cols:
+            # Дословный текст входящего сообщения клиента с оценкой (не только распознанная
+            # цифра 1-5) — для «истории переписки» в /guest-reviews-report (просьба
+            # пользователя 2026-09-06). Раньше текст не сохранялся вовсе (см.
+            # messenger_inbound) — у заявок, отвеченных до этой правки, будет NULL.
+            conn.execute("ALTER TABLE order_rating_requests ADD COLUMN response_text TEXT")
         _rc_cols = [r[1] for r in conn.execute("PRAGMA table_info(rating_campaigns)").fetchall()]
         if 'send_time_from' not in _rc_cols:
             # Разрешённое время отправки запроса на оценку (не будить клиента ночью) — применяется
@@ -10650,7 +10656,12 @@ def messenger_inbound(token):
     отдаёт телефон для незнакомых контактов (приватность MAX), из-за чего реальный ответ
     клиента не находил заявку. Телефон для отправки follow-up берём из уже сохранённой
     заявки (order_rating_requests.phone), а не из входящего вебхука — так это работает
-    независимо от того, смог ли канал отдать телефон отправителя."""
+    независимо от того, смог ли канал отдать телефон отправителя.
+
+    Дословный текст входящего сообщения (response_text) сохраняется целиком, не только
+    распознанная цифра-оценка — просьба пользователя 2026-09-06 показывать «историю
+    переписки» в /guest-reviews-report со словами клиента, а не только числом (см.
+    api_rating_request_dialog)."""
     if not _check_broadcast_token(token):
         return jsonify({'error': 'forbidden'}), 403
     data = request.get_json(silent=True) or {}
@@ -10679,9 +10690,9 @@ def messenger_inbound(token):
             return jsonify({'ok': True})
         acc = conn.execute('SELECT channel FROM messenger_accounts WHERE id=?', (account_id,)).fetchone()
         conn.execute('''
-            UPDATE order_rating_requests SET status='responded', rating=?, responded_at=datetime('now')
+            UPDATE order_rating_requests SET status='responded', rating=?, response_text=?, responded_at=datetime('now')
             WHERE id=?
-        ''', (rating, req['id']))
+        ''', (rating, text.strip(), req['id']))
         conn.commit()
 
     followup_text = req['low_text'] if rating <= 3 else (req['mid_text'] if rating == 4 else req['high_text'])
@@ -16905,7 +16916,7 @@ def guest_reviews_report():
         sql_where2 = ' AND '.join(where2)
 
         rr_rows = conn.execute(f'''
-            SELECT rr.order_number, rr.phone, rr.rating, rr.order_date,
+            SELECT rr.id AS rating_request_id, rr.order_number, rr.phone, rr.rating, rr.order_date,
                    datetime(rr.responded_at, '+7 hours') AS responded_at,
                    rc.branch_id AS branch_id, b.name AS branch_name,
                    o.amount AS order_amount
@@ -16938,6 +16949,7 @@ def guest_reviews_report():
             'guest_phone': r['phone'],
             'order_amount': r['order_amount'],
             'compensation_amount': None,
+            'rating_request_id': r['rating_request_id'],
             'sentiment': 'П' if r['rating'] >= 4 else 'О',
             'source': 'revvy',
         })
@@ -16978,7 +16990,7 @@ def guest_reviews_report():
                 combined.append(d)
 
             extra_rr = conn.execute(f'''
-                SELECT rr.order_number, rr.phone, rr.rating, rr.order_date,
+                SELECT rr.id AS rating_request_id, rr.order_number, rr.phone, rr.rating, rr.order_date,
                        datetime(rr.responded_at, '+7 hours') AS responded_at,
                        rc.branch_id AS branch_id, b.name AS branch_name,
                        o.amount AS order_amount
@@ -17003,6 +17015,7 @@ def guest_reviews_report():
                     'review_type': '',
                     'content': f"Оценка по рассылке: {r['rating']}/5",
                     'guest_name': None,
+                    'rating_request_id': r['rating_request_id'],
                     'guest_phone': r['phone'],
                     'order_amount': r['order_amount'],
                     'compensation_amount': None,
@@ -17078,6 +17091,60 @@ def guest_reviews_reveal_phone():
             ).fetchone()['status']
 
     return jsonify({'phone': phone_fmt(phone) if phone else None, 'status': new_status})
+
+
+@app.route('/api/rating-request/<int:req_id>/dialog')
+@login_required
+@menu_permission_required('guest_reviews_report')
+def api_rating_request_dialog(req_id):
+    """«История переписки» для одной заявки на оценку заказа (order_rating_requests) —
+    кнопка «Переписка» у отзывов источника «Ревви» в /guest-reviews-report (просьба
+    пользователя 2026-09-06). Реконструирует обмен из трёх сообщений: (1) текст запроса,
+    который реально ушёл (по variant_index — если для этого варианта в
+    rating_campaign_request_texts текста почему-то нет, откатываемся на
+    rating_campaigns.request_text), (2) ответ клиента — response_text, если сохранён
+    (заявки, отвеченные ДО этой правки, его не имеют — тогда просто оценка без слов, см.
+    messenger_inbound), (3) follow-up по итоговой оценке (low/mid/high_text). Оба
+    временных штампа (sent_at/responded_at) в БД лежат в UTC (datetime('now') в коде
+    отправки/приёма) — переводим в локальное время (+7, Asia/Novosibirsk) тем же приёмом,
+    что и в guest_reviews_report()."""
+    with get_db() as conn:
+        row = conn.execute('''
+            SELECT rr.*, rc.request_text AS campaign_request_text,
+                   rc.low_text, rc.mid_text, rc.high_text,
+                   ma.channel AS channel,
+                   datetime(rr.sent_at, '+7 hours') AS sent_at_local,
+                   datetime(rr.responded_at, '+7 hours') AS responded_at_local
+            FROM order_rating_requests rr
+            JOIN rating_campaigns rc ON rc.id = rr.campaign_id
+            LEFT JOIN messenger_accounts ma ON ma.id = rr.assigned_account_id
+            WHERE rr.id = ?
+        ''', (req_id,)).fetchone()
+        if not row:
+            return jsonify({'ok': False, 'error': 'not_found'}), 404
+        variant_row = conn.execute(
+            'SELECT text FROM rating_campaign_request_texts WHERE campaign_id=? AND variant_index=?',
+            (row['campaign_id'], row['variant_index'])
+        ).fetchone()
+
+    request_text = (variant_row['text'] if variant_row else None) or row['campaign_request_text']
+    followup_text = None
+    if row['rating'] is not None:
+        followup_text = row['low_text'] if row['rating'] <= 3 else (row['mid_text'] if row['rating'] == 4 else row['high_text'])
+
+    return jsonify({
+        'ok': True,
+        'order_number': row['order_number'],
+        'phone': phone_fmt(row['phone']) if row['phone'] else None,
+        'channel': BROADCAST_CHANNEL_LABELS.get(row['channel'], row['channel']) if row['channel'] else None,
+        'sent_at': datetime_ru_short(row['sent_at_local']),
+        'request_text': request_text,
+        'rating': row['rating'],
+        'response_text': row['response_text'],
+        'responded_at': datetime_ru_short(row['responded_at_local']),
+        'followup_text': followup_text,
+        'followup_status': row['followup_status'],
+    })
 
 
 # ─── ВЫДАЧА ФОРМЫ (склад + выдача сотрудникам, учёт по группе филиалов) ────────────
