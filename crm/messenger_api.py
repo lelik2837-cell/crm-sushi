@@ -102,6 +102,22 @@ def send_message(channel, account_id, phone, text, timeout=15):
     return resp.json()
 
 
+def send_message_by_id(channel, account_id, contact_ref, text, timeout=15):
+    """Как send_message, но получатель — contact_ref (тот же ID, что приходит в вебхуке
+    входящего сообщения, см. messenger_inbound), а не телефон. Нужно странице «Диалоги» —
+    ответить человеку, для которого телефон никогда не резолвился (обычный случай для
+    Max/Telegram, см. комментарии в message_send этих сервисов). WhatsApp свой contact_ref
+    и так хранит как телефон (JID) — там просто переиспользуем обычный send_message."""
+    if channel == 'whatsapp':
+        return send_message(channel, account_id, contact_ref, text, timeout=timeout)
+    resp = requests.post(f'{_base_url(channel)}/accounts/{account_id}/message/send-by-id',
+                          json={'user_id': contact_ref, 'text': text}, timeout=timeout)
+    log.info('send_message_by_id channel=%s account_id=%s status=%s', channel, account_id, resp.status_code)
+    if not resp.ok:
+        raise RuntimeError(f'{resp.status_code} {resp.text[:400]}')
+    return resp.json()
+
+
 def start_campaign(channel, account_id, broadcast_id, recipients, interval_min, interval_max,
                     batch_size, batch_pause_seconds, image_bytes=None, image_mime=None,
                     timeout=30):

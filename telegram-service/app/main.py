@@ -318,6 +318,11 @@ class SendMessageBody(BaseModel):
     text: str
 
 
+class SendMessageByIdBody(BaseModel):
+    user_id: str
+    text: str
+
+
 @app.get('/health')
 async def health():
     return {'ok': True, 'accounts': len(accounts)}
@@ -435,6 +440,24 @@ async def message_send(account_id: str, body: SendMessageBody):
         # recipient_ref — тот же ID, что придёт в event.sender_id у ответа этого пользователя
         # (см. register_handlers) — Flask сохраняет его, чтобы потом смочь сматчить входящий ответ.
         return {'ok': True, 'recipient_ref': str(user.id)}
+    except Exception as e:
+        return JSONResponse({'error': str(e)}, status_code=500)
+
+
+# Ответ в «Диалогах» (CRM) на входящее сообщение, для которого телефон не известен (обычный
+# случай — MTProto не отдаёт номер незнакомого контакта, см. resolve_phone/register_handlers).
+# Telethon уже закэшировал peer этого отправителя в сессии из самого входящего NewMessage —
+# отправка по голому numeric id работает без отдельного resolve, если этот id хоть раз
+# приходил во входящем событии этого аккаунта (что для «Диалогов» всегда так — иначе там
+# неоткуда взяться треду).
+@app.post('/accounts/{account_id}/message/send-by-id')
+async def message_send_by_id(account_id: str, body: SendMessageByIdBody):
+    state = get_account(account_id)
+    if state.status != 'connected' or state.client is None:
+        return JSONResponse({'error': 'not_connected'}, status_code=409)
+    try:
+        await state.client.send_message(int(body.user_id), body.text)
+        return {'ok': True}
     except Exception as e:
         return JSONResponse({'error': str(e)}, status_code=500)
 

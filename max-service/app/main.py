@@ -194,23 +194,51 @@ async def run_account(state: AccountState, phone: Optional[str]) -> None:
             state.status = 'disconnected'
 
     # Нужно "Оценке заказа" — принять ответный текст клиента (баллом от 1 до 5) на запрос
-    # об оценке заказа. Раньше сервис только отправлял, входящие никак не обрабатывались.
+    # об оценке заказа, а с 2026-09 ещё и странице «Диалоги» в CRM — увидеть ЛЮБОЕ входящее
+    # сообщение (не только ответ на оценку) и присланные фото. Раньше сервис только
+    # отправлял, входящие никак не обрабатывались, и учитывался только текст.
     # message.sender — числовой ID пользователя, не телефон (см. pymax/types/domain/message.py),
     # телефон приходится резолвить отдельным вызовом get_user().
     @client.on_message()
     async def _on_message(message, c: WebClient) -> None:
-        if not message.text or message.sender is None:
+        if message.sender is None:
             return
         if c.me is not None and message.sender == c.me.contact.id:
             return  # не реагируем на собственные исходящие
+
+        # Фото — единственный тип вложения, который сейчас пересылаем в CRM (просьба
+        # пользователя 2026-09-06, начали именно с MAX). attach.base_url — прямая ссылка на
+        # полноразмерное фото; скачиваем тем же способом, что и сама pymax внутри себя для
+        # URL-based файлов (BaseFile.read(), см. pymax/files/base.py) — обычный запрос без
+        # доп. авторизации, никаких токенов/куки сессии для этого не передаётся.
+        image_b64, image_mime = None, None
+        for attach in (message.attaches or []):
+            if getattr(attach, 'type', None) == 'PHOTO' and getattr(attach, 'base_url', None):
+                try:
+                    async with httpx.AsyncClient(timeout=15) as http:
+                        resp = await http.get(attach.base_url)
+                        resp.raise_for_status()
+                        image_b64 = base64.b64encode(resp.content).decode()
+                        image_mime = resp.headers.get('content-type') or 'image/jpeg'
+                except Exception:
+                    log.exception('failed to download photo account_id=%s', state.account_id)
+                break
+
+        if not message.text and not image_b64:
+            return  # ни текста, ни (успешно скачанного) фото — пересылать нечего
+
         # Раньше здесь резолвили телефон через get_user(message.sender) — на практике
         # MAX не всегда отдаёт телефон для незнакомых контактов (приватность), из-за
         # чего реальные ответы клиентов молча терялись. message.sender сам по себе уже
         # стабильный ID отправителя — используем его напрямую, без доп. сетевого вызова.
-        asyncio.create_task(send_inbound_webhook({
+        payload = {
             'channel': 'max', 'account_id': state.account_id,
-            'sender_id': str(message.sender), 'text': message.text,
-        }))
+            'sender_id': str(message.sender), 'text': message.text or '',
+        }
+        if image_b64:
+            payload['image_base64'] = image_b64
+            payload['image_mime'] = image_mime
+        asyncio.create_task(send_inbound_webhook(payload))
 
     try:
         await client.start()
@@ -281,6 +309,11 @@ class PhonesBody(BaseModel):
 
 class SendMessageBody(BaseModel):
     phone: str
+    text: str
+
+
+class SendMessageByIdBody(BaseModel):
+    user_id: str
     text: str
 
 
@@ -389,6 +422,24 @@ async def message_send(account_id: str, body: SendMessageBody):
         # recipient_ref — тот же ID, что придёт в message.sender у ответа этого пользователя
         # (см. _on_message) — Flask сохраняет его, чтобы потом смочь сматчить входящий ответ.
         return {'ok': True, 'recipient_ref': str(user.id)}
+    except Exception as e:
+        return JSONResponse({'error': str(e)}, status_code=500)
+
+
+# Ответ в «Диалогах» (CRM) на входящее сообщение, для которого телефон не известен (обычный
+# случай — MAX не отдаёт номер незнакомого контакта, см. _on_message). get_chat_id считается
+# локально по паре ID без обращения к серверу (см. pymax/infra/user.py) — отдельный поиск по
+# телефону тут не нужен вообще, id отправителя уже пришёл во входящем сообщении.
+@app.post('/accounts/{account_id}/message/send-by-id')
+async def message_send_by_id(account_id: str, body: SendMessageByIdBody):
+    state = get_account(account_id)
+    if state.status != 'connected':
+        return JSONResponse({'error': 'not_connected'}, status_code=409)
+    try:
+        chat_id = state.client.get_chat_id(
+            first_user_id=state.client.me.contact.id, second_user_id=int(body.user_id))
+        await state.client.send_message(chat_id=chat_id, text=body.text)
+        return {'ok': True}
     except Exception as e:
         return JSONResponse({'error': str(e)}, status_code=500)
 

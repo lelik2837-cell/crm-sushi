@@ -318,7 +318,7 @@
                 </li>
                 {% endif %}
                 {% if group_has_visible_item('reports') %}
-                {% set reports_active = request.endpoint in ('reports', 'shifts_archive', 'expenses_report', 'cash_flow_report', 'wait_time_report', 'purchases', 'report_reconciliation', 'reconciliation_cashless', 'pnl_report', 'pnl_settings_save', 'change_settings', 'call_center', 'contact_center_report') or (request.endpoint and (request.endpoint.startswith('bank') or 'purchases_import' in (request.endpoint or ''))) %}
+                {% set reports_active = request.endpoint in ('reports', 'shifts_archive', 'expenses_report', 'cash_flow_report', 'wait_time_report', 'purchases', 'report_reconciliation', 'reconciliation_cashless', 'pnl_report', 'pnl_settings_save', 'change_settings', 'call_center', 'contact_center_report', 'dialogs_report') or (request.endpoint and (request.endpoint.startswith('bank') or 'purchases_import' in (request.endpoint or ''))) %}
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle {% if reports_active %}active{% endif %}"
                        href="#" data-bs-toggle="dropdown" aria-expanded="false">
@@ -413,6 +413,13 @@
                         <li>
                             <a class="dropdown-item {% if request.endpoint and request.endpoint.startswith('broadcast') %}active{% endif %}" href="{{ url_for('broadcast_page') }}">
                                 <i class="bi bi-megaphone me-2"></i>Рассылка
+                            </a>
+                        </li>
+                        {% endif %}
+                        {% if item_visible('dialogs_report') %}
+                        <li>
+                            <a class="dropdown-item {% if request.endpoint=='dialogs_report' %}active{% endif %}" href="{{ url_for('dialogs_report') }}">
+                                <i class="bi bi-chat-dots me-2"></i>Диалоги
                             </a>
                         </li>
                         {% endif %}

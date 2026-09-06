@@ -33,7 +33,7 @@ import sber_api
 # (most likely due to a circular import)" — прогреваем здесь же, заранее.
 import _strptime
 import messenger_api
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, g
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, g, Response
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 import sqlite3
@@ -150,6 +150,7 @@ MENU_ITEMS = [
     ('purchases',             'Накладные',                'reports',  True),
     ('bank',                  'Банк',                     'reports',  True),
     ('whatsapp_broadcast',    'Рассылка',                 'reports',  False),
+    ('dialogs_report',        'Диалоги',                  'reports',  False),
     ('points_accrual',        'Начисление баллов',        'reports',  False),
     ('guest_reviews_report',  'Отзывы',                   'reports',  False),
     ('uniform_issuance',      'Выдача формы',             'reports',  False),
@@ -2444,6 +2445,28 @@ def init_db():
                 priority INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (broadcast_id, account_id)
             );
+
+            -- Журнал ВСЕХ сообщений переписки (не только ответов на оценку заказа) — просьба
+            -- пользователя 2026-09-06 видеть на странице «Диалоги» любое сообщение от человека
+            -- (в т.ч. без привязки к оценке) и присланные им фото. contact_ref — тот же ID, что
+            -- в order_rating_requests.recipient_ref (для WhatsApp это телефон, для Max/Telegram —
+            -- числовой ID отправителя, см. messenger_inbound); один (account_id, contact_ref) —
+            -- один "диалог". image_blob хранится в БД, как и остальные загружаемые в проекте
+            -- файлы (см. broadcasts.image_blob) — отдельного файлового хранилища в проекте нет.
+            CREATE TABLE IF NOT EXISTS messenger_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id INTEGER NOT NULL REFERENCES messenger_accounts(id),
+                channel TEXT NOT NULL,
+                contact_ref TEXT NOT NULL,
+                contact_phone TEXT,
+                direction TEXT NOT NULL CHECK(direction IN ('in','out')),
+                text TEXT,
+                image_blob BLOB,
+                image_mime TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_messenger_messages_thread
+                ON messenger_messages(account_id, contact_ref, created_at);
         ''')
 
         # Оценка заказа (авто-запрос оценки 1-5 после статуса "Выполнен" + ветвление
@@ -10645,34 +10668,61 @@ def messenger_webhook(token):
 
 @app.route('/api/messenger-inbound/<token>', methods=['POST'])
 def messenger_inbound(token):
-    """Входящее сообщение от клиента (сейчас единственный сценарий — ответ с оценкой заказа
-    1-5 на "Оценку заказа"). Присылается whatsapp-service/max-service на КАЖДОЕ входящее
-    сообщение подключённого аккаунта — если оно не похоже на ожидаемый ответ (нет цифры
-    1-5, или для этого получателя/аккаунта нет открытой заявки), просто молча игнорируем:
-    это не единственное, что может прийти на рабочий номер.
+    """Входящее сообщение от клиента. С 2026-09-06 логируется ЦЕЛИКОМ в messenger_messages —
+    текст и/или фото, независимо от содержимого — для страницы «Диалоги» (просьба пользователя
+    видеть любую переписку, не только ответы на оценку заказа: «если что-то писал человек, или
+    отвечал на оценку, или просто написал в личку без оценки»). Присылается
+    whatsapp-service/telegram-service/max-service на КАЖДОЕ входящее сообщение подключённого
+    аккаунта. Фото сейчас пересылает только max-service (image_base64/image_mime, начали с
+    одного канала по просьбе пользователя — см. max-service/app/main.py `_on_message`);
+    WhatsApp/Telegram пока текст-онли, как и раньше.
+
+    После записи в журнал — прежняя логика «Оценки заказа» без изменений: если текст похож на
+    ответ с оценкой 1-5 и для этого получателя/аккаунта есть открытая заявка, обрабатываем её
+    (см. ниже); если нет — раньше сообщение на этом шаге выбрасывалось целиком, теперь оно
+    просто остаётся только в общем журнале «Диалогов», ничего больше с ним не делаем.
 
     Матчинг заявки — по recipient_ref, не по телефону из вебхука напрямую: WhatsApp шлёт
-    phone (JID и так его несёт), а MAX шлёт числовой sender_id — get_user() по нему не всегда
-    отдаёт телефон для незнакомых контактов (приватность MAX), из-за чего реальный ответ
-    клиента не находил заявку. Телефон для отправки follow-up берём из уже сохранённой
-    заявки (order_rating_requests.phone), а не из входящего вебхука — так это работает
-    независимо от того, смог ли канал отдать телефон отправителя.
+    phone (JID и так его несёт), а MAX/Telegram шлют числовой sender_id — get_user() по нему
+    не всегда отдаёт телефон для незнакомых контактов (приватность), из-за чего реальный ответ
+    клиента не находил заявку. Телефон для отправки follow-up берём из уже сохранённой заявки
+    (order_rating_requests.phone), а не из входящего вебхука — так это работает независимо от
+    того, смог ли канал отдать телефон отправителя.
 
-    Дословный текст входящего сообщения (response_text) сохраняется целиком, не только
-    распознанная цифра-оценка — просьба пользователя 2026-09-06 показывать «историю
+    Дословный текст входящего сообщения (response_text) сохраняется в саму заявку целиком, не
+    только распознанная цифра-оценка — просьба пользователя 2026-09-06 показывать «историю
     переписки» в /guest-reviews-report со словами клиента, а не только числом (см.
     api_rating_request_dialog)."""
     if not _check_broadcast_token(token):
         return jsonify({'error': 'forbidden'}), 403
     data = request.get_json(silent=True) or {}
-    account_id, text = data.get('account_id'), data.get('text')
-    if not account_id or not text:
+    account_id = data.get('account_id')
+    text = (data.get('text') or '').strip() or None
+    image_b64 = data.get('image_base64')
+    image_mime = data.get('image_mime')
+    if not account_id or (not text and not image_b64):
         return jsonify({'error': 'bad_request'}), 400
     if data.get('sender_id'):
         contact_ref = str(data['sender_id'])
+        contact_phone = None
     else:
         contact_ref = _normalize_ru_phone(data.get('phone'))
+        contact_phone = contact_ref
     if not contact_ref:
+        return jsonify({'ok': True})
+    image_blob = base64.b64decode(image_b64) if image_b64 else None
+
+    with get_db() as conn:
+        acc = conn.execute('SELECT channel FROM messenger_accounts WHERE id=?', (account_id,)).fetchone()
+        conn.execute('''
+            INSERT INTO messenger_messages
+                (account_id, channel, contact_ref, contact_phone, direction, text, image_blob, image_mime)
+            VALUES (?, ?, ?, ?, 'in', ?, ?, ?)
+        ''', (account_id, acc['channel'] if acc else (data.get('channel') or ''),
+              contact_ref, contact_phone, text, image_blob, image_mime))
+        conn.commit()
+
+    if not text:
         return jsonify({'ok': True})
     m = re.search(r'[1-5]', text)
     if not m:
@@ -10688,11 +10738,10 @@ def messenger_inbound(token):
         ''', (contact_ref, account_id)).fetchone()
         if not req:
             return jsonify({'ok': True})
-        acc = conn.execute('SELECT channel FROM messenger_accounts WHERE id=?', (account_id,)).fetchone()
         conn.execute('''
             UPDATE order_rating_requests SET status='responded', rating=?, response_text=?, responded_at=datetime('now')
             WHERE id=?
-        ''', (rating, text.strip(), req['id']))
+        ''', (rating, text, req['id']))
         conn.commit()
 
     followup_text = req['low_text'] if rating <= 3 else (req['mid_text'] if rating == 4 else req['high_text'])
@@ -10709,8 +10758,167 @@ def messenger_inbound(token):
     with get_db() as conn:
         conn.execute('UPDATE order_rating_requests SET followup_status=? WHERE id=?',
                       (followup_status, req['id']))
+        if followup_status == 'sent':
+            conn.execute('''
+                INSERT INTO messenger_messages (account_id, channel, contact_ref, contact_phone, direction, text)
+                VALUES (?, ?, ?, ?, 'out', ?)
+            ''', (account_id, acc['channel'], contact_ref, contact_phone or req['phone'], followup_text))
         conn.commit()
     return jsonify({'ok': True})
+
+
+# ─── ДИАЛОГИ (вся переписка по подключённым номерам, не только оценка заказа) ───────
+# Просьба пользователя 2026-09-06: видеть в CRM любое сообщение от человека — ответил на
+# оценку, написал сам без повода, прислал фото (пока только Max, см. messenger_inbound) —
+# и отвечать ему прямо отсюда. Источник данных — messenger_messages (журнал всех входящих
+# и исходящих сообщений, пишется из messenger_inbound и из api_dialogs_thread_send ниже).
+
+@app.route('/reports/dialogs')
+@login_required
+@menu_permission_required('dialogs_report')
+def dialogs_report():
+    return render_template('dialogs_report.html')
+
+
+@app.route('/api/dialogs/threads')
+@login_required
+@menu_permission_required('dialogs_report')
+def api_dialogs_threads():
+    q = request.args.get('q', '').strip().lower()
+    with get_db() as conn:
+        # Один диалог — одна пара (account_id, contact_ref). MAX(contact_phone) — best-effort
+        # телефон треда: он не всегда известен на КАЖДОЙ строке (для Max/Telegram обычно
+        # заполнен только там, где нашёлся через заявку на оценку, см. messenger_inbound), но
+        # если известен хоть где-то в треде — этого достаточно, чтобы показать номер вместо
+        # голого contact_ref.
+        threads = conn.execute('''
+            SELECT account_id, contact_ref, channel, MAX(id) AS last_id,
+                   MAX(contact_phone) AS any_phone, COUNT(*) AS msg_count
+            FROM messenger_messages
+            GROUP BY account_id, contact_ref
+            ORDER BY last_id DESC
+            LIMIT 300
+        ''').fetchall()
+        if not threads:
+            return jsonify({'ok': True, 'threads': []})
+
+        ids = [t['last_id'] for t in threads]
+        ph = ','.join('?' * len(ids))
+        last_rows = {r['id']: r for r in conn.execute(f'''
+            SELECT id, direction, text, image_blob IS NOT NULL AS has_image,
+                   datetime(created_at, '+7 hours') AS created_at
+            FROM messenger_messages WHERE id IN ({ph})
+        ''', ids).fetchall()}
+
+        accounts = {r['id']: r for r in conn.execute('SELECT id, label FROM messenger_accounts').fetchall()}
+
+    result = []
+    for t in threads:
+        label = phone_fmt(t['any_phone']) if t['any_phone'] else t['contact_ref']
+        if q and q not in label.lower() and q not in (t['contact_ref'] or '').lower():
+            continue
+        last = last_rows.get(t['last_id'])
+        acc = accounts.get(t['account_id'])
+        result.append({
+            'account_id': t['account_id'],
+            'contact_ref': t['contact_ref'],
+            'channel': t['channel'],
+            'channel_label': BROADCAST_CHANNEL_LABELS.get(t['channel'], t['channel']),
+            'account_label': acc['label'] if acc else None,
+            'label': label,
+            'msg_count': t['msg_count'],
+            'last_at': datetime_ru_short(last['created_at']) if last else '',
+            'last_preview': ('Фото' if last and last['has_image'] else (last['text'] if last else '')) or '',
+            'last_direction': last['direction'] if last else None,
+        })
+    return jsonify({'ok': True, 'threads': result})
+
+
+@app.route('/api/dialogs/thread/<int:account_id>/<contact_ref>/messages')
+@login_required
+@menu_permission_required('dialogs_report')
+def api_dialogs_thread_messages(account_id, contact_ref):
+    after_id = request.args.get('after_id', type=int)
+    with get_db() as conn:
+        if after_id:
+            rows = conn.execute('''
+                SELECT id, direction, text, image_blob IS NOT NULL AS has_image,
+                       datetime(created_at, '+7 hours') AS created_at
+                FROM messenger_messages
+                WHERE account_id=? AND contact_ref=? AND id > ?
+                ORDER BY id ASC
+            ''', (account_id, contact_ref, after_id)).fetchall()
+        else:
+            rows = list(reversed(conn.execute('''
+                SELECT id, direction, text, image_blob IS NOT NULL AS has_image,
+                       datetime(created_at, '+7 hours') AS created_at
+                FROM messenger_messages
+                WHERE account_id=? AND contact_ref=?
+                ORDER BY id DESC LIMIT 200
+            ''', (account_id, contact_ref)).fetchall()))
+
+    messages = [{
+        'id': r['id'], 'direction': r['direction'], 'text': r['text'],
+        'has_image': bool(r['has_image']),
+        'image_url': url_for('api_messenger_message_image', message_id=r['id']) if r['has_image'] else None,
+        'created_at': datetime_ru_short(r['created_at']),
+    } for r in rows]
+    return jsonify({'ok': True, 'messages': messages})
+
+
+@app.route('/api/dialogs/thread/<int:account_id>/<contact_ref>/send', methods=['POST'])
+@login_required
+@menu_permission_required('dialogs_report')
+def api_dialogs_thread_send(account_id, contact_ref):
+    """Ответ клиенту прямо из «Диалогов» — только текст (просьба пользователя 2026-09-06,
+    отправка фото от нас клиенту в этой версии не делалась). Для Max/Telegram шлём по
+    contact_ref (send_message_by_id) — телефон этого человека мог никогда не резолвиться
+    (обычный случай для «просто написал в личку без оценки»); для WhatsApp contact_ref и
+    так уже телефон, send_message_by_id сам сводит его к обычному send_message."""
+    data = request.get_json(silent=True) or {}
+    text = (data.get('text') or '').strip()
+    if not text:
+        return jsonify({'ok': False, 'error': 'empty'}), 400
+
+    with get_db() as conn:
+        acc = conn.execute('SELECT channel FROM messenger_accounts WHERE id=?', (account_id,)).fetchone()
+    if not acc:
+        return jsonify({'ok': False, 'error': 'account_not_found'}), 404
+
+    try:
+        messenger_api.send_message_by_id(acc['channel'], account_id, contact_ref, text)
+    except Exception as e:
+        logging.exception('dialog reply send failed account_id=%s contact_ref=%s', account_id, contact_ref)
+        return jsonify({'ok': False, 'error': str(e)}), 502
+
+    with get_db() as conn:
+        phone_row = conn.execute('''
+            SELECT MAX(contact_phone) AS p FROM messenger_messages WHERE account_id=? AND contact_ref=?
+        ''', (account_id, contact_ref)).fetchone()
+        cur = conn.execute('''
+            INSERT INTO messenger_messages (account_id, channel, contact_ref, contact_phone, direction, text)
+            VALUES (?, ?, ?, ?, 'out', ?)
+        ''', (account_id, acc['channel'], contact_ref, phone_row['p'] if phone_row else None, text))
+        conn.commit()
+        new_id = cur.lastrowid
+
+    return jsonify({'ok': True, 'message': {
+        'id': new_id, 'direction': 'out', 'text': text, 'has_image': False, 'image_url': None,
+        'created_at': datetime_ru_short(datetime.now().strftime('%Y-%m-%d %H:%M:%S')),
+    }})
+
+
+@app.route('/api/messenger-message/<int:message_id>/image')
+@login_required
+@menu_permission_required('dialogs_report')
+def api_messenger_message_image(message_id):
+    with get_db() as conn:
+        row = conn.execute(
+            'SELECT image_blob, image_mime FROM messenger_messages WHERE id=?', (message_id,)
+        ).fetchone()
+    if not row or not row['image_blob']:
+        return '', 404
+    return Response(row['image_blob'], mimetype=row['image_mime'] or 'image/jpeg')
 
 
 @app.route('/internal/messenger/resume')
