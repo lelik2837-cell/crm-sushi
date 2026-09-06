@@ -5333,6 +5333,11 @@ def save_staff(shift_id):
                         f"{'да' if is_paid_flag else 'нет'}\n") + desc
             if not desc:
                 desc = f"Обновлены данные: {name} ({role_lbl}), итого {_fmt_money(data.get('total_amount'))}"
+            else:
+                # Просьба пользователя 2026-09-06: без этого в «Истории изменений» было видно
+                # ТОЛЬКО что именно поменялось (см. _diff_desc), но не у кого — сотрудник виден
+                # был только в редком случае «правка без реального изменения» (ветка выше).
+                desc = f"{name} ({role_lbl}):\n" + desc
             log_action(conn, 'staff_update', desc, shift_id=shift_id, entity_id=staff_id)
             auto_bonuses = calculate_bonuses(conn, shift_id)
         else:
@@ -5519,8 +5524,10 @@ def add_courier_route(shift_id, staff_id):
                      (new_km, new_orders, base_pay, staff_id))
         auto_bonuses = calculate_bonuses(conn, shift_id)
         total_row = conn.execute('SELECT total_amount FROM employee_shifts WHERE id=?', (staff_id,)).fetchone()
+        role_lbl = ROLE_LABELS.get(existing['role_snapshot'], existing['role_snapshot'])
         log_action(conn, 'staff_update',
-            f"Добавлен доп. маршрут: {ROUTE_REASON_LABELS[reason]}, {km:g} км",
+            f"{existing['full_name_snapshot']} ({role_lbl}): добавлен доп. маршрут — "
+            f"{ROUTE_REASON_LABELS[reason]}, {km:g} км",
             shift_id=shift_id, entity_id=staff_id)
         conn.commit()
     return jsonify({'ok': True, 'route_id': route_id, 'reason': reason, 'km': km, 'comment': comment,
@@ -5558,8 +5565,10 @@ def update_courier_route(shift_id, staff_id, route_id):
                      (aggregate_km, base_pay, staff_id))
         auto_bonuses = calculate_bonuses(conn, shift_id)
         total_row = conn.execute('SELECT total_amount FROM employee_shifts WHERE id=?', (staff_id,)).fetchone()
+        role_lbl = ROLE_LABELS.get(existing['role_snapshot'], existing['role_snapshot'])
         log_action(conn, 'staff_update',
-            f"Изменён доп. маршрут: {ROUTE_REASON_LABELS[reason]}, {new_km:g} км",
+            f"{existing['full_name_snapshot']} ({role_lbl}): изменён доп. маршрут — "
+            f"{ROUTE_REASON_LABELS[reason]}, {new_km:g} км",
             shift_id=shift_id, entity_id=staff_id)
         conn.commit()
     return jsonify({'ok': True, 'km_total': aggregate_km, 'orders_total': aggregate_orders,
@@ -5588,7 +5597,10 @@ def delete_courier_route(shift_id, staff_id, route_id):
                      (aggregate_km, aggregate_orders, base_pay, staff_id))
         auto_bonuses = calculate_bonuses(conn, shift_id)
         total_row = conn.execute('SELECT total_amount FROM employee_shifts WHERE id=?', (staff_id,)).fetchone()
-        log_action(conn, 'staff_update', "Удалён доп. маршрут", shift_id=shift_id, entity_id=staff_id)
+        role_lbl = ROLE_LABELS.get(existing['role_snapshot'], existing['role_snapshot'])
+        log_action(conn, 'staff_update',
+            f"{existing['full_name_snapshot']} ({role_lbl}): удалён доп. маршрут",
+            shift_id=shift_id, entity_id=staff_id)
         conn.commit()
     return jsonify({'ok': True, 'km_total': aggregate_km, 'orders_total': aggregate_orders,
                     'total_amount': total_row['total_amount'], 'auto_bonuses': auto_bonuses})
