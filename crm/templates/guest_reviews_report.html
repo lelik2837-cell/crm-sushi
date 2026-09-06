@@ -129,11 +129,13 @@
 {% endif %}
 {% endmacro %}
 
-{% macro dialog_button(r) %}
+{% macro review_content_cell(r) %}
 {% if r.source == 'revvy' and r.rating_request_id %}
-<button type="button" class="btn btn-sm btn-outline-secondary p-0 ms-2" style="width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;" title="Переписка" onclick="event.stopPropagation(); openRvDialog({{ r.rating_request_id }})">
+<span style="display:inline-flex; align-items:center; white-space:nowrap;">{{ r.content }}<button type="button" class="btn btn-sm btn-outline-secondary p-0 ms-2" style="width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;" title="Переписка" onclick="event.stopPropagation(); openRvDialog({{ r.rating_request_id }})">
     <i class="bi bi-chat-left-text" style="font-size:12px;"></i>
-</button>
+</button></span>
+{% else %}
+{{ r.content }}
 {% endif %}
 {% endmacro %}
 
@@ -169,7 +171,7 @@
                     <td class="text-center">{{ sentiment_dot(r.sentiment) }}</td>
                     <td class="text-center">{{ source_badge(r.source) }}</td>
                     <td>{{ r.review_type }}</td>
-                    <td style="max-width:420px; white-space:pre-wrap;">{{ r.content }}{{ dialog_button(r) }}</td>
+                    <td style="max-width:420px; white-space:pre-wrap;">{{ review_content_cell(r) }}</td>
                     <td class="text-nowrap">{{ phone_reveal_cell(g.order_number, g.guest_phone, g.status is not none) }}</td>
                     <td class="text-nowrap">{{ '%.0f'|format(r.order_amount) if r.order_amount is not none else '—' }}</td>
                     <td class="text-nowrap">{{ '%.0f'|format(r.compensation_amount) if r.compensation_amount else '—' }}</td>
@@ -202,7 +204,7 @@
                     <td class="text-center">{{ sentiment_dot(r.sentiment) }}</td>
                     <td class="text-center">{{ source_badge(r.source) }}</td>
                     <td>{{ r.review_type }}</td>
-                    <td style="max-width:420px; white-space:pre-wrap;">{{ r.content }}{{ dialog_button(r) }}</td>
+                    <td style="max-width:420px; white-space:pre-wrap;">{{ review_content_cell(r) }}</td>
                     <td></td>
                     <td></td>
                     <td class="text-nowrap">{{ '%.0f'|format(r.compensation_amount) if r.compensation_amount else '—' }}</td>
