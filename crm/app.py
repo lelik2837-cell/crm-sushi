@@ -2476,6 +2476,21 @@ def init_db():
             # ещё не удалено; заполнено — когда именно удалили (для показа в /reports/dialogs).
             conn.execute("ALTER TABLE messenger_messages ADD COLUMN image_deleted_at TIMESTAMP")
 
+        # Отметка «прочитано» для «Диалогов» (просьба пользователя 2026-09-06, мобильная
+        # версия страницы) — общая на весь тред, не по-пользовательски (в этом CRM
+        # «Диалоги» ведутся как один общий почтовый ящик, как и Оценка заказа/Рассылка, а не
+        # отдельные назначенные на сотрудника переписки). last_read_id обновляется на каждый
+        # просмотр треда (см. api_dialogs_thread_messages) — трек «непрочитано» строится как
+        # «есть входящее сообщение с id больше last_read_id» (см. api_dialogs_threads).
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS dialog_read_marks (
+                account_id INTEGER NOT NULL,
+                contact_ref TEXT NOT NULL,
+                last_read_id INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (account_id, contact_ref)
+            );
+        ''')
+
         # Оценка заказа (авто-запрос оценки 1-5 после статуса "Выполнен" + ветвление
         # ответного сообщения по баллу, по образцу Revvy) — переиспользует messenger_accounts/
         # messenger_api.py, но триггерится событием (импорт заказов), а не кнопкой, и умеет
@@ -10800,6 +10815,7 @@ def api_dialogs_threads():
         # голого contact_ref.
         threads = conn.execute('''
             SELECT account_id, contact_ref, channel, MAX(id) AS last_id,
+                   MAX(CASE WHEN direction='in' THEN id END) AS last_in_id,
                    MAX(contact_phone) AS any_phone, COUNT(*) AS msg_count
             FROM messenger_messages
             GROUP BY account_id, contact_ref
@@ -10819,6 +10835,8 @@ def api_dialogs_threads():
         ''', ids).fetchall()}
 
         accounts = {r['id']: r for r in conn.execute('SELECT id, label FROM messenger_accounts').fetchall()}
+        read_marks = {(r['account_id'], r['contact_ref']): r['last_read_id']
+                      for r in conn.execute('SELECT account_id, contact_ref, last_read_id FROM dialog_read_marks').fetchall()}
 
     result = []
     for t in threads:
@@ -10833,6 +10851,8 @@ def api_dialogs_threads():
             preview = 'Фото (удалено)'
         else:
             preview = (last['text'] if last else '') or ''
+        last_read_id = read_marks.get((t['account_id'], t['contact_ref']), 0)
+        unread = bool(t['last_in_id'] and t['last_in_id'] > last_read_id)
         result.append({
             'account_id': t['account_id'],
             'contact_ref': t['contact_ref'],
@@ -10844,8 +10864,21 @@ def api_dialogs_threads():
             'last_at': datetime_ru_short(last['created_at']) if last else '',
             'last_preview': preview,
             'last_direction': last['direction'] if last else None,
+            'unread': unread,
         })
     return jsonify({'ok': True, 'threads': result})
+
+
+def _dialog_mark_read(conn, account_id, contact_ref):
+    """Отмечает тред прочитанным по текущее последнее сообщение — вызывается при каждом
+    открытии/опросе треда (см. api_dialogs_thread_messages) и после отправки ответа, так что
+    пока диалог открыт на экране, он не может «внезапно» стать непрочитанным."""
+    conn.execute('''
+        INSERT INTO dialog_read_marks (account_id, contact_ref, last_read_id)
+        VALUES (?, ?, COALESCE((SELECT MAX(id) FROM messenger_messages WHERE account_id=? AND contact_ref=?), 0))
+        ON CONFLICT(account_id, contact_ref) DO UPDATE SET last_read_id=excluded.last_read_id
+    ''', (account_id, contact_ref, account_id, contact_ref))
+    conn.commit()
 
 
 @app.route('/api/dialogs/thread/<int:account_id>/<contact_ref>/messages')
@@ -10854,6 +10887,7 @@ def api_dialogs_threads():
 def api_dialogs_thread_messages(account_id, contact_ref):
     after_id = request.args.get('after_id', type=int)
     with get_db() as conn:
+        _dialog_mark_read(conn, account_id, contact_ref)
         if after_id:
             rows = conn.execute('''
                 SELECT id, direction, text, image_blob IS NOT NULL AS has_image,
@@ -10918,6 +10952,7 @@ def api_dialogs_thread_send(account_id, contact_ref):
         ''', (account_id, acc['channel'], contact_ref, phone_row['p'] if phone_row else None, text))
         conn.commit()
         new_id = cur.lastrowid
+        _dialog_mark_read(conn, account_id, contact_ref)
 
     return jsonify({'ok': True, 'message': {
         'id': new_id, 'direction': 'out', 'text': text, 'has_image': False, 'image_url': None,

@@ -32,6 +32,17 @@
 .dlg-bubble-img { max-width:260px; border-radius:10px; display:block; cursor:pointer; }
 .dlg-reply { border-top:1px solid #e3e6ec; padding:10px 14px; display:flex; gap:8px; }
 .dlg-reply textarea { resize:none; }
+.dlg-unread-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#0d6efd; margin-right:6px; vertical-align:middle; flex-shrink:0; }
+.dlg-item-name.unread { color:#000; font-weight:800; }
+.dlg-back-btn { display:none; align-items:center; justify-content:center; width:30px; height:30px; border:none; background:transparent; color:#212529; font-size:18px; margin-right:6px; padding:0; flex-shrink:0; }
+@media (max-width: 768px) {
+    .dlg-wrap { height:calc(100vh - 140px); border-radius:0; }
+    .dlg-list { width:100%; }
+    .dlg-chat { display:none; }
+    .dlg-wrap[data-mobile-view="chat"] .dlg-list { display:none; }
+    .dlg-wrap[data-mobile-view="chat"] .dlg-chat { display:flex; }
+    .dlg-back-btn { display:inline-flex; }
+}
 </style>
 
 <div class="dlg-wrap">
@@ -44,7 +55,12 @@
         </div>
     </div>
     <div class="dlg-chat">
-        <div class="dlg-chat-header" id="dlgChatHeader">Выберите диалог слева</div>
+        <div class="dlg-chat-header d-flex align-items-center" id="dlgChatHeader">
+            <button type="button" class="dlg-back-btn" onclick="dlgBackToList()" aria-label="Назад к списку">
+                <i class="bi bi-arrow-left"></i>
+            </button>
+            <span id="dlgChatHeaderText">Выберите диалог слева</span>
+        </div>
         <div class="dlg-chat-body" id="dlgChatBody">
             <div class="dlg-chat-empty">Нет открытого диалога</div>
         </div>
@@ -96,9 +112,10 @@
             if (q && t.label.toLowerCase().indexOf(q) === -1 && (t.contact_ref || '').toLowerCase().indexOf(q) === -1) return;
             var active = currentThread && threadKey(currentThread) === threadKey(t);
             var prefix = t.last_direction === 'out' ? 'Вы: ' : '';
+            var unreadDot = t.unread ? '<span class="dlg-unread-dot"></span>' : '';
             html += '<div class="dlg-item' + (active ? ' active' : '') + '" data-key="' + threadKey(t) + '" onclick="dlgOpenThreadByKey(\'' + threadKey(t) + '\')">' +
                 '<div class="dlg-item-top">' +
-                    '<span class="dlg-item-name">' + escapeHtml(t.label) + '</span>' +
+                    '<span class="dlg-item-name' + (t.unread ? ' unread' : '') + '">' + unreadDot + escapeHtml(t.label) + '</span>' +
                     '<span class="dlg-item-time">' + escapeHtml(t.last_at) + '</span>' +
                 '</div>' +
                 '<div class="dlg-item-preview">' +
@@ -129,14 +146,24 @@
     function dlgOpenThread(t) {
         currentThread = { account_id: t.account_id, contact_ref: t.contact_ref };
         lastMsgId = 0;
+        t.unread = false; // оптимистично — сервер тоже пометит прочитанным этим же открытием (см. _dialog_mark_read)
         renderThreadList(threadsCache);
-        document.getElementById('dlgChatHeader').textContent = t.label + ' · ' + t.channel_label;
+        document.getElementById('dlgChatHeaderText').textContent = t.label + ' · ' + t.channel_label;
         document.getElementById('dlgChatBody').innerHTML = '<div class="dlg-chat-empty">Загрузка…</div>';
         document.getElementById('dlgReplyWrap').style.display = '';
+        document.querySelector('.dlg-wrap').setAttribute('data-mobile-view', 'chat');
         loadMessages(true);
         if (pollMessagesTimer) clearInterval(pollMessagesTimer);
         pollMessagesTimer = setInterval(function () { loadMessages(false); }, 4000);
     }
+
+    window.dlgBackToList = function () {
+        document.querySelector('.dlg-wrap').removeAttribute('data-mobile-view');
+        if (pollMessagesTimer) { clearInterval(pollMessagesTimer); pollMessagesTimer = null; }
+        currentThread = null;
+        renderThreadList(threadsCache);
+        loadThreads();
+    };
 
     function bubbleHtml(m) {
         var dir = m.direction === 'out' ? 'out' : 'in';
