@@ -2603,20 +2603,39 @@ def init_db():
 
         # Одноразовая корректировка (2026-09-07): загрузка архивной выгрузки заказов (напр.
         # за прошлый месяц) заводила заявки на оценку так же, как для свежих заказов — не было
-        # проверки, что заказ вообще недавний (см. _RATING_REQUEST_MAX_AGE_DAYS ниже). Убираем
-        # уже накопленные такие заявки, пока не отправлены: status='pending_send' и заказ
-        # (order_date) старше своей заявки (created_at) больше чем на _RATING_REQUEST_MAX_AGE_DAYS
-        # — реальному только что выполненному заказу это не грозит, разница там — минуты.
+        # проверки, что заказ вообще недавний. Убираем уже накопленные такие заявки, пока не
+        # отправлены: status='pending_send' и заказ (order_date) старше своей заявки
+        # (created_at) больше чем на 2 дня — реальному только что выполненному заказу это не
+        # грозит, разница там — минуты. Порог позже ужесточён до «строго сегодня» (см.
+        # rating_req_same_day_cleanup_v1 ниже) — эта первая чистка оставлена как есть.
         if not conn.execute(
             "SELECT 1 FROM api_settings WHERE key='rating_req_backfill_cleanup_v1'"
         ).fetchone():
-            conn.execute(f'''
+            conn.execute('''
                 DELETE FROM order_rating_requests
                 WHERE status='pending_send'
-                  AND (julianday(created_at) - julianday(order_date)) > {_RATING_REQUEST_MAX_AGE_DAYS}
+                  AND (julianday(created_at) - julianday(order_date)) > 2
             ''')
             conn.execute(
                 "INSERT OR REPLACE INTO api_settings (key, value) VALUES ('rating_req_backfill_cleanup_v1', '1')"
+            )
+
+        # Одноразовая корректировка v2 (2026-09-07, пользователь уточнил правило строже):
+        # заявка на оценку должна заводиться только для заказа, принятого СЕГОДНЯ — даже
+        # вчерашний заказ оценку получать не должен (см. _maybe_create_rating_request).
+        # Первая чистка выше убирала только явно архивные заявки (разница > 2 дней) — здесь
+        # добираем то, что осталось: любая ещё не отправленная заявка, чей заказ (order_date)
+        # не совпадает с локальным днём создания самой заявки (created_at, +7 часов).
+        if not conn.execute(
+            "SELECT 1 FROM api_settings WHERE key='rating_req_same_day_cleanup_v1'"
+        ).fetchone():
+            conn.execute('''
+                DELETE FROM order_rating_requests
+                WHERE status='pending_send'
+                  AND order_date != date(datetime(created_at, '+7 hours'))
+            ''')
+            conn.execute(
+                "INSERT OR REPLACE INTO api_settings (key, value) VALUES ('rating_req_same_day_cleanup_v1', '1')"
             )
         _rc_cols = [r[1] for r in conn.execute("PRAGMA table_info(rating_campaigns)").fetchall()]
         if 'send_time_from' not in _rc_cols:
@@ -10145,9 +10164,12 @@ def broadcast_page():
     stats_branch_ids = [int(b) for b in request.args.getlist('branch_ids') if b.isdigit()]
     # История заявок на оценку (карточка «История» на вкладке) — отдельный фильтр периода
     # от «Статистики» выше (свои query-параметры, не date_from/date_to), по умолчанию сегодня
-    # (просьба пользователя 2026-09-07 «видеть все отправки и сортировку по дате»).
+    # (просьба пользователя 2026-09-07 «видеть все отправки и сортировку по дате»). Выбор даты
+    # и филиала сделан по образцу отчёта «Отзывы» (guest_reviews_report) — те же виджеты
+    # (стрелки дня + календарь, дропдаун филиалов с группами) по прямой просьбе пользователя.
     hist_date_from = request.args.get('hist_from', today)
     hist_date_to = request.args.get('hist_to', today)
+    hist_branch_ids = [int(b) for b in request.args.getlist('hist_branch_ids') if b.isdigit()]
 
     with get_db() as conn:
         accounts = conn.execute(
@@ -10180,7 +10202,13 @@ def broadcast_page():
         # величина, что и группировка в _rating_broadcast_stats выше по странице, чтобы
         # «сегодня» в «Истории» и «сегодня» в «Статистике» совпадали. Без LIMIT — просьба
         # пользователя показывать все отправки за выбранный период, а не последние 50.
-        rating_requests = conn.execute('''
+        _hist_where = ['date(datetime(rr.created_at, \'+7 hours\')) >= ?', 'date(datetime(rr.created_at, \'+7 hours\')) <= ?']
+        _hist_params = [hist_date_from, hist_date_to]
+        if hist_branch_ids:
+            _hist_ph = ','.join('?' * len(hist_branch_ids))
+            _hist_where.append(f'rc.branch_id IN ({_hist_ph})')
+            _hist_params.extend(hist_branch_ids)
+        rating_requests = conn.execute(f'''
             SELECT rr.order_number, rr.order_date, rr.phone, rr.status, rr.rating,
                    datetime(rr.sent_at, '+7 hours') AS sent_at,
                    datetime(rr.responded_at, '+7 hours') AS responded_at,
@@ -10189,9 +10217,9 @@ def broadcast_page():
             JOIN rating_campaigns rc ON rc.id = rr.campaign_id
             JOIN branches b ON b.id = rc.branch_id
             LEFT JOIN messenger_accounts ma ON ma.id = rr.assigned_account_id
-            WHERE date(datetime(rr.created_at, '+7 hours')) >= ? AND date(datetime(rr.created_at, '+7 hours')) <= ?
+            WHERE {' AND '.join(_hist_where)}
             ORDER BY rr.created_at DESC
-        ''', (hist_date_from, hist_date_to)).fetchall()
+        ''', _hist_params).fetchall()
         branches_without_campaign = conn.execute('''
             SELECT * FROM branches
             WHERE is_active=1 AND id NOT IN (SELECT branch_id FROM rating_campaigns)
@@ -10215,6 +10243,7 @@ def broadcast_page():
                             stats_date_from=stats_date_from, stats_date_to=stats_date_to,
                             stats_branch_ids=stats_branch_ids,
                             hist_date_from=hist_date_from, hist_date_to=hist_date_to,
+                            hist_branch_ids=hist_branch_ids,
                             active_tab=request.args.get('tab', 'numbers'))
 
 
@@ -10266,10 +10295,10 @@ def _parse_send_time_window():
 
 def _broadcast_rating_redirect():
     """Редирект на вкладку «Оценка заказа» после POST-формы (создание/редактирование/
-    вкл-выкл кампании) — пробрасывает дальше текущий период фильтра карточки «История»
-    (hist_from/hist_to), который эта форма несёт в скрытых полях (см. CLAUDE.md про
-    сохранение фильтров при сабмите служебных форм) — иначе после любого действия с
-    кампанией фильтр истории сбрасывался бы обратно на «сегодня»."""
+    вкл-выкл кампании) — пробрасывает дальше текущий фильтр карточки «История» (период
+    hist_from/hist_to и филиалы hist_branch_ids), который эта форма несёт в скрытых полях
+    (см. CLAUDE.md про сохранение фильтров при сабмите служебных форм) — иначе после
+    любого действия с кампанией фильтр истории сбрасывался бы обратно на дефолт."""
     kwargs = {'tab': 'rating'}
     hist_from = request.form.get('hist_from', '').strip()
     hist_to = request.form.get('hist_to', '').strip()
@@ -10277,6 +10306,9 @@ def _broadcast_rating_redirect():
         kwargs['hist_from'] = hist_from
     if hist_to:
         kwargs['hist_to'] = hist_to
+    hist_branch_ids = [b for b in request.form.getlist('hist_branch_ids') if b.isdigit()]
+    if hist_branch_ids:
+        kwargs['hist_branch_ids'] = hist_branch_ids
     return redirect(url_for('broadcast_page', **kwargs))
 
 
@@ -16560,15 +16592,6 @@ def _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename, create
     return imported, updated, removed
 
 
-# Заказ старше этого числа дней (относительно момента импорта) не ставим в очередь на
-# оценку, даже если формально прошёл все остальные проверки — иначе загрузка архивной
-# выгрузки (напр. «довезли» дозагрузку за прошлый месяц) массово шлёт клиентам вопрос
-# про месячной давности заказ. Реальный «свежий» заказ до этой границы не долетает —
-# разница между приёмом заказа и импортом там обычно минуты-часы, не дни. См. кейс
-# пользователя 2026-09-07 (287 заявок при загрузке выгрузки за август).
-_RATING_REQUEST_MAX_AGE_DAYS = 2
-
-
 def _maybe_create_rating_request(conn, r, branch_id, campaigns_by_branch, variant_counts, campaigns_ready_since):
     """Если заказ пришёл со статусом "Выполнен" и на его филиале включена кампания оценки
     заказа (rating_campaigns) — заводим заявку на отправку. UNIQUE(campaign_id, order_number,
@@ -16609,8 +16632,11 @@ def _maybe_create_rating_request(conn, r, branch_id, campaigns_by_branch, varian
         received_dt = datetime.strptime(r['received_at'], '%Y-%m-%d %H:%M:%S')
     except ValueError:
         return
-    if (datetime.now() - received_dt).days > _RATING_REQUEST_MAX_AGE_DAYS:
-        # Архивная/бэкфильная выгрузка — не спрашиваем оценку про старый заказ задним числом.
+    if received_dt.date() != datetime.now().date():
+        # Заявка заводится только для заказов, принятых СЕГОДНЯ (просьба пользователя
+        # 2026-09-07: даже вчерашний заказ оценку получать не должен) — архивный импорт
+        # или утренняя дозагрузка вчерашней выгрузки не должны спрашивать оценку задним
+        # числом, только по факту сегодняшнего заказа.
         return
     ready_since = campaigns_ready_since.get(campaign['id'])
     if not ready_since or r['received_at'] < ready_since:

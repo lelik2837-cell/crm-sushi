@@ -337,6 +337,7 @@
                 <form method="POST" action="{{ url_for('create_rating_campaign') }}" class="row g-3">
                     <input type="hidden" name="hist_from" value="{{ hist_date_from }}">
                     <input type="hidden" name="hist_to" value="{{ hist_date_to }}">
+                    {% for bid in hist_branch_ids %}<input type="hidden" name="hist_branch_ids" value="{{ bid }}">{% endfor %}
                     <div class="col-md-4">
                         <label class="form-label small fw-semibold">Филиал</label>
                         <select name="branch_id" class="form-select" required>
@@ -370,6 +371,7 @@
                             <form method="POST" action="{{ url_for('toggle_rating_campaign', campaign_id=c.id) }}">
                                 <input type="hidden" name="hist_from" value="{{ hist_date_from }}">
                                 <input type="hidden" name="hist_to" value="{{ hist_date_to }}">
+                                {% for bid in hist_branch_ids %}<input type="hidden" name="hist_branch_ids" value="{{ bid }}">{% endfor %}
                                 <button type="submit" class="btn btn-sm btn-outline-secondary">{% if c.enabled %}Выключить{% else %}Включить{% endif %}</button>
                             </form>
                         </div>
@@ -385,6 +387,7 @@
                         <form method="POST" action="{{ url_for('edit_rating_campaign', campaign_id=c.id) }}" class="row g-3">
                             <input type="hidden" name="hist_from" value="{{ hist_date_from }}">
                             <input type="hidden" name="hist_to" value="{{ hist_date_to }}">
+                            {% for bid in hist_branch_ids %}<input type="hidden" name="hist_branch_ids" value="{{ bid }}">{% endfor %}
                             {{ rating_campaign_fields('rc-edit-' ~ c.id, connected_accounts, channel_icons, channel_labels,
                                                        assigned_accounts=rating_campaign_accounts.get(c.id, []),
                                                        variants=rating_campaign_variants.get(c.id),
@@ -405,23 +408,79 @@
         {% endfor %}
     </div>
 
-    <!-- История заявок на оценку -->
-    <div class="card">
-        <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
-            <span class="fw-semibold"><i class="bi bi-clock-history me-2"></i>История</span>
-            <form method="GET" action="{{ url_for('broadcast_page') }}" class="d-flex align-items-center gap-1" id="bcHistFilterForm">
+    <!-- История заявок на оценку: фильтр по образцу отчёта «Отзывы» (guest_reviews_report) —
+         стрелки дня + календарь и дропдаун филиалов с группами, просьба пользователя 2026-09-07 -->
+    <div class="card mb-3">
+        <div class="card-body">
+            <form method="GET" action="{{ url_for('broadcast_page') }}" class="row g-2 align-items-end" id="bcHistFilterForm">
                 <input type="hidden" name="tab" value="rating">
-                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="bcHistSetRange(0)">Сегодня</button>
-                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="bcHistSetRange(7)">7 дней</button>
-                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="bcHistSetRange(30)">30 дней</button>
-                <button type="button" class="btn btn-outline-secondary btn-sm" id="bcHistDateBtn" onclick="openBcHistCal()" style="min-width:150px;white-space:nowrap;" title="Свой период">
-                    <i class="bi bi-calendar3 me-1"></i><span id="bcHistDateBtnLabel"></span>
-                </button>
-                <input type="hidden" name="hist_from" id="bcHistDateFrom" value="{{ hist_date_from }}">
-                <input type="hidden" name="hist_to" id="bcHistDateTo" value="{{ hist_date_to }}">
-                <input id="bcHistCalHidden" type="text" style="display:none;position:absolute;">
+                <div class="col-auto">
+                    <label class="form-label small fw-semibold d-block">Дата</label>
+                    <div class="d-flex align-items-center gap-1">
+                        <button type="button" class="btn btn-outline-secondary btn-sm px-2" onclick="navBcHistDate(-1)" title="Предыдущий день">‹</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="bcHistDateBtn" onclick="openBcHistCal()" style="min-width:150px;white-space:nowrap;" title="Выбрать даты">
+                            <i class="bi bi-calendar3 me-1"></i><span id="bcHistDateBtnLabel"></span>
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm px-2" onclick="navBcHistDate(1)" title="Следующий день">›</button>
+                    </div>
+                    <input type="hidden" name="hist_from" id="bcHistDateFrom" value="{{ hist_date_from }}">
+                    <input type="hidden" name="hist_to" id="bcHistDateTo" value="{{ hist_date_to }}">
+                    <input id="bcHistCalHidden" type="text" style="display:none;position:absolute;">
+                </div>
+                <div class="col-6 col-md-auto">
+                    <label class="form-label small fw-semibold">Филиал</label>
+                    <div class="dropdown">
+                        <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle"
+                            data-bs-toggle="dropdown" data-bs-auto-close="outside"
+                            style="min-width:170px; text-align:left;">
+                            <span id="bcHistBranchBtnLabel">{% if hist_branch_ids %}Выбрано: {{ hist_branch_ids|length }}{% else %}Все{% endif %}</span>
+                        </button>
+                        <ul class="dropdown-menu p-2" style="min-width:230px; max-height:320px; overflow-y:auto;">
+                            {% if branch_groups %}
+                            <li class="text-muted px-1 mb-1" style="font-size:0.7rem;font-weight:600;letter-spacing:.5px;">ГРУППЫ</li>
+                            {% for g in branch_groups %}
+                            <li class="mb-1">
+                                <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1"
+                                        data-branch-ids="{{ g.branch_ids | join(',') }}"
+                                        onclick="selectBcHistBranchGroup(this)">
+                                    <span class="fw-bold">{{ g.abbr or g.name[:3].upper() }}</span>
+                                    <span class="text-muted ms-1 small">{{ g.name }} ({{ g.branch_ids | length }})</span>
+                                </button>
+                            </li>
+                            {% endfor %}
+                            <li><hr class="dropdown-divider my-1"></li>
+                            {% endif %}
+                            <li class="mb-1">
+                                <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                                    <input type="checkbox" id="bcHistBranchAllCb" onchange="toggleAllBcHistBranches(this)"
+                                        {% if not hist_branch_ids %}checked{% endif %}>
+                                    <span class="fw-semibold small">Все филиалы</span>
+                                </label>
+                            </li>
+                            <li><hr class="dropdown-divider my-1"></li>
+                            {% for b in branches %}
+                            <li>
+                                <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                                    <input type="checkbox" class="bc-hist-branch-cb" name="hist_branch_ids" value="{{ b.id }}"
+                                        {% if b.id in hist_branch_ids %}checked{% endif %}
+                                        onchange="onBcHistBranchCbChange()">
+                                    <span class="small">{{ b.name }}</span>
+                                </label>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                </div>
+                <div class="col-auto">
+                    <button type="submit" class="btn btn-primary btn-sm">Показать</button>
+                </div>
             </form>
         </div>
+    </div>
+
+    <!-- История заявок на оценку -->
+    <div class="card">
+        <div class="card-header fw-semibold"><i class="bi bi-clock-history me-2"></i>История</div>
         <div class="table-responsive">
             <table class="table table-sm mb-0 align-middle">
                 <thead class="table-light">
@@ -888,9 +947,10 @@ document.querySelectorAll('.bc-tab-pane form').forEach((form) => {
     };
 })();
 
-/* ── Карточка «История» на вкладке «Оценка заказа»: период (по умолчанию сегодня) ──
-   тот же приём, что и в фильтре «Статистики» выше (кнопки-пресеты + свой период
-   календарём) — просьба пользователя 2026-09-07 «сделай как обычно реализуем». */
+/* ── Карточка «История» на вкладке «Оценка заказа»: дата (стрелки + календарь) и филиал
+   (дропдаун с группами) — по прямой просьбе пользователя 2026-09-07 сделано один в один
+   как в отчёте «Отзывы» (guest_reviews_report.html, см. navRvDate/openRvCal/onRvBranchCbChange
+   там же) — дата меняется и сразу отправляет форму, филиал требует нажать «Показать». */
 (function () {
     function fmtLocalDate(d) {
         return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -908,21 +968,21 @@ document.querySelectorAll('.bc-tab-pane form').forEach((form) => {
     var bcHistTo = parseLocalDate(document.getElementById('bcHistDateTo').value);
 
     function updateBcHistDateLabel() {
-        var label = bcHistFrom.getTime() === bcHistTo.getTime() ? fmtRuShort(bcHistFrom) : fmtRuShort(bcHistFrom) + ' – ' + fmtRuShort(bcHistTo);
-        document.getElementById('bcHistDateBtnLabel').textContent = label;
+        var label = document.getElementById('bcHistDateBtnLabel');
+        var sameDay = fmtLocalDate(bcHistFrom) === fmtLocalDate(bcHistTo);
+        label.textContent = sameDay ? fmtRuShort(bcHistFrom) : (fmtRuShort(bcHistFrom) + ' – ' + fmtRuShort(bcHistTo));
     }
     updateBcHistDateLabel();
 
-    function submitBcHist() {
+    function submitBcHistDates() {
         document.getElementById('bcHistDateFrom').value = fmtLocalDate(bcHistFrom);
         document.getElementById('bcHistDateTo').value = fmtLocalDate(bcHistTo);
         document.getElementById('bcHistFilterForm').submit();
     }
-    window.bcHistSetRange = function (days) {
-        bcHistTo = new Date();
-        bcHistFrom = new Date();
-        if (days > 0) bcHistFrom.setDate(bcHistFrom.getDate() - (days - 1));
-        submitBcHist();
+    window.navBcHistDate = function (delta) {
+        bcHistFrom.setDate(bcHistFrom.getDate() + delta);
+        bcHistTo.setDate(bcHistTo.getDate() + delta);
+        submitBcHistDates();
     };
 
     var bcHistCalPicker = null;
@@ -937,15 +997,41 @@ document.querySelectorAll('.bc-tab-pane form').forEach((form) => {
                 onClose: function (dates) {
                     if (dates.length === 2) {
                         bcHistFrom = dates[0]; bcHistTo = dates[1];
-                        submitBcHist();
+                        submitBcHistDates();
                     } else if (dates.length === 1) {
                         bcHistFrom = dates[0]; bcHistTo = dates[0];
-                        submitBcHist();
+                        submitBcHistDates();
                     }
                 }
             });
         }
         bcHistCalPicker.open();
+    };
+
+    window.onBcHistBranchCbChange = function () {
+        var cbs = document.querySelectorAll('.bc-hist-branch-cb');
+        var checked = [...cbs].filter(function (c) { return c.checked; });
+        var allCb = document.getElementById('bcHistBranchAllCb');
+        if (allCb) allCb.checked = checked.length === 0;
+        var label = document.getElementById('bcHistBranchBtnLabel');
+        if (label) label.textContent = checked.length === 0 ? 'Все' : 'Выбрано: ' + checked.length;
+    };
+    window.toggleAllBcHistBranches = function (cb) {
+        if (cb.checked) {
+            document.querySelectorAll('.bc-hist-branch-cb').forEach(function (c) { c.checked = false; });
+            var label = document.getElementById('bcHistBranchBtnLabel');
+            if (label) label.textContent = 'Все';
+        }
+    };
+    window.selectBcHistBranchGroup = function (btn) {
+        var ids = (btn.dataset.branchIds || '').split(',').filter(Boolean);
+        document.querySelectorAll('.bc-hist-branch-cb').forEach(function (cb) {
+            cb.checked = ids.indexOf(cb.value) !== -1;
+        });
+        var allCb = document.getElementById('bcHistBranchAllCb');
+        if (allCb) allCb.checked = false;
+        var label = document.getElementById('bcHistBranchBtnLabel');
+        if (label) label.textContent = 'Выбрано: ' + ids.length;
     };
 })();
 </script>
