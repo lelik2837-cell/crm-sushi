@@ -92,12 +92,6 @@
     var threadsCache = [];
     var pollThreadsTimer = null;
     var pollMessagesTimer = null;
-    // Диплинк из /guest-reviews-report («Открыть в Диалогах», новая вкладка) — открываем
-    // этот тред сразу после первой загрузки списка, дальше сбрасываем (не мешает обычной
-    // навигации по диалогам).
-    var deepAccountId = {{ deep_account_id | tojson }};
-    var deepContactRef = {{ deep_contact_ref | tojson }};
-    var pendingDeepLink = (deepAccountId && deepContactRef) ? { account_id: deepAccountId, contact_ref: deepContactRef } : null;
 
     function escapeHtml(s) {
         return String(s == null ? '' : s)
@@ -140,17 +134,6 @@
                 if (!d.ok) return;
                 threadsCache = d.threads;
                 renderThreadList(threadsCache);
-                if (pendingDeepLink) {
-                    var dl = pendingDeepLink;
-                    pendingDeepLink = null;
-                    var key = dl.account_id + '|' + dl.contact_ref;
-                    var t = threadsCache.filter(function (x) { return threadKey(x) === key; })[0];
-                    // Тред мог не попасть в последние 300 (см. /api/dialogs/threads) —
-                    // тогда открываем напрямую по account_id/contact_ref с минимальными
-                    // данными для шапки, список подтянет верный label при следующем опросе.
-                    dlgOpenThread(t || { account_id: dl.account_id, contact_ref: dl.contact_ref,
-                        label: dl.contact_ref, channel_label: '' });
-                }
             });
     }
 
