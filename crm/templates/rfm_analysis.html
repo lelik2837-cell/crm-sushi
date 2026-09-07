@@ -1,0 +1,304 @@
+{% extends 'base.html' %}
+{% block title %}RFM анализ{% endblock %}
+
+{% macro pct(value) -%}
+{%- if value < 0.005 -%}0%{%- else -%}{{ ('%.2f'|format(value)).replace('.', ',') }}%{%- endif -%}
+{%- endmacro %}
+
+{% macro settings_column(title, dim, codes, unit) %}
+<div class="col-12 col-xl-4">
+    <div class="rfm-settings-column h-100">
+        <div class="fw-semibold border-bottom pb-2 mb-2">{{ title }}</div>
+        {% for code in codes %}
+        {% set bounds = cfg[dim][code] %}
+        <div class="rfm-setting-row">
+            <span class="rfm-setting-code">{{ code }}</span>
+            <span class="small">от</span>
+            <input type="number" min="0" step="1" class="form-control form-control-sm"
+                   name="{{ dim }}_{{ code|lower }}_min"
+                   value="{{ bounds.min if bounds.min is not none else '' }}"
+                   aria-label="{{ code }} от">
+            <span class="small">до</span>
+            <input type="number" min="0" step="1" class="form-control form-control-sm"
+                   name="{{ dim }}_{{ code|lower }}_max"
+                   value="{{ bounds.max if bounds.max is not none else '' }}"
+                   aria-label="{{ code }} до">
+            <span class="small text-muted">{{ unit }}</span>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endmacro %}
+
+{% block content %}
+<style>
+    .rfm-settings-column {
+        border: 1px solid #e2e8f0;
+        border-radius: .6rem;
+        padding: .9rem;
+        background: #fff;
+    }
+    .rfm-setting-row {
+        display: grid;
+        grid-template-columns: 30px 20px minmax(68px, 1fr) 22px minmax(68px, 1fr) 62px;
+        align-items: center;
+        gap: .35rem;
+        margin: .55rem 0;
+    }
+    .rfm-setting-code { color: #94a3b8; font-weight: 700; font-size: .85rem; }
+    .rfm-section {
+        display: grid;
+        grid-template-columns: 175px minmax(0, 1fr);
+        gap: 1rem;
+        align-items: center;
+        margin-bottom: 1.75rem;
+    }
+    .rfm-recency-summary { color: #28536d; }
+    .rfm-recency-code { font-size: 1.65rem; font-weight: 800; line-height: 1; }
+    .rfm-recency-title { font-size: .92rem; font-weight: 600; margin-top: .45rem; }
+    .rfm-recency-meta { font-size: .78rem; line-height: 1.45; margin-top: .25rem; }
+    .rfm-matrix-scroll { overflow-x: auto; padding-bottom: .2rem; }
+    .rfm-matrix {
+        min-width: 660px;
+        display: grid;
+        grid-template-columns: 70px repeat(var(--rfm-m-cols), minmax(128px, 1fr));
+        gap: .4rem;
+    }
+    .rfm-m-head {
+        text-align: center;
+        color: #64748b;
+        font-size: .72rem;
+        line-height: 1.25;
+        padding-bottom: .15rem;
+    }
+    .rfm-m-head strong { display: block; color: #52697b; font-size: .78rem; }
+    .rfm-f-head {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
+        color: #64748b;
+        font-size: .7rem;
+        line-height: 1.25;
+    }
+    .rfm-f-head strong { color: #52697b; font-size: .78rem; }
+    .rfm-square {
+        min-height: 94px;
+        aspect-ratio: 1.45 / 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        border: 1px solid rgba(71, 85, 105, .24);
+        border-radius: .3rem;
+        padding: .55rem .65rem;
+        color: #17212b;
+    }
+    .rfm-square-green-strong { background: #b9ec93; }
+    .rfm-square-green { background: #d8f2c7; }
+    .rfm-square-cream { background: #fff6df; }
+    .rfm-square-yellow { background: #ffe8b4; }
+    .rfm-square-pink { background: #f8d2d3; }
+    .rfm-square-red { background: #eeabad; }
+    .rfm-square-name { min-height: 1.2rem; color: #475569; font-size: .66rem; line-height: 1.15; }
+    .rfm-square-percent { font-size: 1.35rem; line-height: 1; font-weight: 800; letter-spacing: -.02em; }
+    .rfm-square-count { color: #374151; font-size: .72rem; }
+    @media (max-width: 767.98px) {
+        .rfm-section { grid-template-columns: 1fr; align-items: start; }
+        .rfm-recency-summary { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
+        .rfm-recency-title, .rfm-recency-meta { margin-top: 0; }
+        .rfm-setting-row { grid-template-columns: 28px 18px minmax(62px, 1fr) 20px minmax(62px, 1fr) 54px; }
+    }
+</style>
+
+<div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+    <div>
+        <h4 class="fw-bold mb-1"><i class="bi bi-grid-3x3-gap me-2"></i>RFM анализ</h4>
+        <div class="text-muted small">Один клиент — один нормализованный номер телефона. Расчёт по всей истории заказов на сегодня.</div>
+    </div>
+
+    {% if session.get('role') == 'owner' or can_pick_other_branches('rfm_analysis') %}
+    <form method="GET" class="d-flex align-items-center gap-2" id="rfm-filter-form">
+        <div class="dropdown">
+            <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle"
+                    data-bs-toggle="dropdown" data-bs-auto-close="outside" id="rfm-branch-btn"
+                    style="min-width:170px;text-align:left;">
+                <span id="rfm-branch-label">{% if selected_branch_ids %}Выбрано: {{ selected_branch_ids|length }}{% else %}Все филиалы{% endif %}</span>
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end p-2 shadow" style="min-width:240px;max-height:380px;overflow-y:auto;">
+                {% if branch_groups %}
+                <li><div class="text-muted px-1 mb-1" style="font-size:.75rem;">ГРУППЫ</div></li>
+                {% for group in branch_groups %}
+                <li class="mb-1">
+                    <button type="button" class="btn btn-sm btn-outline-primary w-100 text-start px-2 py-1"
+                            onclick="rfmSelectBranchGroup({{ group.branch_ids|tojson }})">
+                        <i class="bi bi-collection me-1"></i>{{ group.name }}
+                        <span class="text-muted small">({{ group.branch_ids|length }})</span>
+                    </button>
+                </li>
+                {% endfor %}
+                <li><hr class="dropdown-divider my-1"></li>
+                {% endif %}
+                <li>
+                    <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                        <input type="checkbox" id="rfm-branch-all" onchange="rfmToggleAllBranches(this)"
+                               {% if not selected_branch_ids %}checked{% endif %}>
+                        <span class="fw-semibold small">Все филиалы</span>
+                    </label>
+                </li>
+                <li><hr class="dropdown-divider my-1"></li>
+                {% for branch in branches %}
+                <li>
+                    <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+                        <input type="checkbox" class="rfm-branch-cb" name="branch_ids" value="{{ branch.id }}"
+                               {% if branch.id|string in selected_branch_ids %}checked{% endif %}
+                               onchange="rfmBranchChanged()">
+                        <span class="small">{{ branch.name }}</span>
+                    </label>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">Показать</button>
+    </form>
+    {% endif %}
+</div>
+
+<div class="card mb-4">
+    <div class="card-header bg-light fw-semibold d-flex justify-content-between align-items-center"
+         role="button" data-bs-toggle="collapse" data-bs-target="#rfm-settings-panel"
+         aria-controls="rfm-settings-panel" aria-expanded="false">
+        <span><i class="bi bi-gear me-2"></i>Настройки RFM</span>
+        <i class="bi bi-chevron-down small"></i>
+    </div>
+    <div class="collapse" id="rfm-settings-panel">
+        <div class="card-body">
+            <form method="POST" action="{{ url_for('rfm_analysis_settings_save') }}" id="rfm-settings-form">
+                {% for branch_id in selected_branch_ids %}<input type="hidden" name="branch_ids" value="{{ branch_id }}">{% endfor %}
+                <div class="text-muted small mb-3">
+                    Границы общие для этого отчёта. Пустая верхняя или нижняя граница означает открытый диапазон;
+                    если очистить обе границы категории, она не участвует в матрице. Разрывы между категориями допустимы — клиенты в них не показываются.
+                </div>
+                <div class="row g-3">
+                    {{ settings_column('Давность (R)', 'r', r_setting_codes, 'дней') }}
+                    {{ settings_column('Частота (F)', 'f', f_setting_codes, 'покупок') }}
+                    {{ settings_column('Стоимость (M)', 'm', m_setting_codes, '₽') }}
+                </div>
+                <button type="submit" class="btn btn-primary btn-sm mt-3">
+                    <i class="bi bi-floppy me-1"></i>Сохранить настройки
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="d-flex align-items-baseline gap-2 flex-wrap mb-3">
+    <span class="text-muted small">Клиентов, попавших в настроенные RFM-диапазоны:</span>
+    <span class="fw-bold fs-4">{{ report.included_clients }}</span>
+    <span class="text-muted small">из {{ report.valid_phone_clients }} клиентов с распознанным телефоном</span>
+</div>
+
+{% if report.included_clients and report.r_sections and report.f_codes and report.m_codes %}
+{% for section in report.r_sections %}
+<section class="rfm-section" aria-label="Матрица {{ section.code }}">
+    <div class="rfm-recency-summary">
+        <div class="rfm-recency-code">{{ section.code }}</div>
+        <div class="rfm-recency-title">{{ section.title }}</div>
+        <div class="rfm-recency-meta">
+            {{ section.range_label }}<br>
+            {{ section.count }} клиентов · {{ pct(section.percent) }} аудитории
+        </div>
+    </div>
+    <div class="rfm-matrix-scroll">
+        <div class="rfm-matrix" style="--rfm-m-cols:{{ report.m_codes|length }};">
+            <div></div>
+            {% for m_code in report.m_codes %}
+            <div class="rfm-m-head">
+                <strong>{{ m_code }}</strong>
+                {{ report.m_titles[m_code] }}
+            </div>
+            {% endfor %}
+
+            {% for f_code in report.f_codes %}
+            <div class="rfm-f-head">
+                <strong>{{ f_code }}</strong>
+                {{ report.f_titles[f_code] }}
+            </div>
+            {% for m_code in report.m_codes %}
+            {% set cell = section.cells[f_code][m_code] %}
+            <div class="rfm-square rfm-square-{{ cell.tone }}"
+                 title="{{ section.code }} · {{ f_code }} · {{ m_code }}">
+                <div class="rfm-square-name">{{ cell.name }}</div>
+                <div class="rfm-square-percent">{{ pct(cell.percent) }}</div>
+                <div class="rfm-square-count"><i class="bi bi-people me-1"></i>{{ cell.count }} клиентов</div>
+            </div>
+            {% endfor %}
+            {% endfor %}
+        </div>
+    </div>
+</section>
+{% endfor %}
+{% else %}
+<div class="alert alert-light border text-muted">
+    <i class="bi bi-inbox me-2"></i>Нет клиентов, одновременно попавших в настроенные диапазоны R, F и M.
+</div>
+{% endif %}
+
+<div class="text-muted small mb-4">
+    Процент каждого квадрата рассчитан от всех клиентов, попавших сразу во все три настроенных диапазона.
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    function selectedBranches() {
+        return Array.from(document.querySelectorAll('.rfm-branch-cb')).filter(function (cb) { return cb.checked; });
+    }
+
+    window.rfmBranchChanged = function () {
+        var selected = selectedBranches();
+        var all = document.getElementById('rfm-branch-all');
+        var label = document.getElementById('rfm-branch-label');
+        if (all) all.checked = selected.length === 0;
+        if (label) label.textContent = selected.length ? 'Выбрано: ' + selected.length : 'Все филиалы';
+    };
+
+    window.rfmToggleAllBranches = function (checkbox) {
+        if (!checkbox.checked) return;
+        document.querySelectorAll('.rfm-branch-cb').forEach(function (cb) { cb.checked = false; });
+        rfmBranchChanged();
+    };
+
+    window.rfmSelectBranchGroup = function (ids) {
+        var wanted = ids.map(String);
+        document.querySelectorAll('.rfm-branch-cb').forEach(function (cb) {
+            cb.checked = wanted.indexOf(cb.value) !== -1;
+        });
+        rfmBranchChanged();
+    };
+
+    var scrollKey = 'rfm_analysis_scroll';
+    var settingsKey = 'rfm_analysis_settings_open';
+    document.querySelectorAll('form').forEach(function (form) {
+        form.addEventListener('submit', function () {
+            sessionStorage.setItem(scrollKey, String(window.scrollY));
+            var panel = document.getElementById('rfm-settings-panel');
+            sessionStorage.setItem(settingsKey, panel && panel.classList.contains('show') ? '1' : '0');
+        });
+    });
+
+    var panelWasOpen = sessionStorage.getItem(settingsKey);
+    if (panelWasOpen !== null) {
+        sessionStorage.removeItem(settingsKey);
+        var panel = document.getElementById('rfm-settings-panel');
+        if (panel && panelWasOpen === '1') panel.classList.add('show');
+    }
+    var savedScroll = sessionStorage.getItem(scrollKey);
+    if (savedScroll !== null) {
+        sessionStorage.removeItem(scrollKey);
+        window.scrollTo(0, parseInt(savedScroll, 10) || 0);
+    }
+})();
+</script>
+{% endblock %}

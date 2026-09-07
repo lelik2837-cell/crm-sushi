@@ -318,7 +318,7 @@
                 </li>
                 {% endif %}
                 {% if group_has_visible_item('reports') %}
-                {% set reports_active = request.endpoint in ('reports', 'shifts_archive', 'expenses_report', 'cash_flow_report', 'wait_time_report', 'purchases', 'report_reconciliation', 'reconciliation_cashless', 'pnl_report', 'pnl_settings_save', 'change_settings', 'call_center', 'contact_center_report', 'dialogs_report') or (request.endpoint and (request.endpoint.startswith('bank') or 'purchases_import' in (request.endpoint or ''))) %}
+                {% set reports_active = request.endpoint in ('reports', 'shifts_archive', 'rfm_analysis', 'expenses_report', 'cash_flow_report', 'wait_time_report', 'purchases', 'report_reconciliation', 'reconciliation_cashless', 'pnl_report', 'pnl_settings_save', 'change_settings', 'call_center', 'contact_center_report', 'dialogs_report') or (request.endpoint and (request.endpoint.startswith('bank') or 'purchases_import' in (request.endpoint or ''))) %}
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle {% if reports_active %}active{% endif %}"
                        href="#" data-bs-toggle="dropdown" aria-expanded="false">
@@ -343,6 +343,13 @@
                         <li>
                             <a class="dropdown-item" href="{{ url_for('reports') }}?tab=salary">
                                 <i class="bi bi-cash-coin me-2"></i>Зарплаты
+                            </a>
+                        </li>
+                        {% endif %}
+                        {% if item_visible('rfm_analysis') %}
+                        <li>
+                            <a class="dropdown-item {% if request.endpoint=='rfm_analysis' %}active{% endif %}" href="{{ url_for('rfm_analysis') }}">
+                                <i class="bi bi-grid-3x3-gap me-2"></i>RFM анализ
                             </a>
                         </li>
                         {% endif %}

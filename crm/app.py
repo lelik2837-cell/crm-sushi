@@ -140,6 +140,7 @@ MENU_ITEMS = [
     ('shifts_archive',        'Смены',                    'reports',  True),
     ('reports_shifts',        'Выручка',                  'reports',  True),
     ('reports_salary',        'Зарплаты',                 'reports',  True),
+    ('rfm_analysis',          'RFM анализ',               'reports',  True),
     ('expenses_report',       'Другие расходы',           'reports',  True),
     ('cash_flow_report',      'Движение наличных',        'reports',  True),
     ('wait_time_report',      'Время ожидания',           'reports',  True),
@@ -8510,6 +8511,293 @@ def edit_rate_template(tmpl_id):
 
 
 # ─── REPORTS ──────────────────────────────────────────────────────────────────
+
+_RFM_SETTINGS_KEY = 'rfm_analysis_settings_v1'
+_RFM_CATEGORY_ORDER = {
+    'r': ('R4', 'R3', 'R2', 'R1'),
+    'f': ('F1', 'F2', 'F3', 'F4'),
+    'm': ('M1', 'M2', 'M3', 'M4'),
+}
+_RFM_DEFAULT_SETTINGS = {
+    'r': {
+        'R4': {'min': 0, 'max': 30},
+        'R3': {'min': 31, 'max': 60},
+        'R2': {'min': 61, 'max': 90},
+        'R1': {'min': 91, 'max': None},
+    },
+    'f': {
+        'F1': {'min': 2, 'max': 3},
+        'F2': {'min': 4, 'max': 8},
+        'F3': {'min': 9, 'max': 14},
+        'F4': {'min': 15, 'max': None},
+    },
+    'm': {
+        'M1': {'min': 300, 'max': 5000},
+        'M2': {'min': 5001, 'max': 12000},
+        'M3': {'min': 12001, 'max': 25000},
+        'M4': {'min': 25001, 'max': None},
+    },
+}
+
+
+def _rfm_default_settings():
+    """Новая копия дефолта: настройки ниже могут дополняться данными из БД."""
+    return _json_lib.loads(_json_lib.dumps(_RFM_DEFAULT_SETTINGS))
+
+
+def _rfm_load_settings(conn):
+    cfg = _rfm_default_settings()
+    row = conn.execute('SELECT value FROM api_settings WHERE key=?', (_RFM_SETTINGS_KEY,)).fetchone()
+    if not row or not row['value']:
+        return cfg
+    try:
+        saved = _json_lib.loads(row['value'])
+    except (TypeError, ValueError):
+        return cfg
+    if not isinstance(saved, dict):
+        return cfg
+    for dim, codes in _RFM_CATEGORY_ORDER.items():
+        saved_dim = saved.get(dim)
+        if not isinstance(saved_dim, dict):
+            continue
+        for code in codes:
+            saved_range = saved_dim.get(code)
+            if not isinstance(saved_range, dict):
+                continue
+            for bound in ('min', 'max'):
+                value = saved_range.get(bound)
+                if value is None:
+                    cfg[dim][code][bound] = None
+                elif isinstance(value, (int, float)) and value >= 0:
+                    cfg[dim][code][bound] = int(value)
+    return cfg
+
+
+def _rfm_validate_settings(cfg):
+    """Разрывы допустимы: клиенты вне диапазонов просто не входят в RFM."""
+    for dim, codes in _RFM_CATEGORY_ORDER.items():
+        active = []
+        for code in codes:
+            bounds = cfg[dim][code]
+            low, high = bounds['min'], bounds['max']
+            if low is None and high is None:
+                continue
+            if low is not None and low < 0 or high is not None and high < 0:
+                return f'{code}: границы не могут быть отрицательными'
+            if low is not None and high is not None and low > high:
+                return f'{code}: значение «от» не может быть больше значения «до»'
+            active.append((code, float('-inf') if low is None else low,
+                           float('inf') if high is None else high))
+        for i, (code_a, low_a, high_a) in enumerate(active):
+            for code_b, low_b, high_b in active[i + 1:]:
+                if max(low_a, low_b) <= min(high_a, high_b):
+                    return f'{code_a} и {code_b}: диапазоны не должны пересекаться'
+    return None
+
+
+def _rfm_range_match(value, ranges, codes):
+    for code in codes:
+        bounds = ranges[code]
+        low, high = bounds['min'], bounds['max']
+        if low is None and high is None:
+            continue
+        if (low is None or value >= low) and (high is None or value <= high):
+            return code
+    return None
+
+
+def _rfm_range_label(bounds, unit):
+    low, high = bounds['min'], bounds['max']
+    if low is None and high is None:
+        return 'не настроено'
+    if low is None:
+        return f'до {high:,}'.replace(',', ' ') + f' {unit}'
+    if high is None:
+        return f'от {low:,}'.replace(',', ' ') + f' {unit}'
+    return f'{low:,}–{high:,}'.replace(',', ' ') + f' {unit}'
+
+
+def _rfm_segment_meta(r_code, f_code, m_code):
+    """Название и цвет квадрата — раскладка утверждённого пользователем макета."""
+    high_m = m_code in ('M4', 'M3')
+    high_f = f_code in ('F4', 'F3')
+    if r_code in ('R4', 'R3'):
+        if f_code == 'F1':
+            return 'Новички', 'cream'
+        if high_f and high_m:
+            return 'Лояльные +', 'green-strong'
+        if high_f:
+            return 'Лояльные', 'green'
+        return ('Лояльные' if high_m else 'Развиваются'), 'green'
+    if r_code == 'R2':
+        if f_code in ('F4', 'F3'):
+            return ('Нельзя потерять' if high_m else 'Требуют внимания'), 'yellow'
+        if f_code == 'F2' and high_m:
+            return 'Нельзя потерять', 'yellow'
+        return 'В зоне риска', 'pink'
+    if f_code == 'F4':
+        return 'В зоне риска', 'pink'
+    if f_code == 'F3' or f_code == 'F2' and high_m:
+        return 'Спящие', 'pink'
+    return 'Потерянные', 'red'
+
+
+def _rfm_build_report(conn, cfg, branch_ids):
+    params = []
+    branch_sql = ''
+    if branch_ids:
+        placeholders = ','.join('?' * len(branch_ids))
+        branch_sql = f'AND branch_id IN ({placeholders})'
+        params.extend(int(branch_id) for branch_id in branch_ids)
+    rows = conn.execute(f'''
+        SELECT phone, received_at, amount
+        FROM orders_report
+        WHERE phone IS NOT NULL AND TRIM(phone) != '' {branch_sql}
+        ORDER BY received_at
+    ''', params).fetchall()
+
+    customers = {}
+    for row in rows:
+        phone = _normalize_ru_phone(row['phone'])
+        if not phone:
+            continue
+        try:
+            order_day = date.fromisoformat(str(row['received_at'])[:10])
+        except (TypeError, ValueError):
+            continue
+        customer = customers.setdefault(phone, {'last_order': order_day, 'orders': 0, 'amount': 0.0})
+        if order_day > customer['last_order']:
+            customer['last_order'] = order_day
+        customer['orders'] += 1
+        try:
+            customer['amount'] += float(row['amount'] or 0)
+        except (TypeError, ValueError):
+            pass
+
+    active_codes = {
+        dim: [code for code in codes
+              if cfg[dim][code]['min'] is not None or cfg[dim][code]['max'] is not None]
+        for dim, codes in _RFM_CATEGORY_ORDER.items()
+    }
+    # Матрица на странице идёт сверху вниз F4→F1 и слева направо M4→M1.
+    r_codes = active_codes['r']
+    f_codes = list(reversed(active_codes['f']))
+    m_codes = list(reversed(active_codes['m']))
+    matrix = {
+        r_code: {f_code: {m_code: 0 for m_code in m_codes} for f_code in f_codes}
+        for r_code in r_codes
+    }
+
+    today = date.today()
+    included = 0
+    for customer in customers.values():
+        recency = max(0, (today - customer['last_order']).days)
+        r_code = _rfm_range_match(recency, cfg['r'], _RFM_CATEGORY_ORDER['r'])
+        f_code = _rfm_range_match(customer['orders'], cfg['f'], _RFM_CATEGORY_ORDER['f'])
+        m_code = _rfm_range_match(customer['amount'], cfg['m'], _RFM_CATEGORY_ORDER['m'])
+        # Просьба пользователя: если хотя бы одна величина не попала в настройки,
+        # такого клиента в RFM-анализе не показывать вовсе.
+        if not r_code or not f_code or not m_code:
+            continue
+        included += 1
+        matrix[r_code][f_code][m_code] += 1
+
+    r_titles = {'R4': 'Часто', 'R3': 'Недавно', 'R2': 'Давно', 'R1': 'Очень давно'}
+    f_titles = {'F4': 'Очень часто', 'F3': 'Часто', 'F2': 'Иногда', 'F1': 'Редко'}
+    m_titles = {'M4': 'Очень большой', 'M3': 'Большой', 'M2': 'Средний', 'M1': 'Маленький'}
+    r_sections = []
+    for r_code in r_codes:
+        subtotal = sum(matrix[r_code][f_code][m_code]
+                       for f_code in f_codes for m_code in m_codes)
+        cells = {}
+        for f_code in f_codes:
+            cells[f_code] = {}
+            for m_code in m_codes:
+                count = matrix[r_code][f_code][m_code]
+                name, tone = _rfm_segment_meta(r_code, f_code, m_code)
+                cells[f_code][m_code] = {
+                    'count': count,
+                    'percent': count / included * 100 if included else 0,
+                    'name': name,
+                    'tone': tone,
+                }
+        r_sections.append({
+            'code': r_code,
+            'title': r_titles[r_code],
+            'range_label': _rfm_range_label(cfg['r'][r_code], 'дней'),
+            'count': subtotal,
+            'percent': subtotal / included * 100 if included else 0,
+            'cells': cells,
+        })
+    return {
+        'valid_phone_clients': len(customers),
+        'included_clients': included,
+        'r_sections': r_sections,
+        'f_codes': f_codes,
+        'm_codes': m_codes,
+        'f_titles': f_titles,
+        'm_titles': m_titles,
+    }
+
+
+@app.route('/reports/rfm')
+@login_required
+@menu_permission_required('rfm_analysis')
+def rfm_analysis():
+    requested_branch_ids = [bid for bid in request.args.getlist('branch_ids') if bid.isdigit()]
+    branch_ids = get_effective_branch_ids('rfm_analysis', requested_branch_ids) or []
+    if session.get('role') == 'owner':
+        selected_branch_ids = requested_branch_ids
+    elif can_pick_other_branches('rfm_analysis'):
+        selected_branch_ids = requested_branch_ids or branch_ids
+    else:
+        selected_branch_ids = branch_ids
+
+    with get_db() as conn:
+        cfg = _rfm_load_settings(conn)
+        report = _rfm_build_report(conn, cfg, branch_ids)
+        branches = conn.execute('SELECT id, name FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        branch_groups = get_branch_groups(conn)
+    return render_template(
+        'rfm_analysis.html', cfg=cfg, report=report, branches=branches,
+        branch_groups=branch_groups, selected_branch_ids=[str(x) for x in selected_branch_ids],
+        r_setting_codes=_RFM_CATEGORY_ORDER['r'],
+        f_setting_codes=_RFM_CATEGORY_ORDER['f'],
+        m_setting_codes=_RFM_CATEGORY_ORDER['m'],
+    )
+
+
+@app.route('/reports/rfm/settings', methods=['POST'])
+@login_required
+@menu_permission_required('rfm_analysis')
+def rfm_analysis_settings_save():
+    cfg = {dim: {} for dim in _RFM_CATEGORY_ORDER}
+    try:
+        for dim, codes in _RFM_CATEGORY_ORDER.items():
+            for code in codes:
+                bounds = {}
+                for bound in ('min', 'max'):
+                    raw = request.form.get(f'{dim}_{code.lower()}_{bound}', '').strip()
+                    bounds[bound] = None if raw == '' else int(raw)
+                cfg[dim][code] = bounds
+    except (TypeError, ValueError):
+        flash('В диапазонах RFM можно указывать только целые числа или оставлять поле пустым.', 'danger')
+    else:
+        error = _rfm_validate_settings(cfg)
+        if error:
+            flash(error, 'danger')
+        else:
+            with get_db() as conn:
+                conn.execute(
+                    'INSERT OR REPLACE INTO api_settings (key, value) VALUES (?,?)',
+                    (_RFM_SETTINGS_KEY, _json_lib.dumps(cfg, ensure_ascii=False))
+                )
+                conn.commit()
+            flash('Настройки RFM сохранены.', 'success')
+
+    selected_branch_ids = [bid for bid in request.form.getlist('branch_ids') if bid.isdigit()]
+    query = '&'.join(f'branch_ids={bid}' for bid in selected_branch_ids)
+    return redirect(url_for('rfm_analysis') + (f'?{query}' if query else ''))
 
 @app.route('/reports')
 @login_required
