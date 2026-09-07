@@ -4507,4 +4507,4 @@ Flask-хендлер `messenger_inbound()`: парсит первую цифру
 
 **Проверено:** `ast.parse` и парсинг обоих шаблонов — без ошибок; баланс скобок в JS обоих файлов сошёлся. На временной SQLite-базе — заявка с полной реальной перепиской (3 сообщения: наш запрос → ответ клиента → наш follow-up, разнесённые по времени) — API вернул их в правильном хронологическом порядке с корректными `account_id`/`contact_ref`. Отдельно — legacy-заявка без `assigned_account_id`/`recipient_ref` — `messages` пустой, `rating`/`response_text` на месте (запасной вариант для фронтенда). Через Flask test client — `/reports/guest-reviews` рендерится с новой разметкой (`rvDialogOpenLink`, `rvBubbleMsg`), `/reports/dialogs` с `?account_id=&contact_ref=` тоже 200 и содержит переданные значения в JS.
 
-Задеплоено `git push` → GitHub Actions, деплой подтверждён через GitHub Actions API (`run` для коммита `32e8603` — статус проверяется).
+Задеплоено `git push` → GitHub Actions, деплой подтверждён через GitHub Actions API (`run` для коммита `32e8603` — `completed`/`success`).
