@@ -10976,7 +10976,13 @@ def messenger_inbound(token):
 @login_required
 @menu_permission_required('dialogs_report')
 def dialogs_report():
-    return render_template('dialogs_report.html')
+    # Диплинк на конкретный тред — «Открыть в Диалогах» из модалки переписки в
+    # /guest-reviews-report (просьба пользователя 2026-09-08 открывать реальный диалог
+    # в новой вкладке); открытие треда по этим параметрам — на JS (см. dialogs_report.html).
+    deep_account_id = request.args.get('account_id', type=int)
+    deep_contact_ref = request.args.get('contact_ref')
+    return render_template('dialogs_report.html',
+                            deep_account_id=deep_account_id, deep_contact_ref=deep_contact_ref)
 
 
 @app.route('/api/dialogs/threads')
@@ -17551,52 +17557,63 @@ def guest_reviews_reveal_phone():
 @menu_permission_required('guest_reviews_report')
 def api_rating_request_dialog(req_id):
     """«История переписки» для одной заявки на оценку заказа (order_rating_requests) —
-    кнопка «Переписка» у отзывов источника «Ревви» в /guest-reviews-report (просьба
-    пользователя 2026-09-06). Реконструирует обмен из трёх сообщений: (1) текст запроса,
-    который реально ушёл (по variant_index — если для этого варианта в
-    rating_campaign_request_texts текста почему-то нет, откатываемся на
-    rating_campaigns.request_text), (2) ответ клиента — response_text, если сохранён
-    (заявки, отвеченные ДО этой правки, его не имеют — тогда просто оценка без слов, см.
-    messenger_inbound), (3) follow-up по итоговой оценке (low/mid/high_text). Оба
-    временных штампа (sent_at/responded_at) в БД лежат в UTC (datetime('now') в коде
-    отправки/приёма) — переводим в локальное время (+7, Asia/Novosibirsk) тем же приёмом,
-    что и в guest_reviews_report()."""
+    кнопка «Переписка» у отзывов источника «Ревви» в /guest-reviews-report.
+
+    С 2026-09-08 (просьба пользователя показывать РЕАЛЬНУЮ переписку) — читаем весь тред
+    напрямую из messenger_messages по паре (assigned_account_id, recipient_ref), тому же
+    ключу, что использует /reports/dialogs (см. messenger_inbound/_scheduled_rating_requests,
+    оба пишут туда и входящие, и исходящие). Раньше эндпоинт РЕКОНСТРУИРОВАЛ переписку из
+    трёх сообщений (текст запроса по конфигу кампании + response_text + follow-up по
+    итоговой оценке) — это могло разойтись с тем, что было отправлено/получено на самом
+    деле (кампанию могли поменять после отправки, в переписке могло быть больше сообщений).
+    Для заявок без сохранённого account_id/recipient_ref (совсем старые, до того как эти
+    поля начали писаться) реальной переписки в messenger_messages нет вовсе — тогда
+    messages будет пустым списком, а фронтенд показывает запасной вариант по rating/
+    response_text (ниже в ответе, как и раньше).
+
+    Заодно помечаем тред прочитанным (_dialog_mark_read) — раз уже посмотрели переписку
+    отсюда, не нужно, чтобы она заново висела непрочитанной в /reports/dialogs."""
     with get_db() as conn:
         row = conn.execute('''
-            SELECT rr.*, rc.request_text AS campaign_request_text,
-                   rc.low_text, rc.mid_text, rc.high_text,
-                   ma.channel AS channel,
-                   datetime(rr.sent_at, '+7 hours') AS sent_at_local,
-                   datetime(rr.responded_at, '+7 hours') AS responded_at_local
+            SELECT rr.*, ma.channel AS channel
             FROM order_rating_requests rr
-            JOIN rating_campaigns rc ON rc.id = rr.campaign_id
             LEFT JOIN messenger_accounts ma ON ma.id = rr.assigned_account_id
             WHERE rr.id = ?
         ''', (req_id,)).fetchone()
         if not row:
             return jsonify({'ok': False, 'error': 'not_found'}), 404
-        variant_row = conn.execute(
-            'SELECT text FROM rating_campaign_request_texts WHERE campaign_id=? AND variant_index=?',
-            (row['campaign_id'], row['variant_index'])
-        ).fetchone()
 
-    request_text = (variant_row['text'] if variant_row else None) or row['campaign_request_text']
-    followup_text = None
-    if row['rating'] is not None:
-        followup_text = row['low_text'] if row['rating'] <= 3 else (row['mid_text'] if row['rating'] == 4 else row['high_text'])
+        messages = []
+        if row['assigned_account_id'] and row['recipient_ref']:
+            _dialog_mark_read(conn, row['assigned_account_id'], row['recipient_ref'])
+            messages = conn.execute('''
+                SELECT id, direction, text, image_blob IS NOT NULL AS has_image,
+                       image_deleted_at IS NOT NULL AS image_deleted,
+                       datetime(created_at, '+7 hours') AS created_at
+                FROM messenger_messages
+                WHERE account_id=? AND contact_ref=?
+                ORDER BY id
+            ''', (row['assigned_account_id'], row['recipient_ref'])).fetchall()
 
     return jsonify({
         'ok': True,
         'order_number': row['order_number'],
         'phone': phone_fmt(row['phone']) if row['phone'] else None,
         'channel': BROADCAST_CHANNEL_LABELS.get(row['channel'], row['channel']) if row['channel'] else None,
-        'sent_at': datetime_ru_short(row['sent_at_local']),
-        'request_text': request_text,
+        'account_id': row['assigned_account_id'],
+        'contact_ref': row['recipient_ref'],
+        'messages': [{
+            'direction': m['direction'],
+            'text': m['text'],
+            'has_image': bool(m['has_image']),
+            'image_deleted': bool(m['image_deleted']),
+            'image_url': url_for('api_messenger_message_image', message_id=m['id']) if m['has_image'] else None,
+            'created_at': datetime_ru_short(m['created_at']),
+        } for m in messages],
+        # Запасной вариант для показа, если реальной переписки в messenger_messages нет
+        # (совсем старая заявка без account_id/recipient_ref) — как было раньше.
         'rating': row['rating'],
         'response_text': row['response_text'],
-        'responded_at': datetime_ru_short(row['responded_at_local']),
-        'followup_text': followup_text,
-        'followup_status': row['followup_status'],
     })
 
 

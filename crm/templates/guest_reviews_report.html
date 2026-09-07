@@ -228,8 +228,14 @@
                 <h5 class="modal-title"><i class="bi bi-chat-left-text me-2"></i>История переписки</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
-            <div class="modal-body" id="rvDialogBody" style="min-height:120px;">
+            <div class="modal-body" id="rvDialogBody" style="min-height:120px; max-height:60vh; overflow-y:auto;">
                 <div class="text-muted text-center py-4">Загрузка…</div>
+            </div>
+            <div class="modal-footer">
+                <a href="#" id="rvDialogOpenLink" target="_blank" class="btn btn-sm btn-outline-primary" style="display:none;">
+                    <i class="bi bi-box-arrow-up-right me-1"></i>Открыть в Диалогах
+                </a>
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Закрыть</button>
             </div>
         </div>
     </div>
@@ -366,20 +372,31 @@
     };
 
     /* ── «История переписки» (модалка) для отзыва источника «Ревви» ──
-       Реконструированный обмен: текст запроса → ответ клиента (дословный текст, если
-       сохранён — см. response_text/messenger_inbound) → наш follow-up по оценке. */
+       Реальная переписка из messenger_messages (тот же журнал, что и /reports/dialogs) —
+       просьба пользователя 2026-09-08 показывать то, что было отправлено/получено на самом
+       деле, а не реконструкцию по конфигу кампании. Для совсем старых заявок без сохранённого
+       account_id/recipient_ref (до того как эти поля начали писаться) реального лога может
+       не быть — тогда запасной вариант по rating/response_text (см. ниже). */
     function escapeHtml(s) {
         return String(s == null ? '' : s)
             .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
-    function rvBubble(align, text, meta) {
-        var isRight = align === 'right';
+    function rvBubbleMsg(m) {
+        var isRight = m.direction === 'out';
+        var inner = '';
+        if (m.has_image) {
+            inner += '<img src="' + m.image_url + '" style="max-width:220px;max-height:220px;border-radius:8px;display:block;margin-bottom:4px;cursor:pointer;" onclick="window.open(\'' + m.image_url + '\', \'_blank\')">';
+        } else if (m.image_deleted) {
+            inner += '<div class="fst-italic" style="opacity:.7;">Фото (удалено, хранится 6 месяцев)</div>';
+        }
+        if (m.text) inner += '<div style="white-space:pre-wrap;">' + escapeHtml(m.text) + '</div>';
+        if (!inner) inner = '<span class="fst-italic" style="opacity:.6;">(пусто)</span>';
         return '<div style="display:flex;justify-content:' + (isRight ? 'flex-end' : 'flex-start') + ';margin-bottom:10px;">' +
             '<div style="max-width:80%;">' +
                 '<div style="background:' + (isRight ? '#0d6efd' : '#e9ecef') + ';color:' + (isRight ? '#fff' : '#212529') + ';' +
-                    'border-radius:12px;padding:8px 12px;white-space:pre-wrap;font-size:13.5px;">' + escapeHtml(text) + '</div>' +
-                '<div class="text-muted small mt-1" style="text-align:' + (isRight ? 'right' : 'left') + ';">' + meta + '</div>' +
+                    'border-radius:12px;padding:8px 12px;font-size:13.5px;">' + inner + '</div>' +
+                '<div class="text-muted small mt-1" style="text-align:' + (isRight ? 'right' : 'left') + ';">' + escapeHtml(m.created_at) + '</div>' +
             '</div>' +
         '</div>';
     }
@@ -387,7 +404,9 @@
     window.openRvDialog = function (reqId) {
         if (!rvDialogModal) rvDialogModal = new bootstrap.Modal(document.getElementById('rvDialogModal'));
         var body = document.getElementById('rvDialogBody');
+        var openLink = document.getElementById('rvDialogOpenLink');
         body.innerHTML = '<div class="text-muted text-center py-4">Загрузка…</div>';
+        openLink.style.display = 'none';
         rvDialogModal.show();
         fetch('/api/rating-request/' + reqId + '/dialog')
             .then(function (r) { return r.json(); })
@@ -401,21 +420,20 @@
                     (d.channel ? ' · ' + escapeHtml(d.channel) : '') + '</div>';
 
                 var html = header;
-                html += rvBubble('right', d.request_text || '(текст запроса не найден)', d.sent_at ? escapeHtml(d.sent_at) : '');
-
-                var clientText = d.response_text ? d.response_text : ('Оценка: ' + d.rating + '/5 (дословный текст ответа не сохранён — заявка отвечена до включения этой возможности)');
-                var clientMeta = (d.responded_at ? escapeHtml(d.responded_at) : '') +
-                    (d.response_text ? ' · оценка ' + d.rating + '/5' : '');
-                html += rvBubble('left', clientText, clientMeta);
-
-                if (d.followup_text) {
-                    var followupMeta = d.followup_status === 'failed'
-                        ? '<span class="text-danger">не доставлено</span>'
-                        : (d.responded_at ? escapeHtml(d.responded_at) : '');
-                    html += rvBubble('right', d.followup_text, followupMeta);
+                if (d.messages && d.messages.length) {
+                    d.messages.forEach(function (m) { html += rvBubbleMsg(m); });
+                } else if (d.response_text || d.rating != null) {
+                    html += '<div class="alert alert-warning small py-2 mb-3">Реальный журнал переписки для этой заявки не сохранился (отвечена до того, как это стало отслеживаться) — показана только сохранённая оценка.</div>';
+                    html += rvBubbleMsg({ direction: 'in', text: d.response_text || ('Оценка: ' + d.rating + '/5'), created_at: '' });
+                } else {
+                    html += '<div class="text-muted text-center py-4">Переписки пока нет</div>';
                 }
-
                 body.innerHTML = html;
+
+                if (d.account_id && d.contact_ref) {
+                    openLink.href = '/reports/dialogs?account_id=' + encodeURIComponent(d.account_id) + '&contact_ref=' + encodeURIComponent(d.contact_ref);
+                    openLink.style.display = '';
+                }
             })
             .catch(function () {
                 body.innerHTML = '<div class="text-danger text-center py-4">Не удалось загрузить переписку</div>';
