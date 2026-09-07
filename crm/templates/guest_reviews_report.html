@@ -101,8 +101,34 @@
 .gr-chevron { display:inline-block; transition:transform .15s; margin-right:4px; }
 .gr-chevron.open { transform:rotate(90deg); }
 .gr-category-select { min-width:190px; max-width:240px; }
-.rv-category-card { border:1px solid #dee2e6; border-radius:10px; padding:12px; }
-.rv-category-leaf { border-top:1px solid #edf0f2; padding-top:12px; margin-top:12px; }
+.rv-category-layout { min-height:470px; }
+.rv-category-tree-pane { padding:20px; background:#f8f9fa; border-right:1px solid #dee2e6; max-height:65vh; overflow-y:auto; }
+.rv-category-editor-pane { padding:28px; min-height:470px; }
+.rv-category-root-block { background:#fff; border:1px solid #dee2e6; border-radius:10px; overflow:hidden; }
+.rv-category-nav { transition:background-color .15s, color .15s, border-color .15s; }
+.rv-category-root-btn,
+.rv-category-child-btn,
+.rv-category-add-child-btn { width:100%; border:0; background:transparent; display:flex; align-items:center; text-align:left; }
+.rv-category-root-btn { padding:10px 12px; font-weight:600; color:#26364a; }
+.rv-category-children { border-top:1px solid #edf0f2; padding:6px; }
+.rv-category-child-btn,
+.rv-category-add-child-btn { border-radius:7px; padding:7px 10px 7px 24px; font-size:.875rem; color:#495057; }
+.rv-category-add-child-btn { color:#198754; }
+.rv-category-root-btn:hover,
+.rv-category-child-btn:hover,
+.rv-category-add-child-btn:hover { background:#eef3f8; }
+.rv-category-nav.active { background:#e7f1ff; color:#0d6efd; }
+.rv-category-empty-state { max-width:430px; margin:80px auto 0; text-align:center; }
+.rv-category-empty-state > i { font-size:2.4rem; color:#adb5bd; }
+@media (min-width:768px) {
+    .rv-category-modal { --bs-modal-width:min(1050px, calc(100vw - 32px)); }
+}
+@media (max-width:767.98px) {
+    .rv-category-layout { min-height:0; }
+    .rv-category-tree-pane { border-right:0; border-bottom:1px solid #dee2e6; max-height:280px; }
+    .rv-category-editor-pane { min-height:390px; padding:20px; }
+    .rv-category-empty-state { margin-top:55px; }
+}
 </style>
 
 {% macro sentiment_dot(sentiment) %}
@@ -263,111 +289,146 @@
 
 <!-- Настройка двухуровневых категорий отзывов -->
 <div class="modal fade" id="reviewCategoriesModal" tabindex="-1" aria-labelledby="reviewCategoriesModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable rv-category-modal">
         <div class="modal-content">
             <div class="modal-header">
                 <div>
                     <h5 class="modal-title" id="reviewCategoriesModalLabel"><i class="bi bi-gear me-2"></i>Категории отзывов</h5>
-                    <div class="text-muted small mt-1">Сначала создайте раздел, затем конечные категории. В отзыве выбирается только конечная категория.</div>
+                    <div class="text-muted small mt-1">Слева выберите корневую категорию или вложенную категорию, справа настройте её.</div>
                 </div>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
-            <div class="modal-body">
-                {% if not review_category_tree %}
-                <div class="alert alert-light border">Категорий пока нет. Добавьте первый раздел, например «Доставка» или «Кухня».</div>
-                {% endif %}
+            <div class="modal-body p-0">
+                <div class="row g-0 rv-category-layout">
+                    <aside class="col-12 col-md-4 rv-category-tree-pane">
+                        <div class="d-flex align-items-center justify-content-between gap-2 mb-3">
+                            <div class="fw-semibold">Дерево категорий</div>
+                            <button type="button" class="btn btn-sm btn-success rv-category-nav"
+                                    data-panel="rv-category-add-root" onclick="showReviewCategoryPanel('rv-category-add-root', this)">
+                                <i class="bi bi-plus-lg me-1"></i>Корневая
+                            </button>
+                        </div>
+                        {% if not review_category_tree %}
+                        <div class="text-muted small border rounded p-3">Пока пусто. Создайте первую корневую категорию, например «Доставка» или «Кухня».</div>
+                        {% endif %}
 
-                <div class="row g-3">
-                    {% for parent in review_category_tree %}
-                    <div class="col-12">
-                        <div class="rv-category-card">
-                            <div class="d-flex flex-column flex-md-row gap-2 align-items-md-center">
-                                <form method="POST" action="{{ url_for('guest_review_categories_update') }}" class="d-flex gap-2 flex-grow-1 rv-category-settings-form">
-                                    {{ category_form_filters() }}
-                                    <input type="hidden" name="action" value="edit_parent">
-                                    <input type="hidden" name="category_id" value="{{ parent.id }}">
-                                    <div class="input-group input-group-sm">
-                                        <span class="input-group-text fw-semibold">Раздел</span>
-                                        <input type="text" class="form-control" name="name" value="{{ parent.name }}" maxlength="100" required>
-                                        <button class="btn btn-outline-primary" type="submit" title="Сохранить раздел"><i class="bi bi-check-lg"></i></button>
-                                    </div>
-                                </form>
-                                <form method="POST" action="{{ url_for('guest_review_categories_update') }}" class="rv-category-settings-form"
-                                      data-confirm="Удалить раздел и все его категории?">
-                                    {{ category_form_filters() }}
-                                    <input type="hidden" name="action" value="delete_parent">
-                                    <input type="hidden" name="category_id" value="{{ parent.id }}">
-                                    <button class="btn btn-sm btn-outline-danger" type="submit" title="Удалить раздел"><i class="bi bi-trash"></i></button>
-                                </form>
-                            </div>
-
-                            {% for child in parent.children %}
-                            <div class="rv-category-leaf">
-                                <div class="row g-2 align-items-end">
-                                    <div class="col-12 col-lg-11">
-                                        <form method="POST" action="{{ url_for('guest_review_categories_update') }}" class="row g-2 rv-category-settings-form">
-                                            {{ category_form_filters() }}
-                                            <input type="hidden" name="action" value="edit_leaf">
-                                            <input type="hidden" name="category_id" value="{{ child.id }}">
-                                            <div class="col-12 col-md-4">
-                                                <label class="form-label small fw-semibold">Конечная категория</label>
-                                                <input type="text" class="form-control form-control-sm" name="name" value="{{ child.name }}" maxlength="100" required>
-                                            </div>
-                                            <div class="col-12 col-md-7">
-                                                <label class="form-label small fw-semibold">Слова и фразы для автоопределения</label>
-                                                <textarea class="form-control form-control-sm" name="keywords" rows="2" maxlength="20000" placeholder="Одна фраза на строку">{{ child.keywords | join('\n') }}</textarea>
-                                                <div class="form-text">Поиск идёт без учёта регистра внутри поля «Тип жалобы».</div>
-                                            </div>
-                                            <div class="col-12 col-md-1 d-flex align-items-end">
-                                                <button class="btn btn-sm btn-primary w-100" type="submit" title="Сохранить"><i class="bi bi-check-lg"></i></button>
-                                            </div>
-                                        </form>
-                                    </div>
-                                    <div class="col-12 col-lg-1 d-grid">
-                                        <form method="POST" action="{{ url_for('guest_review_categories_update') }}" class="rv-category-settings-form"
-                                              data-confirm="Удалить конечную категорию?">
-                                            {{ category_form_filters() }}
-                                            <input type="hidden" name="action" value="delete_leaf">
-                                            <input type="hidden" name="category_id" value="{{ child.id }}">
-                                            <button class="btn btn-sm btn-outline-danger w-100" type="submit" title="Удалить"><i class="bi bi-trash"></i></button>
-                                        </form>
-                                    </div>
+                        <div class="d-flex flex-column gap-2">
+                            {% for parent in review_category_tree %}
+                            <div class="rv-category-root-block">
+                                <button type="button" class="rv-category-nav rv-category-root-btn"
+                                        data-panel="rv-category-parent-{{ parent.id }}"
+                                        onclick="showReviewCategoryPanel('rv-category-parent-{{ parent.id }}', this)">
+                                    <i class="bi bi-folder2-open me-2"></i><span>{{ parent.name }}</span>
+                                    <i class="bi bi-chevron-right ms-auto"></i>
+                                </button>
+                                <div class="rv-category-children">
+                                    {% for child in parent.children %}
+                                    <button type="button" class="rv-category-nav rv-category-child-btn"
+                                            data-panel="rv-category-leaf-{{ child.id }}"
+                                            onclick="showReviewCategoryPanel('rv-category-leaf-{{ child.id }}', this)">
+                                        <i class="bi bi-tag me-2"></i><span>{{ child.name }}</span>
+                                    </button>
+                                    {% else %}
+                                    <div class="text-muted small px-2 py-1">Нет вложенных категорий</div>
+                                    {% endfor %}
+                                    <button type="button" class="rv-category-nav rv-category-add-child-btn"
+                                            data-panel="rv-category-add-leaf-{{ parent.id }}"
+                                            onclick="showReviewCategoryPanel('rv-category-add-leaf-{{ parent.id }}', this)">
+                                        <i class="bi bi-plus-lg me-2"></i>Добавить категорию
+                                    </button>
                                 </div>
                             </div>
                             {% endfor %}
+                        </div>
+                    </aside>
 
-                            <div class="rv-category-leaf bg-light rounded p-2">
-                                <form method="POST" action="{{ url_for('guest_review_categories_update') }}" class="row g-2 align-items-end rv-category-settings-form">
-                                    {{ category_form_filters() }}
-                                    <input type="hidden" name="action" value="add_leaf">
-                                    <input type="hidden" name="parent_id" value="{{ parent.id }}">
-                                    <div class="col-12 col-md-4">
-                                        <label class="form-label small fw-semibold">Новая конечная категория</label>
-                                        <input type="text" class="form-control form-control-sm" name="name" maxlength="100" placeholder="Например, Опоздание" required>
-                                    </div>
-                                    <div class="col-12 col-md-7">
-                                        <label class="form-label small fw-semibold">Слова и фразы</label>
-                                        <textarea class="form-control form-control-sm" name="keywords" rows="2" maxlength="20000" placeholder="опоздание&#10;долго везли"></textarea>
-                                    </div>
-                                    <div class="col-12 col-md-1 d-grid">
-                                        <button class="btn btn-sm btn-success" type="submit" title="Добавить категорию"><i class="bi bi-plus-lg"></i></button>
-                                    </div>
-                                </form>
+                    <section class="col-12 col-md-8 rv-category-editor-pane">
+                        <div class="rv-category-panel" id="rv-category-welcome">
+                            <div class="rv-category-empty-state">
+                                <i class="bi bi-diagram-3"></i>
+                                <div class="fw-semibold mt-2">Выберите элемент слева</div>
+                                <div class="text-muted small mt-1">Можно изменить корневую категорию, добавить в неё вложенную или настроить автоправила выбранной категории.</div>
                             </div>
                         </div>
-                    </div>
-                    {% endfor %}
-                </div>
 
-                <form method="POST" action="{{ url_for('guest_review_categories_update') }}" class="mt-3 rv-category-settings-form">
-                    {{ category_form_filters() }}
-                    <input type="hidden" name="action" value="add_parent">
-                    <label class="form-label small fw-semibold">Новый раздел</label>
-                    <div class="input-group input-group-sm" style="max-width:520px;">
-                        <input type="text" class="form-control" name="name" maxlength="100" placeholder="Например, Доставка" required>
-                        <button class="btn btn-success" type="submit"><i class="bi bi-plus-lg me-1"></i>Добавить раздел</button>
-                    </div>
-                </form>
+                        <div class="rv-category-panel d-none" id="rv-category-add-root">
+                            <div class="text-success small fw-semibold mb-1"><i class="bi bi-plus-circle me-1"></i>Новая корневая категория</div>
+                            <h5 class="mb-3">Создать корневую категорию</h5>
+                            <form method="POST" action="{{ url_for('guest_review_categories_update') }}" class="rv-category-settings-form" data-panel-id="rv-category-add-root">
+                                {{ category_form_filters() }}
+                                <input type="hidden" name="action" value="add_parent">
+                                <label class="form-label small fw-semibold">Название</label>
+                                <input type="text" class="form-control" name="name" maxlength="100" placeholder="Например, Доставка" required>
+                                <button class="btn btn-success mt-3" type="submit"><i class="bi bi-plus-lg me-1"></i>Создать</button>
+                            </form>
+                        </div>
+
+                    {% for parent in review_category_tree %}
+                        <div class="rv-category-panel d-none" id="rv-category-parent-{{ parent.id }}">
+                            <div class="text-primary small fw-semibold mb-1"><i class="bi bi-folder2-open me-1"></i>Корневая категория</div>
+                            <h5 class="mb-3">{{ parent.name }}</h5>
+                            <form method="POST" action="{{ url_for('guest_review_categories_update') }}" class="rv-category-settings-form" data-panel-id="rv-category-parent-{{ parent.id }}">
+                                {{ category_form_filters() }}
+                                <input type="hidden" name="action" value="edit_parent">
+                                <input type="hidden" name="category_id" value="{{ parent.id }}">
+                                <label class="form-label small fw-semibold">Название корневой категории</label>
+                                <input type="text" class="form-control" name="name" value="{{ parent.name }}" maxlength="100" required>
+                                <button class="btn btn-primary mt-3" type="submit"><i class="bi bi-check-lg me-1"></i>Сохранить</button>
+                            </form>
+                            <hr class="my-4">
+                            <form method="POST" action="{{ url_for('guest_review_categories_update') }}" class="rv-category-settings-form"
+                                  data-panel-id="rv-category-parent-{{ parent.id }}" data-confirm="Удалить корневую категорию и все вложенные категории?">
+                                {{ category_form_filters() }}
+                                <input type="hidden" name="action" value="delete_parent">
+                                <input type="hidden" name="category_id" value="{{ parent.id }}">
+                                <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash me-1"></i>Удалить корневую категорию</button>
+                            </form>
+                        </div>
+
+                        <div class="rv-category-panel d-none" id="rv-category-add-leaf-{{ parent.id }}">
+                            <div class="text-success small fw-semibold mb-1"><i class="bi bi-plus-circle me-1"></i>{{ parent.name }}</div>
+                            <h5 class="mb-3">Добавить вложенную категорию</h5>
+                            <form method="POST" action="{{ url_for('guest_review_categories_update') }}" class="rv-category-settings-form" data-panel-id="rv-category-add-leaf-{{ parent.id }}">
+                                {{ category_form_filters() }}
+                                <input type="hidden" name="action" value="add_leaf">
+                                <input type="hidden" name="parent_id" value="{{ parent.id }}">
+                                <label class="form-label small fw-semibold">Название категории</label>
+                                <input type="text" class="form-control" name="name" maxlength="100" placeholder="Например, Опоздание" required>
+                                <label class="form-label small fw-semibold mt-3">Слова и фразы для автоматического выбора</label>
+                                <textarea class="form-control" name="keywords" rows="5" maxlength="20000" placeholder="опоздание&#10;долго везли"></textarea>
+                                <div class="form-text">Указывайте по одному слову или фразе на строку. Поиск идёт без учёта регистра в поле «Тип жалобы».</div>
+                                <button class="btn btn-success mt-3" type="submit"><i class="bi bi-plus-lg me-1"></i>Добавить категорию</button>
+                            </form>
+                        </div>
+
+                        {% for child in parent.children %}
+                        <div class="rv-category-panel d-none" id="rv-category-leaf-{{ child.id }}">
+                            <div class="text-muted small mb-1"><i class="bi bi-folder2 me-1"></i>{{ parent.name }}</div>
+                            <h5 class="mb-3"><i class="bi bi-tag me-2"></i>{{ child.name }}</h5>
+                            <form method="POST" action="{{ url_for('guest_review_categories_update') }}" class="rv-category-settings-form" data-panel-id="rv-category-leaf-{{ child.id }}">
+                                {{ category_form_filters() }}
+                                <input type="hidden" name="action" value="edit_leaf">
+                                <input type="hidden" name="category_id" value="{{ child.id }}">
+                                <label class="form-label small fw-semibold">Название категории</label>
+                                <input type="text" class="form-control" name="name" value="{{ child.name }}" maxlength="100" required>
+                                <label class="form-label small fw-semibold mt-3">Слова и фразы для автоматического выбора</label>
+                                <textarea class="form-control" name="keywords" rows="5" maxlength="20000" placeholder="Одна фраза на строку">{{ child.keywords | join('\n') }}</textarea>
+                                <div class="form-text">Если совпало несколько правил, используется самая длинная фраза. Ручной выбор в таблице всегда имеет приоритет.</div>
+                                <button class="btn btn-primary mt-3" type="submit"><i class="bi bi-check-lg me-1"></i>Сохранить настройки</button>
+                            </form>
+                            <hr class="my-4">
+                            <form method="POST" action="{{ url_for('guest_review_categories_update') }}" class="rv-category-settings-form"
+                                  data-panel-id="rv-category-leaf-{{ child.id }}" data-confirm="Удалить вложенную категорию?">
+                                    {{ category_form_filters() }}
+                                <input type="hidden" name="action" value="delete_leaf">
+                                <input type="hidden" name="category_id" value="{{ child.id }}">
+                                <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash me-1"></i>Удалить категорию</button>
+                            </form>
+                        </div>
+                        {% endfor %}
+                    {% endfor %}
+                    </section>
+                </div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
@@ -543,8 +604,20 @@
        прокрутку страницы и раскрытые группы, чтобы после сохранения пользователь
        продолжил с того же места и с теми же фильтрами. */
     var RV_CATEGORY_STATE_KEY = 'guest_reviews_category_ui';
+    window.showReviewCategoryPanel = function (panelId, trigger) {
+        var target = document.getElementById(panelId);
+        if (!target) target = document.getElementById('rv-category-welcome');
+        document.querySelectorAll('.rv-category-panel').forEach(function (panel) {
+            panel.classList.toggle('d-none', panel !== target);
+        });
+        document.querySelectorAll('.rv-category-nav').forEach(function (item) {
+            item.classList.toggle('active', item === trigger || item.dataset.panel === target.id);
+        });
+    };
     window.rememberRvCategoryUi = function () {
         var modalBody = document.querySelector('#reviewCategoriesModal .modal-body');
+        var treePane = document.querySelector('#reviewCategoriesModal .rv-category-tree-pane');
+        var activePanel = document.querySelector('#reviewCategoriesModal .rv-category-panel:not(.d-none)');
         var openGroups = [];
         document.querySelectorAll('.gr-chevron.open').forEach(function (item) {
             openGroups.push(item.id.replace('gr-chevron-', ''));
@@ -553,6 +626,8 @@
             reopenModal: true,
             pageScroll: window.scrollY,
             modalScroll: modalBody ? modalBody.scrollTop : 0,
+            treeScroll: treePane ? treePane.scrollTop : 0,
+            activePanel: activePanel ? activePanel.id : 'rv-category-welcome',
             openGroups: openGroups
         }));
     };
@@ -572,12 +647,16 @@
         try {
             var state = JSON.parse(savedCategoryState);
             (state.openGroups || []).forEach(function (gi) { window.toggleGrGroup(gi); });
+            var activeNav = document.querySelector('.rv-category-nav[data-panel="' + state.activePanel + '"]');
+            window.showReviewCategoryPanel(state.activePanel || 'rv-category-welcome', activeNav);
             requestAnimationFrame(function () { window.scrollTo(0, Number(state.pageScroll) || 0); });
             if (state.reopenModal) {
                 var categoryModalEl = document.getElementById('reviewCategoriesModal');
                 categoryModalEl.addEventListener('shown.bs.modal', function () {
                     var body = categoryModalEl.querySelector('.modal-body');
+                    var treePane = categoryModalEl.querySelector('.rv-category-tree-pane');
                     if (body) body.scrollTop = Number(state.modalScroll) || 0;
+                    if (treePane) treePane.scrollTop = Number(state.treeScroll) || 0;
                 }, { once: true });
                 new bootstrap.Modal(categoryModalEl).show();
             }

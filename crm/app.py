@@ -17658,9 +17658,9 @@ def guest_review_categories_update():
         with get_db() as conn:
             if action == 'add_parent':
                 if not name:
-                    raise ValueError('Введите название раздела')
+                    raise ValueError('Введите название корневой категории')
                 if _review_category_name_exists(conn, name, None):
-                    raise ValueError('Такой раздел уже существует')
+                    raise ValueError('Такая корневая категория уже существует')
                 sort_order = conn.execute(
                     'SELECT COALESCE(MAX(sort_order), 0) + 1 FROM review_categories WHERE parent_id IS NULL'
                 ).fetchone()[0]
@@ -17668,7 +17668,7 @@ def guest_review_categories_update():
                     INSERT INTO review_categories (name, parent_id, sort_order, created_by)
                     VALUES (?, NULL, ?, ?)
                 ''', (name, sort_order, session.get('user_id')))
-                flash('Раздел категории добавлен', 'success')
+                flash('Корневая категория добавлена', 'success')
 
             elif action == 'edit_parent':
                 row = conn.execute(
@@ -17676,16 +17676,16 @@ def guest_review_categories_update():
                     (category_id,)
                 ).fetchone()
                 if not row:
-                    raise ValueError('Раздел не найден')
+                    raise ValueError('Корневая категория не найдена')
                 if not name:
-                    raise ValueError('Введите название раздела')
+                    raise ValueError('Введите название корневой категории')
                 if _review_category_name_exists(conn, name, None, category_id):
-                    raise ValueError('Такой раздел уже существует')
+                    raise ValueError('Такая корневая категория уже существует')
                 conn.execute(
                     'UPDATE review_categories SET name=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
                     (name, category_id)
                 )
-                flash('Раздел категории сохранён', 'success')
+                flash('Корневая категория сохранена', 'success')
 
             elif action == 'delete_parent':
                 row = conn.execute(
@@ -17693,7 +17693,7 @@ def guest_review_categories_update():
                     (category_id,)
                 ).fetchone()
                 if not row:
-                    raise ValueError('Раздел не найден')
+                    raise ValueError('Корневая категория не найдена')
                 ids = [category_id] + [
                     r['id'] for r in conn.execute(
                         'SELECT id FROM review_categories WHERE parent_id=?', (category_id,)
@@ -17709,7 +17709,7 @@ def guest_review_categories_update():
                     f'WHERE review_category_id IN ({placeholders})', ids
                 )
                 conn.execute('DELETE FROM review_categories WHERE id=?', (category_id,))
-                flash('Раздел и его категории удалены', 'success')
+                flash('Корневая категория и все вложенные категории удалены', 'success')
 
             elif action == 'add_leaf':
                 parent = conn.execute(
@@ -17717,7 +17717,7 @@ def guest_review_categories_update():
                     (parent_id,)
                 ).fetchone()
                 if not parent:
-                    raise ValueError('Раздел не найден')
+                    raise ValueError('Корневая категория не найдена')
                 if not name:
                     raise ValueError('Введите название категории')
                 if _review_category_name_exists(conn, name, parent_id):
@@ -17736,7 +17736,7 @@ def guest_review_categories_update():
                     VALUES (?, ?, ?)
                 ''', [(cur.lastrowid, phrase, i) for i, phrase in enumerate(phrases)])
                 _apply_review_category_rules(conn)
-                flash('Конечная категория добавлена', 'success')
+                flash('Вложенная категория добавлена', 'success')
 
             elif action == 'edit_leaf':
                 row = conn.execute('''
@@ -17785,7 +17785,7 @@ def guest_review_categories_update():
                 ''', (category_id,))
                 conn.execute('DELETE FROM review_categories WHERE id=?', (category_id,))
                 _apply_review_category_rules(conn)
-                flash('Конечная категория удалена', 'success')
+                flash('Вложенная категория удалена', 'success')
 
             else:
                 raise ValueError('Неизвестное действие')
