@@ -2619,6 +2619,42 @@ def init_db():
             # messenger_inbound) — у заявок, отвеченных до этой правки, будет NULL.
             conn.execute("ALTER TABLE order_rating_requests ADD COLUMN response_text TEXT")
 
+        # Одноразовая докладка (2026-09-07): исходный запрос «оцените заказ» отправлялся
+        # (_scheduled_rating_requests) без записи в messenger_messages — «Диалоги»
+        # (/reports/dialogs) показывали тред только с момента ответа клиента, без того, что
+        # ему написали мы (просьба пользователя видеть полный диалог). Т.к. _scheduled_
+        # rating_requests теперь логирует исходящее сам (см. ниже по файлу), эта миграция
+        # разово дозаписывает уже отправленные ДО правки запросы, чтобы старые диалоги тоже
+        # стали полными — по одной строке на каждую уже отправленную заявку (assigned_
+        # account_id/sent_at заполнены), created_at = реальное время отправки (sent_at), а не
+        # «сейчас», чтобы сообщение встало в переписке на своё место по времени.
+        if not conn.execute(
+            "SELECT 1 FROM api_settings WHERE key='dialogs_backfill_rating_requests_v1'"
+        ).fetchone():
+            _rr_rows = conn.execute('''
+                SELECT r.assigned_account_id, r.phone, r.recipient_ref, r.sent_at,
+                       ma.channel AS channel,
+                       COALESCE(rt.text, c.request_text) AS request_text
+                FROM order_rating_requests r
+                JOIN rating_campaigns c ON c.id = r.campaign_id
+                JOIN messenger_accounts ma ON ma.id = r.assigned_account_id
+                LEFT JOIN rating_campaign_request_texts rt
+                    ON rt.campaign_id = r.campaign_id AND rt.variant_index = r.variant_index
+                WHERE r.assigned_account_id IS NOT NULL AND r.sent_at IS NOT NULL
+            ''').fetchall()
+            conn.executemany('''
+                INSERT INTO messenger_messages
+                    (account_id, channel, contact_ref, contact_phone, direction, text, created_at)
+                VALUES (?, ?, ?, ?, 'out', ?, ?)
+            ''', [
+                (r['assigned_account_id'], r['channel'], r['recipient_ref'] or r['phone'], r['phone'],
+                 r['request_text'], r['sent_at'])
+                for r in _rr_rows
+            ])
+            conn.execute(
+                "INSERT OR REPLACE INTO api_settings (key, value) VALUES ('dialogs_backfill_rating_requests_v1', '1')"
+            )
+
         # Одноразовая корректировка (2026-09-07): загрузка архивной выгрузки заказов (напр.
         # за прошлый месяц) заводила заявки на оценку так же, как для свежих заказов — не было
         # проверки, что заказ вообще недавний. Убираем уже накопленные такие заявки, пока не
@@ -18959,7 +18995,7 @@ def _scheduled_rating_requests():
                     WHERE ca.campaign_id=? AND a.status='connected'
                     ORDER BY ca.priority
                 ''', (req['campaign_id'],)).fetchall()
-                sent_account_id, last_error, recipient_ref = None, None, None
+                sent_account_id, sent_channel, last_error, recipient_ref = None, None, None, None
                 for acc in accounts:
                     try:
                         results = messenger_api.check_numbers(acc['channel'], acc['id'], [req['phone']])
@@ -18970,6 +19006,7 @@ def _scheduled_rating_requests():
                     try:
                         result = messenger_api.send_message(acc['channel'], acc['id'], req['phone'], req['request_text'])
                         sent_account_id = acc['id']
+                        sent_channel = acc['channel']
                         # Сервис может вернуть свой стабильный ID получателя (сейчас — только
                         # MAX, см. messenger_inbound) — если нет, используем телефон как раньше.
                         recipient_ref = (result or {}).get('recipient_ref') or req['phone']
@@ -18982,6 +19019,15 @@ def _scheduled_rating_requests():
                         SET status='awaiting_response', assigned_account_id=?, sent_at=datetime('now'), recipient_ref=?
                         WHERE id=?
                     ''', (sent_account_id, recipient_ref, req['id']))
+                    # Лог в общий журнал «Диалогов» (messenger_messages) — без этого запрос
+                    # «оцените заказ» был не виден в /reports/dialogs: тред появлялся только
+                    # когда клиент отвечал (messenger_inbound логирует входящее само), а самое
+                    # первое наше сообщение оставалось невидимым — просьба пользователя
+                    # 2026-09-07 сохранять полный диалог, включая то, что отправили мы.
+                    conn.execute('''
+                        INSERT INTO messenger_messages (account_id, channel, contact_ref, contact_phone, direction, text)
+                        VALUES (?, ?, ?, ?, 'out', ?)
+                    ''', (sent_account_id, sent_channel, recipient_ref, req['phone'], req['request_text']))
                 else:
                     conn.execute(
                         "UPDATE order_rating_requests SET status='failed', error=? WHERE id=?",
