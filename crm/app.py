@@ -3220,12 +3220,16 @@ def dashboard():
             ''').fetchone()
             branch_groups = get_branch_groups(conn)
             dash_blocks = get_user_dashboard_blocks(conn, session['user_id'])
+            # Вкладки дашборда («Обзор»/«RFM анализ») — переключение мгновенное через JS
+            # (см. switchDashTab в dashboard_owner.html), query-параметр только задаёт
+            # исходное состояние при заходе по прямой ссылке/обновлении страницы.
+            active_tab = request.args.get('dash_tab', 'overview')
             return render_template('dashboard_owner.html',
                 branches=branches, stats=stats, weekly=weekly,
                 open_shifts=open_shifts, kpi_blocks=kpi_blocks,
                 month_rev=month_rev, month_fot=month_fot['fot'] or 0,
                 branch_groups=branch_groups, today=date.today().isoformat(),
-                dash_blocks=dash_blocks)
+                dash_blocks=dash_blocks, active_tab=active_tab)
         else:
             if not item_visible('dashboard'):
                 # "dashboard" — единственная всегда-достижимая страница после логина,
@@ -3447,6 +3451,161 @@ def api_revenue_months():
             m = 1
             y += 1
     return jsonify({'ok': True, 'total': sum(x['revenue'] for x in months_list), 'months': months_list})
+
+
+# Границы (дней с последнего заказа) для R-категорий давности во вкладке «RFM анализ»
+# дашборда директора: R4 — до 30 дней, R3 — 31-60, R2 — 61-90, R1 — 90+. Фиксированные
+# дни, а не квантили (не «поровну по 25% клиентов») — намеренно: график сравнивает % по
+# категориям сегодня с % месяц/два назад, при квантильном делении сумма всегда была бы
+# ~25/25/25/25 в любом периоде и сравнение было бы бессмысленным.
+_RFM_RECENCY_BUCKETS_DAYS = [30, 60, 90]
+
+
+def _rfm_build_periods(today, granularity, count):
+    """count периодов для вкладки «RFM анализ», от старого к новому (последний элемент —
+    «Сегодня»). Период 0 («Сегодня») — с начала текущего месяца/недели по сегодня; период
+    k>=1 — k-й предыдущий ПОЛНЫЙ календарный месяц/неделя (понедельник-воскресенье).
+    as_of — дата среза для R-категорий давности (последний день диапазона периода)."""
+    periods = []
+    if granularity == 'week':
+        this_week_start = today - timedelta(days=today.weekday())
+        for k in range(count - 1, -1, -1):
+            if k == 0:
+                range_from, range_to, label = this_week_start, today, 'Сегодня'
+            else:
+                range_from = this_week_start - timedelta(weeks=k)
+                range_to = range_from + timedelta(days=6)
+                label = 'Неделю назад' if k == 1 else f'{k} нед. назад'
+            periods.append({'label': label, 'range_from': range_from, 'range_to': range_to, 'as_of': range_to})
+    else:
+        for k in range(count - 1, -1, -1):
+            if k == 0:
+                range_from, range_to, label = today.replace(day=1), today, 'Сегодня'
+            else:
+                y, m = today.year, today.month - k
+                while m <= 0:
+                    m += 12
+                    y -= 1
+                range_from = date(y, m, 1)
+                range_to = (date(y, 12, 31) if m == 12 else date(y, m + 1, 1) - timedelta(days=1))
+                label = 'Месяц назад' if k == 1 else f'{k} мес. назад'
+            periods.append({'label': label, 'range_from': range_from, 'range_to': range_to, 'as_of': range_to})
+    return periods
+
+
+@app.route('/api/rfm-summary')
+@login_required
+@menu_permission_required('dashboard')
+def api_rfm_summary():
+    """Вкладка «RFM анализ» дашборда директора — клиент = нормализованный телефон
+    (`_normalize_ru_phone`) из `orders_report.phone`. Главный график — доля клиентов по
+    R-категории давности (см. `_RFM_RECENCY_BUCKETS_DAYS`) на дату среза каждого периода;
+    остальные метрики — агрегаты ЗА диапазон периода (см. `_rfm_build_periods`).
+
+    Один SQL-запрос на всю историю заказов с телефоном + вся агрегация в Python (группировка
+    по нормализованному телефону, сортировка по дате уже даёт SQL ORDER BY) — не N отдельных
+    запросов на период. Не требует новой колонки/индекса в БД; при заметном росте истории
+    заказов это может стать узким местом — тогда стоит завести persisted `phone_norm` с
+    индексом, аналогично уже существующей паре `order_type_raw`/`order_type` в этой же
+    таблице (см. `_normalize_order_type`)."""
+    raw_bids = request.args.get('branch_ids', '')
+    bids = [int(x) for x in raw_bids.split(',') if x.strip().isdigit()]
+    granularity = request.args.get('granularity', 'month')
+    if granularity not in ('month', 'week'):
+        granularity = 'month'
+
+    today = date.today()
+    periods = _rfm_build_periods(today, granularity, count=6)
+
+    bf = f"AND branch_id IN ({','.join('?' * len(bids))})" if bids else ''
+    with get_db() as conn:
+        rows = conn.execute(f'''
+            SELECT phone, received_at, amount FROM orders_report
+            WHERE phone IS NOT NULL AND phone != '' {bf}
+            ORDER BY received_at
+        ''', bids).fetchall()
+
+    by_phone = {}
+    for r in rows:
+        phone = _normalize_ru_phone(r['phone'])
+        if not phone:
+            continue
+        try:
+            dt = datetime.strptime(r['received_at'][:19], '%Y-%m-%d %H:%M:%S')
+        except (ValueError, TypeError):
+            continue
+        by_phone.setdefault(phone, []).append((dt, r['amount'] or 0))
+    # Списки заказов на телефон уже отсортированы по дате — так их отдал SQL ORDER BY.
+    first_order = {phone: orders[0][0] for phone, orders in by_phone.items()}
+
+    recency = {'r4': [], 'r3': [], 'r2': [], 'r1': [], 'total_clients': []}
+    avg_check, orders_per_client, revenue_per_client = [], [], []
+    new_clients_out, repeat_rate = [], []
+
+    for p in periods:
+        as_of_end = datetime.combine(p['as_of'], datetime.max.time())
+        range_from_dt = datetime.combine(p['range_from'], datetime.min.time())
+        range_to_dt = datetime.combine(p['range_to'], datetime.max.time())
+
+        r4 = r3 = r2 = r1 = total_clients = 0
+        period_orders_count = 0
+        period_revenue = 0.0
+        period_clients = set()
+        new_clients = 0
+
+        for phone, orders in by_phone.items():
+            last_before = None
+            for dt, _amt in orders:
+                if dt <= as_of_end:
+                    last_before = dt
+                else:
+                    break  # список отсортирован по дате — дальше только более поздние заказы
+            if last_before is not None:
+                total_clients += 1
+                days_since = (as_of_end.date() - last_before.date()).days
+                if days_since <= _RFM_RECENCY_BUCKETS_DAYS[0]:
+                    r4 += 1
+                elif days_since <= _RFM_RECENCY_BUCKETS_DAYS[1]:
+                    r3 += 1
+                elif days_since <= _RFM_RECENCY_BUCKETS_DAYS[2]:
+                    r2 += 1
+                else:
+                    r1 += 1
+
+            in_range = [(dt, amt) for dt, amt in orders if range_from_dt <= dt <= range_to_dt]
+            if in_range:
+                period_clients.add(phone)
+                period_orders_count += len(in_range)
+                period_revenue += sum(amt for _, amt in in_range)
+
+            if range_from_dt <= first_order[phone] <= range_to_dt:
+                new_clients += 1
+
+        clients_count = len(period_clients)
+        recency['r4'].append(r4)
+        recency['r3'].append(r3)
+        recency['r2'].append(r2)
+        recency['r1'].append(r1)
+        recency['total_clients'].append(total_clients)
+        avg_check.append(round(period_revenue / period_orders_count, 2) if period_orders_count else 0)
+        orders_per_client.append(round(period_orders_count / clients_count, 2) if clients_count else 0)
+        revenue_per_client.append(round(period_revenue / clients_count, 2) if clients_count else 0)
+        new_clients_out.append(new_clients)
+        repeat_rate.append(round((clients_count - new_clients) / clients_count * 100, 1) if clients_count else 0)
+
+    return jsonify({
+        'ok': True,
+        'periods': [{
+            'label': p['label'], 'range_from': p['range_from'].isoformat(),
+            'range_to': p['range_to'].isoformat(), 'as_of': p['as_of'].isoformat(),
+        } for p in periods],
+        'recency': recency,
+        'avg_check': avg_check,
+        'orders_per_client': orders_per_client,
+        'revenue_per_client': revenue_per_client,
+        'new_clients': new_clients_out,
+        'repeat_rate': repeat_rate,
+    })
 
 
 @app.route('/api/lfl')
