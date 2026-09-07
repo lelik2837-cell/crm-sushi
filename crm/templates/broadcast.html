@@ -335,6 +335,8 @@
                 <div class="alert alert-secondary mb-0">Для всех активных филиалов кампания уже настроена. Чтобы изменить филиал, сначала отключите (или переиспользуйте) существующую кампанию ниже.</div>
                 {% else %}
                 <form method="POST" action="{{ url_for('create_rating_campaign') }}" class="row g-3">
+                    <input type="hidden" name="hist_from" value="{{ hist_date_from }}">
+                    <input type="hidden" name="hist_to" value="{{ hist_date_to }}">
                     <div class="col-md-4">
                         <label class="form-label small fw-semibold">Филиал</label>
                         <select name="branch_id" class="form-select" required>
@@ -366,6 +368,8 @@
                         <div class="d-flex gap-2">
                             <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="collapse" data-bs-target="#rc-edit-{{ c.id }}">Редактировать</button>
                             <form method="POST" action="{{ url_for('toggle_rating_campaign', campaign_id=c.id) }}">
+                                <input type="hidden" name="hist_from" value="{{ hist_date_from }}">
+                                <input type="hidden" name="hist_to" value="{{ hist_date_to }}">
                                 <button type="submit" class="btn btn-sm btn-outline-secondary">{% if c.enabled %}Выключить{% else %}Включить{% endif %}</button>
                             </form>
                         </div>
@@ -379,6 +383,8 @@
                     <div class="collapse mt-3" id="rc-edit-{{ c.id }}">
                         <hr>
                         <form method="POST" action="{{ url_for('edit_rating_campaign', campaign_id=c.id) }}" class="row g-3">
+                            <input type="hidden" name="hist_from" value="{{ hist_date_from }}">
+                            <input type="hidden" name="hist_to" value="{{ hist_date_to }}">
                             {{ rating_campaign_fields('rc-edit-' ~ c.id, connected_accounts, channel_icons, channel_labels,
                                                        assigned_accounts=rating_campaign_accounts.get(c.id, []),
                                                        variants=rating_campaign_variants.get(c.id),
@@ -401,7 +407,21 @@
 
     <!-- История заявок на оценку -->
     <div class="card">
-        <div class="card-header fw-semibold"><i class="bi bi-clock-history me-2"></i>История</div>
+        <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <span class="fw-semibold"><i class="bi bi-clock-history me-2"></i>История</span>
+            <form method="GET" action="{{ url_for('broadcast_page') }}" class="d-flex align-items-center gap-1" id="bcHistFilterForm">
+                <input type="hidden" name="tab" value="rating">
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="bcHistSetRange(0)">Сегодня</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="bcHistSetRange(7)">7 дней</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="bcHistSetRange(30)">30 дней</button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="bcHistDateBtn" onclick="openBcHistCal()" style="min-width:150px;white-space:nowrap;" title="Свой период">
+                    <i class="bi bi-calendar3 me-1"></i><span id="bcHistDateBtnLabel"></span>
+                </button>
+                <input type="hidden" name="hist_from" id="bcHistDateFrom" value="{{ hist_date_from }}">
+                <input type="hidden" name="hist_to" id="bcHistDateTo" value="{{ hist_date_to }}">
+                <input id="bcHistCalHidden" type="text" style="display:none;position:absolute;">
+            </form>
+        </div>
         <div class="table-responsive">
             <table class="table table-sm mb-0 align-middle">
                 <thead class="table-light">
@@ -429,7 +449,7 @@
                         <td class="text-nowrap">{{ rr.sent_at | sent_response_fmt(rr.responded_at) }}</td>
                     </tr>
                     {% else %}
-                    <tr><td colspan="6" class="text-center text-muted py-3">Заявок пока нет</td></tr>
+                    <tr><td colspan="6" class="text-center text-muted py-3">Заявок за этот период нет</td></tr>
                     {% endfor %}
                 </tbody>
             </table>
@@ -865,6 +885,67 @@ document.querySelectorAll('.bc-tab-pane form').forEach((form) => {
         });
         document.getElementById('bcStatsBranchAllCb').checked = false;
         document.getElementById('bcStatsBranchBtnLabel').textContent = 'Выбрано: ' + ids.length;
+    };
+})();
+
+/* ── Карточка «История» на вкладке «Оценка заказа»: период (по умолчанию сегодня) ──
+   тот же приём, что и в фильтре «Статистики» выше (кнопки-пресеты + свой период
+   календарём) — просьба пользователя 2026-09-07 «сделай как обычно реализуем». */
+(function () {
+    function fmtLocalDate(d) {
+        return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
+    function fmtRuShort(d) {
+        return String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + d.getFullYear();
+    }
+    function parseLocalDate(s) {
+        var p = s.split('-');
+        return new Date(parseInt(p[0]), parseInt(p[1]) - 1, parseInt(p[2]));
+    }
+    var elFrom = document.getElementById('bcHistDateFrom');
+    if (!elFrom) return; // карточки «История» ещё нет на странице (на всякий случай)
+    var bcHistFrom = parseLocalDate(elFrom.value);
+    var bcHistTo = parseLocalDate(document.getElementById('bcHistDateTo').value);
+
+    function updateBcHistDateLabel() {
+        var label = bcHistFrom.getTime() === bcHistTo.getTime() ? fmtRuShort(bcHistFrom) : fmtRuShort(bcHistFrom) + ' – ' + fmtRuShort(bcHistTo);
+        document.getElementById('bcHistDateBtnLabel').textContent = label;
+    }
+    updateBcHistDateLabel();
+
+    function submitBcHist() {
+        document.getElementById('bcHistDateFrom').value = fmtLocalDate(bcHistFrom);
+        document.getElementById('bcHistDateTo').value = fmtLocalDate(bcHistTo);
+        document.getElementById('bcHistFilterForm').submit();
+    }
+    window.bcHistSetRange = function (days) {
+        bcHistTo = new Date();
+        bcHistFrom = new Date();
+        if (days > 0) bcHistFrom.setDate(bcHistFrom.getDate() - (days - 1));
+        submitBcHist();
+    };
+
+    var bcHistCalPicker = null;
+    window.openBcHistCal = function () {
+        if (!bcHistCalPicker) {
+            bcHistCalPicker = flatpickr('#bcHistCalHidden', {
+                mode: 'range',
+                dateFormat: 'Y-m-d',
+                appendTo: document.body,
+                disableMobile: true,
+                defaultDate: [bcHistFrom, bcHistTo],
+                onClose: function (dates) {
+                    if (dates.length === 2) {
+                        bcHistFrom = dates[0]; bcHistTo = dates[1];
+                        submitBcHist();
+                    } else if (dates.length === 1) {
+                        bcHistFrom = dates[0]; bcHistTo = dates[0];
+                        submitBcHist();
+                    }
+                }
+            });
+        }
+        bcHistCalPicker.open();
     };
 })();
 </script>

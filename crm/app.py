@@ -2600,6 +2600,24 @@ def init_db():
             # пользователя 2026-09-06). Раньше текст не сохранялся вовсе (см.
             # messenger_inbound) — у заявок, отвеченных до этой правки, будет NULL.
             conn.execute("ALTER TABLE order_rating_requests ADD COLUMN response_text TEXT")
+
+        # Одноразовая корректировка (2026-09-07): загрузка архивной выгрузки заказов (напр.
+        # за прошлый месяц) заводила заявки на оценку так же, как для свежих заказов — не было
+        # проверки, что заказ вообще недавний (см. _RATING_REQUEST_MAX_AGE_DAYS ниже). Убираем
+        # уже накопленные такие заявки, пока не отправлены: status='pending_send' и заказ
+        # (order_date) старше своей заявки (created_at) больше чем на _RATING_REQUEST_MAX_AGE_DAYS
+        # — реальному только что выполненному заказу это не грозит, разница там — минуты.
+        if not conn.execute(
+            "SELECT 1 FROM api_settings WHERE key='rating_req_backfill_cleanup_v1'"
+        ).fetchone():
+            conn.execute(f'''
+                DELETE FROM order_rating_requests
+                WHERE status='pending_send'
+                  AND (julianday(created_at) - julianday(order_date)) > {_RATING_REQUEST_MAX_AGE_DAYS}
+            ''')
+            conn.execute(
+                "INSERT OR REPLACE INTO api_settings (key, value) VALUES ('rating_req_backfill_cleanup_v1', '1')"
+            )
         _rc_cols = [r[1] for r in conn.execute("PRAGMA table_info(rating_campaigns)").fetchall()]
         if 'send_time_from' not in _rc_cols:
             # Разрешённое время отправки запроса на оценку (не будить клиента ночью) — применяется
@@ -10125,6 +10143,11 @@ def broadcast_page():
     stats_date_from = request.args.get('date_from', (date.today() - timedelta(days=29)).isoformat())
     stats_date_to = request.args.get('date_to', today)
     stats_branch_ids = [int(b) for b in request.args.getlist('branch_ids') if b.isdigit()]
+    # История заявок на оценку (карточка «История» на вкладке) — отдельный фильтр периода
+    # от «Статистики» выше (свои query-параметры, не date_from/date_to), по умолчанию сегодня
+    # (просьба пользователя 2026-09-07 «видеть все отправки и сортировку по дате»).
+    hist_date_from = request.args.get('hist_from', today)
+    hist_date_to = request.args.get('hist_to', today)
 
     with get_db() as conn:
         accounts = conn.execute(
@@ -10153,6 +10176,10 @@ def broadcast_page():
             ).fetchall()] or [c['request_text']]
             for c in rating_campaigns
         }
+        # Фильтр по дню СОЗДАНИЯ заявки (created_at, локальное время +7 часов) — та же
+        # величина, что и группировка в _rating_broadcast_stats выше по странице, чтобы
+        # «сегодня» в «Истории» и «сегодня» в «Статистике» совпадали. Без LIMIT — просьба
+        # пользователя показывать все отправки за выбранный период, а не последние 50.
         rating_requests = conn.execute('''
             SELECT rr.order_number, rr.order_date, rr.phone, rr.status, rr.rating,
                    datetime(rr.sent_at, '+7 hours') AS sent_at,
@@ -10162,8 +10189,9 @@ def broadcast_page():
             JOIN rating_campaigns rc ON rc.id = rr.campaign_id
             JOIN branches b ON b.id = rc.branch_id
             LEFT JOIN messenger_accounts ma ON ma.id = rr.assigned_account_id
-            ORDER BY rr.id DESC LIMIT 50
-        ''').fetchall()
+            WHERE date(datetime(rr.created_at, '+7 hours')) >= ? AND date(datetime(rr.created_at, '+7 hours')) <= ?
+            ORDER BY rr.created_at DESC
+        ''', (hist_date_from, hist_date_to)).fetchall()
         branches_without_campaign = conn.execute('''
             SELECT * FROM branches
             WHERE is_active=1 AND id NOT IN (SELECT branch_id FROM rating_campaigns)
@@ -10186,6 +10214,7 @@ def broadcast_page():
                             rating_stats=rating_stats, active_channels=active_channels,
                             stats_date_from=stats_date_from, stats_date_to=stats_date_to,
                             stats_branch_ids=stats_branch_ids,
+                            hist_date_from=hist_date_from, hist_date_to=hist_date_to,
                             active_tab=request.args.get('tab', 'numbers'))
 
 
@@ -10235,6 +10264,22 @@ def _parse_send_time_window():
     return time_from, time_to
 
 
+def _broadcast_rating_redirect():
+    """Редирект на вкладку «Оценка заказа» после POST-формы (создание/редактирование/
+    вкл-выкл кампании) — пробрасывает дальше текущий период фильтра карточки «История»
+    (hist_from/hist_to), который эта форма несёт в скрытых полях (см. CLAUDE.md про
+    сохранение фильтров при сабмите служебных форм) — иначе после любого действия с
+    кампанией фильтр истории сбрасывался бы обратно на «сегодня»."""
+    kwargs = {'tab': 'rating'}
+    hist_from = request.form.get('hist_from', '').strip()
+    hist_to = request.form.get('hist_to', '').strip()
+    if hist_from:
+        kwargs['hist_from'] = hist_from
+    if hist_to:
+        kwargs['hist_to'] = hist_to
+    return redirect(url_for('broadcast_page', **kwargs))
+
+
 @app.route('/reports/broadcast/rating-campaigns', methods=['POST'])
 @login_required
 @menu_permission_required('whatsapp_broadcast')
@@ -10244,7 +10289,7 @@ def create_rating_campaign():
         delay_minutes = max(0, int(request.form.get('delay_minutes', 30)))
     except ValueError:
         flash('Некорректная задержка отправки', 'danger')
-        return redirect(url_for('broadcast_page', tab='rating'))
+        return _broadcast_rating_redirect()
     request_variants = [v.strip() for v in request.form.getlist('request_text_variants[]') if v.strip()]
     low_text = request.form.get('low_text', '').strip()
     mid_text = request.form.get('mid_text', '').strip()
@@ -10256,7 +10301,7 @@ def create_rating_campaign():
     if not branch_id or not request_variants or not (low_text and mid_text and high_text) or not account_ids:
         flash('Заполните филиал, хотя бы один вариант текста запроса, все три ответных текста '
               'и выберите хотя бы один номер-отправитель', 'danger')
-        return redirect(url_for('broadcast_page', tab='rating'))
+        return _broadcast_rating_redirect()
 
     with get_db() as conn:
         try:
@@ -10270,11 +10315,11 @@ def create_rating_campaign():
                   session['user_id'], datetime.now().strftime('%Y-%m-%d %H:%M:%S'))).lastrowid
         except sqlite3.IntegrityError:
             flash('Для этого филиала кампания уже есть.', 'danger')
-            return redirect(url_for('broadcast_page', tab='rating'))
+            return _broadcast_rating_redirect()
         _save_rating_campaign_variants_and_accounts(conn, campaign_id, request_variants, account_ids)
         conn.commit()
     flash('Кампания «Оценка заказа» создана.', 'success')
-    return redirect(url_for('broadcast_page', tab='rating'))
+    return _broadcast_rating_redirect()
 
 
 @app.route('/reports/broadcast/rating-campaigns/<int:campaign_id>/edit', methods=['POST'])
@@ -10285,7 +10330,7 @@ def edit_rating_campaign(campaign_id):
         delay_minutes = max(0, int(request.form.get('delay_minutes', 30)))
     except ValueError:
         flash('Некорректная задержка отправки', 'danger')
-        return redirect(url_for('broadcast_page', tab='rating'))
+        return _broadcast_rating_redirect()
     request_variants = [v.strip() for v in request.form.getlist('request_text_variants[]') if v.strip()]
     low_text = request.form.get('low_text', '').strip()
     mid_text = request.form.get('mid_text', '').strip()
@@ -10297,13 +10342,13 @@ def edit_rating_campaign(campaign_id):
     if not request_variants or not (low_text and mid_text and high_text) or not account_ids:
         flash('Заполните хотя бы один вариант текста запроса, все три ответных текста '
               'и выберите хотя бы один номер-отправитель', 'danger')
-        return redirect(url_for('broadcast_page', tab='rating'))
+        return _broadcast_rating_redirect()
 
     with get_db() as conn:
         campaign = conn.execute('SELECT id FROM rating_campaigns WHERE id=?', (campaign_id,)).fetchone()
         if not campaign:
             flash('Кампания не найдена', 'danger')
-            return redirect(url_for('broadcast_page', tab='rating'))
+            return _broadcast_rating_redirect()
         conn.execute('''
             UPDATE rating_campaigns
             SET delay_minutes=?, send_time_from=?, send_time_to=?, enforce_send_time=?,
@@ -10314,7 +10359,7 @@ def edit_rating_campaign(campaign_id):
         _save_rating_campaign_variants_and_accounts(conn, campaign_id, request_variants, account_ids)
         conn.commit()
     flash('Настройки «Оценки заказа» обновлены.', 'success')
-    return redirect(url_for('broadcast_page', tab='rating'))
+    return _broadcast_rating_redirect()
 
 
 @app.route('/reports/broadcast/rating-campaigns/<int:campaign_id>/toggle', methods=['POST'])
@@ -10324,7 +10369,7 @@ def toggle_rating_campaign(campaign_id):
     with get_db() as conn:
         conn.execute('UPDATE rating_campaigns SET enabled = NOT enabled WHERE id=?', (campaign_id,))
         conn.commit()
-    return redirect(url_for('broadcast_page', tab='rating'))
+    return _broadcast_rating_redirect()
 
 
 @app.route('/reports/broadcast/accounts', methods=['POST'])
@@ -16515,6 +16560,15 @@ def _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename, create
     return imported, updated, removed
 
 
+# Заказ старше этого числа дней (относительно момента импорта) не ставим в очередь на
+# оценку, даже если формально прошёл все остальные проверки — иначе загрузка архивной
+# выгрузки (напр. «довезли» дозагрузку за прошлый месяц) массово шлёт клиентам вопрос
+# про месячной давности заказ. Реальный «свежий» заказ до этой границы не долетает —
+# разница между приёмом заказа и импортом там обычно минуты-часы, не дни. См. кейс
+# пользователя 2026-09-07 (287 заявок при загрузке выгрузки за август).
+_RATING_REQUEST_MAX_AGE_DAYS = 2
+
+
 def _maybe_create_rating_request(conn, r, branch_id, campaigns_by_branch, variant_counts, campaigns_ready_since):
     """Если заказ пришёл со статусом "Выполнен" и на его филиале включена кампания оценки
     заказа (rating_campaigns) — заводим заявку на отправку. UNIQUE(campaign_id, order_number,
@@ -16550,6 +16604,13 @@ def _maybe_create_rating_request(conn, r, branch_id, campaigns_by_branch, varian
         return
     if not r.get('received_at') or r['received_at'] < campaign['created_at']:
         # Заказ принят ещё до включения кампании — не дёргаем клиентов задним числом.
+        return
+    try:
+        received_dt = datetime.strptime(r['received_at'], '%Y-%m-%d %H:%M:%S')
+    except ValueError:
+        return
+    if (datetime.now() - received_dt).days > _RATING_REQUEST_MAX_AGE_DAYS:
+        # Архивная/бэкфильная выгрузка — не спрашиваем оценку про старый заказ задним числом.
         return
     ready_since = campaigns_ready_since.get(campaign['id'])
     if not ready_since or r['received_at'] < ready_since:
