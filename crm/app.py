@@ -242,6 +242,12 @@ DASHBOARD_REVENUE_BLOCKS = [
     ('delivery',      'Доставка'),
     ('preorders',     'Предзаказы'),
     ('promo',         'Промокоды'),
+    ('rfm_recency',            'RFM: давность заказов'),
+    ('rfm_avg_check',          'RFM: средний чек'),
+    ('rfm_orders_per_client',  'RFM: заказов на клиента'),
+    ('rfm_revenue_per_client', 'RFM: выручка на клиента'),
+    ('rfm_new_clients',        'RFM: новые клиенты'),
+    ('rfm_repeat_rate',        'RFM: повторные клиенты'),
     ('delivery_time', 'Время доставки'),
 ]
 DASHBOARD_REVENUE_BLOCK_TITLES = dict(DASHBOARD_REVENUE_BLOCKS)
@@ -2196,6 +2202,22 @@ def init_db():
                 "INSERT OR REPLACE INTO api_settings (key, value) VALUES ('role_perms_visibility_fix_v1', '1')"
             )
 
+        # Одноразовая корректировка: 6 новых блоков «RFM: ...» вставлены в реестр
+        # DASHBOARD_REVENUE_BLOCKS сразу после 'promo' (просьба пользователя — RFM-блоки
+        # должны стоять под «Промокоды») — но get_user_dashboard_blocks досеивает только
+        # ОТСУТСТВУЮЩИЕ ключи, а у пользователей, уже открывавших дашборд, 'delivery_time'
+        # уже сохранён со старым sort_order=7 и никуда не сдвинется сам. Без этой правки
+        # новые RFM-блоки встали бы ПОСЛЕ «Время доставки» (сравнение sort_order при
+        # досеивании new keys даёт им те же/большие номера, но 'delivery_time' с меньшим id
+        # выигрывает тай-брейк) — сдвигаем на 6 позиций, чтобы освободить место под RFM.
+        if not conn.execute(
+            "SELECT 1 FROM api_settings WHERE key='dashboard_blocks_rfm_reorder_v1'"
+        ).fetchone():
+            conn.execute("UPDATE user_dashboard_blocks SET sort_order = sort_order + 6 WHERE block_key='delivery_time'")
+            conn.execute(
+                "INSERT OR REPLACE INTO api_settings (key, value) VALUES ('dashboard_blocks_rfm_reorder_v1', '1')"
+            )
+
         # Одноразовая корректировка: открыть управляющему (director) раздел
         # «Выдача формы» — по просьбе владельца, дальнейшие изменения через
         # Настройки → Роли и доступ этот сид не трогает.
@@ -3220,16 +3242,12 @@ def dashboard():
             ''').fetchone()
             branch_groups = get_branch_groups(conn)
             dash_blocks = get_user_dashboard_blocks(conn, session['user_id'])
-            # Вкладки дашборда («Обзор»/«RFM анализ») — переключение мгновенное через JS
-            # (см. switchDashTab в dashboard_owner.html), query-параметр только задаёт
-            # исходное состояние при заходе по прямой ссылке/обновлении страницы.
-            active_tab = request.args.get('dash_tab', 'overview')
             return render_template('dashboard_owner.html',
                 branches=branches, stats=stats, weekly=weekly,
                 open_shifts=open_shifts, kpi_blocks=kpi_blocks,
                 month_rev=month_rev, month_fot=month_fot['fot'] or 0,
                 branch_groups=branch_groups, today=date.today().isoformat(),
-                dash_blocks=dash_blocks, active_tab=active_tab)
+                dash_blocks=dash_blocks)
         else:
             if not item_visible('dashboard'):
                 # "dashboard" — единственная всегда-достижимая страница после логина,

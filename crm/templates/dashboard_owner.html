@@ -5,22 +5,9 @@
 @media (max-width:991.98px) {
   #rev-all-btn { display:none !important; }
 }
-.dash-tab-link { border:none; background:transparent; padding:8px 4px; margin-right:24px; font-size:14px; font-weight:600; color:#94a3b8; cursor:pointer; border-bottom:2.5px solid transparent; }
-.dash-tab-link.active { color:#4f46e5; border-bottom-color:#4f46e5; }
-.rfm-kpi-card { background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 100%); border:1.5px solid #e2e8f0; border-radius:14px; padding:14px 16px; box-shadow:0 2px 10px rgba(0,0,0,0.06); }
-.rfm-kpi-title { font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:6px; }
-.rfm-kpi-value { font-size:22px; font-weight:800; color:#1e293b; margin-bottom:8px; }
-.rfm-kpi-canvas { width:100% !important; height:44px !important; }
 .rfm-chart-type.active, .rfm-granularity.active { background:#4f46e5; color:#fff; border-color:#4f46e5; }
+.rfm-cat-cb-label { font-size:11px; }
 </style>
-
-<!-- ══ ВКЛАДКИ ══ -->
-<div style="border-bottom:1.5px solid #e2e8f0; margin-bottom:18px;">
-  <button type="button" class="dash-tab-link{% if active_tab != 'rfm' %} active{% endif %}" onclick="switchDashTab('overview')" id="dash-tab-btn-overview">Обзор</button>
-  <button type="button" class="dash-tab-link{% if active_tab == 'rfm' %} active{% endif %}" onclick="switchDashTab('rfm')" id="dash-tab-btn-rfm">RFM анализ</button>
-</div>
-
-<div id="dash-pane-overview" style="{% if active_tab == 'rfm' %}display:none;{% endif %}">
 
 <!-- ══ REVENUE CARD ══ -->
 <div class="row g-3 mb-4">
@@ -245,8 +232,96 @@
         <div id="rm-promo-list" style="display:flex;flex-direction:column;gap:4px;border-top:1px solid #f1f5f9;padding-top:8px;"></div>
       </div>
 
-      <!-- 8. Время доставки: среднее за период + по филиалам -->
-      <div id="rm-delivery-time-card" style="background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 100%); border:1.5px solid #e2e8f0; border-radius:14px; padding:16px 18px; box-shadow:0 2px 10px rgba(0,0,0,0.06); order:{{ dash_order.get('delivery_time', 7) }};{% if not dash_visible.get('delivery_time', true) %} display:none;{% endif %}">
+      <!-- 8. RFM: давность последнего заказа — на всю ширину сетки, как «основной график» выручки -->
+      <div id="rm-rfm-recency-card" style="grid-column:1 / -1; background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 100%); border:1.5px solid #e2e8f0; border-radius:14px; padding:16px 18px; box-shadow:0 2px 10px rgba(0,0,0,0.06); order:{{ dash_order.get('rfm_recency', 7) }};{% if not dash_visible.get('rfm_recency', true) %} display:none;{% endif %}">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2" style="margin-bottom:10px;">
+          <div>
+            <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.8px;">RFM: давность последнего заказа</div>
+            <div style="font-size:11px;color:#94a3b8;">доля клиентов по категориям R4–R1, % от базы на дату среза</div>
+          </div>
+          <div class="d-flex flex-wrap align-items-center gap-2">
+            <div class="btn-group btn-group-sm" role="group">
+              <button type="button" class="btn btn-outline-secondary rfm-chart-type active" data-type="bar" onclick="rfmSetChartType('bar')">Столбцы</button>
+              <button type="button" class="btn btn-outline-secondary rfm-chart-type" data-type="line" onclick="rfmSetChartType('line')">Линия</button>
+            </div>
+            <div class="btn-group btn-group-sm" role="group">
+              <button type="button" class="btn btn-outline-secondary rfm-granularity active" data-g="month" onclick="rfmSetGranularity('month')">Помесячно</button>
+              <button type="button" class="btn btn-outline-secondary rfm-granularity" data-g="week" onclick="rfmSetGranularity('week')">Понедельно</button>
+            </div>
+          </div>
+        </div>
+        <div class="d-flex flex-wrap gap-3" style="margin-bottom:8px;">
+          <label class="d-flex align-items-center gap-1 rfm-cat-cb-label" style="cursor:pointer;">
+            <input type="checkbox" class="rfm-cat-cb" value="r4" checked onchange="rfmToggleCategory('r4', this.checked)">
+            <span style="width:9px;height:9px;border-radius:2px;background:#2e7d32;display:inline-block;"></span> R4 (0–30 дн.)
+          </label>
+          <label class="d-flex align-items-center gap-1 rfm-cat-cb-label" style="cursor:pointer;">
+            <input type="checkbox" class="rfm-cat-cb" value="r3" checked onchange="rfmToggleCategory('r3', this.checked)">
+            <span style="width:9px;height:9px;border-radius:2px;background:#8bc34a;display:inline-block;"></span> R3 (31–60 дн.)
+          </label>
+          <label class="d-flex align-items-center gap-1 rfm-cat-cb-label" style="cursor:pointer;">
+            <input type="checkbox" class="rfm-cat-cb" value="r2" checked onchange="rfmToggleCategory('r2', this.checked)">
+            <span style="width:9px;height:9px;border-radius:2px;background:#ffb300;display:inline-block;"></span> R2 (61–90 дн.)
+          </label>
+          <label class="d-flex align-items-center gap-1 rfm-cat-cb-label" style="cursor:pointer;">
+            <input type="checkbox" class="rfm-cat-cb" value="r1" checked onchange="rfmToggleCategory('r1', this.checked)">
+            <span style="width:9px;height:9px;border-radius:2px;background:#e53935;display:inline-block;"></span> R1 (90+ дн.)
+          </label>
+        </div>
+        <div id="rfm-main-loading" class="text-center text-muted py-4" style="font-size:13px;"><div class="spinner-border spinner-border-sm"></div> Загрузка...</div>
+        <canvas id="rfm-main-canvas" height="70" style="display:none;"></canvas>
+      </div>
+
+      <!-- 9-13. RFM: средний чек / заказов на клиента / выручка на клиента / новые / повторные —
+           те же карточки, что «Промокоды»/«Время доставки» выше, вместо списка по филиалам —
+           маленький график-тренд за те же периоды, что и в основном RFM-графике -->
+      <div id="rm-rfm-avg-check-card" style="background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 100%); border:1.5px solid #e2e8f0; border-radius:14px; padding:16px 18px; box-shadow:0 2px 10px rgba(0,0,0,0.06); order:{{ dash_order.get('rfm_avg_check', 8) }};{% if not dash_visible.get('rfm_avg_check', true) %} display:none;{% endif %}">
+        <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:4px;">RFM: средний чек</div>
+        <div style="display:flex; align-items:baseline; gap:2px; line-height:1;">
+          <span id="rfm-kpi-avg-check-value" style="font-size:28px;font-weight:800;color:#4f46e5;letter-spacing:-1px;">—</span>
+        </div>
+        <div style="font-size:12px;color:#94a3b8;margin-bottom:8px;">сегодня / текущий период</div>
+        <div style="border-top:1px solid #f1f5f9;padding-top:8px;"><canvas id="rfm-kpi-avg-check-canvas" style="width:100% !important;height:44px !important;"></canvas></div>
+      </div>
+
+      <div id="rm-rfm-orders-per-client-card" style="background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 100%); border:1.5px solid #e2e8f0; border-radius:14px; padding:16px 18px; box-shadow:0 2px 10px rgba(0,0,0,0.06); order:{{ dash_order.get('rfm_orders_per_client', 9) }};{% if not dash_visible.get('rfm_orders_per_client', true) %} display:none;{% endif %}">
+        <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:4px;">RFM: заказов на клиента</div>
+        <div style="display:flex; align-items:baseline; gap:2px; line-height:1;">
+          <span id="rfm-kpi-orders-per-client-value" style="font-size:28px;font-weight:800;color:#0d9488;letter-spacing:-1px;">—</span>
+        </div>
+        <div style="font-size:12px;color:#94a3b8;margin-bottom:8px;">сегодня / текущий период</div>
+        <div style="border-top:1px solid #f1f5f9;padding-top:8px;"><canvas id="rfm-kpi-orders-per-client-canvas" style="width:100% !important;height:44px !important;"></canvas></div>
+      </div>
+
+      <div id="rm-rfm-revenue-per-client-card" style="background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 100%); border:1.5px solid #e2e8f0; border-radius:14px; padding:16px 18px; box-shadow:0 2px 10px rgba(0,0,0,0.06); order:{{ dash_order.get('rfm_revenue_per_client', 10) }};{% if not dash_visible.get('rfm_revenue_per_client', true) %} display:none;{% endif %}">
+        <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:4px;">RFM: выручка на клиента</div>
+        <div style="display:flex; align-items:baseline; gap:2px; line-height:1;">
+          <span id="rfm-kpi-revenue-per-client-value" style="font-size:28px;font-weight:800;color:#db2777;letter-spacing:-1px;">—</span>
+        </div>
+        <div style="font-size:12px;color:#94a3b8;margin-bottom:8px;">сегодня / текущий период</div>
+        <div style="border-top:1px solid #f1f5f9;padding-top:8px;"><canvas id="rfm-kpi-revenue-per-client-canvas" style="width:100% !important;height:44px !important;"></canvas></div>
+      </div>
+
+      <div id="rm-rfm-new-clients-card" style="background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 100%); border:1.5px solid #e2e8f0; border-radius:14px; padding:16px 18px; box-shadow:0 2px 10px rgba(0,0,0,0.06); order:{{ dash_order.get('rfm_new_clients', 11) }};{% if not dash_visible.get('rfm_new_clients', true) %} display:none;{% endif %}">
+        <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:4px;">RFM: новые клиенты</div>
+        <div style="display:flex; align-items:baseline; gap:2px; line-height:1;">
+          <span id="rfm-kpi-new-clients-value" style="font-size:28px;font-weight:800;color:#65a30d;letter-spacing:-1px;">—</span>
+        </div>
+        <div style="font-size:12px;color:#94a3b8;margin-bottom:8px;">сегодня / текущий период</div>
+        <div style="border-top:1px solid #f1f5f9;padding-top:8px;"><canvas id="rfm-kpi-new-clients-canvas" style="width:100% !important;height:44px !important;"></canvas></div>
+      </div>
+
+      <div id="rm-rfm-repeat-rate-card" style="background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 100%); border:1.5px solid #e2e8f0; border-radius:14px; padding:16px 18px; box-shadow:0 2px 10px rgba(0,0,0,0.06); order:{{ dash_order.get('rfm_repeat_rate', 12) }};{% if not dash_visible.get('rfm_repeat_rate', true) %} display:none;{% endif %}">
+        <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:4px;">RFM: повторные клиенты</div>
+        <div style="display:flex; align-items:baseline; gap:2px; line-height:1;">
+          <span id="rfm-kpi-repeat-rate-value" style="font-size:28px;font-weight:800;color:#0284c7;letter-spacing:-1px;">—</span>
+        </div>
+        <div style="font-size:12px;color:#94a3b8;margin-bottom:8px;">сегодня / текущий период</div>
+        <div style="border-top:1px solid #f1f5f9;padding-top:8px;"><canvas id="rfm-kpi-repeat-rate-canvas" style="width:100% !important;height:44px !important;"></canvas></div>
+      </div>
+
+      <!-- 14. Время доставки: среднее за период + по филиалам -->
+      <div id="rm-delivery-time-card" style="background:linear-gradient(135deg,#ffffff 0%,#f1f5f9 100%); border:1.5px solid #e2e8f0; border-radius:14px; padding:16px 18px; box-shadow:0 2px 10px rgba(0,0,0,0.06); order:{{ dash_order.get('delivery_time', 13) }};{% if not dash_visible.get('delivery_time', true) %} display:none;{% endif %}">
         <div style="font-size:10px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:.8px; margin-bottom:4px;">Время доставки</div>
         <div style="display:flex; align-items:baseline; gap:2px; line-height:1;">
           <span id="rm-delivery-time-val" style="font-size:34px;font-weight:800;color:#059669;letter-spacing:-1px;">—</span>
@@ -389,80 +464,6 @@
         </div>
     </div>
 </div>
-
-</div><!-- /dash-pane-overview -->
-
-<!-- ══ RFM АНАЛИЗ ══ -->
-<div id="dash-pane-rfm" style="{% if active_tab != 'rfm' %}display:none;{% endif %}">
-  <div class="card mb-3">
-    <div class="card-body">
-      <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
-        <div>
-          <div style="font-size:16px; font-weight:700; color:#1e293b;">Давность последнего заказа клиентов</div>
-          <div style="font-size:12px; color:#94a3b8;">доля клиентов по категориям R4–R1 (% от базы на дату среза)</div>
-        </div>
-        <div class="d-flex flex-wrap align-items-center gap-2">
-          <div class="btn-group btn-group-sm" role="group">
-            <button type="button" class="btn btn-outline-secondary rfm-chart-type active" data-type="bar" onclick="rfmSetChartType('bar')">Столбцы</button>
-            <button type="button" class="btn btn-outline-secondary rfm-chart-type" data-type="line" onclick="rfmSetChartType('line')">Линия</button>
-          </div>
-          <div class="btn-group btn-group-sm" role="group">
-            <button type="button" class="btn btn-outline-secondary rfm-granularity active" data-g="month" onclick="rfmSetGranularity('month')">Помесячно</button>
-            <button type="button" class="btn btn-outline-secondary rfm-granularity" data-g="week" onclick="rfmSetGranularity('week')">Понедельно</button>
-          </div>
-        </div>
-      </div>
-      <div class="d-flex flex-wrap gap-3 mb-3">
-        <label class="d-flex align-items-center gap-1" style="font-size:13px; cursor:pointer;">
-          <input type="checkbox" class="rfm-cat-cb" value="r4" checked onchange="rfmToggleCategory('r4', this.checked)">
-          <span style="width:10px;height:10px;border-radius:3px;background:#2e7d32;display:inline-block;"></span> R4 (0–30 дн.)
-        </label>
-        <label class="d-flex align-items-center gap-1" style="font-size:13px; cursor:pointer;">
-          <input type="checkbox" class="rfm-cat-cb" value="r3" checked onchange="rfmToggleCategory('r3', this.checked)">
-          <span style="width:10px;height:10px;border-radius:3px;background:#8bc34a;display:inline-block;"></span> R3 (31–60 дн.)
-        </label>
-        <label class="d-flex align-items-center gap-1" style="font-size:13px; cursor:pointer;">
-          <input type="checkbox" class="rfm-cat-cb" value="r2" checked onchange="rfmToggleCategory('r2', this.checked)">
-          <span style="width:10px;height:10px;border-radius:3px;background:#ffb300;display:inline-block;"></span> R2 (61–90 дн.)
-        </label>
-        <label class="d-flex align-items-center gap-1" style="font-size:13px; cursor:pointer;">
-          <input type="checkbox" class="rfm-cat-cb" value="r1" checked onchange="rfmToggleCategory('r1', this.checked)">
-          <span style="width:10px;height:10px;border-radius:3px;background:#e53935;display:inline-block;"></span> R1 (90+ дн.)
-        </label>
-      </div>
-      <div id="rfm-main-loading" class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm"></div> Загрузка...</div>
-      <canvas id="rfm-main-canvas" height="90" style="display:none;"></canvas>
-    </div>
-  </div>
-
-  <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px;">
-    <div class="rfm-kpi-card">
-      <div class="rfm-kpi-title">Средний чек</div>
-      <div class="rfm-kpi-value" id="rfm-kpi-avg-check-value">—</div>
-      <canvas class="rfm-kpi-canvas" id="rfm-kpi-avg-check-canvas"></canvas>
-    </div>
-    <div class="rfm-kpi-card">
-      <div class="rfm-kpi-title">Заказов на клиента</div>
-      <div class="rfm-kpi-value" id="rfm-kpi-orders-per-client-value">—</div>
-      <canvas class="rfm-kpi-canvas" id="rfm-kpi-orders-per-client-canvas"></canvas>
-    </div>
-    <div class="rfm-kpi-card">
-      <div class="rfm-kpi-title">Выручка на клиента</div>
-      <div class="rfm-kpi-value" id="rfm-kpi-revenue-per-client-value">—</div>
-      <canvas class="rfm-kpi-canvas" id="rfm-kpi-revenue-per-client-canvas"></canvas>
-    </div>
-    <div class="rfm-kpi-card">
-      <div class="rfm-kpi-title">Новых клиентов</div>
-      <div class="rfm-kpi-value" id="rfm-kpi-new-clients-value">—</div>
-      <canvas class="rfm-kpi-canvas" id="rfm-kpi-new-clients-canvas"></canvas>
-    </div>
-    <div class="rfm-kpi-card">
-      <div class="rfm-kpi-title">Доля повторных клиентов</div>
-      <div class="rfm-kpi-value" id="rfm-kpi-repeat-rate-value">—</div>
-      <canvas class="rfm-kpi-canvas" id="rfm-kpi-repeat-rate-canvas"></canvas>
-    </div>
-  </div>
-</div><!-- /dash-pane-rfm -->
 
 {% endblock %}
 {% block scripts %}
@@ -1317,13 +1318,12 @@ function loadRevCard(period) {
 
 loadRevCard('today');
 
-/* ── Вкладка «RFM анализ» ── */
+/* ── Блоки «RFM: ...» в сетке КПИ (под «Промокоды») ── */
 var rfmData = null;
 var rfmChartType = 'bar';
 var rfmGranularity = 'month';
 var rfmMainChart = null;
 var rfmVisibleCats = { r4: true, r3: true, r2: true, r1: true };
-var rfmLoaded = false;
 var rfmMiniCharts = {};
 var RFM_CATS = ['r4', 'r3', 'r2', 'r1'];
 var RFM_COLORS = { r4: '#2e7d32', r3: '#8bc34a', r2: '#ffb300', r1: '#e53935' };
@@ -1335,17 +1335,6 @@ var RFM_KPI_DEFS = [
     { key: 'new_clients', id: 'new-clients', fmt: function (v) { return Math.round(v); } },
     { key: 'repeat_rate', id: 'repeat-rate', fmt: function (v) { return v.toFixed(1).replace('.', ',') + '%'; } },
 ];
-
-window.switchDashTab = function (tab) {
-    document.getElementById('dash-pane-overview').style.display = tab === 'overview' ? '' : 'none';
-    document.getElementById('dash-pane-rfm').style.display = tab === 'rfm' ? '' : 'none';
-    document.getElementById('dash-tab-btn-overview').classList.toggle('active', tab === 'overview');
-    document.getElementById('dash-tab-btn-rfm').classList.toggle('active', tab === 'rfm');
-    if (tab === 'rfm' && !rfmLoaded) {
-        rfmLoaded = true;
-        loadRfmData();
-    }
-};
 
 function loadRfmData() {
     document.getElementById('rfm-main-loading').style.display = '';
@@ -1458,19 +1447,17 @@ function buildRfmKpiBlocks() {
     });
 }
 
-// Смена филиалов должна перезагружать и RFM-данные, если вкладка уже открывалась —
-// расширяем существующий обработчик, а не заменяем (loadRevCard(revPeriod) выше).
+// Смена филиалов должна перезагружать и блоки «RFM: ...» — расширяем существующий
+// обработчик, а не заменяем (loadRevCard(revPeriod) выше).
 (function () {
     var origOnBranchChange = window.dashOnBranchChange;
     window.dashOnBranchChange = function () {
         if (origOnBranchChange) origOnBranchChange();
-        if (rfmLoaded) loadRfmData();
+        loadRfmData();
     };
 })();
 
-{% if active_tab == 'rfm' %}
-switchDashTab('rfm');
-{% endif %}
+loadRfmData();
 </script>
 {% endblock %}
 
