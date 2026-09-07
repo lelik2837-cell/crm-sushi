@@ -1636,11 +1636,37 @@ def init_db():
                 guilty              TEXT,
                 compensation_amount REAL,
                 penalty_amount      REAL,
+                review_category_id  INTEGER REFERENCES review_categories(id),
+                review_category_manual INTEGER NOT NULL DEFAULT 0,
                 import_hash         TEXT UNIQUE,
                 created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS idx_guest_reviews_branch ON guest_reviews(branch_id);
             CREATE INDEX IF NOT EXISTS idx_guest_reviews_review_at ON guest_reviews(review_at);
+            -- Настраиваемая двухуровневая классификация отзывов: запись без parent_id —
+            -- раздел («Доставка», «Кухня»), запись с parent_id — конечная категория,
+            -- которую можно выбрать у отзыва. Автоправила принадлежат только конечным
+            -- категориям и сопоставляются с полем guest_reviews.review_type.
+            CREATE TABLE IF NOT EXISTS review_categories (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        TEXT NOT NULL,
+                parent_id   INTEGER REFERENCES review_categories(id) ON DELETE CASCADE,
+                sort_order  INTEGER NOT NULL DEFAULT 0,
+                created_by  INTEGER REFERENCES users(id),
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_review_categories_parent
+                ON review_categories(parent_id, sort_order, id);
+            CREATE TABLE IF NOT EXISTS review_category_keywords (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                category_id INTEGER NOT NULL REFERENCES review_categories(id) ON DELETE CASCADE,
+                phrase      TEXT NOT NULL,
+                sort_order  INTEGER NOT NULL DEFAULT 0,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_review_category_keywords_category
+                ON review_category_keywords(category_id, sort_order, id);
             -- Статус отработки отзыва/жалобы (новый/в работе/завершён) — просьба пользователя
             -- 2026-09-04, пока только отображение (см. guest_reviews_report.html), сохранение
             -- статуса добавится отдельно. Ключ — order_number, а не id строки guest_reviews:
@@ -2380,6 +2406,12 @@ def init_db():
             # (детальная категория жалобы, напр. «Опоздание»). У части старых отзывов не
             # проставлена вовсе (см. п.302 в plan.md) — тогда пусто, не заполняем задним числом.
             conn.execute("ALTER TABLE guest_reviews ADD COLUMN sentiment TEXT")
+        if 'review_category_id' not in _gr_cols:
+            conn.execute("ALTER TABLE guest_reviews ADD COLUMN review_category_id INTEGER REFERENCES review_categories(id)")
+        if 'review_category_manual' not in _gr_cols:
+            # 0 — категория управляется автоправилами, 1 — пользователь явно выбрал
+            # конечную категорию (или «Без категории»), поэтому правила её не перезаписывают.
+            conn.execute("ALTER TABLE guest_reviews ADD COLUMN review_category_manual INTEGER NOT NULL DEFAULT 0")
 
         # Выплата задолженности по ЗП («выплатные дни») — правила настроек
         # (дата/период/лимит) + доработка журнала выплат под погашение долга
@@ -2585,6 +2617,8 @@ def init_db():
                 responded_at TIMESTAMP,
                 followup_status TEXT,
                 error TEXT,
+                review_category_id INTEGER REFERENCES review_categories(id),
+                review_category_manual INTEGER NOT NULL DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(campaign_id, order_number, order_date)
             );
@@ -2619,6 +2653,10 @@ def init_db():
             # пользователя 2026-09-06). Раньше текст не сохранялся вовсе (см.
             # messenger_inbound) — у заявок, отвеченных до этой правки, будет NULL.
             conn.execute("ALTER TABLE order_rating_requests ADD COLUMN response_text TEXT")
+        if 'review_category_id' not in _orr_cols:
+            conn.execute("ALTER TABLE order_rating_requests ADD COLUMN review_category_id INTEGER REFERENCES review_categories(id)")
+        if 'review_category_manual' not in _orr_cols:
+            conn.execute("ALTER TABLE order_rating_requests ADD COLUMN review_category_manual INTEGER NOT NULL DEFAULT 0")
 
         # Одноразовая корректировка (2026-09-07): загрузка архивной выгрузки заказов (напр.
         # за прошлый месяц) заводила заявки на оценку так же, как для свежих заказов — не было
@@ -17311,6 +17349,7 @@ def _ingest_guest_reviews_rows(conn, frows, branch_map):
     backfilled = 0
     unresolved_raws = set()
     seen_hashes = set()
+    category_rules = _review_category_rules(conn)
     for r in frows:
         h = _review_row_hash(r)
         seen_hashes.add(h)
@@ -17321,12 +17360,13 @@ def _ingest_guest_reviews_rows(conn, frows, branch_map):
             INSERT OR IGNORE INTO guest_reviews
                 (order_number, review_at, branch_raw, branch_id, sentiment, review_type, content,
                  guest_name, guest_phone, order_amount, guilty, compensation_amount,
-                 penalty_amount, import_hash)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 penalty_amount, review_category_id, review_category_manual, import_hash)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ''', (
             r['order_number'], r['review_at'], r['branch_raw'], branch_id, r['sentiment'], r['review_type'],
             r['content'], r['guest_name'], r['guest_phone'], r['order_amount'], r['guilty'],
-            r['compensation_amount'], r['penalty_amount'], h
+            r['compensation_amount'], r['penalty_amount'],
+            _match_review_category(r['review_type'], category_rules), 0, h
         ))
         if cur.rowcount:
             imported += 1
@@ -17467,6 +17507,359 @@ _ORDER_MERGE_WINDOW_DAYS = 30
 REVIEW_STATUS_LABELS = {'new': 'Новый', 'in_progress': 'В работе', 'done': 'Завершён'}
 
 
+def _normalize_review_match_text(value):
+    """Нормализация для нечувствительного к регистру поиска слова/фразы внутри типа жалобы."""
+    return ' '.join(str(value or '').casefold().split())
+
+
+def _parse_review_category_keywords(raw_value):
+    """В настройке одна фраза задаётся строкой; также принимаем `;` как разделитель."""
+    result = []
+    seen = set()
+    for part in re.split(r'[;\r\n]+', raw_value or ''):
+        phrase = ' '.join(part.strip().split())[:200]
+        key = phrase.casefold()
+        if phrase and key not in seen:
+            seen.add(key)
+            result.append(phrase)
+        if len(result) >= 100:
+            break
+    return result
+
+
+def _review_category_rules(conn):
+    """Правила только конечных категорий; длинная фраза имеет больший приоритет."""
+    return [
+        (r['category_id'], _normalize_review_match_text(r['phrase']))
+        for r in conn.execute('''
+            SELECT k.category_id, k.phrase
+            FROM review_category_keywords k
+            JOIN review_categories leaf ON leaf.id = k.category_id
+            JOIN review_categories parent ON parent.id = leaf.parent_id
+            WHERE leaf.parent_id IS NOT NULL AND parent.parent_id IS NULL
+            ORDER BY length(k.phrase) DESC, parent.sort_order, parent.id,
+                     leaf.sort_order, leaf.id, k.sort_order, k.id
+        ''').fetchall()
+        if _normalize_review_match_text(r['phrase'])
+    ]
+
+
+def _match_review_category(review_type, rules):
+    """Возвращает id первого совпадения; rules уже отсортированы от частного к общему."""
+    haystack = _normalize_review_match_text(review_type)
+    if not haystack:
+        return None
+    for category_id, phrase in rules:
+        if phrase in haystack:
+            return category_id
+    return None
+
+
+def _apply_review_category_rules(conn):
+    """Пересчитывает только автоматические назначения, не затрагивая ручной выбор."""
+    rules = _review_category_rules(conn)
+    rows = conn.execute('''
+        SELECT id, review_type
+        FROM guest_reviews
+        WHERE review_category_manual=0
+    ''').fetchall()
+    conn.executemany(
+        'UPDATE guest_reviews SET review_category_id=? WHERE id=?',
+        [(_match_review_category(r['review_type'], rules), r['id']) for r in rows]
+    )
+
+
+def _review_category_catalog(conn):
+    """Дерево для модалки, плоский список конечных категорий и индекс по их id."""
+    rows = conn.execute('''
+        SELECT id, name, parent_id, sort_order
+        FROM review_categories
+        ORDER BY sort_order, id
+    ''').fetchall()
+    keyword_rows = conn.execute('''
+        SELECT category_id, phrase
+        FROM review_category_keywords
+        ORDER BY category_id, sort_order, id
+    ''').fetchall()
+    keywords = {}
+    for row in keyword_rows:
+        keywords.setdefault(row['category_id'], []).append(row['phrase'])
+
+    children = {}
+    for row in rows:
+        if row['parent_id'] is not None:
+            children.setdefault(row['parent_id'], []).append({
+                'id': row['id'],
+                'name': row['name'],
+                'keywords': keywords.get(row['id'], []),
+            })
+
+    tree = []
+    options = []
+    for row in rows:
+        if row['parent_id'] is not None:
+            continue
+        parent = {
+            'id': row['id'],
+            'name': row['name'],
+            'children': children.get(row['id'], []),
+        }
+        tree.append(parent)
+        for child in parent['children']:
+            option = {
+                'id': child['id'],
+                'name': child['name'],
+                'parent_name': parent['name'],
+                'label': f"{parent['name']} → {child['name']}",
+            }
+            options.append(option)
+    return tree, options, {option['id']: option for option in options}
+
+
+def _review_category_name_exists(conn, name, parent_id, exclude_id=None):
+    wanted = _normalize_review_match_text(name)
+    rows = conn.execute('''
+        SELECT id, name FROM review_categories
+        WHERE (parent_id=? OR (parent_id IS NULL AND ? IS NULL))
+    ''', (parent_id, parent_id)).fetchall()
+    return any(
+        r['id'] != exclude_id and _normalize_review_match_text(r['name']) == wanted
+        for r in rows
+    )
+
+
+def _guest_reviews_settings_redirect():
+    """Возвращает в тот же период/филиалы отчёта после формы из модального окна."""
+    args = {
+        'date_from': request.form.get('date_from') or date.today().isoformat(),
+        'date_to': request.form.get('date_to') or date.today().isoformat(),
+    }
+    branch_ids = [v for v in request.form.getlist('branch_ids') if v.isdigit()]
+    if branch_ids:
+        args['branch_ids'] = branch_ids
+    if request.form.get('show_positive') == '1':
+        args['show_positive'] = '1'
+    return redirect(url_for('guest_reviews_report', **args))
+
+
+@app.route('/reports/guest-reviews/categories', methods=['POST'])
+@login_required
+@menu_permission_required('guest_reviews_report')
+def guest_review_categories_update():
+    """CRUD двух уровней категорий и фраз автоклассификации из модального окна отчёта."""
+    action = (request.form.get('action') or '').strip()
+    name = ' '.join((request.form.get('name') or '').strip().split())[:100]
+    raw_id = request.form.get('category_id') or ''
+    raw_parent_id = request.form.get('parent_id') or ''
+    category_id = int(raw_id) if raw_id.isdigit() else None
+    parent_id = int(raw_parent_id) if raw_parent_id.isdigit() else None
+
+    try:
+        with get_db() as conn:
+            if action == 'add_parent':
+                if not name:
+                    raise ValueError('Введите название раздела')
+                if _review_category_name_exists(conn, name, None):
+                    raise ValueError('Такой раздел уже существует')
+                sort_order = conn.execute(
+                    'SELECT COALESCE(MAX(sort_order), 0) + 1 FROM review_categories WHERE parent_id IS NULL'
+                ).fetchone()[0]
+                conn.execute('''
+                    INSERT INTO review_categories (name, parent_id, sort_order, created_by)
+                    VALUES (?, NULL, ?, ?)
+                ''', (name, sort_order, session.get('user_id')))
+                flash('Раздел категории добавлен', 'success')
+
+            elif action == 'edit_parent':
+                row = conn.execute(
+                    'SELECT id FROM review_categories WHERE id=? AND parent_id IS NULL',
+                    (category_id,)
+                ).fetchone()
+                if not row:
+                    raise ValueError('Раздел не найден')
+                if not name:
+                    raise ValueError('Введите название раздела')
+                if _review_category_name_exists(conn, name, None, category_id):
+                    raise ValueError('Такой раздел уже существует')
+                conn.execute(
+                    'UPDATE review_categories SET name=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+                    (name, category_id)
+                )
+                flash('Раздел категории сохранён', 'success')
+
+            elif action == 'delete_parent':
+                row = conn.execute(
+                    'SELECT id FROM review_categories WHERE id=? AND parent_id IS NULL',
+                    (category_id,)
+                ).fetchone()
+                if not row:
+                    raise ValueError('Раздел не найден')
+                ids = [category_id] + [
+                    r['id'] for r in conn.execute(
+                        'SELECT id FROM review_categories WHERE parent_id=?', (category_id,)
+                    ).fetchall()
+                ]
+                placeholders = ','.join('?' * len(ids))
+                conn.execute(
+                    f'UPDATE guest_reviews SET review_category_id=NULL, review_category_manual=0 '
+                    f'WHERE review_category_id IN ({placeholders})', ids
+                )
+                conn.execute(
+                    f'UPDATE order_rating_requests SET review_category_id=NULL, review_category_manual=0 '
+                    f'WHERE review_category_id IN ({placeholders})', ids
+                )
+                conn.execute('DELETE FROM review_categories WHERE id=?', (category_id,))
+                flash('Раздел и его категории удалены', 'success')
+
+            elif action == 'add_leaf':
+                parent = conn.execute(
+                    'SELECT id FROM review_categories WHERE id=? AND parent_id IS NULL',
+                    (parent_id,)
+                ).fetchone()
+                if not parent:
+                    raise ValueError('Раздел не найден')
+                if not name:
+                    raise ValueError('Введите название категории')
+                if _review_category_name_exists(conn, name, parent_id):
+                    raise ValueError('Такая категория уже есть в этом разделе')
+                sort_order = conn.execute('''
+                    SELECT COALESCE(MAX(sort_order), 0) + 1
+                    FROM review_categories WHERE parent_id=?
+                ''', (parent_id,)).fetchone()[0]
+                cur = conn.execute('''
+                    INSERT INTO review_categories (name, parent_id, sort_order, created_by)
+                    VALUES (?, ?, ?, ?)
+                ''', (name, parent_id, sort_order, session.get('user_id')))
+                phrases = _parse_review_category_keywords(request.form.get('keywords'))
+                conn.executemany('''
+                    INSERT INTO review_category_keywords (category_id, phrase, sort_order)
+                    VALUES (?, ?, ?)
+                ''', [(cur.lastrowid, phrase, i) for i, phrase in enumerate(phrases)])
+                _apply_review_category_rules(conn)
+                flash('Конечная категория добавлена', 'success')
+
+            elif action == 'edit_leaf':
+                row = conn.execute('''
+                    SELECT id FROM review_categories
+                    WHERE id=? AND parent_id IS NOT NULL
+                ''', (category_id,)).fetchone()
+                if not row:
+                    raise ValueError('Категория не найдена')
+                parent_row = conn.execute(
+                    'SELECT parent_id FROM review_categories WHERE id=?', (category_id,)
+                ).fetchone()
+                if not name:
+                    raise ValueError('Введите название категории')
+                if _review_category_name_exists(conn, name, parent_row['parent_id'], category_id):
+                    raise ValueError('Такая категория уже есть в этом разделе')
+                conn.execute('''
+                    UPDATE review_categories SET name=?, updated_at=CURRENT_TIMESTAMP WHERE id=?
+                ''', (name, category_id))
+                conn.execute(
+                    'DELETE FROM review_category_keywords WHERE category_id=?', (category_id,)
+                )
+                phrases = _parse_review_category_keywords(request.form.get('keywords'))
+                conn.executemany('''
+                    INSERT INTO review_category_keywords (category_id, phrase, sort_order)
+                    VALUES (?, ?, ?)
+                ''', [(category_id, phrase, i) for i, phrase in enumerate(phrases)])
+                _apply_review_category_rules(conn)
+                flash('Категория и автоправила сохранены', 'success')
+
+            elif action == 'delete_leaf':
+                row = conn.execute('''
+                    SELECT id FROM review_categories
+                    WHERE id=? AND parent_id IS NOT NULL
+                ''', (category_id,)).fetchone()
+                if not row:
+                    raise ValueError('Категория не найдена')
+                conn.execute('''
+                    UPDATE guest_reviews
+                    SET review_category_id=NULL, review_category_manual=0
+                    WHERE review_category_id=?
+                ''', (category_id,))
+                conn.execute('''
+                    UPDATE order_rating_requests
+                    SET review_category_id=NULL, review_category_manual=0
+                    WHERE review_category_id=?
+                ''', (category_id,))
+                conn.execute('DELETE FROM review_categories WHERE id=?', (category_id,))
+                _apply_review_category_rules(conn)
+                flash('Конечная категория удалена', 'success')
+
+            else:
+                raise ValueError('Неизвестное действие')
+            conn.commit()
+    except ValueError as exc:
+        flash(str(exc), 'danger')
+    except sqlite3.IntegrityError:
+        flash('Не удалось сохранить категорию: проверьте название и связи', 'danger')
+    return _guest_reviews_settings_redirect()
+
+
+@app.route('/reports/guest-reviews/category', methods=['POST'])
+@login_required
+@menu_permission_required('guest_reviews_report')
+def guest_review_category_set():
+    """Сохраняет ручную конечную категорию или возвращает конкретный отзыв в авторежим."""
+    data = request.get_json(silent=True) or {}
+    source = data.get('source')
+    raw_review_id = str(data.get('review_id') or '')
+    selection = str(data.get('category') or '')
+    if source not in ('gulyash', 'revvy') or not raw_review_id.isdigit():
+        return jsonify({'ok': False, 'error': 'Некорректный отзыв'}), 400
+
+    table = 'guest_reviews' if source == 'gulyash' else 'order_rating_requests'
+    review_id = int(raw_review_id)
+    with get_db() as conn:
+        row = conn.execute(
+            f"SELECT id{', review_type' if source == 'gulyash' else ''} FROM {table} WHERE id=?",
+            (review_id,)
+        ).fetchone()
+        if not row:
+            return jsonify({'ok': False, 'error': 'Отзыв не найден'}), 404
+
+        if selection == 'auto':
+            category_id = _match_review_category(
+                row['review_type'] if source == 'gulyash' else '',
+                _review_category_rules(conn)
+            )
+            manual = 0
+        elif selection == 'none':
+            category_id = None
+            manual = 1
+        elif selection.isdigit():
+            category_id = int(selection)
+            category = conn.execute('''
+                SELECT leaf.id, leaf.name, parent.name AS parent_name
+                FROM review_categories leaf
+                JOIN review_categories parent ON parent.id = leaf.parent_id
+                WHERE leaf.id=? AND parent.parent_id IS NULL
+            ''', (category_id,)).fetchone()
+            if not category:
+                return jsonify({'ok': False, 'error': 'Можно выбрать только конечную категорию'}), 400
+            manual = 1
+        else:
+            return jsonify({'ok': False, 'error': 'Некорректная категория'}), 400
+
+        conn.execute(
+            f'UPDATE {table} SET review_category_id=?, review_category_manual=? WHERE id=?',
+            (category_id, manual, review_id)
+        )
+        label = None
+        if category_id:
+            category = conn.execute('''
+                SELECT leaf.name, parent.name AS parent_name
+                FROM review_categories leaf
+                JOIN review_categories parent ON parent.id = leaf.parent_id
+                WHERE leaf.id=?
+            ''', (category_id,)).fetchone()
+            if category:
+                label = f"{category['parent_name']} → {category['name']}"
+        conn.commit()
+    return jsonify({'ok': True, 'category_id': category_id, 'manual': bool(manual), 'label': label})
+
+
 def _group_guest_reviews(rows, status_by_order=None):
     """Заказ может получить несколько разных отзывов/жалоб (разные категории, разное время,
     и теперь ещё и разные источники — см. ниже) — группирует строки одного запроса (уже
@@ -17499,7 +17892,8 @@ def _group_guest_reviews(rows, status_by_order=None):
     worst_sentiment (самый «плохой» sentiment среди группы — 'О'/пусто побеждает 'Н', 'Н' побеждает
     'П', используется для цвета строки/шарика, см. guest_reviews_report.html), categories
     (уникальные review_type группы, в порядке появления, без пустых — у оценок из рассылки
-    review_type нет), sources (уникальные source группы, в порядке появления — бейджи Гуляш/Ревви),
+    review_type нет), assigned_categories (уникальные выбранные конечные категории),
+    sources (уникальные source группы, в порядке появления — бейджи Гуляш/Ревви),
     compensation_total (сумма compensation_amount по группе, None если ни одной непустой), и
     «представительские» поля (филиал/гость/сумма) — берутся из первого непустого значения среди
     отзывов группы (не строго из самого свежего: например, сумму заказа Гуляш обычно знает, а
@@ -17528,10 +17922,13 @@ def _group_guest_reviews(rows, status_by_order=None):
         grp = groups[key]
         worst_sentiment = min(grp, key=lambda r: _GR_SENTIMENT_RANK.get(r['sentiment'], 0))['sentiment']
         categories = []
+        assigned_categories = []
         sources = []
         for r in grp:
             if r['review_type'] and r['review_type'] not in categories:
                 categories.append(r['review_type'])
+            if r.get('review_category_label') and r['review_category_label'] not in assigned_categories:
+                assigned_categories.append(r['review_category_label'])
             if r['source'] not in sources:
                 sources.append(r['source'])
         comp_values = [r['compensation_amount'] for r in grp if r['compensation_amount']]
@@ -17542,6 +17939,7 @@ def _group_guest_reviews(rows, status_by_order=None):
             'reviews': grp,
             'worst_sentiment': worst_sentiment,
             'categories': categories,
+            'assigned_categories': assigned_categories,
             'sources': sources,
             'status': status,
             'compensation_total': sum(comp_values) if comp_values else None,
@@ -17562,6 +17960,7 @@ def guest_reviews_report():
     with get_db() as conn:
         branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
         branch_groups = get_branch_groups(conn)
+        review_category_tree, review_category_options, review_category_by_id = _review_category_catalog(conn)
 
         today = date.today().isoformat()
         date_from = request.args.get('date_from', today)
@@ -17622,6 +18021,7 @@ def guest_reviews_report():
 
         rr_rows = conn.execute(f'''
             SELECT rr.id AS rating_request_id, rr.order_number, rr.phone, rr.rating, rr.order_date,
+                   rr.review_category_id, rr.review_category_manual,
                    datetime(rr.responded_at, '+7 hours') AS responded_at,
                    rc.branch_id AS branch_id, b.name AS branch_name,
                    o.amount AS order_amount
@@ -17635,13 +18035,23 @@ def guest_reviews_report():
             LIMIT 500
         ''', params2).fetchall()
 
+    def _decorate_review_category(row_dict, source, source_id):
+        row_dict['source'] = source
+        row_dict['source_id'] = source_id
+        row_dict['review_category_manual'] = bool(row_dict.get('review_category_manual'))
+        category = review_category_by_id.get(row_dict.get('review_category_id'))
+        if not category:
+            row_dict['review_category_id'] = None
+        row_dict['review_category_label'] = category['label'] if category else None
+        return row_dict
+
     combined = []
     for r in gr_rows:
-        d = dict(r, source='gulyash')
+        d = dict(r)
         d['order_date'] = gr_order_dates.get((r['order_number'], r['review_at']))
-        combined.append(d)
+        combined.append(_decorate_review_category(d, 'gulyash', r['id']))
     for r in rr_rows:
-        combined.append({
+        combined.append(_decorate_review_category({
             'order_number': r['order_number'],
             'order_date': r['order_date'],
             'review_at': r['responded_at'],
@@ -17656,8 +18066,9 @@ def guest_reviews_report():
             'compensation_amount': None,
             'rating_request_id': r['rating_request_id'],
             'sentiment': 'П' if r['rating'] >= 4 else 'О',
-            'source': 'revvy',
-        })
+            'review_category_id': r['review_category_id'],
+            'review_category_manual': r['review_category_manual'],
+        }, 'revvy', r['rating_request_id']))
     combined.sort(key=lambda r: r['review_at'] or '', reverse=True)
     combined = combined[:500]
 
@@ -17690,12 +18101,13 @@ def guest_reviews_report():
                 conn, [(r['order_number'], r['review_at']) for r in extra_gr]
             )
             for r in extra_gr:
-                d = dict(r, source='gulyash')
+                d = dict(r)
                 d['order_date'] = extra_gr_order_dates.get((r['order_number'], r['review_at']))
-                combined.append(d)
+                combined.append(_decorate_review_category(d, 'gulyash', r['id']))
 
             extra_rr = conn.execute(f'''
                 SELECT rr.id AS rating_request_id, rr.order_number, rr.phone, rr.rating, rr.order_date,
+                       rr.review_category_id, rr.review_category_manual,
                        datetime(rr.responded_at, '+7 hours') AS responded_at,
                        rc.branch_id AS branch_id, b.name AS branch_name,
                        o.amount AS order_amount
@@ -17710,7 +18122,7 @@ def guest_reviews_report():
                   AND datetime(rr.responded_at, '+7 hours') >= ? AND datetime(rr.responded_at, '+7 hours') <= ?
             ''', order_numbers_in_view + [dt_from, dt_to, wide_from, wide_to]).fetchall()
             for r in extra_rr:
-                combined.append({
+                combined.append(_decorate_review_category({
                     'order_number': r['order_number'],
                     'order_date': r['order_date'],
                     'review_at': r['responded_at'],
@@ -17725,8 +18137,9 @@ def guest_reviews_report():
                     'order_amount': r['order_amount'],
                     'compensation_amount': None,
                     'sentiment': 'П' if r['rating'] >= 4 else 'О',
-                    'source': 'revvy',
-                })
+                    'review_category_id': r['review_category_id'],
+                    'review_category_manual': r['review_category_manual'],
+                }, 'revvy', r['rating_request_id']))
         combined.sort(key=lambda r: r['review_at'] or '', reverse=True)
 
     with get_db() as conn:
@@ -17747,7 +18160,8 @@ def guest_reviews_report():
     return render_template('guest_reviews_report.html',
         rows=combined, grouped_rows=grouped_rows, branches=branches, branch_groups=branch_groups,
         branch_flt=branch_flt, date_from=date_from, date_to=date_to, show_positive=show_positive,
-        review_status_labels=REVIEW_STATUS_LABELS)
+        review_status_labels=REVIEW_STATUS_LABELS, review_category_tree=review_category_tree,
+        review_category_options=review_category_options)
 
 
 @app.route('/reports/guest-reviews/reveal-phone', methods=['POST'])

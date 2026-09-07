@@ -4,9 +4,14 @@
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="fw-bold mb-0"><i class="bi bi-star-half me-2"></i>Отзывы</h4>
-    <a href="{{ url_for('branches') }}" class="btn btn-outline-secondary btn-sm">
-        <i class="bi bi-link-45deg me-1"></i>Сопоставить филиалы
-    </a>
+    <div class="d-flex gap-2">
+        <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#reviewCategoriesModal">
+            <i class="bi bi-gear me-1"></i>Категории
+        </button>
+        <a href="{{ url_for('branches') }}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-link-45deg me-1"></i>Сопоставить филиалы
+        </a>
+    </div>
 </div>
 
 <!-- Фильтры -->
@@ -95,6 +100,9 @@
 .gr-detail-row > td:first-child { padding-left:28px; }
 .gr-chevron { display:inline-block; transition:transform .15s; margin-right:4px; }
 .gr-chevron.open { transform:rotate(90deg); }
+.gr-category-select { min-width:190px; max-width:240px; }
+.rv-category-card { border:1px solid #dee2e6; border-radius:10px; padding:12px; }
+.rv-category-leaf { border-top:1px solid #edf0f2; padding-top:12px; margin-top:12px; }
 </style>
 
 {% macro sentiment_dot(sentiment) %}
@@ -139,6 +147,35 @@
 {% endif %}
 {% endmacro %}
 
+{% macro category_select(r) %}
+<select class="form-select form-select-sm gr-category-select"
+        data-source="{{ r.source }}" data-review-id="{{ r.source_id }}"
+        data-label="{{ r.review_category_label or '' }}"
+        data-current="{% if not r.review_category_manual %}auto{% elif r.review_category_id %}{{ r.review_category_id }}{% else %}none{% endif %}"
+        onclick="event.stopPropagation()" onchange="saveReviewCategory(this)">
+    <option value="auto" data-label="{{ r.review_category_label or '' }}" {% if not r.review_category_manual %}selected{% endif %}>
+        Авто{% if r.review_category_label %} — {{ r.review_category_label }}{% else %} — без категории{% endif %}
+    </option>
+    <option value="none" data-label="" {% if r.review_category_manual and not r.review_category_id %}selected{% endif %}>Без категории (вручную)</option>
+    {% for parent in review_category_tree %}
+    {% if parent.children %}
+    <optgroup label="{{ parent.name }}">
+        {% for child in parent.children %}
+        <option value="{{ child.id }}" data-label="{{ parent.name }} → {{ child.name }}" {% if r.review_category_manual and r.review_category_id == child.id %}selected{% endif %}>{{ child.name }}</option>
+        {% endfor %}
+    </optgroup>
+    {% endif %}
+    {% endfor %}
+</select>
+{% endmacro %}
+
+{% macro category_form_filters() %}
+<input type="hidden" name="date_from" value="{{ date_from }}">
+<input type="hidden" name="date_to" value="{{ date_to }}">
+{% for branch_id in branch_flt %}<input type="hidden" name="branch_ids" value="{{ branch_id }}">{% endfor %}
+{% if show_positive %}<input type="hidden" name="show_positive" value="1">{% endif %}
+{% endmacro %}
+
 <div class="card">
     <div class="card-header fw-semibold">Всего: {{ rows|length }} {{ 'за период (показаны последние 500)' if rows|length == 500 else '' }}</div>
     <div class="table-responsive">
@@ -152,6 +189,7 @@
                     <th class="text-center">Тип</th>
                     <th class="text-center">Источник</th>
                     <th>Тип жалобы</th>
+                    <th>Категория</th>
                     <th>Содержание</th>
                     <th>Телефон</th>
                     <th>Сумма</th>
@@ -171,6 +209,7 @@
                     <td class="text-center">{{ sentiment_dot(r.sentiment) }}</td>
                     <td class="text-center">{{ source_badge(r.source) }}</td>
                     <td>{{ r.review_type }}</td>
+                    <td>{{ category_select(r) }}</td>
                     <td style="max-width:420px; white-space:pre-wrap;">{{ review_content_cell(r) }}</td>
                     <td class="text-nowrap">{{ phone_reveal_cell(g.order_number, g.guest_phone, g.status is not none) }}</td>
                     <td class="text-nowrap">{{ '%.0f'|format(r.order_amount) if r.order_amount is not none else '—' }}</td>
@@ -179,7 +218,7 @@
                 </tr>
                 {% else %}
                 {% set gi = loop.index0 %}
-                <tr class="gr-group-row {{ sentiment_row_class(g.worst_sentiment) }}" onclick="toggleGrGroup({{ gi }})">
+                <tr class="gr-group-row {{ sentiment_row_class(g.worst_sentiment) }}" data-group-index="{{ gi }}" onclick="toggleGrGroup({{ gi }})">
                     <td class="text-nowrap">
                         <i class="bi bi-chevron-right gr-chevron" id="gr-chevron-{{ gi }}"></i>{{ g.latest_review_at | datetime_ru_short }}
                     </td>
@@ -189,6 +228,7 @@
                     <td class="text-center">{{ sentiment_dot(g.worst_sentiment) }}</td>
                     <td class="text-center">{% for s in g.sources %}{{ source_badge(s) }} {% endfor %}</td>
                     <td>{{ g.categories | join(', ') }}</td>
+                    <td class="gr-group-category-summary">{{ g.assigned_categories | join(', ') if g.assigned_categories else '—' }}</td>
                     <td class="text-muted fst-italic">Показать {{ g.reviews|length }} отзыва(ов) по заказу</td>
                     <td class="text-nowrap">{{ phone_reveal_cell(g.order_number, g.guest_phone, g.status is not none) }}</td>
                     <td class="text-nowrap">{{ '%.0f'|format(g.order_amount) if g.order_amount is not none else '—' }}</td>
@@ -204,6 +244,7 @@
                     <td class="text-center">{{ sentiment_dot(r.sentiment) }}</td>
                     <td class="text-center">{{ source_badge(r.source) }}</td>
                     <td>{{ r.review_type }}</td>
+                    <td>{{ category_select(r) }}</td>
                     <td style="max-width:420px; white-space:pre-wrap;">{{ review_content_cell(r) }}</td>
                     <td></td>
                     <td></td>
@@ -213,10 +254,125 @@
                 {% endfor %}
                 {% endif %}
                 {% else %}
-                <tr><td colspan="12" class="text-center text-muted py-3">Отзывов за этот период нет</td></tr>
+                <tr><td colspan="13" class="text-center text-muted py-3">Отзывов за этот период нет</td></tr>
                 {% endfor %}
             </tbody>
         </table>
+    </div>
+</div>
+
+<!-- Настройка двухуровневых категорий отзывов -->
+<div class="modal fade" id="reviewCategoriesModal" tabindex="-1" aria-labelledby="reviewCategoriesModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="modal-title" id="reviewCategoriesModalLabel"><i class="bi bi-gear me-2"></i>Категории отзывов</h5>
+                    <div class="text-muted small mt-1">Сначала создайте раздел, затем конечные категории. В отзыве выбирается только конечная категория.</div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                {% if not review_category_tree %}
+                <div class="alert alert-light border">Категорий пока нет. Добавьте первый раздел, например «Доставка» или «Кухня».</div>
+                {% endif %}
+
+                <div class="row g-3">
+                    {% for parent in review_category_tree %}
+                    <div class="col-12">
+                        <div class="rv-category-card">
+                            <div class="d-flex flex-column flex-md-row gap-2 align-items-md-center">
+                                <form method="POST" action="{{ url_for('guest_review_categories_update') }}" class="d-flex gap-2 flex-grow-1 rv-category-settings-form">
+                                    {{ category_form_filters() }}
+                                    <input type="hidden" name="action" value="edit_parent">
+                                    <input type="hidden" name="category_id" value="{{ parent.id }}">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text fw-semibold">Раздел</span>
+                                        <input type="text" class="form-control" name="name" value="{{ parent.name }}" maxlength="100" required>
+                                        <button class="btn btn-outline-primary" type="submit" title="Сохранить раздел"><i class="bi bi-check-lg"></i></button>
+                                    </div>
+                                </form>
+                                <form method="POST" action="{{ url_for('guest_review_categories_update') }}" class="rv-category-settings-form"
+                                      data-confirm="Удалить раздел и все его категории?">
+                                    {{ category_form_filters() }}
+                                    <input type="hidden" name="action" value="delete_parent">
+                                    <input type="hidden" name="category_id" value="{{ parent.id }}">
+                                    <button class="btn btn-sm btn-outline-danger" type="submit" title="Удалить раздел"><i class="bi bi-trash"></i></button>
+                                </form>
+                            </div>
+
+                            {% for child in parent.children %}
+                            <div class="rv-category-leaf">
+                                <div class="row g-2 align-items-end">
+                                    <div class="col-12 col-lg-11">
+                                        <form method="POST" action="{{ url_for('guest_review_categories_update') }}" class="row g-2 rv-category-settings-form">
+                                            {{ category_form_filters() }}
+                                            <input type="hidden" name="action" value="edit_leaf">
+                                            <input type="hidden" name="category_id" value="{{ child.id }}">
+                                            <div class="col-12 col-md-4">
+                                                <label class="form-label small fw-semibold">Конечная категория</label>
+                                                <input type="text" class="form-control form-control-sm" name="name" value="{{ child.name }}" maxlength="100" required>
+                                            </div>
+                                            <div class="col-12 col-md-7">
+                                                <label class="form-label small fw-semibold">Слова и фразы для автоопределения</label>
+                                                <textarea class="form-control form-control-sm" name="keywords" rows="2" maxlength="20000" placeholder="Одна фраза на строку">{{ child.keywords | join('\n') }}</textarea>
+                                                <div class="form-text">Поиск идёт без учёта регистра внутри поля «Тип жалобы».</div>
+                                            </div>
+                                            <div class="col-12 col-md-1 d-flex align-items-end">
+                                                <button class="btn btn-sm btn-primary w-100" type="submit" title="Сохранить"><i class="bi bi-check-lg"></i></button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                    <div class="col-12 col-lg-1 d-grid">
+                                        <form method="POST" action="{{ url_for('guest_review_categories_update') }}" class="rv-category-settings-form"
+                                              data-confirm="Удалить конечную категорию?">
+                                            {{ category_form_filters() }}
+                                            <input type="hidden" name="action" value="delete_leaf">
+                                            <input type="hidden" name="category_id" value="{{ child.id }}">
+                                            <button class="btn btn-sm btn-outline-danger w-100" type="submit" title="Удалить"><i class="bi bi-trash"></i></button>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+
+                            <div class="rv-category-leaf bg-light rounded p-2">
+                                <form method="POST" action="{{ url_for('guest_review_categories_update') }}" class="row g-2 align-items-end rv-category-settings-form">
+                                    {{ category_form_filters() }}
+                                    <input type="hidden" name="action" value="add_leaf">
+                                    <input type="hidden" name="parent_id" value="{{ parent.id }}">
+                                    <div class="col-12 col-md-4">
+                                        <label class="form-label small fw-semibold">Новая конечная категория</label>
+                                        <input type="text" class="form-control form-control-sm" name="name" maxlength="100" placeholder="Например, Опоздание" required>
+                                    </div>
+                                    <div class="col-12 col-md-7">
+                                        <label class="form-label small fw-semibold">Слова и фразы</label>
+                                        <textarea class="form-control form-control-sm" name="keywords" rows="2" maxlength="20000" placeholder="опоздание&#10;долго везли"></textarea>
+                                    </div>
+                                    <div class="col-12 col-md-1 d-grid">
+                                        <button class="btn btn-sm btn-success" type="submit" title="Добавить категорию"><i class="bi bi-plus-lg"></i></button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <form method="POST" action="{{ url_for('guest_review_categories_update') }}" class="mt-3 rv-category-settings-form">
+                    {{ category_form_filters() }}
+                    <input type="hidden" name="action" value="add_parent">
+                    <label class="form-label small fw-semibold">Новый раздел</label>
+                    <div class="input-group input-group-sm" style="max-width:520px;">
+                        <input type="text" class="form-control" name="name" maxlength="100" placeholder="Например, Доставка" required>
+                        <button class="btn btn-success" type="submit"><i class="bi bi-plus-lg me-1"></i>Добавить раздел</button>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -330,6 +486,105 @@
         detailRows.forEach(function (r) { r.style.display = opening ? '' : 'none'; });
         if (chevron) chevron.classList.toggle('open', opening);
     };
+
+    /* ── Категория конкретного отзыва ── */
+    function refreshGroupCategorySummary(select) {
+        var row = select.closest('tr');
+        if (!row) return;
+        var groupClass = Array.from(row.classList).find(function (cls) { return cls.indexOf('gr-group-') === 0; });
+        if (!groupClass) return;
+        var gi = groupClass.replace('gr-group-', '');
+        var labels = [];
+        document.querySelectorAll('.gr-group-' + gi + ' .gr-category-select').forEach(function (item) {
+            var label = item.dataset.label || '';
+            if (label && labels.indexOf(label) === -1) labels.push(label);
+        });
+        var groupRow = document.querySelector('.gr-group-row[data-group-index="' + gi + '"]');
+        var summary = groupRow ? groupRow.querySelector('.gr-group-category-summary') : null;
+        if (summary) summary.textContent = labels.length ? labels.join(', ') : '—';
+    }
+
+    window.saveReviewCategory = function (select) {
+        var previous = select.dataset.current || 'auto';
+        select.disabled = true;
+        fetch('{{ url_for("guest_review_category_set") }}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                source: select.dataset.source,
+                review_id: select.dataset.reviewId,
+                category: select.value
+            })
+        })
+        .then(function (response) {
+            return response.json().then(function (data) {
+                if (!response.ok || !data.ok) throw new Error(data.error || 'Не удалось сохранить категорию');
+                return data;
+            });
+        })
+        .then(function (data) {
+            select.dataset.current = select.value;
+            select.dataset.label = data.label || '';
+            var autoOption = select.querySelector('option[value="auto"]');
+            if (autoOption && select.value === 'auto') {
+                autoOption.dataset.label = data.label || '';
+                autoOption.textContent = 'Авто — ' + (data.label || 'без категории');
+            }
+            refreshGroupCategorySummary(select);
+        })
+        .catch(function (error) {
+            select.value = previous;
+            window.alert(error.message || 'Не удалось сохранить категорию');
+        })
+        .finally(function () { select.disabled = false; });
+    };
+
+    /* Формы настроек перезагружают текущий отчёт. Сохраняем модалку, её прокрутку,
+       прокрутку страницы и раскрытые группы, чтобы после сохранения пользователь
+       продолжил с того же места и с теми же фильтрами. */
+    var RV_CATEGORY_STATE_KEY = 'guest_reviews_category_ui';
+    window.rememberRvCategoryUi = function () {
+        var modalBody = document.querySelector('#reviewCategoriesModal .modal-body');
+        var openGroups = [];
+        document.querySelectorAll('.gr-chevron.open').forEach(function (item) {
+            openGroups.push(item.id.replace('gr-chevron-', ''));
+        });
+        sessionStorage.setItem(RV_CATEGORY_STATE_KEY, JSON.stringify({
+            reopenModal: true,
+            pageScroll: window.scrollY,
+            modalScroll: modalBody ? modalBody.scrollTop : 0,
+            openGroups: openGroups
+        }));
+    };
+    document.querySelectorAll('.rv-category-settings-form').forEach(function (form) {
+        form.addEventListener('submit', function (event) {
+            if (form.dataset.confirm && !window.confirm(form.dataset.confirm)) {
+                event.preventDefault();
+                return;
+            }
+            window.rememberRvCategoryUi();
+        });
+    });
+
+    var savedCategoryState = sessionStorage.getItem(RV_CATEGORY_STATE_KEY);
+    if (savedCategoryState) {
+        sessionStorage.removeItem(RV_CATEGORY_STATE_KEY);
+        try {
+            var state = JSON.parse(savedCategoryState);
+            (state.openGroups || []).forEach(function (gi) { window.toggleGrGroup(gi); });
+            requestAnimationFrame(function () { window.scrollTo(0, Number(state.pageScroll) || 0); });
+            if (state.reopenModal) {
+                var categoryModalEl = document.getElementById('reviewCategoriesModal');
+                categoryModalEl.addEventListener('shown.bs.modal', function () {
+                    var body = categoryModalEl.querySelector('.modal-body');
+                    if (body) body.scrollTop = Number(state.modalScroll) || 0;
+                }, { once: true });
+                new bootstrap.Modal(categoryModalEl).show();
+            }
+        } catch (e) {
+            sessionStorage.removeItem(RV_CATEGORY_STATE_KEY);
+        }
+    }
 
     /* ── Показать номер по клику (сам номер сервер отдаёт только по запросу) ──
        Если у заказа применим статус (has_status/data-mark), заодно переводит
