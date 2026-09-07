@@ -2317,6 +2317,40 @@ def init_db():
         if 'phone' not in _or_cols:
             conn.execute("ALTER TABLE orders_report ADD COLUMN phone TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_orders_report_delivery ON orders_report(delivery_at)")
+
+        # Одноразовая корректировка: заказ, переданный в доставку такси, iiko выгружал
+        # второй строкой с тем же номером и префиксом «T»/«Т» (напр. 4629 и T4629,
+        # см. кейс пользователя 2026-09-07) — _parse_orders_csv теперь такой номер
+        # нормализует при импорте, но уже накопленные до фикса дубли/лишние номера
+        # с префиксом схлопываем здесь: если рядом есть строка с номером без префикса
+        # за тот же день — удаляем дубль (он задваивал выручку), иначе просто убираем
+        # префикс у одиночной строки (и пересчитываем import_hash, чтобы следующая
+        # выгрузка того же заказа обновляла именно её, а не создавала новую).
+        if not conn.execute(
+            "SELECT 1 FROM api_settings WHERE key='orders_taxi_dup_fix_v1'"
+        ).fetchone():
+            _taxi_rows = conn.execute(
+                "SELECT id, order_number, substr(received_at,1,10) AS day FROM orders_report"
+            ).fetchall()
+            for _row in _taxi_rows:
+                _on = _row['order_number'] or ''
+                if len(_on) > 1 and _on[0] in 'TtТт' and _on[1:].isdigit():
+                    _base = _on[1:]
+                    _has_base = conn.execute(
+                        'SELECT 1 FROM orders_report WHERE order_number=? AND substr(received_at,1,10)=? AND id!=?',
+                        (_base, _row['day'], _row['id'])
+                    ).fetchone()
+                    if _has_base:
+                        conn.execute('DELETE FROM orders_report WHERE id=?', (_row['id'],))
+                    else:
+                        _new_hash = _orders_row_hash({'order_number': _base, 'received_at': _row['day']})
+                        conn.execute(
+                            'UPDATE orders_report SET order_number=?, import_hash=? WHERE id=?',
+                            (_base, _new_hash, _row['id'])
+                        )
+            conn.execute(
+                "INSERT OR REPLACE INTO api_settings (key, value) VALUES ('orders_taxi_dup_fix_v1', '1')"
+            )
         _oib_cols = [r[1] for r in conn.execute("PRAGMA table_info(orders_import_batches)").fetchall()]
         if 'updated_count' not in _oib_cols:
             conn.execute("ALTER TABLE orders_import_batches ADD COLUMN updated_count INTEGER DEFAULT 0")
@@ -16329,6 +16363,12 @@ def _parse_orders_csv(file_bytes):
         order_number = cell(row, idx_number)
         if not order_number:
             continue
+        # Заказ, переданный в доставку такси, iiko выгружает второй строкой с тем же
+        # номером и префиксом «T»/«Т» (напр. 4629 и T4629, см. кейс пользователя
+        # 2026-09-07) — это тот же заказ, не новый; без нормализации он задваивался
+        # в orders_report и в выручке.
+        if len(order_number) > 1 and order_number[0] in 'TtТт' and order_number[1:].isdigit():
+            order_number = order_number[1:]
         if _norm_status(cell(row, idx_status)) in _ORDERS_EXCLUDED_STATUSES:
             excluded_keys.append((order_number, dt.strftime('%Y-%m-%d')))
             continue  # Отмена/Возврат/Выполнен (завершён) — не показываем (см. _ORDERS_EXCLUDED_STATUSES)
