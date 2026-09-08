@@ -17801,63 +17801,80 @@ def guest_review_categories_update():
 @login_required
 @menu_permission_required('guest_reviews_report')
 def guest_review_category_set():
-    """Сохраняет ручную конечную категорию или возвращает конкретный отзыв в авторежим."""
+    """Сохраняет ручную конечную категорию (или возвращает в авторежим) сразу для ВСЕХ отзывов
+    одного заказа за один запрос — просьба пользователя 2026-09-08 «категория выбирается 1 раз
+    на заказ, а не на каждый отзыв»: фронт (guest_reviews_report.html, один <select> в свёрнутой
+    строке заказа) передаёт список всех {source, review_id} отзывов группы (g.review_refs, см.
+    _group_guest_reviews), а не один отзыв, как было раньше."""
     data = request.get_json(silent=True) or {}
-    source = data.get('source')
-    raw_review_id = str(data.get('review_id') or '')
+    raw_reviews = data.get('reviews')
     selection = str(data.get('category') or '')
-    if source not in ('gulyash', 'revvy') or not raw_review_id.isdigit():
-        return jsonify({'ok': False, 'error': 'Некорректный отзыв'}), 400
+    if not isinstance(raw_reviews, list) or not raw_reviews:
+        return jsonify({'ok': False, 'error': 'Некорректный запрос'}), 400
 
-    table = 'guest_reviews' if source == 'gulyash' else 'order_rating_requests'
-    review_id = int(raw_review_id)
+    items = []
+    for item in raw_reviews:
+        source = item.get('source') if isinstance(item, dict) else None
+        raw_review_id = str((item.get('review_id') if isinstance(item, dict) else None) or '')
+        if source not in ('gulyash', 'revvy') or not raw_review_id.isdigit():
+            return jsonify({'ok': False, 'error': 'Некорректный отзыв'}), 400
+        items.append((source, int(raw_review_id)))
+
+    if selection not in ('auto', 'none') and not selection.isdigit():
+        return jsonify({'ok': False, 'error': 'Некорректная категория'}), 400
+
     with get_db() as conn:
-        row = conn.execute(
-            f"SELECT id{', review_type' if source == 'gulyash' else ''} FROM {table} WHERE id=?",
-            (review_id,)
-        ).fetchone()
-        if not row:
-            return jsonify({'ok': False, 'error': 'Отзыв не найден'}), 404
-
-        if selection == 'auto':
-            category_id = _match_review_category(
-                row['review_type'] if source == 'gulyash' else '',
-                _review_category_rules(conn)
-            )
-            manual = 0
-        elif selection == 'none':
-            category_id = None
-            manual = 1
-        elif selection.isdigit():
-            category_id = int(selection)
+        manual_label = None
+        if selection.isdigit():
+            manual_category_id = int(selection)
             category = conn.execute('''
                 SELECT leaf.id, leaf.name, parent.name AS parent_name
                 FROM review_categories leaf
                 JOIN review_categories parent ON parent.id = leaf.parent_id
                 WHERE leaf.id=? AND parent.parent_id IS NULL
-            ''', (category_id,)).fetchone()
+            ''', (manual_category_id,)).fetchone()
             if not category:
                 return jsonify({'ok': False, 'error': 'Можно выбрать только конечную категорию'}), 400
-            manual = 1
-        else:
-            return jsonify({'ok': False, 'error': 'Некорректная категория'}), 400
+            manual_label = f"{category['parent_name']} → {category['name']}"
 
-        conn.execute(
-            f'UPDATE {table} SET review_category_id=?, review_category_manual=? WHERE id=?',
-            (category_id, manual, review_id)
-        )
-        label = None
-        if category_id:
-            category = conn.execute('''
-                SELECT leaf.name, parent.name AS parent_name
-                FROM review_categories leaf
-                JOIN review_categories parent ON parent.id = leaf.parent_id
-                WHERE leaf.id=?
-            ''', (category_id,)).fetchone()
-            if category:
-                label = f"{category['parent_name']} → {category['name']}"
+        rules = _review_category_rules(conn) if selection == 'auto' else None
+        auto_labels = []
+        for source, review_id in items:
+            table = 'guest_reviews' if source == 'gulyash' else 'order_rating_requests'
+            row = conn.execute(
+                f"SELECT id{', review_type' if source == 'gulyash' else ''} FROM {table} WHERE id=?",
+                (review_id,)
+            ).fetchone()
+            if not row:
+                return jsonify({'ok': False, 'error': 'Отзыв не найден'}), 404
+
+            if selection == 'auto':
+                category_id = _match_review_category(row['review_type'] if source == 'gulyash' else '', rules)
+                manual = 0
+                if category_id:
+                    cat = conn.execute('''
+                        SELECT leaf.name, parent.name AS parent_name
+                        FROM review_categories leaf
+                        JOIN review_categories parent ON parent.id = leaf.parent_id
+                        WHERE leaf.id=?
+                    ''', (category_id,)).fetchone()
+                    if cat and cat['parent_name'] + ' → ' + cat['name'] not in auto_labels:
+                        auto_labels.append(f"{cat['parent_name']} → {cat['name']}")
+            elif selection == 'none':
+                category_id = None
+                manual = 1
+            else:
+                category_id = manual_category_id
+                manual = 1
+
+            conn.execute(
+                f'UPDATE {table} SET review_category_id=?, review_category_manual=? WHERE id=?',
+                (category_id, manual, review_id)
+            )
         conn.commit()
-    return jsonify({'ok': True, 'category_id': category_id, 'manual': bool(manual), 'label': label})
+
+    label = manual_label if selection.isdigit() else (', '.join(auto_labels) if selection == 'auto' else None)
+    return jsonify({'ok': True, 'manual': selection != 'auto', 'label': label})
 
 
 def _group_guest_reviews(rows, status_by_order=None):
@@ -17900,7 +17917,14 @@ def _group_guest_reviews(rows, status_by_order=None):
     оценка по рассылке — нет, и наоборот с телефоном), и status (статус отработки заказа из
     review_statuses, по умолчанию 'new' — см. REVIEW_STATUS_LABELS) — только у групп, которые
     считаются «требующими внимания» (worst_sentiment != 'П'), у положительных групп status=None,
-    отрабатывать нечего."""
+    отрабатывать нечего», а также review_refs (список {source, review_id} всех отзывов группы —
+    нужен фронту, чтобы отправить категорию сразу на все отзывы заказа, см. ниже) и
+    category_current (значение для <select> категории в свёрнутой строке заказа: id конечной
+    категории или 'none', если ВСЕ отзывы группы вручную и согласованно выставлены на одно и то
+    же значение, иначе 'auto' — просьба пользователя 2026-09-08 «категория выбирается 1 раз на
+    заказ, а не на каждый отзыв»: теперь выбор категории живёт только в свёрнутой строке заказа,
+    а не у каждого отдельного отзыва в раскрытом списке, и один выбор применяется сразу ко всем
+    отзывам этого заказа — см. guest_review_category_set)."""
     status_by_order = status_by_order or {}
     groups = {}
     order = []
@@ -17933,6 +17957,16 @@ def _group_guest_reviews(rows, status_by_order=None):
                 sources.append(r['source'])
         comp_values = [r['compensation_amount'] for r in grp if r['compensation_amount']]
         status = status_by_order.get(key, 'new') if worst_sentiment != 'П' else None
+
+        manual_flags = {bool(r['review_category_manual']) for r in grp}
+        if manual_flags == {True}:
+            manual_ids = {r.get('review_category_id') for r in grp}
+            only_id = next(iter(manual_ids))
+            category_current = ('none' if only_id is None else only_id) if len(manual_ids) == 1 else 'auto'
+        else:
+            category_current = 'auto'
+        review_refs = [{'source': r['source'], 'review_id': r['source_id']} for r in grp]
+
         result.append({
             'order_number': key,
             'order_date': _first_present(grp, 'order_date'),
@@ -17940,6 +17974,8 @@ def _group_guest_reviews(rows, status_by_order=None):
             'worst_sentiment': worst_sentiment,
             'categories': categories,
             'assigned_categories': assigned_categories,
+            'category_current': category_current,
+            'review_refs': review_refs,
             'sources': sources,
             'status': status,
             'compensation_total': sum(comp_values) if comp_values else None,

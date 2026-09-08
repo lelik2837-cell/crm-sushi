@@ -175,7 +175,7 @@
 
 {% macro category_select(r) %}
 <select class="form-select form-select-sm gr-category-select"
-        data-source="{{ r.source }}" data-review-id="{{ r.source_id }}"
+        data-reviews='{{ [{"source": r.source, "review_id": r.source_id}] | tojson }}'
         data-label="{{ r.review_category_label or '' }}"
         data-current="{% if not r.review_category_manual %}auto{% elif r.review_category_id %}{{ r.review_category_id }}{% else %}none{% endif %}"
         onclick="event.stopPropagation()" onchange="saveReviewCategory(this)">
@@ -195,6 +195,28 @@
 </select>
 {% endmacro %}
 
+{% macro group_category_select(g) %}
+<select class="form-select form-select-sm gr-category-select"
+        data-reviews='{{ g.review_refs | tojson }}'
+        data-label="{{ g.assigned_categories | join(', ') }}"
+        data-current="{{ g.category_current }}"
+        onclick="event.stopPropagation()" onchange="saveReviewCategory(this)">
+    <option value="auto" data-label="{{ g.assigned_categories | join(', ') }}" {% if g.category_current == 'auto' %}selected{% endif %}>
+        Авто{% if g.assigned_categories %} — {{ g.assigned_categories | join(', ') }}{% else %} — без категории{% endif %}
+    </option>
+    <option value="none" data-label="" {% if g.category_current == 'none' %}selected{% endif %}>Без категории (вручную)</option>
+    {% for parent in review_category_tree %}
+    {% if parent.children %}
+    <optgroup label="{{ parent.name }}">
+        {% for child in parent.children %}
+        <option value="{{ child.id }}" data-label="{{ parent.name }} → {{ child.name }}" {% if g.category_current == child.id %}selected{% endif %}>{{ child.name }}</option>
+        {% endfor %}
+    </optgroup>
+    {% endif %}
+    {% endfor %}
+</select>
+{% endmacro %}
+
 {% macro category_form_filters() %}
 <input type="hidden" name="date_from" value="{{ date_from }}">
 <input type="hidden" name="date_to" value="{{ date_to }}">
@@ -203,7 +225,7 @@
 {% endmacro %}
 
 <div class="card">
-    <div class="card-header fw-semibold">Всего: {{ rows|length }} {{ 'за период (показаны последние 500)' if rows|length == 500 else '' }}</div>
+    <div class="card-header fw-semibold">Оценено заказов: {{ grouped_rows|length }} {{ '(показаны последние 500 отзывов за период)' if rows|length == 500 else '' }}</div>
     <div class="table-responsive">
         <table class="table table-sm mb-0 align-middle gr-table">
             <thead class="table-light">
@@ -254,7 +276,7 @@
                     <td class="text-center">{{ sentiment_dot(g.worst_sentiment) }}</td>
                     <td class="text-center">{% for s in g.sources %}{{ source_badge(s) }} {% endfor %}</td>
                     <td>{{ g.categories | join(', ') }}</td>
-                    <td class="gr-group-category-summary">{{ g.assigned_categories | join(', ') if g.assigned_categories else '—' }}</td>
+                    <td>{{ group_category_select(g) }}</td>
                     <td class="text-muted fst-italic">Показать {{ g.reviews|length }} отзыва(ов) по заказу</td>
                     <td class="text-nowrap">{{ phone_reveal_cell(g.order_number, g.guest_phone, g.status is not none) }}</td>
                     <td class="text-nowrap">{{ '%.0f'|format(g.order_amount) if g.order_amount is not none else '—' }}</td>
@@ -270,7 +292,7 @@
                     <td class="text-center">{{ sentiment_dot(r.sentiment) }}</td>
                     <td class="text-center">{{ source_badge(r.source) }}</td>
                     <td>{{ r.review_type }}</td>
-                    <td>{{ category_select(r) }}</td>
+                    <td></td>
                     <td style="max-width:420px; white-space:pre-wrap;">{{ review_content_cell(r) }}</td>
                     <td></td>
                     <td></td>
@@ -548,32 +570,19 @@
         if (chevron) chevron.classList.toggle('open', opening);
     };
 
-    /* ── Категория конкретного отзыва ── */
-    function refreshGroupCategorySummary(select) {
-        var row = select.closest('tr');
-        if (!row) return;
-        var groupClass = Array.from(row.classList).find(function (cls) { return cls.indexOf('gr-group-') === 0; });
-        if (!groupClass) return;
-        var gi = groupClass.replace('gr-group-', '');
-        var labels = [];
-        document.querySelectorAll('.gr-group-' + gi + ' .gr-category-select').forEach(function (item) {
-            var label = item.dataset.label || '';
-            if (label && labels.indexOf(label) === -1) labels.push(label);
-        });
-        var groupRow = document.querySelector('.gr-group-row[data-group-index="' + gi + '"]');
-        var summary = groupRow ? groupRow.querySelector('.gr-group-category-summary') : null;
-        if (summary) summary.textContent = labels.length ? labels.join(', ') : '—';
-    }
-
+    /* ── Категория заказа (один выбор применяется сразу ко всем отзывам заказа — см.
+       data-reviews на <select>, заполняется category_select/group_category_select) ── */
     window.saveReviewCategory = function (select) {
         var previous = select.dataset.current || 'auto';
+        var reviews;
+        try { reviews = JSON.parse(select.dataset.reviews || '[]'); } catch (e) { reviews = []; }
+        if (!reviews.length) return;
         select.disabled = true;
         fetch('{{ url_for("guest_review_category_set") }}', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                source: select.dataset.source,
-                review_id: select.dataset.reviewId,
+                reviews: reviews,
                 category: select.value
             })
         })
@@ -591,7 +600,6 @@
                 autoOption.dataset.label = data.label || '';
                 autoOption.textContent = 'Авто — ' + (data.label || 'без категории');
             }
-            refreshGroupCategorySummary(select);
         })
         .catch(function (error) {
             select.value = previous;
