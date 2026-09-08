@@ -17639,6 +17639,8 @@ def _guest_reviews_settings_redirect():
         args['branch_ids'] = branch_ids
     if request.form.get('show_positive') == '1':
         args['show_positive'] = '1'
+    if request.form.get('date_mode') == 'review':
+        args['date_mode'] = 'review'
     return redirect(url_for('guest_reviews_report', **args))
 
 
@@ -18003,20 +18005,50 @@ def guest_reviews_report():
         date_to = request.args.get('date_to', today)
         branch_flt = [int(b) for b in request.args.getlist('branch_ids') if b.isdigit()]
         show_positive = request.args.get('show_positive') == '1'
+        # Переключатель «по дате заказа»/«по дате отзыва» — просьба пользователя 2026-09-08.
+        # 'order' (умолчание) — показываем отзывы/оценки ЗАКАЗОВ, принятых в выбранном периоде,
+        # независимо от того, когда сам отзыв оставлен (отзыв на заказ от 1-го числа мог прийти
+        # и 5-го — при этой настройке он всё равно попадёт в выборку за 1-е). 'review' — старое
+        # поведение по умолчанию до этой правки: период фильтрует ДАТУ САМОГО ОТЗЫВА/ОЦЕНКИ, а
+        # не заказа, поэтому отзыв на заказ другого дня, оставленный в выбранный период, тоже
+        # покажется.
+        date_mode = request.args.get('date_mode', 'order')
+        if date_mode not in ('order', 'review'):
+            date_mode = 'order'
         dt_from, dt_to = date_from + ' 00:00:00', date_to + ' 23:59:59'
 
-        where = ['review_at >= ?', 'review_at <= ?']
-        params = [dt_from, dt_to]
-        if branch_flt:
-            ph = ','.join('?' * len(branch_flt))
-            where.append(f'branch_id IN ({ph})')
-            params.extend(branch_flt)
-        if not show_positive:
-            # По умолчанию положительные отзывы («П») скрыты — отчёт исторически про то, на что
-            # стоит обратить внимание (отрицательные/нейтральные/без типа), просьба пользователя
-            # 2026-09-04. Строки с sentiment IS NULL (тип не проставлен, см. п.302) не трогаем —
-            # они по-прежнему считаются «требующими внимания», а не положительными.
-            where.append("(sentiment IS NULL OR sentiment != 'П')")
+        if date_mode == 'order':
+            # order_number у Гуляша периодически переиспользуется для разных, не связанных друг
+            # с другом заказов (см. _lookup_order_dates) — EXISTS ниже сознательно не пытается
+            # разобрать, какому именно повтору принадлежит КОНКРЕТНЫЙ отзыв (эта эвристика уже
+            # один раз ломала группировку отзывов, см. историю _group_guest_reviews): раз хотя бы
+            # один заказ с таким номером принят в периоде — показываем ВСЕ отзывы этого номера
+            # целиком, без ограничения по review_at, ровно как их и объединяет _group_guest_reviews.
+            where = ['''EXISTS (
+                SELECT 1 FROM orders_report o2
+                WHERE o2.order_number = gr.order_number AND o2.received_at >= ? AND o2.received_at <= ?
+            )''']
+            params = [dt_from, dt_to]
+            if branch_flt:
+                ph = ','.join('?' * len(branch_flt))
+                where.append(f'gr.branch_id IN ({ph})')
+                params.extend(branch_flt)
+            if not show_positive:
+                where.append("(gr.sentiment IS NULL OR gr.sentiment != 'П')")
+        else:
+            where = ['review_at >= ?', 'review_at <= ?']
+            params = [dt_from, dt_to]
+            if branch_flt:
+                ph = ','.join('?' * len(branch_flt))
+                where.append(f'branch_id IN ({ph})')
+                params.extend(branch_flt)
+            if not show_positive:
+                # По умолчанию положительные отзывы («П») скрыты — отчёт исторически про то, на
+                # что стоит обратить внимание (отрицательные/нейтральные/без типа), просьба
+                # пользователя 2026-09-04. Строки с sentiment IS NULL (тип не проставлен, см.
+                # п.302) не трогаем — они по-прежнему считаются «требующими внимания», а не
+                # положительными.
+                where.append("(sentiment IS NULL OR sentiment != 'П')")
         sql_where = ' AND '.join(where)
 
         gr_rows = conn.execute(f'''
@@ -18044,9 +18076,15 @@ def guest_reviews_report():
         # «Рассылка» (broadcast_page, SELECT ... datetime(rr.responded_at, '+7 hours')), иначе
         # и фильтр по дате день/день считает по чужому часовому поясу, и в самом отчёте оценки
         # из рассылки показывались бы на ~7 часов раньше отзывов Гуляша с тем же временем визита.
-        where2 = ["rr.status='responded'", 'rr.rating IS NOT NULL',
-                  "datetime(rr.responded_at, '+7 hours') >= ?", "datetime(rr.responded_at, '+7 hours') <= ?"]
-        params2 = [dt_from, dt_to]
+        if date_mode == 'order':
+            # У order_rating_requests, в отличие от guest_reviews, дата заказа хранится прямо в
+            # строке (order_date, см. _maybe_create_rating_request) — эвристика не нужна.
+            where2 = ["rr.status='responded'", 'rr.rating IS NOT NULL', 'rr.order_date >= ?', 'rr.order_date <= ?']
+            params2 = [date_from, date_to]
+        else:
+            where2 = ["rr.status='responded'", 'rr.rating IS NOT NULL',
+                      "datetime(rr.responded_at, '+7 hours') >= ?", "datetime(rr.responded_at, '+7 hours') <= ?"]
+            params2 = [dt_from, dt_to]
         if branch_flt:
             ph2 = ','.join('?' * len(branch_flt))
             where2.append(f'rc.branch_id IN ({ph2})')
@@ -18119,7 +18157,11 @@ def guest_reviews_report():
     # заказа у Гуляша периодически повторяется у разных заказов, см. _lookup_order_dates).
     # show_positive/branch_flt на эту досборку не влияют — раз заказ уже показан, он должен
     # быть показан полностью, а не обрезан тем же фильтром, который его сюда и привёл.
-    order_numbers_in_view = list({r['order_number'] for r in combined})
+    # Только для date_mode == 'review' — в режиме «по дате заказа» первичный запрос ВЫШЕ (см.
+    # EXISTS по orders_report / rr.order_date) уже не ограничен по review_at/responded_at и сам
+    # по себе тянет ВСЕ отзывы совпавшего order_number, так что досборка здесь не нужна и, более
+    # того, была бы некорректна — dt_from/dt_to ниже относятся к семантике даты отзыва, а не заказа.
+    order_numbers_in_view = list({r['order_number'] for r in combined}) if date_mode == 'review' else []
     if order_numbers_in_view:
         wide_from = (datetime.strptime(date_from, '%Y-%m-%d') - timedelta(days=_ORDER_MERGE_WINDOW_DAYS)).strftime('%Y-%m-%d 00:00:00')
         wide_to = (datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=_ORDER_MERGE_WINDOW_DAYS)).strftime('%Y-%m-%d 23:59:59')
@@ -18196,8 +18238,8 @@ def guest_reviews_report():
     return render_template('guest_reviews_report.html',
         rows=combined, grouped_rows=grouped_rows, branches=branches, branch_groups=branch_groups,
         branch_flt=branch_flt, date_from=date_from, date_to=date_to, show_positive=show_positive,
-        review_status_labels=REVIEW_STATUS_LABELS, review_category_tree=review_category_tree,
-        review_category_options=review_category_options)
+        date_mode=date_mode, review_status_labels=REVIEW_STATUS_LABELS,
+        review_category_tree=review_category_tree, review_category_options=review_category_options)
 
 
 @app.route('/reports/guest-reviews/reveal-phone', methods=['POST'])

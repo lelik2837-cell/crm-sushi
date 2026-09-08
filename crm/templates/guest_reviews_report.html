@@ -31,6 +31,14 @@
                 <input type="hidden" name="date_to" id="rvDateTo" value="{{ date_to }}">
                 <input id="rvCalHidden" type="text" style="display:none;position:absolute;">
             </div>
+            <div class="col-auto">
+                <label class="form-label small fw-semibold d-block">Дата — по</label>
+                <input type="hidden" name="date_mode" id="rvDateMode" value="{{ date_mode }}">
+                <div class="btn-group btn-group-sm" role="group">
+                    <button type="button" class="btn btn-outline-primary{{ ' active' if date_mode == 'order' }}" onclick="setRvDateMode('order')">Дате заказа</button>
+                    <button type="button" class="btn btn-outline-primary{{ ' active' if date_mode == 'review' }}" onclick="setRvDateMode('review')">Дате отзыва</button>
+                </div>
+            </div>
             <div class="col-6 col-md-auto">
                 <label class="form-label small fw-semibold">Филиал</label>
                 <div class="dropdown">
@@ -222,6 +230,7 @@
 <input type="hidden" name="date_to" value="{{ date_to }}">
 {% for branch_id in branch_flt %}<input type="hidden" name="branch_ids" value="{{ branch_id }}">{% endfor %}
 {% if show_positive %}<input type="hidden" name="show_positive" value="1">{% endif %}
+{% if date_mode == 'review' %}<input type="hidden" name="date_mode" value="review">{% endif %}
 {% endmacro %}
 
 <div class="card">
@@ -532,6 +541,12 @@
             });
         }
         rvCalPicker.open();
+    };
+
+    /* ── Переключатель «по дате заказа»/«по дате отзыва» ── */
+    window.setRvDateMode = function (mode) {
+        document.getElementById('rvDateMode').value = mode;
+        document.getElementById('reviewsFilterForm').submit();
     };
 
     /* ── Мультивыбор филиалов ── */
