@@ -2,6 +2,21 @@
 {% block title %}Панель директора{% endblock %}
 {% block content %}
 <style>
+.open-shift-row {
+  display:grid;
+  grid-template-columns:4.25rem minmax(4.75rem, 1fr) auto;
+  align-items:center;
+  column-gap:.5rem;
+}
+.open-shift-time {
+  display:inline-flex;
+  align-items:center;
+  gap:.25rem;
+  white-space:nowrap;
+  font-variant-numeric:tabular-nums;
+}
+.open-shift-branch { justify-self:start; min-width:3rem; }
+.open-shift-status { justify-self:end; }
 @media (max-width:991.98px) {
   #rev-all-btn { display:none !important; }
 }
@@ -292,12 +307,10 @@
         <div class="list-group list-group-flush">
         {% for s in open_shifts %}
         <a href="{{ url_for('shift_view', shift_id=s.id) }}"
-           class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
-            <span class="d-flex flex-column flex-sm-row align-items-start align-items-sm-center gap-1 gap-sm-2">
-                <span class="badge bg-warning text-dark">{{ s.branch_abbr }}</span>
-                <span class="small text-muted"><i class="bi bi-clock me-1"></i>{{ s.opened_time }}</span>
-            </span>
-            <span class="badge bg-warning text-dark">Открыта</span>
+           class="list-group-item list-group-item-action open-shift-row">
+            <span class="badge bg-warning text-dark open-shift-branch">{{ s.branch_abbr }}</span>
+            <span class="open-shift-time small text-muted"><i class="bi bi-clock"></i><span>{{ s.opened_time }}</span></span>
+            <span class="badge bg-warning text-dark open-shift-status">Открыта</span>
         </a>
         {% endfor %}
         </div>
