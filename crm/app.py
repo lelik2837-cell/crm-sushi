@@ -233,8 +233,8 @@ _SAFE_OPS = {
 }
 
 # Мелкие блоки под основной карточкой выручки на дашборде директора
-# (dashboard_owner.html) — состав и порядок настраивается каждым
-# пользователем отдельно в /settings?tab=dashboard.
+# (dashboard_owner.html) — состав и порядок настраивается каждым пользователем
+# отдельно для сегодня, другого дня и месяца/года в /settings?tab=dashboard.
 DASHBOARD_REVENUE_BLOCKS = [
     ('payments',      'Оплата'),
     ('fot',           'ФОТ'),
@@ -246,27 +246,49 @@ DASHBOARD_REVENUE_BLOCKS = [
     ('delivery_time', 'Время доставки'),
 ]
 DASHBOARD_REVENUE_BLOCK_TITLES = dict(DASHBOARD_REVENUE_BLOCKS)
+DASHBOARD_PERIOD_GROUPS = [
+    ('today', 'Сегодня'),
+    ('day', 'Другой день'),
+    ('range', 'Месяц / год'),
+]
+DASHBOARD_PERIOD_GROUP_TITLES = dict(DASHBOARD_PERIOD_GROUPS)
 
 
-def get_user_dashboard_blocks(conn, user_id):
+def normalize_dashboard_period_group(value):
+    return value if value in DASHBOARD_PERIOD_GROUP_TITLES else 'today'
+
+
+def get_user_dashboard_blocks(conn, user_id, period_group='today'):
+    period_group = normalize_dashboard_period_group(period_group)
     existing = {r['block_key'] for r in conn.execute(
-        'SELECT block_key FROM user_dashboard_blocks WHERE user_id=?', (user_id,)
+        'SELECT block_key FROM user_dashboard_period_blocks WHERE user_id=? AND period_group=?',
+        (user_id, period_group)
+    ).fetchall()}
+    legacy = {r['block_key']: r for r in conn.execute(
+        'SELECT block_key, is_visible, sort_order FROM user_dashboard_blocks WHERE user_id=?',
+        (user_id,)
     ).fetchall()}
     for i, (key, _title) in enumerate(DASHBOARD_REVENUE_BLOCKS):
         if key not in existing:
+            old = legacy.get(key)
             conn.execute(
-                'INSERT INTO user_dashboard_blocks (user_id, block_key, is_visible, sort_order) VALUES (?,?,1,?)',
-                (user_id, key, i)
+                'INSERT INTO user_dashboard_period_blocks '
+                '(user_id, period_group, block_key, is_visible, sort_order) VALUES (?,?,?,?,?)',
+                (user_id, period_group, key,
+                 old['is_visible'] if old else 1,
+                 old['sort_order'] if old else i)
             )
     rows = conn.execute(
-        'SELECT block_key, is_visible, sort_order FROM user_dashboard_blocks '
-        'WHERE user_id=? ORDER BY sort_order, id', (user_id,)
+        'SELECT block_key, is_visible, sort_order FROM user_dashboard_period_blocks '
+        'WHERE user_id=? AND period_group=? ORDER BY sort_order, id',
+        (user_id, period_group)
     ).fetchall()
     return [{
         'key': r['block_key'],
-        'title': DASHBOARD_REVENUE_BLOCK_TITLES.get(r['block_key'], r['block_key']),
+        'title': ('Заказы сегодня' if period_group == 'today' and r['block_key'] == 'payments'
+                  else DASHBOARD_REVENUE_BLOCK_TITLES.get(r['block_key'], r['block_key'])),
         'visible': bool(r['is_visible']),
-    } for r in rows]
+    } for r in rows if r['block_key'] in DASHBOARD_REVENUE_BLOCK_TITLES]
 
 
 def safe_eval(formula, variables):
@@ -3278,13 +3300,17 @@ def dashboard():
                 WHERE s.date >= date('now', 'start of month')
             ''').fetchone()
             branch_groups = get_branch_groups(conn)
-            dash_blocks = get_user_dashboard_blocks(conn, session['user_id'])
+            dash_blocks_by_period = {
+                period_key: get_user_dashboard_blocks(conn, session['user_id'], period_key)
+                for period_key, _label in DASHBOARD_PERIOD_GROUPS
+            }
+            dash_blocks = dash_blocks_by_period['today']
             return render_template('dashboard_owner.html',
                 branches=branches, stats=stats, weekly=weekly,
                 open_shifts=open_shifts, kpi_blocks=kpi_blocks,
                 month_rev=month_rev, month_fot=month_fot['fot'] or 0,
                 branch_groups=branch_groups, today=date.today().isoformat(),
-                dash_blocks=dash_blocks)
+                dash_blocks=dash_blocks, dash_blocks_by_period=dash_blocks_by_period)
         else:
             if not item_visible('dashboard'):
                 # "dashboard" — единственная всегда-достижимая страница после логина,
@@ -7940,7 +7966,9 @@ def settings():
             LEFT JOIN branch_groups bg ON bg.id = spr.branch_group_id
             ORDER BY spr.day_of_month, spr.id
         ''').fetchall()
-        dash_blocks = get_user_dashboard_blocks(conn, session['user_id']) if session.get('role') == 'owner' else []
+        dash_period = normalize_dashboard_period_group(request.args.get('dashboard_period', 'today'))
+        dash_blocks = (get_user_dashboard_blocks(conn, session['user_id'], dash_period)
+                       if session.get('role') == 'owner' else [])
     return render_template('settings.html',
         exp_cats=exp_cats, exp_cats_parents=exp_cats_parents,
         cat_branches=cat_branches,
@@ -7961,7 +7989,8 @@ def settings():
         menu_subitems=MENU_SUBITEMS,
         role_configurable=ROLE_CONFIGURABLE, login_role_labels=LOGIN_ROLE_LABELS,
         salary_payout_rules=salary_payout_rules,
-        dash_blocks=dash_blocks)
+        dash_blocks=dash_blocks, dash_period=dash_period,
+        dash_period_groups=DASHBOARD_PERIOD_GROUPS)
 
 
 @app.route('/settings/role-permissions/save', methods=['POST'])
@@ -8173,17 +8202,19 @@ def toggle_kpi_block(block_id):
 @login_required
 @owner_required
 def toggle_dashboard_block(block_key):
+    period_group = normalize_dashboard_period_group(request.form.get('period_group', 'today'))
     if block_key not in DASHBOARD_REVENUE_BLOCK_TITLES:
         flash('Неизвестный блок', 'danger')
-        return redirect(url_for('settings', tab='dashboard'))
+        return redirect(url_for('settings', tab='dashboard', dashboard_period=period_group))
     with get_db() as conn:
-        get_user_dashboard_blocks(conn, session['user_id'])  # гарантирует наличие строки
+        get_user_dashboard_blocks(conn, session['user_id'], period_group)  # гарантирует наличие строки
         conn.execute(
-            'UPDATE user_dashboard_blocks SET is_visible=1-is_visible WHERE user_id=? AND block_key=?',
-            (session['user_id'], block_key)
+            'UPDATE user_dashboard_period_blocks SET is_visible=1-is_visible '
+            'WHERE user_id=? AND period_group=? AND block_key=?',
+            (session['user_id'], period_group, block_key)
         )
         conn.commit()
-    return redirect(url_for('settings', tab='dashboard'))
+    return redirect(url_for('settings', tab='dashboard', dashboard_period=period_group))
 
 
 @app.route('/settings/dashboard-blocks/<block_key>/move', methods=['POST'])
@@ -8191,11 +8222,12 @@ def toggle_dashboard_block(block_key):
 @owner_required
 def move_dashboard_block(block_key):
     direction = request.form.get('direction')
+    period_group = normalize_dashboard_period_group(request.form.get('period_group', 'today'))
     if block_key not in DASHBOARD_REVENUE_BLOCK_TITLES or direction not in ('up', 'down'):
         flash('Неизвестный блок', 'danger')
-        return redirect(url_for('settings', tab='dashboard'))
+        return redirect(url_for('settings', tab='dashboard', dashboard_period=period_group))
     with get_db() as conn:
-        blocks = get_user_dashboard_blocks(conn, session['user_id'])
+        blocks = get_user_dashboard_blocks(conn, session['user_id'], period_group)
         keys = [b['key'] for b in blocks]
         idx = keys.index(block_key)
         swap_idx = idx - 1 if direction == 'up' else idx + 1
@@ -8203,11 +8235,12 @@ def move_dashboard_block(block_key):
             keys[idx], keys[swap_idx] = keys[swap_idx], keys[idx]
             for i, key in enumerate(keys):
                 conn.execute(
-                    'UPDATE user_dashboard_blocks SET sort_order=? WHERE user_id=? AND block_key=?',
-                    (i, session['user_id'], key)
+                    'UPDATE user_dashboard_period_blocks SET sort_order=? '
+                    'WHERE user_id=? AND period_group=? AND block_key=?',
+                    (i, session['user_id'], period_group, key)
                 )
             conn.commit()
-    return redirect(url_for('settings', tab='dashboard'))
+    return redirect(url_for('settings', tab='dashboard', dashboard_period=period_group))
 
 
 @app.route('/settings/bonus-rules/add', methods=['POST'])

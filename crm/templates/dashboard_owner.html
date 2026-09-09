@@ -497,6 +497,17 @@ var revCustomFrom       = null;
 var revCustomTo         = null;
 var revTodayDate        = new Date();
 var revMonthDate        = (function() { var d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); })();
+var DASHBOARD_BLOCK_CONFIGS = {{ dash_blocks_by_period | tojson }};
+var DASHBOARD_BLOCK_IDS = {
+    payments: 'rm-payments',
+    fot: 'rm-fot-card',
+    region: 'rm-region-card',
+    pickup: 'rm-pickup-card',
+    delivery: 'rm-delivery-card',
+    preorders: 'rm-preorders-card',
+    promo: 'rm-promo-card',
+    delivery_time: 'rm-delivery-time-card'
+};
 
 function selectRevToday() {
     revTodayDate = new Date();
@@ -596,6 +607,36 @@ function isSameDay(a, b) { return a.getFullYear()===b.getFullYear() && a.getMont
 // (Выполнено/В работе/Позже) имеет смысл только для реального сегодня, не для
 // произвольного выбранного дня в режиме «today».
 function isRevTodayActualToday() { return revPeriod === 'today' && isSameDay(revTodayDate, new Date()); }
+
+function dashboardBlockPeriodGroup() {
+    if (revPeriod === 'today') return isRevTodayActualToday() ? 'today' : 'day';
+    return 'range';
+}
+
+function applyDashboardBlockLayout(todayMode) {
+    var config = DASHBOARD_BLOCK_CONFIGS[dashboardBlockPeriodGroup()] || [];
+    var byKey = {};
+    config.forEach(function(item, index) {
+        byKey[item.key] = { visible: item.visible, order: index };
+    });
+
+    Object.keys(DASHBOARD_BLOCK_IDS).forEach(function(key, defaultOrder) {
+        var item = byKey[key] || { visible: true, order: defaultOrder };
+        var el = document.getElementById(DASHBOARD_BLOCK_IDS[key]);
+        if (!el) return;
+        el.style.order = String(item.order);
+        el.style.display = item.visible ? '' : 'none';
+    });
+
+    var paymentsItem = byKey.payments || { visible: true, order: 0 };
+    var paymentsBlock = document.getElementById('rm-payments');
+    var ordersStatusBlock = document.getElementById('rm-orders-status');
+    if (paymentsBlock) paymentsBlock.style.display = todayMode ? 'none' : (paymentsItem.visible ? '' : 'none');
+    if (ordersStatusBlock) {
+        ordersStatusBlock.style.order = String(paymentsItem.order);
+        ordersStatusBlock.style.display = todayMode && paymentsItem.visible ? '' : 'none';
+    }
+}
 
 function fmtNum(n) { return Math.round(n).toLocaleString('ru-RU'); }
 function fmtPct(val, total) { return total ? '(' + Math.round(val / total * 100) + '%)' : ''; }
@@ -1027,10 +1068,7 @@ function loadRevCard(period) {
     // «Заказы сегодня» (Выполнено/В работе/Позже) вместо «Оплата» — только когда
     // выбран режим «today» и это реально сегодняшняя дата (а не пролистанный день).
     var todayMode = isRevTodayActualToday();
-    var paymentsBlock = document.getElementById('rm-payments');
-    var ordersStatusBlock = document.getElementById('rm-orders-status');
-    if (paymentsBlock) paymentsBlock.style.display = todayMode ? 'none' : '';
-    if (ordersStatusBlock) ordersStatusBlock.style.display = todayMode ? '' : 'none';
+    applyDashboardBlockLayout(todayMode);
 
     // «Предзаказы» не зависит от выбранного периода на карточке выручки — это всегда
     // про сегодняшний день (заказы, принятые сегодня, с доставкой на другой день),

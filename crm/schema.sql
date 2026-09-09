@@ -143,6 +143,16 @@ CREATE TABLE IF NOT EXISTS user_dashboard_blocks (
     UNIQUE(user_id, block_key)
 );
 
+CREATE TABLE IF NOT EXISTS user_dashboard_period_blocks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    period_group TEXT NOT NULL CHECK(period_group IN ('today', 'day', 'range')),
+    block_key TEXT NOT NULL,
+    is_visible INTEGER DEFAULT 1,
+    sort_order INTEGER DEFAULT 0,
+    UNIQUE(user_id, period_group, block_key)
+);
+
 CREATE TABLE IF NOT EXISTS bonus_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     role TEXT NOT NULL,

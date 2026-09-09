@@ -1883,14 +1883,33 @@
         <div class="alert alert-info mb-4">
             <i class="bi bi-info-circle me-1"></i>
             Здесь настраивается, какие небольшие блоки показывать под основной карточкой выручки
-            на дашборде («Оплата», «ФОТ» и т.д.), и в каком порядке. Настройка личная — у каждого
-            пользователя-владельца свой набор и порядок блоков, на других пользователей не влияет.
+            на дашборде («Оплата», «ФОТ» и т.д.), и в каком порядке. Для каждого типа периода
+            действует отдельный набор. Настройка личная — на других пользователей не влияет.
         </div>
         <div class="row">
             <div class="col-md-7">
                 <div class="card">
                     <div class="card-header bg-light fw-bold">
                         <i class="bi bi-grid"></i> Блоки под карточкой выручки
+                    </div>
+                    <div class="card-body border-bottom">
+                        <div class="d-flex flex-wrap gap-2" role="navigation" aria-label="Тип периода дашборда">
+                            {% for period_key, period_label in dash_period_groups %}
+                            <a href="{{ url_for('settings', tab='dashboard', dashboard_period=period_key) }}"
+                               class="btn btn-sm {% if dash_period == period_key %}btn-primary{% else %}btn-outline-secondary{% endif %}">
+                                {{ period_label }}
+                            </a>
+                            {% endfor %}
+                        </div>
+                        <div class="text-muted small mt-2">
+                            {% if dash_period == 'today' %}
+                            Применяется, когда на дашборде выбрано настоящее «Сегодня».
+                            {% elif dash_period == 'day' %}
+                            Применяется после перехода стрелками на любой другой день.
+                            {% else %}
+                            Применяется для месяца, года, всего времени и любого периода из календаря.
+                            {% endif %}
+                        </div>
                     </div>
                     <div class="card-body p-0">
                         <table class="table table-sm mb-0 align-middle">
@@ -1900,12 +1919,14 @@
                                 <td style="width:1%;white-space:nowrap;">
                                     <form method="POST" action="{{ url_for('move_dashboard_block', block_key=b.key) }}" class="d-inline">
                                         <input type="hidden" name="direction" value="up">
+                                        <input type="hidden" name="period_group" value="{{ dash_period }}">
                                         <button class="btn btn-sm btn-outline-secondary" title="Выше" {% if loop.first %}disabled{% endif %}>
                                             <i class="bi bi-arrow-up"></i>
                                         </button>
                                     </form>
                                     <form method="POST" action="{{ url_for('move_dashboard_block', block_key=b.key) }}" class="d-inline">
                                         <input type="hidden" name="direction" value="down">
+                                        <input type="hidden" name="period_group" value="{{ dash_period }}">
                                         <button class="btn btn-sm btn-outline-secondary" title="Ниже" {% if loop.last %}disabled{% endif %}>
                                             <i class="bi bi-arrow-down"></i>
                                         </button>
@@ -1921,6 +1942,7 @@
                                 </td>
                                 <td class="text-end">
                                     <form method="POST" action="{{ url_for('toggle_dashboard_block', block_key=b.key) }}" class="d-inline">
+                                        <input type="hidden" name="period_group" value="{{ dash_period }}">
                                         <button class="btn btn-sm btn-outline-secondary" title="Показать/скрыть">
                                             <i class="bi bi-{% if b.visible %}eye-slash{% else %}eye{% endif %}"></i>
                                         </button>
