@@ -1706,8 +1706,9 @@ def init_db():
             -- уже существующий общий механизм из "Филиалы", пользователь сам заводит там группы
             -- по городам — новой сущности "город" заводить не стали, раз группа уже есть).
             CREATE TABLE IF NOT EXISTS uniform_types (
-                id   INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                name         TEXT NOT NULL UNIQUE,
+                min_quantity INTEGER NOT NULL DEFAULT 10
             );
             -- Приход формы на склад — append-only, текущий остаток считается на лету
             -- (SUM прихода MINUS SUM выдачи по той же группе+типу+размеру), отдельного
@@ -2434,6 +2435,13 @@ def init_db():
             # 0 — категория управляется автоправилами, 1 — пользователь явно выбрал
             # конечную категорию (или «Без категории»), поэтому правила её не перезаписывают.
             conn.execute("ALTER TABLE guest_reviews ADD COLUMN review_category_manual INTEGER NOT NULL DEFAULT 0")
+
+        _ut_cols = [r[1] for r in conn.execute("PRAGMA table_info(uniform_types)").fetchall()]
+        if 'min_quantity' not in _ut_cols:
+            # Порог для подсветки остатка красным на вкладке «Склад» страницы «Выдача формы»
+            # (просьба пользователя 2026-09-09) — свой порог у каждого типа формы, редактируется
+            # в настройках («Настройки» → тип формы), по умолчанию 10.
+            conn.execute("ALTER TABLE uniform_types ADD COLUMN min_quantity INTEGER NOT NULL DEFAULT 10")
 
         # Выплата задолженности по ЗП («выплатные дни») — правила настроек
         # (дата/период/лимит) + доработка журнала выплат под погашение долга
@@ -18398,9 +18406,10 @@ def _uniform_available_qty(conn, branch_group_id, type_id, size):
 
 def _uniform_stock_levels(conn, branch_group_id):
     """Текущие остатки по группе филиалов, сгруппированные по (тип, размер) — для
-    сводной таблицы на вкладке «Склад»."""
+    сводной таблицы на вкладке «Склад». min_quantity — порог подсветки красным (свой
+    у каждого типа формы, редактируется в настройках, см. rename_uniform_type)."""
     rows = conn.execute('''
-        SELECT t.id AS type_id, t.name AS type_name, se.size AS size,
+        SELECT t.id AS type_id, t.name AS type_name, t.min_quantity AS min_quantity, se.size AS size,
                COALESCE(SUM(se.quantity), 0) AS in_stock
         FROM uniform_stock_entries se
         JOIN uniform_types t ON t.id = se.type_id
@@ -18418,6 +18427,7 @@ def _uniform_stock_levels(conn, branch_group_id):
             'type_id': r['type_id'], 'type_name': r['type_name'], 'size': r['size'],
             'in_stock': int(r['in_stock']), 'issued': int(issued),
             'available': int(r['in_stock']) - int(issued),
+            'min_quantity': int(r['min_quantity']),
         })
     return result
 
@@ -18491,13 +18501,16 @@ def uniform_available_qty():
 @menu_permission_required('uniform_issuance')
 def create_uniform_type():
     name = request.form.get('name', '').strip()
+    min_quantity = request.form.get('min_quantity', type=int)
+    if min_quantity is None or min_quantity < 0:
+        min_quantity = 10
     tab, group_id = request.form.get('tab', 'stock'), request.form.get('group_id', type=int)
     if not name:
         flash('Укажите название типа формы', 'danger')
         return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
     with get_db() as conn:
         try:
-            conn.execute('INSERT INTO uniform_types (name) VALUES (?)', (name,))
+            conn.execute('INSERT INTO uniform_types (name, min_quantity) VALUES (?,?)', (name, min_quantity))
             conn.commit()
         except sqlite3.IntegrityError:
             flash('Такой тип формы уже есть.', 'danger')
@@ -18511,13 +18524,16 @@ def create_uniform_type():
 @menu_permission_required('uniform_issuance')
 def rename_uniform_type(type_id):
     name = request.form.get('name', '').strip()
+    min_quantity = request.form.get('min_quantity', type=int)
+    if min_quantity is None or min_quantity < 0:
+        min_quantity = 10
     tab, group_id = request.form.get('tab', 'stock'), request.form.get('group_id', type=int)
     if not name:
         flash('Укажите название', 'danger')
         return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
     with get_db() as conn:
         try:
-            conn.execute('UPDATE uniform_types SET name=? WHERE id=?', (name, type_id))
+            conn.execute('UPDATE uniform_types SET name=?, min_quantity=? WHERE id=?', (name, min_quantity, type_id))
             conn.commit()
         except sqlite3.IntegrityError:
             flash('Такой тип формы уже есть.', 'danger')
@@ -18551,6 +18567,60 @@ def add_uniform_stock():
         ''', (group_id, type_id, size, quantity, cost_per_unit, entry_date, comment or None, session['user_id']))
         conn.commit()
     flash('Приход формы добавлен.', 'success')
+    return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
+
+
+@app.route('/reports/uniform/stock/<int:entry_id>/edit', methods=['POST'])
+@login_required
+@owner_required
+def edit_uniform_stock(entry_id):
+    """Редактирование старой записи прихода — просьба пользователя 2026-09-09, доступно
+    только владельцу (остальным ролям, у кого вообще есть доступ к «Выдаче формы», доступны
+    только добавление/удаление, см. add_uniform_stock/delete_uniform_stock)."""
+    tab = request.form.get('tab', 'stock')
+    group_id = request.form.get('group_id', type=int)
+    type_id = request.form.get('type_id', type=int)
+    size = request.form.get('size', '').strip()
+    quantity = request.form.get('quantity', type=int)
+    cost_per_unit = request.form.get('cost_per_unit', type=float) or 0
+    entry_date = request.form.get('entry_date', '').strip() or date.today().isoformat()
+    comment = request.form.get('comment', '').strip()
+
+    if not type_id or not quantity or quantity <= 0:
+        flash('Заполните тип формы и количество', 'danger')
+        return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
+
+    with get_db() as conn:
+        entry = conn.execute('SELECT * FROM uniform_stock_entries WHERE id=?', (entry_id,)).fetchone()
+        if not entry:
+            flash('Запись не найдена', 'danger')
+            return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
+
+        # Тот же принцип, что и при удалении (см. delete_uniform_stock) — нельзя изменить
+        # приход так, чтобы остаток по затронутым (тип, размер) ушёл в минус, т.е. чтобы
+        # выданного оказалось больше, чем осталось бы после правки.
+        same_combo = (type_id == entry['type_id'] and size == entry['size'])
+        if same_combo:
+            other_avail = _uniform_available_qty(conn, entry['branch_group_id'], type_id, size) - entry['quantity']
+        else:
+            other_avail = _uniform_available_qty(conn, entry['branch_group_id'], type_id, size)
+            old_avail_after_removal = _uniform_available_qty(
+                conn, entry['branch_group_id'], entry['type_id'], entry['size']
+            ) - entry['quantity']
+            if old_avail_after_removal < 0:
+                flash('Нельзя изменить — часть исходного прихода уже выдана сотрудникам.', 'danger')
+                return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
+        if other_avail + quantity < 0:
+            flash('Нельзя уменьшить — часть этого прихода уже выдана сотрудникам.', 'danger')
+            return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
+
+        conn.execute('''
+            UPDATE uniform_stock_entries
+            SET type_id=?, size=?, quantity=?, cost_per_unit=?, entry_date=?, comment=?
+            WHERE id=?
+        ''', (type_id, size, quantity, cost_per_unit, entry_date, comment or None, entry_id))
+        conn.commit()
+    flash('Запись прихода обновлена.', 'success')
     return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
 
 

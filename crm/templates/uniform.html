@@ -14,6 +14,11 @@
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="fw-bold mb-0"><i class="bi bi-bag-check me-2"></i>Выдача формы</h4>
+    {% if active_tab == 'stock' %}
+    <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#uniformTypesModal">
+        <i class="bi bi-gear me-1"></i>Настройки
+    </button>
+    {% endif %}
 </div>
 
 {% if not branch_groups %}
@@ -51,33 +56,6 @@
 <!-- ═══ Вкладка «Склад» ═══ -->
 <div class="unf-tab-pane" id="unf-pane-stock" style="{% if active_tab != 'stock' %}display:none;{% endif %}">
 
-    <!-- Типы формы (справочник) -->
-    <div class="card mb-3">
-        <div class="card-header fw-semibold"><i class="bi bi-tags me-2"></i>Типы формы</div>
-        <div class="card-body">
-            <div class="row g-2 mb-3">
-                {% for t in types %}
-                <div class="col-md-4">
-                    <form method="POST" action="{{ url_for('rename_uniform_type', type_id=t.id) }}" class="input-group input-group-sm">
-                        <input type="hidden" name="tab" value="stock">
-                        <input type="hidden" name="group_id" value="{{ group_flt }}">
-                        <input type="text" name="name" class="form-control" value="{{ t.name }}">
-                        <button type="submit" class="btn btn-outline-secondary" title="Сохранить название"><i class="bi bi-check-lg"></i></button>
-                    </form>
-                </div>
-                {% else %}
-                <div class="col-12 text-muted small">Типов формы ещё нет — добавьте первый ниже (например «Футболка», «Кепка»).</div>
-                {% endfor %}
-            </div>
-            <form method="POST" action="{{ url_for('create_uniform_type') }}" class="d-flex gap-2" style="max-width:400px;">
-                <input type="hidden" name="tab" value="stock">
-                <input type="hidden" name="group_id" value="{{ group_flt }}">
-                <input type="text" name="name" class="form-control form-control-sm" placeholder="Новый тип формы" required>
-                <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap"><i class="bi bi-plus-lg"></i> Добавить</button>
-            </form>
-        </div>
-    </div>
-
     <div class="mb-3">
         <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#stockModal"
                 {% if not types %}disabled title="Сначала добавьте хотя бы один тип формы"{% endif %}>
@@ -86,7 +64,7 @@
     </div>
 
     <!-- Текущие остатки -->
-    <div class="card mb-3">
+    <div class="card mb-3" style="max-width:720px;">
         <div class="card-header fw-semibold">Текущий остаток на складе</div>
         <div class="table-responsive">
             <table class="table table-sm mb-0 align-middle">
@@ -100,7 +78,7 @@
                         <td>{{ s.size or '—' }}</td>
                         <td class="text-end">{{ s.in_stock }}</td>
                         <td class="text-end">{{ s.issued }}</td>
-                        <td class="text-end {{ 'text-danger fw-semibold' if s.available <= 0 else 'fw-semibold' }}">{{ s.available }}</td>
+                        <td class="text-end {{ 'text-danger fw-semibold' if s.available < s.min_quantity else 'fw-semibold' }}">{{ s.available }}</td>
                     </tr>
                     {% else %}
                     <tr><td colspan="5" class="text-center text-muted py-3">Прихода формы по этой группе ещё не было</td></tr>
@@ -111,7 +89,7 @@
     </div>
 
     <!-- История прихода -->
-    <div class="card">
+    <div class="card" style="max-width:920px;">
         <div class="card-header fw-semibold">История прихода</div>
         <div class="table-responsive">
             <table class="table table-sm mb-0 align-middle">
@@ -121,14 +99,22 @@
                 <tbody>
                     {% for e in stock_history %}
                     <tr>
-                        <td class="text-nowrap">{{ e.entry_date }}</td>
+                        <td class="text-nowrap">{{ e.entry_date | date_fmt }}</td>
                         <td>{{ e.type_name }}</td>
                         <td>{{ e.size or '—' }}</td>
                         <td class="text-end">{{ e.quantity }}</td>
                         <td class="text-end">{{ '%.0f'|format(e.cost_per_unit) if e.cost_per_unit else '—' }}</td>
                         <td class="text-muted small">{{ e.created_by_name or '—' }}</td>
-                        <td class="text-end">
-                            <form method="POST" action="{{ url_for('delete_uniform_stock', entry_id=e.id) }}" onsubmit="return confirm('Удалить эту запись прихода?');">
+                        <td class="text-end text-nowrap">
+                            {% if session.get('role') == 'owner' %}
+                            <button type="button" class="btn btn-sm btn-outline-secondary unf-edit-stock-btn"
+                                    data-id="{{ e.id }}" data-type-id="{{ e.type_id }}" data-size="{{ e.size }}"
+                                    data-quantity="{{ e.quantity }}" data-cost-per-unit="{{ e.cost_per_unit or '' }}"
+                                    data-entry-date="{{ e.entry_date }}" data-comment="{{ e.comment or '' }}">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                            {% endif %}
+                            <form method="POST" action="{{ url_for('delete_uniform_stock', entry_id=e.id) }}" class="d-inline" onsubmit="return confirm('Удалить эту запись прихода?');">
                                 <input type="hidden" name="tab" value="stock">
                                 <input type="hidden" name="group_id" value="{{ group_flt }}">
                                 <button type="submit" class="btn btn-sm btn-outline-danger">Удалить</button>
@@ -154,7 +140,7 @@
         </button>
     </div>
 
-    <div class="card">
+    <div class="card" style="max-width:860px;">
         <div class="card-header fw-semibold">История выдачи</div>
         <div class="table-responsive">
             <table class="table table-sm mb-0 align-middle">
@@ -164,7 +150,7 @@
                 <tbody>
                     {% for i in issuance_history %}
                     <tr>
-                        <td class="text-nowrap">{{ i.issued_date }}</td>
+                        <td class="text-nowrap">{{ i.issued_date | date_fmt }}</td>
                         <td>{{ i.employee_name }}</td>
                         <td>{{ i.type_name }}</td>
                         <td>{{ i.size or '—' }}</td>
@@ -183,6 +169,53 @@
                     {% endfor %}
                 </tbody>
             </table>
+        </div>
+    </div>
+</div>
+
+<!-- Модалка «Настройки» — типы формы: название + порог подсветки остатка красным -->
+<div class="modal fade" id="uniformTypesModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-tags me-2"></i>Типы формы</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="text-muted small mb-3">
+                    «Мин. остаток» — если остаток формы этого типа опустится ниже этого числа, он подсветится красным в таблице «Текущий остаток».
+                </div>
+                <div class="row g-2 mb-3">
+                    {% for t in types %}
+                    <div class="col-12">
+                        <form method="POST" action="{{ url_for('rename_uniform_type', type_id=t.id) }}" class="input-group input-group-sm">
+                            <input type="hidden" name="tab" value="stock">
+                            <input type="hidden" name="group_id" value="{{ group_flt }}">
+                            <span class="input-group-text">Название</span>
+                            <input type="text" name="name" class="form-control" value="{{ t.name }}">
+                            <span class="input-group-text">Мин. остаток</span>
+                            <input type="number" name="min_quantity" class="form-control" style="max-width:90px;" min="0" value="{{ t.min_quantity }}">
+                            <button type="submit" class="btn btn-outline-secondary" title="Сохранить"><i class="bi bi-check-lg"></i></button>
+                        </form>
+                    </div>
+                    {% else %}
+                    <div class="col-12 text-muted small">Типов формы ещё нет — добавьте первый ниже (например «Футболка», «Кепка»).</div>
+                    {% endfor %}
+                </div>
+                <hr>
+                <form method="POST" action="{{ url_for('create_uniform_type') }}" class="input-group input-group-sm">
+                    <input type="hidden" name="tab" value="stock">
+                    <input type="hidden" name="group_id" value="{{ group_flt }}">
+                    <span class="input-group-text">Название</span>
+                    <input type="text" name="name" class="form-control" placeholder="Новый тип формы" required>
+                    <span class="input-group-text">Мин. остаток</span>
+                    <input type="number" name="min_quantity" class="form-control" style="max-width:90px;" min="0" value="10">
+                    <button type="submit" class="btn btn-outline-primary text-nowrap"><i class="bi bi-plus-lg"></i> Добавить</button>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Закрыть</button>
+            </div>
         </div>
     </div>
 </div>
@@ -236,6 +269,58 @@
         </form>
     </div>
 </div>
+
+{% if session.get('role') == 'owner' %}
+<!-- Модалка «Изменить приход» — только для владельца, см. edit_uniform_stock -->
+<div class="modal fade" id="editStockModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <form method="POST" id="unf-edit-stock-form" class="modal-content">
+            <input type="hidden" name="tab" value="stock">
+            <input type="hidden" name="group_id" value="{{ group_flt }}">
+            <div class="modal-header">
+                <h5 class="modal-title">Изменить приход формы</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label small fw-semibold">Тип формы</label>
+                        <select name="type_id" id="unf-edit-type-id" class="form-select" required>
+                            {% for t in types %}
+                            <option value="{{ t.id }}">{{ t.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label small fw-semibold">Размер</label>
+                        <input type="text" name="size" id="unf-edit-size" class="form-control" list="uniform-sizes" placeholder="L, M, Универсальный...">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-semibold">Количество</label>
+                        <input type="number" name="quantity" id="unf-edit-quantity" class="form-control" min="1" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-semibold">Цена за штуку</label>
+                        <input type="number" step="0.01" name="cost_per_unit" id="unf-edit-cost-per-unit" class="form-control" placeholder="необязательно">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-semibold">Дата</label>
+                        <input type="date" name="entry_date" id="unf-edit-entry-date" class="form-control">
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label small fw-semibold">Комментарий</label>
+                        <input type="text" name="comment" id="unf-edit-comment" class="form-control" placeholder="необязательно">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отменить</button>
+                <button type="submit" class="btn btn-primary">Сохранить</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
 
 <!-- Модалка «Выдать форму» -->
 <div class="modal fade" id="issueModal" tabindex="-1" aria-hidden="true">
@@ -313,10 +398,26 @@ function unfUpdateAvailable() {
         .catch(() => {});
 }
 
+// Кнопка «Изменить» у строки прихода — заполняет модалку редактирования данными этой
+// записи (переданы через data-* атрибуты) и подставляет entry_id в action формы.
+document.querySelectorAll('.unf-edit-stock-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+        const form = document.getElementById('unf-edit-stock-form');
+        form.action = `/reports/uniform/stock/${btn.dataset.id}/edit`;
+        document.getElementById('unf-edit-type-id').value = btn.dataset.typeId;
+        document.getElementById('unf-edit-size').value = btn.dataset.size;
+        document.getElementById('unf-edit-quantity').value = btn.dataset.quantity;
+        document.getElementById('unf-edit-cost-per-unit').value = btn.dataset.costPerUnit;
+        document.getElementById('unf-edit-entry-date').value = btn.dataset.entryDate;
+        document.getElementById('unf-edit-comment').value = btn.dataset.comment;
+        new bootstrap.Modal(document.getElementById('editStockModal')).show();
+    });
+});
+
 // Сабмит любой формы на этой странице не должен прыгать в начало страницы после
 // перезагрузки — сохраняем позицию скролла перед уходом (см. правило в CLAUDE.md
 // про сохранение состояния фильтров/вкладок при сабмите форм).
-document.querySelectorAll('.unf-tab-pane form, form[action*="uniform"]').forEach((form) => {
+document.querySelectorAll('.unf-tab-pane form, form[action*="uniform"], #unf-edit-stock-form').forEach((form) => {
     form.addEventListener('submit', () => {
         sessionStorage.setItem('unf_scroll_y', String(window.scrollY));
     });
