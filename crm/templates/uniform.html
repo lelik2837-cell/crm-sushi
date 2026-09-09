@@ -431,7 +431,7 @@ function unfUpdateAvailable() {
     const typeId = document.getElementById('unf-issue-type').value;
     const size = document.getElementById('unf-issue-size').value.trim();
     const hint = document.getElementById('unf-available-hint');
-    if (!typeId) { hint.textContent = ''; return; }
+    if (!typeId || !size) { hint.textContent = ''; return; }
     fetch(`/reports/uniform/available?group_id={{ group_flt }}&type_id=${encodeURIComponent(typeId)}&size=${encodeURIComponent(size)}`)
         .then((r) => r.json())
         .then((data) => {
