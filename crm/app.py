@@ -1708,7 +1708,8 @@ def init_db():
             CREATE TABLE IF NOT EXISTS uniform_types (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 name         TEXT NOT NULL UNIQUE,
-                min_quantity INTEGER NOT NULL DEFAULT 10
+                min_quantity INTEGER NOT NULL DEFAULT 10,
+                icon         TEXT NOT NULL DEFAULT ''
             );
             -- Приход формы на склад — append-only, текущий остаток считается на лету
             -- (SUM прихода MINUS SUM выдачи по той же группе+типу+размеру), отдельного
@@ -2442,6 +2443,14 @@ def init_db():
             # (просьба пользователя 2026-09-09) — свой порог у каждого типа формы, редактируется
             # в настройках («Настройки» → тип формы), по умолчанию 10.
             conn.execute("ALTER TABLE uniform_types ADD COLUMN min_quantity INTEGER NOT NULL DEFAULT 10")
+        if 'icon' not in _ut_cols:
+            # Чёрно-белый смайл-иконка типа формы (майка/кепка/штаны/обувь, см.
+            # UNIFORM_TYPE_ICONS) — просьба пользователя 2026-09-09, показывается вместо
+            # текста рядом с количеством на вкладке «Выдача» (не в истории по сотруднику —
+            # там осознанно текст, просьба пользователя явно это разделить). Хранится КЛЮЧ
+            # из UNIFORM_TYPE_ICONS ('shirt'/'cap'/...), не сам эмодзи-символ — так сам эмодзи
+            # можно поменять в одном месте в коде, не трогая БД. Пустая строка — без иконки.
+            conn.execute("ALTER TABLE uniform_types ADD COLUMN icon TEXT NOT NULL DEFAULT ''")
 
         # Выплата задолженности по ЗП («выплатные дни») — правила настроек
         # (дата/период/лимит) + доработка журнала выплат под погашение долга
@@ -18392,6 +18401,21 @@ def api_rating_request_dialog(req_id):
 # используется также для ставок/выплат) — пользователь сам заводит там группы по городам,
 # отдельную сущность «город» заводить не стали.
 
+# Иконки типа формы (просьба пользователя 2026-09-09) — фиксированный набор из 4 силуэтов
+# одежды плюс «без иконки»; в БД (uniform_types.icon) хранится ключ (первый элемент), не
+# сам эмодзи-символ, чтобы сам символ можно было поменять в одном месте, не трогая записи в
+# базе. На вкладке «Выдача» показывается вместо/рядом с количеством выданного, с CSS-фильтром
+# grayscale (класс unf-icon в uniform.html) — просьба показывать «чёрно-белым», а не цветным.
+UNIFORM_TYPE_ICONS = [
+    ('', 'Без иконки', ''),
+    ('shirt', 'Майка', '👕'),
+    ('cap', 'Кепка', '🧢'),
+    ('pants', 'Штаны', '👖'),
+    ('shoes', 'Обувь', '👟'),
+]
+UNIFORM_TYPE_ICON_EMOJI = {key: emoji for key, _label, emoji in UNIFORM_TYPE_ICONS}
+
+
 def _uniform_available_qty(conn, branch_group_id, type_id, size):
     """Остаток = приход минус выдача по (группа, тип, размер) — считается на лету,
     не хранится отдельным полем, чтобы не могло разойтись с историей."""
@@ -18435,10 +18459,14 @@ def _uniform_stock_levels(conn, branch_group_id):
 def _group_uniform_issuances_by_employee(issuance_history):
     """Вкладка «Выдача» — просьба пользователя 2026-09-09 группировать историю выдачи по
     сотрудникам (раньше был плоский список строк): для каждого сотрудника — суммарное
-    количество выданного (по всем типам/размерам) и entries — отдельные выдачи для модалки
-    «История» (дата уже в формате ДД.ММ.ГГГГ через date_fmt — просьба показывать даты в
-    этом формате по умолчанию, см. п.354/feedback-date-format-ddmmyyyy-default). Отсортировано
-    по имени сотрудника — так удобнее искать (см. поиск по сотрудникам на этой же вкладке).
+    количество выданного (по всем типам/размерам), разбивка по типам с иконками
+    (type_breakdown — для компактных бейджей «иконка/название + количество» в таблице
+    «Выдано сотрудникам») и entries — отдельные выдачи для модалки «История» (дата уже в
+    формате ДД.ММ.ГГГГ через date_fmt — просьба показывать даты в этом формате по умолчанию,
+    см. п.354/feedback-date-format-ddmmyyyy-default; поле type_icon в entries НЕ кладём —
+    отдельная просьба пользователя не использовать иконки в истории по сотруднику, там
+    только текст названия типа). Отсортировано по имени сотрудника — так удобнее искать
+    (см. поиск по сотрудникам на этой же вкладке).
     Ключ намеренно не 'items' — в Jinja `g.items` на обычном dict резолвится в встроенный
     метод dict.items, а не в значение по ключу (падает при tojson, TypeError: builtin_function
     is not JSON serializable), поэтому используется предметное имя entries."""
@@ -18449,7 +18477,7 @@ def _group_uniform_issuances_by_employee(issuance_history):
         if eid not in groups:
             groups[eid] = {
                 'employee_id': eid, 'employee_name': r['employee_name'],
-                'total_quantity': 0, 'entries': [],
+                'total_quantity': 0, 'entries': [], 'by_type': {},
             }
             order.append(eid)
         groups[eid]['total_quantity'] += r['quantity']
@@ -18461,7 +18489,14 @@ def _group_uniform_issuances_by_employee(issuance_history):
             'quantity': r['quantity'],
             'created_by_name': r['created_by_name'] or '—',
         })
+        by_type = groups[eid]['by_type']
+        tid = r['type_id']
+        if tid not in by_type:
+            by_type[tid] = {'type_name': r['type_name'], 'icon': r['type_icon'] or '', 'quantity': 0}
+        by_type[tid]['quantity'] += r['quantity']
     result = [groups[eid] for eid in order]
+    for g in result:
+        g['type_breakdown'] = sorted(g.pop('by_type').values(), key=lambda x: x['type_name'])
     result.sort(key=lambda g: g['employee_name'])
     return result
 
@@ -18490,7 +18525,7 @@ def uniform_page():
                 ORDER BY se.entry_date DESC, se.id DESC LIMIT 200
             ''', (group_flt,)).fetchall()
             issuance_history = conn.execute('''
-                SELECT ui.*, t.name AS type_name, e.full_name AS employee_name, u.full_name AS created_by_name
+                SELECT ui.*, t.name AS type_name, t.icon AS type_icon, e.full_name AS employee_name, u.full_name AS created_by_name
                 FROM uniform_issuances ui
                 JOIN uniform_types t ON t.id = ui.type_id
                 JOIN employees e ON e.id = ui.employee_id
@@ -18513,6 +18548,7 @@ def uniform_page():
         stock_levels=stock_levels, stock_history=stock_history,
         issuance_history=issuance_history, employees_in_group=employees_in_group,
         employee_issuance_groups=_group_uniform_issuances_by_employee(issuance_history),
+        uniform_type_icons=UNIFORM_TYPE_ICONS, uniform_type_icon_emoji=UNIFORM_TYPE_ICON_EMOJI,
         today=date.today().isoformat(),
         active_tab=request.args.get('tab', 'stock'))
 
@@ -18539,13 +18575,16 @@ def create_uniform_type():
     min_quantity = request.form.get('min_quantity', type=int)
     if min_quantity is None or min_quantity < 0:
         min_quantity = 10
+    icon = request.form.get('icon', '').strip()
+    if icon not in UNIFORM_TYPE_ICON_EMOJI:
+        icon = ''
     tab, group_id = request.form.get('tab', 'stock'), request.form.get('group_id', type=int)
     if not name:
         flash('Укажите название типа формы', 'danger')
         return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
     with get_db() as conn:
         try:
-            conn.execute('INSERT INTO uniform_types (name, min_quantity) VALUES (?,?)', (name, min_quantity))
+            conn.execute('INSERT INTO uniform_types (name, min_quantity, icon) VALUES (?,?,?)', (name, min_quantity, icon))
             conn.commit()
         except sqlite3.IntegrityError:
             flash('Такой тип формы уже есть.', 'danger')
@@ -18562,13 +18601,16 @@ def rename_uniform_type(type_id):
     min_quantity = request.form.get('min_quantity', type=int)
     if min_quantity is None or min_quantity < 0:
         min_quantity = 10
+    icon = request.form.get('icon', '').strip()
+    if icon not in UNIFORM_TYPE_ICON_EMOJI:
+        icon = ''
     tab, group_id = request.form.get('tab', 'stock'), request.form.get('group_id', type=int)
     if not name:
         flash('Укажите название', 'danger')
         return redirect(url_for('uniform_page', tab=tab, group_id=group_id))
     with get_db() as conn:
         try:
-            conn.execute('UPDATE uniform_types SET name=?, min_quantity=? WHERE id=?', (name, min_quantity, type_id))
+            conn.execute('UPDATE uniform_types SET name=?, min_quantity=?, icon=? WHERE id=?', (name, min_quantity, icon, type_id))
             conn.commit()
         except sqlite3.IntegrityError:
             flash('Такой тип формы уже есть.', 'danger')

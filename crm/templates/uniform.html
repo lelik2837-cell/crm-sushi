@@ -12,6 +12,13 @@
     <option value="XXL">
 </datalist>
 
+<style>
+/* Иконка типа формы на вкладке «Выдача» — чёрно-белая, просьба пользователя 2026-09-09
+   не показывать эмодзи цветным (в истории по сотруднику иконки намеренно не используются). */
+.unf-icon { filter: grayscale(1) contrast(1.1); }
+.unf-type-badge { display: inline-block; margin-left: 10px; white-space: nowrap; }
+</style>
+
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="fw-bold mb-0"><i class="bi bi-bag-check me-2"></i>Выдача формы</h4>
     {% if active_tab == 'stock' %}
@@ -133,7 +140,7 @@
 <!-- ═══ Вкладка «Выдача» ═══ -->
 <div class="unf-tab-pane" id="unf-pane-issue" style="{% if active_tab != 'issue' %}display:none;{% endif %}">
 
-    <div class="mb-3 d-flex justify-content-between align-items-end flex-wrap gap-2">
+    <div class="mb-3 d-flex align-items-end flex-wrap gap-2">
         <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#issueModal"
                 {% if not types or not employees_in_group %}disabled title="{% if not types %}Сначала добавьте тип формы{% else %}В этой группе филиалов нет сотрудников{% endif %}"{% endif %}>
             <i class="bi bi-plus-lg me-1"></i>Выдать форму
@@ -147,13 +154,20 @@
         <div class="table-responsive">
             <table class="table table-sm mb-0 align-middle">
                 <thead class="table-light">
-                    <tr><th>Сотрудник</th><th class="text-end">Выдано, шт.</th><th></th></tr>
+                    <tr><th>Сотрудник</th><th class="text-end">Выдано</th><th></th></tr>
                 </thead>
                 <tbody id="unf-emp-tbody">
                     {% for g in employee_issuance_groups %}
                     <tr class="unf-emp-row" data-name="{{ g.employee_name | lower }}">
                         <td>{{ g.employee_name }}</td>
-                        <td class="text-end fw-semibold">{{ g.total_quantity }}</td>
+                        <td class="text-end">
+                            {% for tb in g.type_breakdown %}
+                            <span class="unf-type-badge" title="{{ tb.type_name }}">
+                                {% if tb.icon %}<span class="unf-icon">{{ uniform_type_icon_emoji[tb.icon] }}</span>{% else %}{{ tb.type_name }}{% endif %}
+                                {{ tb.quantity }}
+                            </span>
+                            {% endfor %}
+                        </td>
                         <td class="text-end">
                             <button type="button" class="btn btn-sm btn-outline-secondary unf-history-btn"
                                     data-employee-name="{{ g.employee_name }}" data-items='{{ g.entries | tojson }}'>
@@ -209,6 +223,12 @@
                         <form method="POST" action="{{ url_for('rename_uniform_type', type_id=t.id) }}" class="input-group input-group-sm">
                             <input type="hidden" name="tab" value="stock">
                             <input type="hidden" name="group_id" value="{{ group_flt }}">
+                            <span class="input-group-text">Иконка</span>
+                            <select name="icon" class="form-select" style="max-width:140px;">
+                                {% for icon_value, icon_label, icon_emoji in uniform_type_icons %}
+                                <option value="{{ icon_value }}" {% if t.icon == icon_value %}selected{% endif %}>{{ icon_emoji }} {{ icon_label }}</option>
+                                {% endfor %}
+                            </select>
                             <span class="input-group-text">Название</span>
                             <input type="text" name="name" class="form-control" value="{{ t.name }}">
                             <span class="input-group-text">Мин. остаток</span>
@@ -224,6 +244,12 @@
                 <form method="POST" action="{{ url_for('create_uniform_type') }}" class="input-group input-group-sm">
                     <input type="hidden" name="tab" value="stock">
                     <input type="hidden" name="group_id" value="{{ group_flt }}">
+                    <span class="input-group-text">Иконка</span>
+                    <select name="icon" class="form-select" style="max-width:140px;">
+                        {% for icon_value, icon_label, icon_emoji in uniform_type_icons %}
+                        <option value="{{ icon_value }}">{{ icon_emoji }} {{ icon_label }}</option>
+                        {% endfor %}
+                    </select>
                     <span class="input-group-text">Название</span>
                     <input type="text" name="name" class="form-control" placeholder="Новый тип формы" required>
                     <span class="input-group-text">Мин. остаток</span>
