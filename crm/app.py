@@ -3246,7 +3246,9 @@ def dashboard():
             weekly = dict(weekly)
             weekly['total'] = float(weekly['total']) + _manual_week
             open_shifts = conn.execute('''
-                SELECT s.*, b.name as branch_name
+                SELECT s.*,
+                       COALESCE(NULLIF(TRIM(b.abbr), ''), UPPER(SUBSTR(b.name, 1, 3))) AS branch_abbr,
+                       strftime('%H:%M', datetime(s.opened_at, '+7 hours')) AS opened_time
                 FROM shifts s JOIN branches b ON b.id=s.branch_id
                 WHERE s.date=date('now') AND s.status='open'
             ''').fetchall()
