@@ -18432,6 +18432,40 @@ def _uniform_stock_levels(conn, branch_group_id):
     return result
 
 
+def _group_uniform_issuances_by_employee(issuance_history):
+    """Вкладка «Выдача» — просьба пользователя 2026-09-09 группировать историю выдачи по
+    сотрудникам (раньше был плоский список строк): для каждого сотрудника — суммарное
+    количество выданного (по всем типам/размерам) и entries — отдельные выдачи для модалки
+    «История» (дата уже в формате ДД.ММ.ГГГГ через date_fmt — просьба показывать даты в
+    этом формате по умолчанию, см. п.354/feedback-date-format-ddmmyyyy-default). Отсортировано
+    по имени сотрудника — так удобнее искать (см. поиск по сотрудникам на этой же вкладке).
+    Ключ намеренно не 'items' — в Jinja `g.items` на обычном dict резолвится в встроенный
+    метод dict.items, а не в значение по ключу (падает при tojson, TypeError: builtin_function
+    is not JSON serializable), поэтому используется предметное имя entries."""
+    groups = {}
+    order = []
+    for r in issuance_history:
+        eid = r['employee_id']
+        if eid not in groups:
+            groups[eid] = {
+                'employee_id': eid, 'employee_name': r['employee_name'],
+                'total_quantity': 0, 'entries': [],
+            }
+            order.append(eid)
+        groups[eid]['total_quantity'] += r['quantity']
+        groups[eid]['entries'].append({
+            'id': r['id'],
+            'issued_date': date_fmt(r['issued_date']),
+            'type_name': r['type_name'],
+            'size': r['size'] or '—',
+            'quantity': r['quantity'],
+            'created_by_name': r['created_by_name'] or '—',
+        })
+    result = [groups[eid] for eid in order]
+    result.sort(key=lambda g: g['employee_name'])
+    return result
+
+
 @app.route('/reports/uniform')
 @login_required
 @menu_permission_required('uniform_issuance')
@@ -18478,6 +18512,7 @@ def uniform_page():
         branch_groups=branch_groups, types=types, group_flt=group_flt,
         stock_levels=stock_levels, stock_history=stock_history,
         issuance_history=issuance_history, employees_in_group=employees_in_group,
+        employee_issuance_groups=_group_uniform_issuances_by_employee(issuance_history),
         today=date.today().isoformat(),
         active_tab=request.args.get('tab', 'stock'))
 
@@ -18685,8 +18720,11 @@ def issue_uniform():
 
 @app.route('/reports/uniform/issuance/<int:issuance_id>/delete', methods=['POST'])
 @login_required
-@menu_permission_required('uniform_issuance')
+@owner_required
 def delete_uniform_issuance(issuance_id):
+    """Отмена выдачи — просьба пользователя 2026-09-09 оставить только владельцу (остальным
+    ролям с доступом к «Выдаче формы» доступна только сама выдача, не отмена), тот же
+    принцип, что и у edit_uniform_stock."""
     tab = request.form.get('tab', 'issue')
     group_id = request.form.get('group_id', type=int)
     with get_db() as conn:

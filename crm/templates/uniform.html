@@ -133,42 +133,60 @@
 <!-- ═══ Вкладка «Выдача» ═══ -->
 <div class="unf-tab-pane" id="unf-pane-issue" style="{% if active_tab != 'issue' %}display:none;{% endif %}">
 
-    <div class="mb-3">
+    <div class="mb-3 d-flex justify-content-between align-items-end flex-wrap gap-2">
         <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#issueModal"
                 {% if not types or not employees_in_group %}disabled title="{% if not types %}Сначала добавьте тип формы{% else %}В этой группе филиалов нет сотрудников{% endif %}"{% endif %}>
             <i class="bi bi-plus-lg me-1"></i>Выдать форму
         </button>
+        <input type="text" class="form-control form-control-sm" id="unf-emp-search"
+               style="max-width:240px;" placeholder="Поиск по сотруднику..." oninput="unfFilterEmployees(this.value)">
     </div>
 
-    <div class="card" style="max-width:860px;">
-        <div class="card-header fw-semibold">История выдачи</div>
+    <div class="card" style="max-width:640px;">
+        <div class="card-header fw-semibold">Выдано сотрудникам</div>
         <div class="table-responsive">
             <table class="table table-sm mb-0 align-middle">
                 <thead class="table-light">
-                    <tr><th>Дата</th><th>Сотрудник</th><th>Тип</th><th>Размер</th><th class="text-end">Кол-во</th><th>Выдал</th><th></th></tr>
+                    <tr><th>Сотрудник</th><th class="text-end">Выдано, шт.</th><th></th></tr>
                 </thead>
-                <tbody>
-                    {% for i in issuance_history %}
-                    <tr>
-                        <td class="text-nowrap">{{ i.issued_date | date_fmt }}</td>
-                        <td>{{ i.employee_name }}</td>
-                        <td>{{ i.type_name }}</td>
-                        <td>{{ i.size or '—' }}</td>
-                        <td class="text-end">{{ i.quantity }}</td>
-                        <td class="text-muted small">{{ i.created_by_name or '—' }}</td>
+                <tbody id="unf-emp-tbody">
+                    {% for g in employee_issuance_groups %}
+                    <tr class="unf-emp-row" data-name="{{ g.employee_name | lower }}">
+                        <td>{{ g.employee_name }}</td>
+                        <td class="text-end fw-semibold">{{ g.total_quantity }}</td>
                         <td class="text-end">
-                            <form method="POST" action="{{ url_for('delete_uniform_issuance', issuance_id=i.id) }}" onsubmit="return confirm('Отменить эту выдачу? Форма вернётся на склад.');">
-                                <input type="hidden" name="tab" value="issue">
-                                <input type="hidden" name="group_id" value="{{ group_flt }}">
-                                <button type="submit" class="btn btn-sm btn-outline-danger">Отменить</button>
-                            </form>
+                            <button type="button" class="btn btn-sm btn-outline-secondary unf-history-btn"
+                                    data-employee-name="{{ g.employee_name }}" data-items='{{ g.entries | tojson }}'>
+                                <i class="bi bi-clock-history me-1"></i>История
+                            </button>
                         </td>
                     </tr>
                     {% else %}
-                    <tr><td colspan="7" class="text-center text-muted py-3">Выдач пока не было</td></tr>
+                    <tr><td colspan="3" class="text-center text-muted py-3">Выдач пока не было</td></tr>
                     {% endfor %}
+                    <tr id="unf-emp-empty-search" class="d-none"><td colspan="3" class="text-center text-muted py-3">Никто не найден</td></tr>
                 </tbody>
             </table>
+        </div>
+    </div>
+</div>
+
+<!-- Модалка «История выдачи» одного сотрудника — заполняется JS из data-items кнопки «История» -->
+<div class="modal fade" id="unfHistoryModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">История выдачи — <span id="unf-history-emp-name"></span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-0">
+                <table class="table table-sm mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr><th>Дата</th><th>Тип</th><th>Размер</th><th class="text-end">Кол-во</th><th>Выдал</th><th></th></tr>
+                    </thead>
+                    <tbody id="unf-history-body"></tbody>
+                </table>
+            </div>
         </div>
     </div>
 </div>
@@ -411,6 +429,63 @@ document.querySelectorAll('.unf-edit-stock-btn').forEach((btn) => {
         document.getElementById('unf-edit-entry-date').value = btn.dataset.entryDate;
         document.getElementById('unf-edit-comment').value = btn.dataset.comment;
         new bootstrap.Modal(document.getElementById('editStockModal')).show();
+    });
+});
+
+// Поиск по сотрудникам на вкладке «Выдача» — простой фильтр строк по подстроке имени
+// (без запроса на сервер, employee_issuance_groups уже весь на странице).
+window.unfFilterEmployees = function (q) {
+    const lq = q.trim().toLowerCase();
+    let anyVisible = false;
+    document.querySelectorAll('.unf-emp-row').forEach((row) => {
+        const visible = row.dataset.name.indexOf(lq) >= 0;
+        row.classList.toggle('d-none', !visible);
+        if (visible) anyVisible = true;
+    });
+    const emptyRow = document.getElementById('unf-emp-empty-search');
+    if (emptyRow) emptyRow.classList.toggle('d-none', anyVisible || !document.querySelectorAll('.unf-emp-row').length);
+};
+
+function escapeHtml(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Отмена выдачи — крестик, доступен только владельцу (кнопка вообще не рендерится в HTML
+// для остальных ролей, см. UNF_IS_OWNER ниже и session.role в шаблоне).
+var UNF_IS_OWNER = {{ 'true' if session.get('role') == 'owner' else 'false' }};
+window.unfCancelIssuance = function (id) {
+    if (!confirm('Отменить эту выдачу? Форма вернётся на склад.')) return;
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = `/reports/uniform/issuance/${id}/delete`;
+    form.innerHTML = '<input type="hidden" name="tab" value="issue">'
+        + '<input type="hidden" name="group_id" value="{{ group_flt }}">';
+    document.body.appendChild(form);
+    sessionStorage.setItem('unf_scroll_y', String(window.scrollY));
+    form.submit();
+};
+
+// Кнопка «История» у строки сотрудника — заполняет общую модалку данными этого
+// сотрудника (переданы через data-items, см. _group_uniform_issuances_by_employee).
+document.querySelectorAll('.unf-history-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+        const items = JSON.parse(btn.dataset.items || '[]');
+        document.getElementById('unf-history-emp-name').textContent = btn.dataset.employeeName;
+        document.getElementById('unf-history-body').innerHTML = items.map((it) => `
+            <tr>
+                <td class="text-nowrap">${escapeHtml(it.issued_date)}</td>
+                <td>${escapeHtml(it.type_name)}</td>
+                <td>${escapeHtml(it.size)}</td>
+                <td class="text-end">${it.quantity}</td>
+                <td class="text-muted small">${escapeHtml(it.created_by_name)}</td>
+                <td class="text-end">${UNF_IS_OWNER
+                    ? `<button type="button" class="btn btn-sm btn-outline-danger" title="Отменить выдачу" onclick="unfCancelIssuance(${it.id})"><i class="bi bi-x-lg"></i></button>`
+                    : ''}</td>
+            </tr>
+        `).join('') || '<tr><td colspan="6" class="text-center text-muted py-3">Выдач пока не было</td></tr>';
+        new bootstrap.Modal(document.getElementById('unfHistoryModal')).show();
     });
 });
 
