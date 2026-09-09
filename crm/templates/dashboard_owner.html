@@ -293,7 +293,10 @@
         {% for s in open_shifts %}
         <a href="{{ url_for('shift_view', shift_id=s.id) }}"
            class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
-            <span>{{ s.branch_abbr }} · {{ s.opened_time }}</span>
+            <span class="d-flex flex-column flex-sm-row align-items-start align-items-sm-center gap-1 gap-sm-2">
+                <span class="badge bg-warning text-dark">{{ s.branch_abbr }}</span>
+                <span class="small text-muted"><i class="bi bi-clock me-1"></i>{{ s.opened_time }}</span>
+            </span>
             <span class="badge bg-warning text-dark">Открыта</span>
         </a>
         {% endfor %}
