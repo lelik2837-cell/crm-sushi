@@ -87,6 +87,10 @@
           </div>
         </div>
 
+        <!-- ₽ / % toggle для графика (как в «Промокодах»), по умолчанию — % -->
+        <button id="os-unit-btn" onclick="toggleSourceUnit()" title="Переключить ₽ / %"
+          style="flex-shrink:0;width:26px;height:26px;border-radius:50%;border:1.5px solid rgba(255,255,255,.9);background:rgba(255,255,255,.28);color:rgba(255,255,255,.95);cursor:pointer;padding:0;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;">%</button>
+
         <!-- Branch selector -->
         {% set bs_prefix = 'osrc' %}
         {% include '_dash_branch_picker.html' %}
@@ -204,6 +208,10 @@ var sourceCustomTo   = null;
 var sourceTodayDate  = new Date();
 var sourceMonthDate  = (function() { var d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); })();
 var selectedSources  = []; // пусто = все источники
+var showPct           = true; // ₽/% для графика — по умолчанию проценты (просьба пользователя 2026-09-14)
+var lastDaysData       = [];
+var lastMonthsData     = [];
+var lastYearDayData    = [];
 
 window.osrcBranchIds = [];
 window.osrcOnBranchChange = function () { loadSourceCard(sourcePeriod); };
@@ -251,6 +259,17 @@ function osrcCheckboxChanged() {
     var vals = [];
     document.querySelectorAll('.os-source-cb:checked').forEach(function (cb) { vals.push(cb.value); });
     osrcSetSources(vals);
+}
+
+function toggleSourceUnit() {
+    showPct = !showPct;
+    var btn = document.getElementById('os-unit-btn');
+    btn.textContent = showPct ? '%' : '₽';
+    btn.style.background = showPct ? 'rgba(255,255,255,.28)' : 'rgba(255,255,255,.12)';
+    btn.style.borderColor = showPct ? 'rgba(255,255,255,.9)' : 'rgba(255,255,255,.35)';
+    if (lastDaysData.length) sourceDayChart = redrawSourceChart('os-day-canvas', lastDaysData, 'date', sourceDayChart);
+    if (lastMonthsData.length) sourceChart = redrawSourceChart('os-year-canvas', lastMonthsData, 'month', sourceChart, true);
+    if (lastYearDayData.length) sourceYearDayChart = redrawSourceChart('os-year-day-canvas', lastYearDayData, 'date', sourceYearDayChart);
 }
 
 // Клик по названию источника в таблице снизу — добавить/убрать его из фильтра сверху.
@@ -330,17 +349,17 @@ function redrawSourceChart(canvasId, items, labelMode, existing, onClickDrill) {
         names = selectedSources.slice();
     } else {
         var seen = {};
-        items.forEach(function (it) { Object.keys(it.percentages || {}).forEach(function (k) { seen[k] = true; }); });
+        items.forEach(function (it) { Object.keys((showPct ? it.percentages : it.series) || {}).forEach(function (k) { seen[k] = true; }); });
         names = Object.keys(seen);
     }
     var totals = {};
-    names.forEach(function (n) { totals[n] = items.reduce(function (s, it) { return s + ((it.percentages && it.percentages[n]) || 0); }, 0); });
+    names.forEach(function (n) { totals[n] = items.reduce(function (s, it) { var src = showPct ? it.percentages : it.series; return s + ((src && src[n]) || 0); }, 0); });
     names.sort(function (a, b) { return totals[b] - totals[a]; });
 
     var datasets = names.map(function (name) {
         return {
             label: name,
-            data: items.map(function (it) { return (it.percentages && it.percentages[name]) || 0; }),
+            data: items.map(function (it) { var src = showPct ? it.percentages : it.series; return (src && src[name]) || 0; }),
             backgroundColor: osrcColor(name),
             hoverBackgroundColor: osrcColor(name),
             borderRadius: 4, borderSkipped: false,
@@ -367,7 +386,7 @@ function redrawSourceChart(canvasId, items, labelMode, existing, onClickDrill) {
                             var d = new Date(raw + 'T00:00:00');
                             return raw.split('-').reverse().join('.') + ', ' + DOW[d.getDay()];
                         },
-                        label: function(ctx) { return ctx.dataset.label + ': ' + fmtPct1(ctx.parsed.y) + '%'; }
+                        label: function(ctx) { return ctx.dataset.label + ': ' + (showPct ? (fmtPct1(ctx.parsed.y) + '%') : (fmtNum(ctx.parsed.y) + ' ₽')); }
                     },
                     backgroundColor: 'rgba(0,0,0,.7)', titleColor: '#fff', bodyColor: '#fff',
                 }
@@ -375,10 +394,13 @@ function redrawSourceChart(canvasId, items, labelMode, existing, onClickDrill) {
             scales: {
                 x: { ticks: { color: 'rgba(255,255,255,.65)', font: { size: 10, weight: '600' } }, grid: { display: false }, border: { color: 'rgba(255,255,255,.15)' } },
                 y: {
-                    beginAtZero: true, max: 100,
+                    beginAtZero: true, max: showPct ? 100 : undefined,
                     ticks: {
                         color: 'rgba(255,255,255,.5)', font: { size: 9 },
-                        callback: function(v) { return v + '%'; }
+                        callback: function(v) {
+                            if (showPct) return v + '%';
+                            return v >= 1000000 ? (v/1000000).toFixed(1) + 'М' : v >= 1000 ? Math.round(v/1000) + 'К' : v;
+                        }
                     },
                     grid: { color: 'rgba(255,255,255,.08)' }, border: { display: false }
                 }
@@ -415,6 +437,7 @@ function showSourceMonthDetail(monthIdx, monthYear, monthLabel) {
         .then(function(r) { return r.json(); })
         .then(function(d) {
             if (!d.ok) return;
+            lastYearDayData = d.days;
             sourceYearDayChart = redrawSourceChart('os-year-day-canvas', d.days, 'date', sourceYearDayChart);
         });
 }
@@ -536,6 +559,7 @@ function loadSourceCard(period) {
 
         fetch(monthsUrl).then(function(r) { return r.json(); }).then(function(d) {
             if (!d.ok) return;
+            lastMonthsData = d.months;
             sourceChart = redrawSourceChart('os-year-canvas', d.months, 'month', sourceChart, true);
         });
         fetch(summaryUrl).then(function(r) { return r.json(); }).then(renderSourceBranchMatrix);
@@ -574,6 +598,7 @@ function loadSourceCard(period) {
             .then(function(r) { return r.json(); })
             .then(function(d) {
                 if (!d.ok) return;
+                lastDaysData = d.days;
                 sourceDayChart = redrawSourceChart('os-day-canvas', d.days, 'date', sourceDayChart);
             });
     }
