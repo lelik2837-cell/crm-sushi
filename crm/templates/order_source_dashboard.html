@@ -5,13 +5,14 @@
 @media (max-width:991.98px) {
   #os-all-btn { display:none !important; }
 }
+.os-swatch { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:5px; vertical-align:middle; }
 </style>
 
 <div class="row g-3 mb-4">
   <div class="col-12">
     <div id="osrc-card" style="background:linear-gradient(135deg,#0b2a3d 0%,#0e4a63 45%,#0f7d8f 100%); border-radius:20px; padding:28px 28px 24px; color:#fff; position:relative;">
 
-      <!-- Row 1: period buttons + calendar + branch selector -->
+      <!-- Row 1: period buttons + calendar + source picker + branch selector -->
       <div style="display:flex; gap:6px; margin-bottom:10px; align-items:center; flex-wrap:wrap;">
         <div class="os-nav" data-period="today" style="display:flex; align-items:center; gap:1px; background:rgba(255,255,255,.12); border:1.5px solid rgba(255,255,255,.35); border-radius:16px; padding:2px;">
           <button onclick="navSourceToday(-1)" title="Предыдущий день"
@@ -46,9 +47,27 @@
         </button>
         <input id="os-cal-hidden" type="text" style="display:none; position:absolute;">
 
-        <!-- ₽ / % toggle -->
-        <button id="os-unit-btn" onclick="toggleSourceUnit()" title="Переключить ₽ / %"
-          style="flex-shrink:0;width:26px;height:26px;border-radius:50%;border:1.5px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);cursor:pointer;padding:0;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;">₽</button>
+        <!-- Мультивыбор источников (вместо переключателя ₽/%, просьба пользователя 2026-09-13) -->
+        <div class="dropdown" style="flex-shrink:0; position:relative;">
+          <button id="os-source-btn" type="button" class="dash-branch-btn"
+            data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" title="Выбор источников">
+            <span id="os-source-abbr" class="dash-branch-abbr">Все источники</span>
+            <svg viewBox="0 0 8 5" width="8" height="5" fill="currentColor" style="opacity:.75;flex-shrink:0;"><path d="M0 0l4 5 4-5z"/></svg>
+          </button>
+          <div class="dropdown-menu p-2 shadow" style="min-width:210px;">
+            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2 mb-1" style="cursor:pointer;">
+              <input type="checkbox" id="os-source-all-cb" checked onchange="osrcToggleAllCb(this)">
+              <span class="fw-semibold small">Все источники</span>
+            </label>
+            <hr class="dropdown-divider my-1">
+            {% for cat in ['Моб.приложение', 'Сайт', 'Оператор', 'Зал', 'Касса самообслуживания'] %}
+            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2" style="cursor:pointer;">
+              <input type="checkbox" class="os-source-cb" value="{{ cat }}" onchange="osrcCheckboxChanged()">
+              <span class="small"><span class="os-swatch" data-osrc-swatch="{{ cat }}"></span>{{ cat }}</span>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
 
         <!-- Branch selector -->
         {% set bs_prefix = 'osrc' %}
@@ -92,8 +111,8 @@
 <div class="card mb-4">
   <div class="card-header bg-light d-flex align-items-center justify-content-between flex-wrap gap-2">
     <span class="fw-bold"><i class="bi bi-signpost-split"></i> Источники заказов за период</span>
-    <a href="#" id="os-reset-link" onclick="selectSource(''); return false;" class="small text-decoration-none" style="display:none;">
-      <i class="bi bi-x-circle me-1"></i>Сбросить выбор источника
+    <a href="#" id="os-reset-link" onclick="osrcSetSources([]); return false;" class="small text-decoration-none" style="display:none;">
+      <i class="bi bi-x-circle me-1"></i>Сбросить выбор источников
     </a>
   </div>
   <div class="table-responsive">
@@ -101,11 +120,11 @@
       <thead class="table-light">
         <tr>
           <th class="os-sort" style="cursor:pointer;user-select:none">Источник <span class="os-arrow text-muted"></span></th>
-          <th class="os-sort text-end" style="cursor:pointer;user-select:none">Сумма выручки <span class="os-arrow text-muted"></span></th>
           <th class="os-sort text-end" style="cursor:pointer;user-select:none">% от выручки <span class="os-arrow text-muted"></span></th>
           <th class="os-sort text-end" style="cursor:pointer;user-select:none">Количество заказов <span class="os-arrow text-muted"></span></th>
           <th class="os-sort text-end" style="cursor:pointer;user-select:none">Новых клиентов <span class="os-arrow text-muted"></span></th>
           <th class="os-sort text-end" style="cursor:pointer;user-select:none">Средний чек <span class="os-arrow text-muted"></span></th>
+          <th class="os-sort text-end" style="cursor:pointer;user-select:none">Сумма выручки <span class="os-arrow text-muted"></span></th>
         </tr>
       </thead>
       <tbody id="osrcTbody">
@@ -132,6 +151,22 @@ var MONTHS_RU_FULL = ['', 'Январь','Февраль','Март','Апрел
 var MONTHS_RU_GEN  = ['', 'января','февраля','марта','апреля','мая','июня',
                       'июля','августа','сентября','октября','ноября','декабря'];
 
+// Цвета категорий источника — разные, контрастные к сине-бирюзовому фону карточки
+// (просьба пользователя 2026-09-13: график по месяцам разными цветами для сравнения).
+var OSRC_COLORS = {
+    'Моб.приложение':        '#fbbf24',
+    'Сайт':                  '#a78bfa',
+    'Оператор':               '#f472b6',
+    'Зал':                    '#34d399',
+    'Касса самообслуживания': '#fb7185',
+    'Другое':                 '#cbd5e1',
+    'Не указан':              '#cbd5e1'
+};
+function osrcColor(name) { return OSRC_COLORS[name] || '#e2e8f0'; }
+document.querySelectorAll('[data-osrc-swatch]').forEach(function (el) {
+    el.style.background = osrcColor(el.dataset.osrcSwatch);
+});
+
 var sourcePeriod     = 'today';
 var sourceChart      = null;
 var sourceDayChart   = null;
@@ -141,33 +176,62 @@ var sourceCustomFrom = null;
 var sourceCustomTo   = null;
 var sourceTodayDate  = new Date();
 var sourceMonthDate  = (function() { var d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); })();
-var selectedSource   = '';
-var showPct          = false;
-var lastDays          = [];
-var lastMonths         = [];
+var selectedSources  = []; // пусто = все источники
 
 window.osrcBranchIds = [];
 window.osrcOnBranchChange = function () { loadSourceCard(sourcePeriod); };
 
-function toggleSourceUnit() {
-    showPct = !showPct;
-    var btn = document.getElementById('os-unit-btn');
-    btn.textContent = showPct ? '%' : '₽';
-    btn.style.background = showPct ? 'rgba(255,255,255,.28)' : 'rgba(255,255,255,.12)';
-    btn.style.borderColor = showPct ? 'rgba(255,255,255,.9)' : 'rgba(255,255,255,.35)';
-    renderSourceTotals(lastSummary);
-    if (lastDays.length) sourceDayChart = redrawSourceChart('os-day-canvas', lastDays, 'date', sourceDayChart);
-    if (lastMonths.length) sourceChart = redrawSourceChart('os-year-canvas', lastMonths, 'month', sourceChart, true);
+// ── Мультивыбор источников ──────────────────────────────────────────────────
+function osrcSourcesSuffix() {
+    return selectedSources.length ? '&sources=' + encodeURIComponent(selectedSources.join(',')) : '';
 }
 
-function selectSource(name) {
-    selectedSource = name || '';
-    document.getElementById('os-label-title').textContent = selectedSource ? ('Источник: ' + selectedSource) : 'Все источники';
-    document.getElementById('os-reset-link').style.display = selectedSource ? '' : 'none';
-    document.querySelectorAll('#osrcTbody tr').forEach(function(tr) {
-        tr.classList.toggle('table-active', tr.dataset.name === selectedSource);
+function osrcRenderPicker() {
+    var abbr = document.getElementById('os-source-abbr');
+    if (!selectedSources.length) abbr.textContent = 'Все источники';
+    else if (selectedSources.length === 1) abbr.textContent = selectedSources[0];
+    else abbr.textContent = selectedSources.length + ' источника';
+
+    document.querySelectorAll('.os-source-cb').forEach(function (cb) {
+        cb.checked = selectedSources.indexOf(cb.value) !== -1;
     });
+    var allCb = document.getElementById('os-source-all-cb');
+    if (allCb) allCb.checked = selectedSources.length === 0;
+
+    document.getElementById('os-label-title').textContent = selectedSources.length
+        ? ('Источник: ' + selectedSources.join(', ')) : 'Все источники';
+    document.getElementById('os-reset-link').style.display = selectedSources.length ? '' : 'none';
+    document.querySelectorAll('#osrcTbody tr').forEach(function (tr) {
+        tr.classList.toggle('table-active', selectedSources.indexOf(tr.dataset.name) !== -1);
+    });
+}
+
+function osrcSetSources(list) {
+    selectedSources = list.slice();
+    osrcRenderPicker();
     loadSourceCard(sourcePeriod);
+}
+
+function osrcToggleAllCb(cb) {
+    if (cb.checked) {
+        osrcSetSources([]);
+    } else {
+        cb.checked = true; // хотя бы «Все источники» должно оставаться отмечено
+    }
+}
+
+function osrcCheckboxChanged() {
+    var vals = [];
+    document.querySelectorAll('.os-source-cb:checked').forEach(function (cb) { vals.push(cb.value); });
+    osrcSetSources(vals);
+}
+
+// Клик по названию источника в таблице снизу — добавить/убрать его из фильтра сверху.
+function selectSource(name) {
+    var idx = selectedSources.indexOf(name);
+    var next = selectedSources.slice();
+    if (idx === -1) next.push(name); else next.splice(idx, 1);
+    osrcSetSources(next);
 }
 
 function selectSourceToday() { sourceTodayDate = new Date(); loadSourceCard('today'); }
@@ -225,29 +289,49 @@ function openSourceCal() {
     sourceCalPicker.open();
 }
 
-function sourceValue(item) { return showPct ? (item.pct || 0) : (item.revenue || 0); }
-
+// Разбивка по нескольким цветным сериям (одна на источник) — для сравнения между собой.
+// Если источники не выбраны явно — рисуем все категории, которые реально встретились
+// в данных за период; если выбраны — рисуем только их (просьба пользователя 2026-09-13).
 function redrawSourceChart(canvasId, items, labelMode, existing, onClickDrill) {
     if (existing) { existing.destroy(); }
     var DOW = ['вс','пн','вт','ср','чт','пт','сб'];
     var canvas = document.getElementById(canvasId);
     var labels = labelMode === 'date' ? items.map(function(d) { return d.date.slice(8); }) : items.map(function(m) { return m.label; });
+
+    var names;
+    if (selectedSources.length) {
+        names = selectedSources.slice();
+    } else {
+        var seen = {};
+        items.forEach(function (it) { Object.keys(it.series || {}).forEach(function (k) { seen[k] = true; }); });
+        names = Object.keys(seen);
+    }
+    var totals = {};
+    names.forEach(function (n) { totals[n] = items.reduce(function (s, it) { return s + ((it.series && it.series[n]) || 0); }, 0); });
+    names.sort(function (a, b) { return totals[b] - totals[a]; });
+
+    var datasets = names.map(function (name) {
+        return {
+            label: name,
+            data: items.map(function (it) { return (it.series && it.series[name]) || 0; }),
+            backgroundColor: osrcColor(name),
+            hoverBackgroundColor: osrcColor(name),
+            borderRadius: 4, borderSkipped: false,
+        };
+    });
+
     return new Chart(canvas, {
         type: 'bar',
-        data: {
-            labels: labels,
-            datasets: [{
-                data: items.map(sourceValue),
-                backgroundColor: 'rgba(255,255,255,0.5)',
-                hoverBackgroundColor: 'rgba(255,255,255,0.9)',
-                borderRadius: 4, borderSkipped: false,
-            }]
-        },
+        data: { labels: labels, datasets: datasets },
         options: {
             responsive: true,
             animation: { duration: 300 },
             plugins: {
-                legend: { display: false },
+                legend: {
+                    display: datasets.length > 1,
+                    position: 'bottom',
+                    labels: { color: 'rgba(255,255,255,.85)', boxWidth: 10, font: { size: 10 } }
+                },
                 tooltip: {
                     callbacks: {
                         title: function(ctx) {
@@ -256,7 +340,7 @@ function redrawSourceChart(canvasId, items, labelMode, existing, onClickDrill) {
                             var d = new Date(raw + 'T00:00:00');
                             return raw.split('-').reverse().join('.') + ', ' + DOW[d.getDay()];
                         },
-                        label: function(ctx) { return showPct ? (fmtPct1(ctx.parsed.y) + ' %') : (fmtNum(ctx.parsed.y) + ' ₽'); }
+                        label: function(ctx) { return ctx.dataset.label + ': ' + fmtNum(ctx.parsed.y) + ' ₽'; }
                     },
                     backgroundColor: 'rgba(0,0,0,.7)', titleColor: '#fff', bodyColor: '#fff',
                 }
@@ -268,7 +352,6 @@ function redrawSourceChart(canvasId, items, labelMode, existing, onClickDrill) {
                     ticks: {
                         color: 'rgba(255,255,255,.5)', font: { size: 9 },
                         callback: function(v) {
-                            if (showPct) return v + '%';
                             return v >= 1000000 ? (v/1000000).toFixed(1) + 'М' : v >= 1000 ? Math.round(v/1000) + 'К' : v;
                         }
                     },
@@ -302,7 +385,7 @@ function showSourceMonthDetail(monthIdx, monthYear, monthLabel) {
     detail.style.display = '';
     titleEl.textContent   = monthLabel + ' ' + y;
 
-    var qs = (selectedSource ? '&source=' + encodeURIComponent(selectedSource) : '') + dashBpSuffix('osrc');
+    var qs = osrcSourcesSuffix() + dashBpSuffix('osrc');
     fetch('/api/order-source-days?date_from=' + dateFrom + '&date_to=' + dateTo + qs)
         .then(function(r) { return r.json(); })
         .then(function(d) {
@@ -311,19 +394,14 @@ function showSourceMonthDetail(monthIdx, monthYear, monthLabel) {
         });
 }
 
-var lastSummary = { revenue: 0, pct: 0, count: 0 };
-
 function renderSourceTotals(d) {
-    lastSummary = d;
     var big = document.getElementById('os-total');
     if (!d || !d.count) { big.textContent = '—'; document.getElementById('os-count-label').textContent = 'нет заказов за период'; return; }
-    if (showPct) {
-        big.textContent = fmtPct1(d.pct) + '%';
-    } else {
-        big.textContent = fmtNum(d.revenue);
-    }
-    document.getElementById('os-count-label').textContent = d.count + (selectedSource ? ' заказов из этого источника' : ' заказов с известным источником') +
-        (showPct ? '' : ' · ' + fmtPct1(d.pct) + '% от выручки');
+    big.textContent = fmtNum(d.revenue);
+    var label = selectedSources.length
+        ? (d.count + ' заказов из ' + (selectedSources.length === 1 ? 'источника' : selectedSources.length + ' источников'))
+        : (d.count + ' заказов за период');
+    document.getElementById('os-count-label').textContent = label + ' · ' + fmtPct1(d.pct) + '% от выручки';
 }
 
 function loadSourceCard(period) {
@@ -373,7 +451,7 @@ function loadSourceCard(period) {
         if (sourceYearDayChart) { sourceYearDayChart.destroy(); sourceYearDayChart = null; }
     }
 
-    var qsSource = (selectedSource ? '&source=' + encodeURIComponent(selectedSource) : '') + dashBpSuffix('osrc');
+    var qsSource = osrcSourcesSuffix() + dashBpSuffix('osrc');
 
     var isCustomMonthly = sourcePeriod === 'custom' && sourceCustomFrom && sourceCustomTo &&
         Math.round((new Date(sourceCustomTo) - new Date(sourceCustomFrom)) / 86400000) > 35;
@@ -397,7 +475,7 @@ function loadSourceCard(period) {
             var fmtLabelM = function(s) { return s.split('-').reverse().join('.'); };
             periodLabel = fmtLabelM(yearFrom) + ' — ' + fmtLabelM(yearTo);
         }
-        document.getElementById('os-period-label').textContent = (showPct ? '% от выручки ' : 'рублей ') + periodLabel;
+        document.getElementById('os-period-label').textContent = 'рублей ' + periodLabel;
 
         var summaryUrl = sourcePeriod === 'all'
             ? null
@@ -408,19 +486,10 @@ function loadSourceCard(period) {
 
         fetch(monthsUrl).then(function(r) { return r.json(); }).then(function(d) {
             if (!d.ok) return;
-            lastMonths = d.months;
             sourceChart = redrawSourceChart('os-year-canvas', d.months, 'month', sourceChart, true);
             if (sourcePeriod === 'all') {
-                var totalRevenue = d.months.reduce(function(s, m) { return s + m.revenue; }, 0);
-                var totalAll     = d.months.reduce(function(s, m) { return s + m.total; }, 0);
-                renderSourceTotals({
-                    revenue: totalRevenue, total_revenue: totalAll,
-                    pct: totalAll > 0 ? Math.round(totalRevenue / totalAll * 1000) / 10 : 0,
-                    count: null
-                });
-                document.getElementById('os-total').textContent = showPct
-                    ? fmtPct1(totalAll > 0 ? totalRevenue / totalAll * 100 : 0) + '%'
-                    : fmtNum(totalRevenue);
+                var totalRevenue = d.months.reduce(function(s, m) { return s + m.total; }, 0);
+                document.getElementById('os-total').textContent = fmtNum(totalRevenue);
                 document.getElementById('os-count-label').textContent = '';
             }
         });
@@ -442,17 +511,17 @@ function loadSourceCard(period) {
     var dateTo, dateFrom;
     if (sourcePeriod === 'custom' && sourceCustomFrom && sourceCustomTo) {
         dateFrom = sourceCustomFrom; dateTo = sourceCustomTo;
-        document.getElementById('os-period-label').textContent = (showPct ? '% от выручки · ' : 'рублей · ') + fmtLabel(dateFrom) + ' — ' + fmtLabel(dateTo);
+        document.getElementById('os-period-label').textContent = 'рублей · ' + fmtLabel(dateFrom) + ' — ' + fmtLabel(dateTo);
     } else if (sourcePeriod === 'today') {
         dateFrom = dateTo = fmtLocalDate(sourceTodayDate);
-        document.getElementById('os-period-label').textContent = showPct ? '% от выручки' : 'рублей';
+        document.getElementById('os-period-label').textContent = 'рублей';
     } else {
         var y = sourceMonthDate.getFullYear();
         var m = sourceMonthDate.getMonth();
         var lastDay = new Date(y, m + 1, 0).getDate();
         dateFrom = y + '-' + String(m + 1).padStart(2, '0') + '-01';
         dateTo   = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
-        document.getElementById('os-period-label').textContent = showPct ? '% от выручки' : 'рублей';
+        document.getElementById('os-period-label').textContent = 'рублей';
     }
 
     fetch('/api/order-source-summary?date_from=' + dateFrom + '&date_to=' + dateTo + qsSource)
@@ -465,7 +534,6 @@ function loadSourceCard(period) {
             .then(function(r) { return r.json(); })
             .then(function(d) {
                 if (!d.ok) return;
-                lastDays = d.days;
                 sourceDayChart = redrawSourceChart('os-day-canvas', d.days, 'date', sourceDayChart);
             });
     }
@@ -500,13 +568,13 @@ function loadSourceList() {
                 return;
             }
             tbody.innerHTML = d.sources.map(function(p) {
-                return '<tr data-name="' + p.name.replace(/"/g,'&quot;') + '"' + (p.name === selectedSource ? ' class="table-active"' : '') + '>' +
+                return '<tr data-name="' + p.name.replace(/"/g,'&quot;') + '"' + (selectedSources.indexOf(p.name) !== -1 ? ' class="table-active"' : '') + '>' +
                     '<td class="fw-semibold"><a href="#" onclick="selectSource(' + JSON.stringify(p.name) + '); return false;" class="text-decoration-none">' + p.name + '</a></td>' +
-                    '<td class="text-end fw-semibold" data-val="' + p.revenue + '">' + fmtNum(p.revenue) + ' ₽</td>' +
-                    '<td class="text-end" data-val="' + p.pct + '">' + fmtPct1(p.pct) + '%</td>' +
+                    '<td class="text-end fw-bold text-primary" data-val="' + p.pct + '">' + fmtPct1(p.pct) + '%</td>' +
                     '<td class="text-end" data-val="' + p.count + '">' + p.count + '</td>' +
                     '<td class="text-end" data-val="' + p.new_clients + '">' + p.new_clients + '</td>' +
                     '<td class="text-end" data-val="' + p.avg_check + '">' + fmtNum(p.avg_check) + ' ₽</td>' +
+                    '<td class="text-end" data-val="' + p.revenue + '">' + fmtNum(p.revenue) + ' ₽</td>' +
                 '</tr>';
             }).join('');
         });

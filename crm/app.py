@@ -4902,11 +4902,20 @@ def order_source_dashboard():
     return render_template('order_source_dashboard.html', branches=branches, branch_groups=branch_groups)
 
 
-def _osrc_scope(source, bparams):
-    """(доп. WHERE, параметры) для конкретной категории источника либо для всех сразу."""
-    if source:
-        return 'AND COALESCE(source, \'Не указан\') = ?', bparams + [source]
-    return "AND source IS NOT NULL", bparams
+def _osrc_sources_param():
+    """Список выбранных категорий источника из query-параметра sources=A,B,C (мультивыбор
+    в UI, просьба пользователя 2026-09-13 заменить переключатель ₽/% на мультивыбор
+    источников) — пустой список означает «все источники», без ограничения по source."""
+    raw = request.args.get('sources', '').strip()
+    return [s for s in raw.split(',') if s] if raw else []
+
+
+def _osrc_scope(sources, bparams):
+    """(доп. WHERE, параметры) для списка выбранных категорий источника либо для всех сразу."""
+    if sources:
+        ph = ','.join('?' * len(sources))
+        return f"AND COALESCE(source, 'Не указан') IN ({ph})", bparams + sources
+    return '', bparams
 
 
 @app.route('/api/order-source-summary')
@@ -4915,9 +4924,9 @@ def _osrc_scope(source, bparams):
 def api_order_source_summary():
     date_from = request.args.get('date_from', date.today().isoformat())
     date_to   = request.args.get('date_to',   date.today().isoformat())
-    source    = request.args.get('source', '').strip()
+    sources   = _osrc_sources_param()
     bf, bparams = _promo_branch_filter()
-    extra, pparams = _osrc_scope(source, bparams)
+    extra, pparams = _osrc_scope(sources, bparams)
 
     with get_db() as conn:
         total_row = conn.execute(f'''
@@ -4935,7 +4944,7 @@ def api_order_source_summary():
     total_revenue = total_row['total'] or 0
     revenue = src_row['revenue'] or 0
     return jsonify({
-        'ok': True, 'source': source or None,
+        'ok': True, 'sources': sources or None,
         'count': src_row['cnt'] or 0,
         'revenue': round(revenue, 2),
         'total_revenue': round(total_revenue, 2),
@@ -4987,59 +4996,66 @@ def api_order_source_list():
 def api_order_source_days():
     date_from = request.args.get('date_from', date.today().isoformat())
     date_to   = request.args.get('date_to',   date.today().isoformat())
-    source    = request.args.get('source', '').strip()
+    sources   = _osrc_sources_param()
     bf, bparams = _promo_branch_filter()
-    extra, pparams = _osrc_scope(source, bparams)
+    extra, params = _osrc_scope(sources, bparams)
 
     with get_db() as conn:
-        total_rows = conn.execute(f'''
-            SELECT DATE(delivery_at) AS d, COALESCE(SUM(amount),0) AS total
-            FROM orders_report
-            WHERE DATE(delivery_at) BETWEEN ? AND ? {bf}
-            GROUP BY d
-        ''', [date_from, date_to] + bparams).fetchall()
-        src_rows = conn.execute(f'''
-            SELECT DATE(delivery_at) AS d, COALESCE(SUM(amount),0) AS revenue
+        rows = conn.execute(f'''
+            SELECT DATE(delivery_at) AS d, COALESCE(source, 'Не указан') AS src,
+                   COALESCE(SUM(amount),0) AS revenue
             FROM orders_report
             WHERE DATE(delivery_at) BETWEEN ? AND ? {bf} {extra}
-            GROUP BY d
-        ''', [date_from, date_to] + pparams).fetchall()
-    total_by_day = {r['d']: r['total'] for r in total_rows}
-    src_by_day = {r['d']: r['revenue'] for r in src_rows}
+            GROUP BY d, src
+        ''', [date_from, date_to] + params).fetchall()
+    by_day = {}
+    for r in rows:
+        by_day.setdefault(r['d'], {})[r['src']] = round(r['revenue'], 2)
 
     days = []
     _d    = datetime.strptime(date_from, '%Y-%m-%d').date()
     _dend = datetime.strptime(date_to, '%Y-%m-%d').date()
     while _d <= _dend:
-        ds  = _d.isoformat()
-        rev = src_by_day.get(ds, 0)
-        tot = total_by_day.get(ds, 0)
-        days.append({'date': ds, 'revenue': round(rev, 2), 'total': round(tot, 2),
-                     'pct': round(rev / tot * 100, 1) if tot > 0 else 0})
+        ds = _d.isoformat()
+        series = by_day.get(ds, {})
+        days.append({'date': ds, 'series': series, 'total': round(sum(series.values()), 2)})
         _d += timedelta(days=1)
-    return jsonify({'ok': True, 'source': source or None, 'days': days})
+    return jsonify({'ok': True, 'sources': sources or None, 'days': days})
 
 
-def _osrc_months_query(conn, bf, bparams, extra, pparams, date_from, date_to):
-    total_rows = conn.execute(f'''
+def _osrc_months_series_query(conn, bf, bparams, extra, params, date_from, date_to):
+    rows = conn.execute(f'''
         SELECT CAST(strftime('%Y', delivery_at) AS INTEGER) AS year,
                CAST(strftime('%m', delivery_at) AS INTEGER) AS month,
-               COALESCE(SUM(amount),0) AS total
-        FROM orders_report
-        WHERE DATE(delivery_at) BETWEEN ? AND ? {bf}
-        GROUP BY year, month
-    ''', [date_from, date_to] + bparams).fetchall()
-    src_rows = conn.execute(f'''
-        SELECT CAST(strftime('%Y', delivery_at) AS INTEGER) AS year,
-               CAST(strftime('%m', delivery_at) AS INTEGER) AS month,
+               COALESCE(source, 'Не указан') AS src,
                COALESCE(SUM(amount),0) AS revenue
         FROM orders_report
         WHERE DATE(delivery_at) BETWEEN ? AND ? {bf} {extra}
-        GROUP BY year, month
-    ''', [date_from, date_to] + pparams).fetchall()
-    total_by_ym = {(r['year'], r['month']): r['total'] for r in total_rows}
-    src_by_ym = {(r['year'], r['month']): r['revenue'] for r in src_rows}
-    return total_by_ym, src_by_ym
+        GROUP BY year, month, src
+    ''', [date_from, date_to] + params).fetchall()
+    by_ym = {}
+    for r in rows:
+        by_ym.setdefault((r['year'], r['month']), {})[r['src']] = round(r['revenue'], 2)
+    return by_ym
+
+
+def _osrc_months_series_list(by_ym, date_from, date_to):
+    labels = ['', 'Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн',
+              'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
+    start = date.fromisoformat(date_from)
+    end   = date.fromisoformat(date_to)
+    months_list = []
+    y, m = start.year, start.month
+    while (y < end.year) or (y == end.year and m <= end.month):
+        label = labels[m] + " '" + str(y)[-2:]
+        series = by_ym.get((y, m), {})
+        months_list.append({'year': y, 'month': m, 'label': label,
+                            'series': series, 'total': round(sum(series.values()), 2)})
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return months_list
 
 
 @app.route('/api/order-source-months')
@@ -5048,22 +5064,22 @@ def _osrc_months_query(conn, bf, bparams, extra, pparams, date_from, date_to):
 def api_order_source_months():
     date_from = request.args.get('date_from')
     date_to   = request.args.get('date_to', date.today().isoformat())
-    source    = request.args.get('source', '').strip()
+    sources   = _osrc_sources_param()
     bf, bparams = _promo_branch_filter()
-    extra, pparams = _osrc_scope(source, bparams)
+    extra, params = _osrc_scope(sources, bparams)
     if not date_from:
         return jsonify({'ok': False, 'error': 'date_from required'}), 400
     with get_db() as conn:
-        total_by_ym, src_by_ym = _osrc_months_query(conn, bf, bparams, extra, pparams, date_from, date_to)
-    months = _promo_months_list(total_by_ym, src_by_ym, date_from, date_to)
-    return jsonify({'ok': True, 'source': source or None, 'months': months})
+        by_ym = _osrc_months_series_query(conn, bf, bparams, extra, params, date_from, date_to)
+    months = _osrc_months_series_list(by_ym, date_from, date_to)
+    return jsonify({'ok': True, 'sources': sources or None, 'months': months})
 
 
 @app.route('/api/order-source-all')
 @login_required
 @menu_permission_required('order_source_dashboard')
 def api_order_source_all():
-    source = request.args.get('source', '').strip()
+    sources = _osrc_sources_param()
     bf, bparams = _promo_branch_filter()
     today_iso = date.today().isoformat()
     with get_db() as conn:
@@ -5072,11 +5088,11 @@ def api_order_source_all():
         ''', bparams).fetchone()
         date_from = min_row[0]
         if not date_from:
-            return jsonify({'ok': True, 'source': source or None, 'months': []})
-        extra, pparams = _osrc_scope(source, bparams)
-        total_by_ym, src_by_ym = _osrc_months_query(conn, bf, bparams, extra, pparams, date_from, today_iso)
-    months = _promo_months_list(total_by_ym, src_by_ym, date_from, today_iso)
-    return jsonify({'ok': True, 'source': source or None, 'months': months})
+            return jsonify({'ok': True, 'sources': sources or None, 'months': []})
+        extra, params = _osrc_scope(sources, bparams)
+        by_ym = _osrc_months_series_query(conn, bf, bparams, extra, params, date_from, today_iso)
+    months = _osrc_months_series_list(by_ym, date_from, today_iso)
+    return jsonify({'ok': True, 'sources': sources or None, 'months': months})
 
 
 # ─── SHIFTS ───────────────────────────────────────────────────────────────────
