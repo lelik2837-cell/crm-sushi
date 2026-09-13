@@ -435,14 +435,14 @@ function renderSourceBranchMatrix(d) {
         return;
     }
 
-    var html = '<table class="os-branch-matrix"><thead><tr><th>Источник</th>';
-    d.branches.forEach(function (branch) {
-        html += '<th title="' + osrcEscape(branch.name) + '">' + osrcEscape(branch.name) + '</th>';
+    var html = '<table class="os-branch-matrix"><thead><tr><th>Филиал</th>';
+    sourceNames.forEach(function (sourceName) {
+        html += '<th><span class="os-swatch" style="background:' + osrcColor(sourceName) + '"></span>' + osrcEscape(sourceName) + '</th>';
     });
     html += '</tr></thead><tbody>';
-    sourceNames.forEach(function (sourceName) {
-        html += '<tr><td><span class="os-swatch" style="background:' + osrcColor(sourceName) + '"></span>' + osrcEscape(sourceName) + '</td>';
-        d.branches.forEach(function (branch) {
+    d.branches.forEach(function (branch) {
+        html += '<tr><td title="' + osrcEscape(branch.name) + '">' + osrcEscape(branch.name) + '</td>';
+        sourceNames.forEach(function (sourceName) {
             var value = branch.shares && branch.shares[sourceName] != null ? branch.shares[sourceName] : 0;
             html += '<td>' + fmtPct1(value) + '%</td>';
         });
