@@ -152,6 +152,7 @@
                     <th class="ord-sort" style="cursor:pointer;user-select:none">Промокод <span class="ord-arrow text-muted"></span></th>
                     <th class="ord-sort text-end" style="cursor:pointer;user-select:none">Сумма <span class="ord-arrow text-muted"></span></th>
                     <th class="ord-sort" style="cursor:pointer;user-select:none">Новый клиент <span class="ord-arrow text-muted"></span></th>
+                    <th class="ord-sort" style="cursor:pointer;user-select:none">Источник <span class="ord-arrow text-muted"></span></th>
                 </tr>
             </thead>
             <tbody id="ordersTbody">
@@ -193,6 +194,7 @@
                         <span class="text-muted">—</span>
                         {% endif %}
                     </td>
+                    <td class="text-muted">{{ r.source_raw or '—' }}</td>
                 </tr>
             {% endfor %}
             </tbody>

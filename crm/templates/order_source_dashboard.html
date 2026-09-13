@@ -1,0 +1,544 @@
+{% extends 'base.html' %}
+{% block title %}Источник заказов{% endblock %}
+{% block content %}
+<style>
+@media (max-width:991.98px) {
+  #os-all-btn { display:none !important; }
+}
+</style>
+
+<div class="row g-3 mb-4">
+  <div class="col-12">
+    <div id="osrc-card" style="background:linear-gradient(135deg,#0b2a3d 0%,#0e4a63 45%,#0f7d8f 100%); border-radius:20px; padding:28px 28px 24px; color:#fff; position:relative;">
+
+      <!-- Row 1: period buttons + calendar + branch selector -->
+      <div style="display:flex; gap:6px; margin-bottom:10px; align-items:center; flex-wrap:wrap;">
+        <div class="os-nav" data-period="today" style="display:flex; align-items:center; gap:1px; background:rgba(255,255,255,.12); border:1.5px solid rgba(255,255,255,.35); border-radius:16px; padding:2px;">
+          <button onclick="navSourceToday(-1)" title="Предыдущий день"
+            style="width:19px; height:19px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; line-height:1;">‹</button>
+          <button onclick="selectSourceToday()" id="os-today-btn"
+            style="border:none; background:transparent; color:#fff; cursor:pointer; font-size:10px; font-weight:700; padding:2px 5px; letter-spacing:.2px; white-space:nowrap;">Сегодня</button>
+          <button onclick="navSourceToday(1)" title="Следующий день"
+            style="width:19px; height:19px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; line-height:1;">›</button>
+        </div>
+        <div class="os-nav" data-period="month" style="display:flex; align-items:center; gap:1px; background:rgba(255,255,255,.25); border:1.5px solid rgba(255,255,255,.9); border-radius:16px; padding:2px;">
+          <button onclick="navSourceMonth(-1)" title="Предыдущий месяц"
+            style="width:19px; height:19px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; line-height:1;">‹</button>
+          <button onclick="selectSourceMonth()" id="os-month-btn"
+            style="border:none; background:transparent; color:#fff; cursor:pointer; font-size:10px; font-weight:700; padding:2px 5px; letter-spacing:.2px; white-space:nowrap;">Месяц</button>
+          <button onclick="navSourceMonth(1)" title="Следующий месяц"
+            style="width:19px; height:19px; border-radius:50%; border:none; background:transparent; color:#fff; cursor:pointer; font-size:11px; font-weight:700; line-height:1;">›</button>
+        </div>
+        <div style="position:relative;">
+          <div class="os-nav" data-period="year" style="display:flex; align-items:center; gap:1px; background:rgba(255,255,255,.12); border:1.5px solid rgba(255,255,255,.35); border-radius:16px; padding:2px;">
+            <button onclick="loadSourceCard('year')" id="os-year-btn"
+              style="border:none; background:transparent; color:#fff; cursor:pointer; font-size:10px; font-weight:700; padding:2px 3px 2px 6px; letter-spacing:.2px; white-space:nowrap;">Год</button>
+            <button onclick="toggleSourceYearMenu(event)" id="os-year-caret" title="Выбрать год"
+              style="width:16px; height:19px; border:none; background:transparent; color:#fff; cursor:pointer; padding:0 4px 0 0; display:flex; align-items:center; justify-content:center;">
+              <svg viewBox="0 0 8 5" width="8" height="5" fill="currentColor"><path d="M0 0l4 5 4-5z"/></svg>
+            </button>
+          </div>
+          <div id="os-year-menu" style="display:none; position:absolute; top:calc(100% + 4px); left:0; background:#fff; border-radius:10px; min-width:88px; overflow:hidden; z-index:30; box-shadow:0 6px 20px rgba(0,0,0,.25);"></div>
+        </div>
+        <button id="os-all-btn" onclick="loadSourceCard('all')" data-rp="all" class="os-period-btn" style="font-size:11px; padding:4px 12px; border-radius:20px; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:#fff; cursor:pointer; font-weight:600; letter-spacing:.3px;">Всё</button>
+        <button id="os-cal-btn" onclick="openSourceCal()" title="Выбрать период" style="width:26px; height:26px; flex-shrink:0; border-radius:50%; border:1.5px solid rgba(255,255,255,.35); background:rgba(255,255,255,.12); color:rgba(255,255,255,.8); cursor:pointer; padding:0; display:inline-flex; align-items:center; justify-content:center;">
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor"><path d="M3.5 0a.5.5 0 0 1 .5.5V1h8V.5a.5.5 0 0 1 1 0V1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h1V.5a.5.5 0 0 1 .5-.5zM1 4v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4H1z"/></svg>
+        </button>
+        <input id="os-cal-hidden" type="text" style="display:none; position:absolute;">
+
+        <!-- ₽ / % toggle -->
+        <button id="os-unit-btn" onclick="toggleSourceUnit()" title="Переключить ₽ / %"
+          style="flex-shrink:0;width:26px;height:26px;border-radius:50%;border:1.5px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:rgba(255,255,255,.85);cursor:pointer;padding:0;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;">₽</button>
+
+        <!-- Branch selector -->
+        {% set bs_prefix = 'osrc' %}
+        {% include '_dash_branch_picker.html' %}
+      </div>
+
+      <!-- Label -->
+      <div id="os-label-title" style="font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; opacity:.7; margin-bottom:6px;">Все источники</div>
+
+      <!-- Big number -->
+      <div id="os-total" style="font-size:clamp(32px,6vw,52px); font-weight:800; letter-spacing:-1px; line-height:1.05; margin-bottom:2px;">—</div>
+      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px;">
+        <div id="os-period-label" style="font-size:14px; opacity:.6;">рублей</div>
+      </div>
+      <div id="os-count-label" style="font-size:12px; opacity:.55; margin-bottom:14px;"></div>
+
+      <!-- Divider -->
+      <div style="border-top:1px solid rgba(255,255,255,.2); margin-bottom:14px;"></div>
+
+      <!-- Day chart (month mode) -->
+      <div id="os-day-wrap" style="display:none;">
+        <canvas id="os-day-canvas" height="120"></canvas>
+      </div>
+
+      <!-- Year chart (year/all/custom-long mode) -->
+      <div id="os-year-wrap" style="display:none;">
+        <canvas id="os-year-canvas" height="150"></canvas>
+        <div id="os-month-detail" style="display:none; margin-top:16px; border-top:1px solid rgba(255,255,255,.2); padding-top:14px;">
+          <div id="os-month-title" style="font-size:12px; font-weight:700; letter-spacing:.5px; opacity:.8; margin-bottom:10px; text-transform:uppercase;"></div>
+          <div id="os-year-day-wrap" style="display:none;">
+            <canvas id="os-year-day-canvas" height="110"></canvas>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ══ Список источников ══ -->
+<div class="card mb-4">
+  <div class="card-header bg-light d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <span class="fw-bold"><i class="bi bi-signpost-split"></i> Источники заказов за период</span>
+    <a href="#" id="os-reset-link" onclick="selectSource(''); return false;" class="small text-decoration-none" style="display:none;">
+      <i class="bi bi-x-circle me-1"></i>Сбросить выбор источника
+    </a>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0 align-middle" id="osrcTable" style="font-size:12.5px">
+      <thead class="table-light">
+        <tr>
+          <th class="os-sort" style="cursor:pointer;user-select:none">Источник <span class="os-arrow text-muted"></span></th>
+          <th class="os-sort text-end" style="cursor:pointer;user-select:none">Сумма выручки <span class="os-arrow text-muted"></span></th>
+          <th class="os-sort text-end" style="cursor:pointer;user-select:none">% от выручки <span class="os-arrow text-muted"></span></th>
+          <th class="os-sort text-end" style="cursor:pointer;user-select:none">Количество заказов <span class="os-arrow text-muted"></span></th>
+          <th class="os-sort text-end" style="cursor:pointer;user-select:none">Новых клиентов <span class="os-arrow text-muted"></span></th>
+          <th class="os-sort text-end" style="cursor:pointer;user-select:none">Средний чек <span class="os-arrow text-muted"></span></th>
+        </tr>
+      </thead>
+      <tbody id="osrcTbody">
+        <tr><td colspan="6" class="text-center text-muted py-3">Загрузка...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+function fmtLocalDate(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function isSameDay(a, b) { return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate(); }
+function fmtNum(n) { return Math.round(n).toLocaleString('ru-RU'); }
+function fmtPct1(n) { var r = Math.round(n * 10) / 10; return (r % 1 === 0) ? String(Math.round(r)) : String(r).replace('.', ','); }
+
+var MONTHS_RU_FULL = ['', 'Январь','Февраль','Март','Апрель','Май','Июнь',
+                      'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+var MONTHS_RU_GEN  = ['', 'января','февраля','марта','апреля','мая','июня',
+                      'июля','августа','сентября','октября','ноября','декабря'];
+
+var sourcePeriod     = 'today';
+var sourceChart      = null;
+var sourceDayChart   = null;
+var sourceYearDayChart = null;
+var sourceYear       = new Date().getFullYear();
+var sourceCustomFrom = null;
+var sourceCustomTo   = null;
+var sourceTodayDate  = new Date();
+var sourceMonthDate  = (function() { var d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); })();
+var selectedSource   = '';
+var showPct          = false;
+var lastDays          = [];
+var lastMonths         = [];
+
+window.osrcBranchIds = [];
+window.osrcOnBranchChange = function () { loadSourceCard(sourcePeriod); };
+
+function toggleSourceUnit() {
+    showPct = !showPct;
+    var btn = document.getElementById('os-unit-btn');
+    btn.textContent = showPct ? '%' : '₽';
+    btn.style.background = showPct ? 'rgba(255,255,255,.28)' : 'rgba(255,255,255,.12)';
+    btn.style.borderColor = showPct ? 'rgba(255,255,255,.9)' : 'rgba(255,255,255,.35)';
+    renderSourceTotals(lastSummary);
+    if (lastDays.length) sourceDayChart = redrawSourceChart('os-day-canvas', lastDays, 'date', sourceDayChart);
+    if (lastMonths.length) sourceChart = redrawSourceChart('os-year-canvas', lastMonths, 'month', sourceChart, true);
+}
+
+function selectSource(name) {
+    selectedSource = name || '';
+    document.getElementById('os-label-title').textContent = selectedSource ? ('Источник: ' + selectedSource) : 'Все источники';
+    document.getElementById('os-reset-link').style.display = selectedSource ? '' : 'none';
+    document.querySelectorAll('#osrcTbody tr').forEach(function(tr) {
+        tr.classList.toggle('table-active', tr.dataset.name === selectedSource);
+    });
+    loadSourceCard(sourcePeriod);
+}
+
+function selectSourceToday() { sourceTodayDate = new Date(); loadSourceCard('today'); }
+function selectSourceMonth() { var d = new Date(); sourceMonthDate = new Date(d.getFullYear(), d.getMonth(), 1); loadSourceCard('month'); }
+function navSourceToday(delta) { sourceTodayDate.setDate(sourceTodayDate.getDate() + delta); loadSourceCard('today'); }
+function navSourceMonth(delta) { sourceMonthDate = new Date(sourceMonthDate.getFullYear(), sourceMonthDate.getMonth() + delta, 1); loadSourceCard('month'); }
+
+function toggleSourceYearMenu(ev) {
+    ev.stopPropagation();
+    var menu = document.getElementById('os-year-menu');
+    if (!menu) return;
+    if (menu.style.display === 'block') { menu.style.display = 'none'; return; }
+    var curYear = new Date().getFullYear();
+    var items = '';
+    for (var y = curYear; y >= curYear - 4; y--) {
+        var active = sourcePeriod === 'year' && sourceYear === y;
+        items += '<div class="os-year-opt" data-y="' + y + '" style="padding:7px 16px;font-size:13px;color:#1e293b;cursor:pointer;white-space:nowrap;' +
+                 (active ? 'font-weight:700;background:#f1f5f9;' : '') + '">' + y + '</div>';
+    }
+    items += '<div style="border-top:1px solid #e2e8f0;"></div>';
+    items += '<div class="os-year-opt" data-y="all" style="padding:7px 16px;font-size:13px;color:#1e293b;cursor:pointer;white-space:nowrap;' +
+             (sourcePeriod === 'all' ? 'font-weight:700;background:#f1f5f9;' : '') + '">Всё</div>';
+    menu.innerHTML = items;
+    menu.style.display = 'block';
+}
+document.addEventListener('click', function(e) {
+    var menu = document.getElementById('os-year-menu');
+    if (!menu) return;
+    var opt = e.target.closest && e.target.closest('.os-year-opt');
+    if (opt) {
+        menu.style.display = 'none';
+        if (opt.dataset.y === 'all') { loadSourceCard('all'); }
+        else { sourceYear = parseInt(opt.dataset.y); loadSourceCard('year'); }
+        return;
+    }
+    if (menu.style.display === 'block' && !menu.contains(e.target) && !(e.target.closest && e.target.closest('#os-year-caret'))) {
+        menu.style.display = 'none';
+    }
+});
+
+var sourceCalPicker = null;
+function openSourceCal() {
+    if (!sourceCalPicker) {
+        sourceCalPicker = flatpickr('#os-cal-hidden', {
+            mode: 'range', dateFormat: 'Y-m-d', appendTo: document.body, disableMobile: true,
+            onClose: function(dates) {
+                if (dates.length === 2) {
+                    sourceCustomFrom = fmtLocalDate(dates[0]);
+                    sourceCustomTo   = fmtLocalDate(dates[1]);
+                    loadSourceCard('custom');
+                }
+            }
+        });
+    }
+    sourceCalPicker.open();
+}
+
+function sourceValue(item) { return showPct ? (item.pct || 0) : (item.revenue || 0); }
+
+function redrawSourceChart(canvasId, items, labelMode, existing, onClickDrill) {
+    if (existing) { existing.destroy(); }
+    var DOW = ['вс','пн','вт','ср','чт','пт','сб'];
+    var canvas = document.getElementById(canvasId);
+    var labels = labelMode === 'date' ? items.map(function(d) { return d.date.slice(8); }) : items.map(function(m) { return m.label; });
+    return new Chart(canvas, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: items.map(sourceValue),
+                backgroundColor: 'rgba(255,255,255,0.5)',
+                hoverBackgroundColor: 'rgba(255,255,255,0.9)',
+                borderRadius: 4, borderSkipped: false,
+            }]
+        },
+        options: {
+            responsive: true,
+            animation: { duration: 300 },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        title: function(ctx) {
+                            if (labelMode !== 'date') return ctx[0].label;
+                            var raw = items[ctx[0].dataIndex].date;
+                            var d = new Date(raw + 'T00:00:00');
+                            return raw.split('-').reverse().join('.') + ', ' + DOW[d.getDay()];
+                        },
+                        label: function(ctx) { return showPct ? (fmtPct1(ctx.parsed.y) + ' %') : (fmtNum(ctx.parsed.y) + ' ₽'); }
+                    },
+                    backgroundColor: 'rgba(0,0,0,.7)', titleColor: '#fff', bodyColor: '#fff',
+                }
+            },
+            scales: {
+                x: { ticks: { color: 'rgba(255,255,255,.65)', font: { size: 10, weight: '600' } }, grid: { display: false }, border: { color: 'rgba(255,255,255,.15)' } },
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        color: 'rgba(255,255,255,.5)', font: { size: 9 },
+                        callback: function(v) {
+                            if (showPct) return v + '%';
+                            return v >= 1000000 ? (v/1000000).toFixed(1) + 'М' : v >= 1000 ? Math.round(v/1000) + 'К' : v;
+                        }
+                    },
+                    grid: { color: 'rgba(255,255,255,.08)' }, border: { display: false }
+                }
+            },
+            onClick: onClickDrill ? function(evt, elements) {
+                if (!elements.length) return;
+                var idx = elements[0].index;
+                var month = items[idx];
+                if (!month.total) return;
+                showSourceMonthDetail(month.month, month.year, MONTHS_RU_FULL[month.month]);
+            } : undefined
+        }
+    });
+}
+
+function showSourceMonthDetail(monthIdx, monthYear, monthLabel) {
+    var y = monthYear;
+    var m = String(monthIdx).padStart(2, '0');
+    var lastDay = new Date(y, monthIdx, 0).getDate();
+    var dateFrom = y + '-' + m + '-01';
+    var dateTo   = y + '-' + m + '-' + String(lastDay).padStart(2, '0');
+
+    var yDayWrap = document.getElementById('os-year-day-wrap');
+    if (sourceYearDayChart) { sourceYearDayChart.destroy(); sourceYearDayChart = null; }
+    if (yDayWrap) yDayWrap.style.display = '';
+
+    var detail  = document.getElementById('os-month-detail');
+    var titleEl = document.getElementById('os-month-title');
+    detail.style.display = '';
+    titleEl.textContent   = monthLabel + ' ' + y;
+
+    var qs = (selectedSource ? '&source=' + encodeURIComponent(selectedSource) : '') + dashBpSuffix('osrc');
+    fetch('/api/order-source-days?date_from=' + dateFrom + '&date_to=' + dateTo + qs)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.ok) return;
+            sourceYearDayChart = redrawSourceChart('os-year-day-canvas', d.days, 'date', sourceYearDayChart);
+        });
+}
+
+var lastSummary = { revenue: 0, pct: 0, count: 0 };
+
+function renderSourceTotals(d) {
+    lastSummary = d;
+    var big = document.getElementById('os-total');
+    if (!d || !d.count) { big.textContent = '—'; document.getElementById('os-count-label').textContent = 'нет заказов за период'; return; }
+    if (showPct) {
+        big.textContent = fmtPct1(d.pct) + '%';
+    } else {
+        big.textContent = fmtNum(d.revenue);
+    }
+    document.getElementById('os-count-label').textContent = d.count + (selectedSource ? ' заказов из этого источника' : ' заказов с известным источником') +
+        (showPct ? '' : ' · ' + fmtPct1(d.pct) + '% от выручки');
+}
+
+function loadSourceCard(period) {
+    if (period) sourcePeriod = period;
+    loadSourceList();
+    var calActive = sourcePeriod === 'custom';
+    document.querySelectorAll('.os-period-btn').forEach(function(b) {
+        var active = !calActive && b.dataset.rp === sourcePeriod;
+        b.style.background  = active ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.12)';
+        b.style.borderColor = active ? 'rgba(255,255,255,.9)'  : 'rgba(255,255,255,.35)';
+    });
+    document.querySelectorAll('.os-nav').forEach(function(nav) {
+        var active = !calActive && nav.dataset.period === sourcePeriod;
+        nav.style.background  = active ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.12)';
+        nav.style.borderColor = active ? 'rgba(255,255,255,.9)'  : 'rgba(255,255,255,.35)';
+    });
+    var calBtn = document.getElementById('os-cal-btn');
+    if (calBtn) {
+        calBtn.style.background  = calActive ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.12)';
+        calBtn.style.borderColor = calActive ? 'rgba(255,255,255,.9)'  : 'rgba(255,255,255,.35)';
+    }
+
+    document.getElementById('os-total').textContent = '…';
+    document.getElementById('os-count-label').textContent = '';
+
+    var dayWrap     = document.getElementById('os-day-wrap');
+    var yearWrap    = document.getElementById('os-year-wrap');
+    var monthDetail = document.getElementById('os-month-detail');
+
+    var todayBtn = document.getElementById('os-today-btn');
+    if (todayBtn) {
+        var now = new Date();
+        todayBtn.textContent = isSameDay(sourceTodayDate, now) ? 'Сегодня' : (sourceTodayDate.getDate() + ' ' + MONTHS_RU_GEN[sourceTodayDate.getMonth() + 1]);
+    }
+    var monthBtn = document.getElementById('os-month-btn');
+    if (monthBtn) {
+        var curYear = new Date().getFullYear();
+        monthBtn.textContent = MONTHS_RU_FULL[sourceMonthDate.getMonth() + 1] + (sourceMonthDate.getFullYear() !== curYear ? ' ' + sourceMonthDate.getFullYear() : '');
+    }
+
+    if (sourcePeriod !== 'month') {
+        dayWrap.style.display = 'none';
+        if (sourceDayChart) { sourceDayChart.destroy(); sourceDayChart = null; }
+    }
+    if (sourcePeriod !== 'year' && sourcePeriod !== 'all') {
+        document.getElementById('os-year-day-wrap').style.display = 'none';
+        if (sourceYearDayChart) { sourceYearDayChart.destroy(); sourceYearDayChart = null; }
+    }
+
+    var qsSource = (selectedSource ? '&source=' + encodeURIComponent(selectedSource) : '') + dashBpSuffix('osrc');
+
+    var isCustomMonthly = sourcePeriod === 'custom' && sourceCustomFrom && sourceCustomTo &&
+        Math.round((new Date(sourceCustomTo) - new Date(sourceCustomFrom)) / 86400000) > 35;
+
+    if (sourcePeriod === 'year' || sourcePeriod === 'all' || isCustomMonthly) {
+        dayWrap.style.display  = 'none';
+        yearWrap.style.display = '';
+        monthDetail.style.display = 'none';
+        if (sourceChart) { sourceChart.destroy(); sourceChart = null; }
+
+        var yearFrom, yearTo, periodLabel;
+        if (sourcePeriod === 'year') {
+            var curYear2 = new Date().getFullYear();
+            yearFrom = sourceYear + '-01-01';
+            yearTo   = sourceYear === curYear2 ? fmtLocalDate(new Date()) : sourceYear + '-12-31';
+            periodLabel = 'за ' + sourceYear;
+        } else if (sourcePeriod === 'all') {
+            periodLabel = 'за всё время';
+        } else {
+            yearFrom = sourceCustomFrom; yearTo = sourceCustomTo;
+            var fmtLabelM = function(s) { return s.split('-').reverse().join('.'); };
+            periodLabel = fmtLabelM(yearFrom) + ' — ' + fmtLabelM(yearTo);
+        }
+        document.getElementById('os-period-label').textContent = (showPct ? '% от выручки ' : 'рублей ') + periodLabel;
+
+        var summaryUrl = sourcePeriod === 'all'
+            ? null
+            : '/api/order-source-summary?date_from=' + yearFrom + '&date_to=' + yearTo + qsSource;
+        var monthsUrl = sourcePeriod === 'all'
+            ? '/api/order-source-all?' + qsSource.replace(/^&/, '')
+            : '/api/order-source-months?date_from=' + yearFrom + '&date_to=' + yearTo + qsSource;
+
+        fetch(monthsUrl).then(function(r) { return r.json(); }).then(function(d) {
+            if (!d.ok) return;
+            lastMonths = d.months;
+            sourceChart = redrawSourceChart('os-year-canvas', d.months, 'month', sourceChart, true);
+            if (sourcePeriod === 'all') {
+                var totalRevenue = d.months.reduce(function(s, m) { return s + m.revenue; }, 0);
+                var totalAll     = d.months.reduce(function(s, m) { return s + m.total; }, 0);
+                renderSourceTotals({
+                    revenue: totalRevenue, total_revenue: totalAll,
+                    pct: totalAll > 0 ? Math.round(totalRevenue / totalAll * 1000) / 10 : 0,
+                    count: null
+                });
+                document.getElementById('os-total').textContent = showPct
+                    ? fmtPct1(totalAll > 0 ? totalRevenue / totalAll * 100 : 0) + '%'
+                    : fmtNum(totalRevenue);
+                document.getElementById('os-count-label').textContent = '';
+            }
+        });
+        if (summaryUrl) {
+            fetch(summaryUrl).then(function(r) { return r.json(); }).then(function(d) {
+                if (!d.ok) return;
+                renderSourceTotals(d);
+            });
+        }
+        return;
+    }
+
+    // today / month / custom (short, ≤35 days)
+    dayWrap.style.display  = 'none';
+    yearWrap.style.display = 'none';
+    if (sourceChart) { sourceChart.destroy(); sourceChart = null; }
+
+    var fmtLabel = function(s) { return s.split('-').reverse().join('.'); };
+    var dateTo, dateFrom;
+    if (sourcePeriod === 'custom' && sourceCustomFrom && sourceCustomTo) {
+        dateFrom = sourceCustomFrom; dateTo = sourceCustomTo;
+        document.getElementById('os-period-label').textContent = (showPct ? '% от выручки · ' : 'рублей · ') + fmtLabel(dateFrom) + ' — ' + fmtLabel(dateTo);
+    } else if (sourcePeriod === 'today') {
+        dateFrom = dateTo = fmtLocalDate(sourceTodayDate);
+        document.getElementById('os-period-label').textContent = showPct ? '% от выручки' : 'рублей';
+    } else {
+        var y = sourceMonthDate.getFullYear();
+        var m = sourceMonthDate.getMonth();
+        var lastDay = new Date(y, m + 1, 0).getDate();
+        dateFrom = y + '-' + String(m + 1).padStart(2, '0') + '-01';
+        dateTo   = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
+        document.getElementById('os-period-label').textContent = showPct ? '% от выручки' : 'рублей';
+    }
+
+    fetch('/api/order-source-summary?date_from=' + dateFrom + '&date_to=' + dateTo + qsSource)
+        .then(function(r) { return r.json(); })
+        .then(renderSourceTotals);
+
+    if (sourcePeriod === 'month') {
+        dayWrap.style.display = '';
+        fetch('/api/order-source-days?date_from=' + dateFrom + '&date_to=' + dateTo + qsSource)
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (!d.ok) return;
+                lastDays = d.days;
+                sourceDayChart = redrawSourceChart('os-day-canvas', d.days, 'date', sourceDayChart);
+            });
+    }
+}
+
+function loadSourceList() {
+    var dateFrom, dateTo;
+    if (sourcePeriod === 'custom' && sourceCustomFrom && sourceCustomTo) {
+        dateFrom = sourceCustomFrom; dateTo = sourceCustomTo;
+    } else if (sourcePeriod === 'today') {
+        dateFrom = dateTo = fmtLocalDate(sourceTodayDate);
+    } else if (sourcePeriod === 'month') {
+        var y = sourceMonthDate.getFullYear(), m = sourceMonthDate.getMonth();
+        var lastDay = new Date(y, m + 1, 0).getDate();
+        dateFrom = y + '-' + String(m + 1).padStart(2, '0') + '-01';
+        dateTo   = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
+    } else if (sourcePeriod === 'year') {
+        var curYear2 = new Date().getFullYear();
+        dateFrom = sourceYear + '-01-01';
+        dateTo   = sourceYear === curYear2 ? fmtLocalDate(new Date()) : sourceYear + '-12-31';
+    } else {
+        dateFrom = '2000-01-01';
+        dateTo   = fmtLocalDate(new Date());
+    }
+
+    fetch('/api/order-source-list?date_from=' + dateFrom + '&date_to=' + dateTo + dashBpSuffix('osrc'))
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            var tbody = document.getElementById('osrcTbody');
+            if (!d.ok || !d.sources.length) {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">Нет заказов с указанным источником за период</td></tr>';
+                return;
+            }
+            tbody.innerHTML = d.sources.map(function(p) {
+                return '<tr data-name="' + p.name.replace(/"/g,'&quot;') + '"' + (p.name === selectedSource ? ' class="table-active"' : '') + '>' +
+                    '<td class="fw-semibold"><a href="#" onclick="selectSource(' + JSON.stringify(p.name) + '); return false;" class="text-decoration-none">' + p.name + '</a></td>' +
+                    '<td class="text-end fw-semibold" data-val="' + p.revenue + '">' + fmtNum(p.revenue) + ' ₽</td>' +
+                    '<td class="text-end" data-val="' + p.pct + '">' + fmtPct1(p.pct) + '%</td>' +
+                    '<td class="text-end" data-val="' + p.count + '">' + p.count + '</td>' +
+                    '<td class="text-end" data-val="' + p.new_clients + '">' + p.new_clients + '</td>' +
+                    '<td class="text-end" data-val="' + p.avg_check + '">' + fmtNum(p.avg_check) + ' ₽</td>' +
+                '</tr>';
+            }).join('');
+        });
+}
+
+(function () {
+    var table = document.getElementById('osrcTable');
+    if (!table) return;
+    var tbody = table.querySelector('tbody');
+    var ths = Array.from(table.querySelectorAll('thead .os-sort'));
+    var curCol = -1, curDir = 0;
+    ths.forEach(function (th, idx) {
+        th.addEventListener('click', function () {
+            var dir = (curCol === idx && curDir === -1) ? 1 : -1;
+            curCol = idx; curDir = dir;
+            ths.forEach(function (h) { h.querySelector('.os-arrow').textContent = ''; });
+            th.querySelector('.os-arrow').textContent = dir === -1 ? '↓' : '↑';
+            var rows = Array.from(tbody.querySelectorAll('tr'));
+            rows.sort(function (a, b) {
+                var ac = a.querySelectorAll('td')[idx];
+                var bc = b.querySelectorAll('td')[idx];
+                if (!ac || !bc) return 0;
+                var av = ac.dataset.val !== undefined ? ac.dataset.val : ac.textContent.trim();
+                var bv = bc.dataset.val !== undefined ? bc.dataset.val : bc.textContent.trim();
+                var an = parseFloat(av), bn = parseFloat(bv);
+                return ((!isNaN(an) && !isNaN(bn)) ? an - bn : av.localeCompare(bv, 'ru')) * dir;
+            });
+            rows.forEach(function (r) { tbody.appendChild(r); });
+        });
+    });
+})();
+
+loadSourceCard('month');
+</script>
+{% endblock %}

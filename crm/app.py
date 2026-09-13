@@ -137,6 +137,7 @@ MENU_ITEMS = [
     ('wait_dashboard',        'Ожидание',                 'dash',     True),
     ('lateness_dashboard',    'Опоздания',                'dash',     True),
     ('promo_dashboard',       'Промокоды',                'dash',     True),
+    ('order_source_dashboard', 'Источник заказов',        'dash',     True),
     ('shifts_archive',        'Смены',                    'reports',  True),
     ('reports_shifts',        'Выручка',                  'reports',  True),
     ('reports_salary',        'Зарплаты',                 'reports',  True),
@@ -2385,6 +2386,14 @@ def init_db():
             conn.execute("ALTER TABLE orders_report ADD COLUMN delivery_at TIMESTAMP")
         if 'phone' not in _or_cols:
             conn.execute("ALTER TABLE orders_report ADD COLUMN phone TEXT")
+        if 'source_raw' not in _or_cols:
+            # «Источник заказа» из выгрузки (Оператор/Сайт/Приложение Android.../Зал/Касса
+            # самообслуживания/Агрегатор и т.п., просьба пользователя 2026-09-13) — исходное
+            # значение как есть, для показа в списке заказов.
+            conn.execute("ALTER TABLE orders_report ADD COLUMN source_raw TEXT")
+        if 'source' not in _or_cols:
+            # Источник заказа, сгруппированный в категории для статистики — см. _normalize_order_source.
+            conn.execute("ALTER TABLE orders_report ADD COLUMN source TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_orders_report_delivery ON orders_report(delivery_at)")
 
         # Одноразовая корректировка: заказ, переданный в доставку такси, iiko выгружал
@@ -4877,6 +4886,197 @@ def api_promo_all():
         total_by_ym, promo_by_ym = _promo_months_query(conn, bf, bparams, extra, pparams, date_from, today_iso)
     months = _promo_months_list(total_by_ym, promo_by_ym, date_from, today_iso)
     return jsonify({'ok': True, 'promo': promo or None, 'months': months})
+
+
+# ─── ИСТОЧНИК ЗАКАЗОВ (выручка/количество по категориям источника из «Отчёта по заказам»,
+# просьба пользователя 2026-09-13) — структура полностью аналогична разделу «Промокоды»
+# выше, только группировка идёт по source (см. _normalize_order_source) вместо promo_code.
+
+@app.route('/order-source-dashboard')
+@login_required
+@menu_permission_required('order_source_dashboard')
+def order_source_dashboard():
+    with get_db() as conn:
+        branches = conn.execute('SELECT * FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        branch_groups = get_branch_groups(conn)
+    return render_template('order_source_dashboard.html', branches=branches, branch_groups=branch_groups)
+
+
+def _osrc_scope(source, bparams):
+    """(доп. WHERE, параметры) для конкретной категории источника либо для всех сразу."""
+    if source:
+        return 'AND COALESCE(source, \'Не указан\') = ?', bparams + [source]
+    return "AND source IS NOT NULL", bparams
+
+
+@app.route('/api/order-source-summary')
+@login_required
+@menu_permission_required('order_source_dashboard')
+def api_order_source_summary():
+    date_from = request.args.get('date_from', date.today().isoformat())
+    date_to   = request.args.get('date_to',   date.today().isoformat())
+    source    = request.args.get('source', '').strip()
+    bf, bparams = _promo_branch_filter()
+    extra, pparams = _osrc_scope(source, bparams)
+
+    with get_db() as conn:
+        total_row = conn.execute(f'''
+            SELECT COALESCE(SUM(amount),0) AS total
+            FROM orders_report
+            WHERE DATE(delivery_at) BETWEEN ? AND ? {bf}
+        ''', [date_from, date_to] + bparams).fetchone()
+        src_row = conn.execute(f'''
+            SELECT COUNT(*) AS cnt, COALESCE(SUM(amount),0) AS revenue, COALESCE(AVG(amount),0) AS avg_check,
+                   SUM(CASE WHEN new_client='Да' THEN 1 ELSE 0 END) AS new_clients
+            FROM orders_report
+            WHERE DATE(delivery_at) BETWEEN ? AND ? {bf} {extra}
+        ''', [date_from, date_to] + pparams).fetchone()
+
+    total_revenue = total_row['total'] or 0
+    revenue = src_row['revenue'] or 0
+    return jsonify({
+        'ok': True, 'source': source or None,
+        'count': src_row['cnt'] or 0,
+        'revenue': round(revenue, 2),
+        'total_revenue': round(total_revenue, 2),
+        'pct': round(revenue / total_revenue * 100, 1) if total_revenue > 0 else 0,
+        'avg_check': round(src_row['avg_check'] or 0, 2),
+        'new_clients': src_row['new_clients'] or 0,
+    })
+
+
+@app.route('/api/order-source-list')
+@login_required
+@menu_permission_required('order_source_dashboard')
+def api_order_source_list():
+    date_from = request.args.get('date_from', date.today().isoformat())
+    date_to   = request.args.get('date_to',   date.today().isoformat())
+    bf, bparams = _promo_branch_filter()
+
+    with get_db() as conn:
+        total_row = conn.execute(f'''
+            SELECT COALESCE(SUM(amount),0) AS total
+            FROM orders_report WHERE delivery_at >= ? AND delivery_at < date(?, '+1 day') {bf}
+        ''', [date_from, date_to] + bparams).fetchone()
+        total_revenue = total_row['total'] or 0
+
+        rows = conn.execute(f'''
+            SELECT COALESCE(source, 'Не указан') AS name, COUNT(*) AS cnt, COALESCE(SUM(amount),0) AS revenue,
+                   COALESCE(AVG(amount),0) AS avg_check,
+                   SUM(CASE WHEN new_client='Да' THEN 1 ELSE 0 END) AS new_clients
+            FROM orders_report
+            WHERE delivery_at >= ? AND delivery_at < date(?, '+1 day') {bf}
+            GROUP BY name
+            ORDER BY revenue DESC
+        ''', [date_from, date_to] + bparams).fetchall()
+
+    sources = [{
+        'name': r['name'], 'count': r['cnt'],
+        'revenue': round(r['revenue'], 2),
+        'pct': round(r['revenue'] / total_revenue * 100, 1) if total_revenue > 0 else 0,
+        'avg_check': round(r['avg_check'], 2),
+        'new_clients': r['new_clients'] or 0,
+    } for r in rows]
+
+    return jsonify({'ok': True, 'total_revenue': round(total_revenue, 2), 'sources': sources})
+
+
+@app.route('/api/order-source-days')
+@login_required
+@menu_permission_required('order_source_dashboard')
+def api_order_source_days():
+    date_from = request.args.get('date_from', date.today().isoformat())
+    date_to   = request.args.get('date_to',   date.today().isoformat())
+    source    = request.args.get('source', '').strip()
+    bf, bparams = _promo_branch_filter()
+    extra, pparams = _osrc_scope(source, bparams)
+
+    with get_db() as conn:
+        total_rows = conn.execute(f'''
+            SELECT DATE(delivery_at) AS d, COALESCE(SUM(amount),0) AS total
+            FROM orders_report
+            WHERE DATE(delivery_at) BETWEEN ? AND ? {bf}
+            GROUP BY d
+        ''', [date_from, date_to] + bparams).fetchall()
+        src_rows = conn.execute(f'''
+            SELECT DATE(delivery_at) AS d, COALESCE(SUM(amount),0) AS revenue
+            FROM orders_report
+            WHERE DATE(delivery_at) BETWEEN ? AND ? {bf} {extra}
+            GROUP BY d
+        ''', [date_from, date_to] + pparams).fetchall()
+    total_by_day = {r['d']: r['total'] for r in total_rows}
+    src_by_day = {r['d']: r['revenue'] for r in src_rows}
+
+    days = []
+    _d    = datetime.strptime(date_from, '%Y-%m-%d').date()
+    _dend = datetime.strptime(date_to, '%Y-%m-%d').date()
+    while _d <= _dend:
+        ds  = _d.isoformat()
+        rev = src_by_day.get(ds, 0)
+        tot = total_by_day.get(ds, 0)
+        days.append({'date': ds, 'revenue': round(rev, 2), 'total': round(tot, 2),
+                     'pct': round(rev / tot * 100, 1) if tot > 0 else 0})
+        _d += timedelta(days=1)
+    return jsonify({'ok': True, 'source': source or None, 'days': days})
+
+
+def _osrc_months_query(conn, bf, bparams, extra, pparams, date_from, date_to):
+    total_rows = conn.execute(f'''
+        SELECT CAST(strftime('%Y', delivery_at) AS INTEGER) AS year,
+               CAST(strftime('%m', delivery_at) AS INTEGER) AS month,
+               COALESCE(SUM(amount),0) AS total
+        FROM orders_report
+        WHERE DATE(delivery_at) BETWEEN ? AND ? {bf}
+        GROUP BY year, month
+    ''', [date_from, date_to] + bparams).fetchall()
+    src_rows = conn.execute(f'''
+        SELECT CAST(strftime('%Y', delivery_at) AS INTEGER) AS year,
+               CAST(strftime('%m', delivery_at) AS INTEGER) AS month,
+               COALESCE(SUM(amount),0) AS revenue
+        FROM orders_report
+        WHERE DATE(delivery_at) BETWEEN ? AND ? {bf} {extra}
+        GROUP BY year, month
+    ''', [date_from, date_to] + pparams).fetchall()
+    total_by_ym = {(r['year'], r['month']): r['total'] for r in total_rows}
+    src_by_ym = {(r['year'], r['month']): r['revenue'] for r in src_rows}
+    return total_by_ym, src_by_ym
+
+
+@app.route('/api/order-source-months')
+@login_required
+@menu_permission_required('order_source_dashboard')
+def api_order_source_months():
+    date_from = request.args.get('date_from')
+    date_to   = request.args.get('date_to', date.today().isoformat())
+    source    = request.args.get('source', '').strip()
+    bf, bparams = _promo_branch_filter()
+    extra, pparams = _osrc_scope(source, bparams)
+    if not date_from:
+        return jsonify({'ok': False, 'error': 'date_from required'}), 400
+    with get_db() as conn:
+        total_by_ym, src_by_ym = _osrc_months_query(conn, bf, bparams, extra, pparams, date_from, date_to)
+    months = _promo_months_list(total_by_ym, src_by_ym, date_from, date_to)
+    return jsonify({'ok': True, 'source': source or None, 'months': months})
+
+
+@app.route('/api/order-source-all')
+@login_required
+@menu_permission_required('order_source_dashboard')
+def api_order_source_all():
+    source = request.args.get('source', '').strip()
+    bf, bparams = _promo_branch_filter()
+    today_iso = date.today().isoformat()
+    with get_db() as conn:
+        min_row = conn.execute(f'''
+            SELECT MIN(DATE(delivery_at)) FROM orders_report WHERE 1=1 {bf}
+        ''', bparams).fetchone()
+        date_from = min_row[0]
+        if not date_from:
+            return jsonify({'ok': True, 'source': source or None, 'months': []})
+        extra, pparams = _osrc_scope(source, bparams)
+        total_by_ym, src_by_ym = _osrc_months_query(conn, bf, bparams, extra, pparams, date_from, today_iso)
+    months = _promo_months_list(total_by_ym, src_by_ym, date_from, today_iso)
+    return jsonify({'ok': True, 'source': source or None, 'months': months})
 
 
 # ─── SHIFTS ───────────────────────────────────────────────────────────────────
@@ -16748,6 +16948,31 @@ def _normalize_order_type(raw):
     return raw or '—'
 
 
+# Категории «Источника заказа» для статистики (просьба пользователя 2026-09-13): все
+# версии/платформы приложения группируем в «Моб.приложение», Сайт/Сайт А/Сайт Б — в «Сайт»
+# (различия между сайтами пользователю не важны), Оператор/Зал/Касса самообслуживания —
+# как есть. Всё прочее (Агрегатор, СберМаркет, Приложение Telegram и т.п., которыми
+# пользователь не пользуется) попадает в «Другое», чтобы сумма по категориям не расходилась
+# с общей выручкой. Исходное значение из выгрузки при этом не теряется — хранится отдельно
+# в source_raw (там видно, например, Android или IOS) и показывается в списке заказов.
+def _normalize_order_source(raw):
+    raw = (raw or '').strip()
+    if not raw:
+        return None
+    low = raw.lower()
+    if low.startswith('прилож'):
+        return 'Моб.приложение'
+    if low.startswith('сайт'):
+        return 'Сайт'
+    if low == 'оператор':
+        return 'Оператор'
+    if low == 'зал':
+        return 'Зал'
+    if low.startswith('касса'):
+        return 'Касса самообслуживания'
+    return 'Другое'
+
+
 def _orders_csv_col(header, *names):
     def _norm(s):
         return re.sub(r'\s+', ' ', (s or '').strip().lower().replace('ё', 'е'))
@@ -16808,6 +17033,7 @@ def _parse_orders_csv(file_bytes):
     idx_status   = _orders_csv_col(header, 'Статус', 'Статус заказа', 'Название статуса', 'Status', 'StatusName')
     idx_delivery_plan = _orders_csv_col(header, 'Дата и время доставки')
     idx_phone    = _orders_csv_col(header, 'Телефон', 'Телефон гостя', 'Номер телефона', 'Phone', 'ClientPhone')
+    idx_source   = _orders_csv_col(header, 'Источник заказа')
 
     def cell(row, idx):
         if idx is None or idx >= len(row):
@@ -16851,6 +17077,7 @@ def _parse_orders_csv(file_bytes):
         except ValueError:
             amount = 0.0
         type_raw = cell(row, idx_type)
+        source_raw = cell(row, idx_source)
 
         # «Дата и время доставки» (план) — точнее received_at показывает, к какому
         # дню реально относится заказ (предзаказы и старые незакрытые доставки на
@@ -16880,6 +17107,8 @@ def _parse_orders_csv(file_bytes):
             'new_client':       cell(row, idx_new_cli) or None,
             'status':           cell(row, idx_status) or None,
             'phone':            cell(row, idx_phone) or None,
+            'source_raw':       source_raw or None,
+            'source':           _normalize_order_source(source_raw),
         })
     return rows, excluded_keys
 
@@ -16954,8 +17183,9 @@ def _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename, create
             INSERT INTO orders_report
                 (order_number, branch_raw, branch_id, received_at, delivery_at, promised_minutes,
                  order_type_raw, order_type, ready_minutes, delivery_minutes,
-                 promo_code, amount, new_client, status, phone, import_batch_id, import_hash)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 promo_code, amount, new_client, status, phone, source_raw, source,
+                 import_batch_id, import_hash)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(import_hash) DO UPDATE SET
                 branch_raw=excluded.branch_raw, branch_id=excluded.branch_id,
                 received_at=excluded.received_at, delivery_at=excluded.delivery_at,
@@ -16964,12 +17194,13 @@ def _ingest_orders_rows(conn, frows, branch_map, existing_keys, filename, create
                 ready_minutes=excluded.ready_minutes, delivery_minutes=excluded.delivery_minutes,
                 promo_code=excluded.promo_code, amount=excluded.amount,
                 new_client=excluded.new_client, status=excluded.status, phone=excluded.phone,
+                source_raw=excluded.source_raw, source=excluded.source,
                 import_batch_id=excluded.import_batch_id
         ''', (
             r['order_number'], r['branch_raw'], branch_id,
             r['received_at'], r['delivery_at'], r['promised_minutes'], r['order_type_raw'], r['order_type'],
             r['ready_minutes'], r['delivery_minutes'], r['promo_code'], r['amount'],
-            r['new_client'], r['status'], r['phone'], batch_id, h
+            r['new_client'], r['status'], r['phone'], r['source_raw'], r['source'], batch_id, h
         ))
         if is_new:
             imported += 1
