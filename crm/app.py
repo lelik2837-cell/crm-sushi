@@ -4943,8 +4943,71 @@ def api_order_source_summary():
             WHERE DATE(delivery_at) BETWEEN ? AND ? {bf} {extra}
         ''', [date_from, date_to] + pparams).fetchone()
 
+        # Матрица долей источников по филиалам для центральной части карточки.
+        # Знаменатель каждой ячейки — вся выручка конкретного филиала за период,
+        # а фильтр sources ограничивает только строки-источники, которые показываем.
+        # Так при выборе одного источника остаётся видна его реальная доля, а не 100%.
+        branch_bf = bf.replace('branch_id', 'o.branch_id')
+        branch_name_sql = "COALESCE(NULLIF(TRIM(b.name), ''), NULLIF(TRIM(o.branch_raw), ''), 'Не указан')"
+        branch_abbr_sql = (
+            "COALESCE(NULLIF(TRIM(b.abbr), ''), "
+            f"UPPER(SUBSTR({branch_name_sql}, 1, 3)))"
+        )
+        branch_total_rows = conn.execute(f'''
+            SELECT o.branch_id AS branch_id,
+                   {branch_name_sql} AS branch_name,
+                   {branch_abbr_sql} AS branch_abbr,
+                   COALESCE(SUM(o.amount), 0) AS total
+            FROM orders_report o
+            LEFT JOIN branches b ON b.id = o.branch_id
+            WHERE DATE(o.delivery_at) BETWEEN ? AND ? {branch_bf}
+            GROUP BY o.branch_id, branch_name, branch_abbr
+        ''', [date_from, date_to] + bparams).fetchall()
+        branch_source_rows = conn.execute(f'''
+            SELECT o.branch_id AS branch_id,
+                   {branch_name_sql} AS branch_name,
+                   {branch_abbr_sql} AS branch_abbr,
+                   COALESCE(o.source, 'Не указан') AS source_name,
+                   COALESCE(SUM(o.amount), 0) AS revenue
+            FROM orders_report o
+            LEFT JOIN branches b ON b.id = o.branch_id
+            WHERE DATE(o.delivery_at) BETWEEN ? AND ? {branch_bf} {extra}
+            GROUP BY o.branch_id, branch_name, branch_abbr, source_name
+        ''', [date_from, date_to] + pparams).fetchall()
+
     total_revenue = total_row['total'] or 0
     revenue = src_row['revenue'] or 0
+    branches_by_key = {}
+    for row in branch_total_rows:
+        key = f"id:{row['branch_id']}" if row['branch_id'] is not None else f"name:{row['branch_name']}"
+        branches_by_key[key] = {
+            'id': row['branch_id'],
+            'name': row['branch_name'],
+            'abbr': row['branch_abbr'],
+            'total_revenue': round(row['total'] or 0, 2),
+            'shares': {},
+        }
+
+    source_totals = {}
+    for row in branch_source_rows:
+        key = f"id:{row['branch_id']}" if row['branch_id'] is not None else f"name:{row['branch_name']}"
+        branch = branches_by_key.get(key)
+        if not branch:
+            continue
+        source_revenue = row['revenue'] or 0
+        branch['shares'][row['source_name']] = round(
+            source_revenue / branch['total_revenue'] * 100, 1
+        ) if branch['total_revenue'] > 0 else 0
+        source_totals[row['source_name']] = source_totals.get(row['source_name'], 0) + source_revenue
+
+    branches = sorted(
+        branches_by_key.values(),
+        key=lambda branch: (branch['name'] == 'Не указан', branch['name'].casefold()),
+    )
+    source_names = sources or sorted(
+        source_totals,
+        key=lambda name: (-source_totals[name], name.casefold()),
+    )
     return jsonify({
         'ok': True, 'sources': sources or None,
         'count': src_row['cnt'] or 0,
@@ -4953,6 +5016,8 @@ def api_order_source_summary():
         'pct': round(revenue / total_revenue * 100, 1) if total_revenue > 0 else 0,
         'avg_check': round(src_row['avg_check'] or 0, 2),
         'new_clients': src_row['new_clients'] or 0,
+        'source_names': source_names,
+        'branches': branches,
     })
 
 
@@ -5003,6 +5068,12 @@ def api_order_source_days():
     extra, params = _osrc_scope(sources, bparams)
 
     with get_db() as conn:
+        total_rows = conn.execute(f'''
+            SELECT DATE(delivery_at) AS d, COALESCE(SUM(amount),0) AS total
+            FROM orders_report
+            WHERE DATE(delivery_at) BETWEEN ? AND ? {bf}
+            GROUP BY d
+        ''', [date_from, date_to] + bparams).fetchall()
         rows = conn.execute(f'''
             SELECT DATE(delivery_at) AS d, COALESCE(source, 'Не указан') AS src,
                    COALESCE(SUM(amount),0) AS revenue
@@ -5010,6 +5081,7 @@ def api_order_source_days():
             WHERE DATE(delivery_at) BETWEEN ? AND ? {bf} {extra}
             GROUP BY d, src
         ''', [date_from, date_to] + params).fetchall()
+    total_by_day = {r['d']: r['total'] or 0 for r in total_rows}
     by_day = {}
     for r in rows:
         by_day.setdefault(r['d'], {})[r['src']] = round(r['revenue'], 2)
@@ -5020,12 +5092,31 @@ def api_order_source_days():
     while _d <= _dend:
         ds = _d.isoformat()
         series = by_day.get(ds, {})
-        days.append({'date': ds, 'series': series, 'total': round(sum(series.values()), 2)})
+        total_revenue = total_by_day.get(ds, 0)
+        percentages = {
+            name: round(value / total_revenue * 100, 1) if total_revenue > 0 else 0
+            for name, value in series.items()
+        }
+        days.append({
+            'date': ds,
+            'series': series,
+            'percentages': percentages,
+            'total': round(sum(series.values()), 2),
+            'total_revenue': round(total_revenue, 2),
+        })
         _d += timedelta(days=1)
     return jsonify({'ok': True, 'sources': sources or None, 'days': days})
 
 
 def _osrc_months_series_query(conn, bf, bparams, extra, params, date_from, date_to):
+    total_rows = conn.execute(f'''
+        SELECT CAST(strftime('%Y', delivery_at) AS INTEGER) AS year,
+               CAST(strftime('%m', delivery_at) AS INTEGER) AS month,
+               COALESCE(SUM(amount),0) AS total
+        FROM orders_report
+        WHERE DATE(delivery_at) BETWEEN ? AND ? {bf}
+        GROUP BY year, month
+    ''', [date_from, date_to] + bparams).fetchall()
     rows = conn.execute(f'''
         SELECT CAST(strftime('%Y', delivery_at) AS INTEGER) AS year,
                CAST(strftime('%m', delivery_at) AS INTEGER) AS month,
@@ -5035,13 +5126,14 @@ def _osrc_months_series_query(conn, bf, bparams, extra, params, date_from, date_
         WHERE DATE(delivery_at) BETWEEN ? AND ? {bf} {extra}
         GROUP BY year, month, src
     ''', [date_from, date_to] + params).fetchall()
+    total_by_ym = {(r['year'], r['month']): r['total'] or 0 for r in total_rows}
     by_ym = {}
     for r in rows:
         by_ym.setdefault((r['year'], r['month']), {})[r['src']] = round(r['revenue'], 2)
-    return by_ym
+    return total_by_ym, by_ym
 
 
-def _osrc_months_series_list(by_ym, date_from, date_to):
+def _osrc_months_series_list(total_by_ym, by_ym, date_from, date_to):
     labels = ['', 'Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн',
               'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек']
     start = date.fromisoformat(date_from)
@@ -5051,8 +5143,20 @@ def _osrc_months_series_list(by_ym, date_from, date_to):
     while (y < end.year) or (y == end.year and m <= end.month):
         label = labels[m] + " '" + str(y)[-2:]
         series = by_ym.get((y, m), {})
-        months_list.append({'year': y, 'month': m, 'label': label,
-                            'series': series, 'total': round(sum(series.values()), 2)})
+        total_revenue = total_by_ym.get((y, m), 0)
+        percentages = {
+            name: round(value / total_revenue * 100, 1) if total_revenue > 0 else 0
+            for name, value in series.items()
+        }
+        months_list.append({
+            'year': y,
+            'month': m,
+            'label': label,
+            'series': series,
+            'percentages': percentages,
+            'total': round(sum(series.values()), 2),
+            'total_revenue': round(total_revenue, 2),
+        })
         m += 1
         if m > 12:
             m = 1
@@ -5072,8 +5176,10 @@ def api_order_source_months():
     if not date_from:
         return jsonify({'ok': False, 'error': 'date_from required'}), 400
     with get_db() as conn:
-        by_ym = _osrc_months_series_query(conn, bf, bparams, extra, params, date_from, date_to)
-    months = _osrc_months_series_list(by_ym, date_from, date_to)
+        total_by_ym, by_ym = _osrc_months_series_query(
+            conn, bf, bparams, extra, params, date_from, date_to
+        )
+    months = _osrc_months_series_list(total_by_ym, by_ym, date_from, date_to)
     return jsonify({'ok': True, 'sources': sources or None, 'months': months})
 
 
@@ -5092,8 +5198,10 @@ def api_order_source_all():
         if not date_from:
             return jsonify({'ok': True, 'sources': sources or None, 'months': []})
         extra, params = _osrc_scope(sources, bparams)
-        by_ym = _osrc_months_series_query(conn, bf, bparams, extra, params, date_from, today_iso)
-    months = _osrc_months_series_list(by_ym, date_from, today_iso)
+        total_by_ym, by_ym = _osrc_months_series_query(
+            conn, bf, bparams, extra, params, date_from, today_iso
+        )
+    months = _osrc_months_series_list(total_by_ym, by_ym, date_from, today_iso)
     return jsonify({'ok': True, 'sources': sources or None, 'months': months})
 
 

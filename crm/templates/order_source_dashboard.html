@@ -6,6 +6,24 @@
   #os-all-btn { display:none !important; }
 }
 .os-swatch { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:5px; vertical-align:middle; }
+.os-branch-summary-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:7px; }
+.os-branch-summary-title { font-size:12px; font-weight:800; letter-spacing:.4px; text-transform:uppercase; }
+#os-period-label { font-size:11px; opacity:.6; text-align:right; }
+.os-branch-matrix-wrap { overflow-x:auto; margin:0 -6px 14px; padding:0 6px 4px; scrollbar-width:thin; }
+.os-branch-matrix { width:100%; min-width:max-content; border-collapse:separate; border-spacing:0; font-size:11px; }
+.os-branch-matrix th, .os-branch-matrix td { padding:6px 10px; border-bottom:1px solid rgba(255,255,255,.12); white-space:nowrap; }
+.os-branch-matrix th { color:rgba(255,255,255,.66); font-size:10px; font-weight:700; text-align:right; }
+.os-branch-matrix th:first-child, .os-branch-matrix td:first-child { position:sticky; left:0; z-index:1; text-align:left; padding-left:0; padding-right:18px; background:#0d465d; }
+.os-branch-matrix th:not(:first-child), .os-branch-matrix td:not(:first-child) { min-width:100px; text-align:right; }
+.os-branch-matrix td:first-child { font-weight:700; }
+.os-branch-matrix td:not(:first-child) { font-size:12px; font-weight:800; }
+.os-branch-matrix tbody tr:last-child td { border-bottom:0; }
+.os-branch-empty { padding:14px 0 16px; font-size:12px; color:rgba(255,255,255,.62); }
+@media (max-width:575.98px) {
+  .os-branch-summary-head { display:block; }
+  #os-period-label { margin-top:2px; text-align:left; }
+  .os-branch-matrix th, .os-branch-matrix td { padding-top:5px; padding-bottom:5px; }
+}
 </style>
 
 <div class="row g-3 mb-4">
@@ -77,12 +95,14 @@
       <!-- Label -->
       <div id="os-label-title" style="font-size:10px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; opacity:.7; margin-bottom:6px;">Все источники</div>
 
-      <!-- Big number -->
-      <div id="os-total" style="font-size:clamp(32px,6vw,52px); font-weight:800; letter-spacing:-1px; line-height:1.05; margin-bottom:2px;">—</div>
-      <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px;">
-        <div id="os-period-label" style="font-size:14px; opacity:.6;">рублей</div>
+      <!-- Доли источников по каждому филиалу: один источник — одна строка -->
+      <div class="os-branch-summary-head">
+        <div class="os-branch-summary-title">По филиалам</div>
+        <div id="os-period-label">% от выручки за период</div>
       </div>
-      <div id="os-count-label" style="font-size:12px; opacity:.55; margin-bottom:14px;"></div>
+      <div id="os-branch-matrix-wrap" class="os-branch-matrix-wrap">
+        <div id="os-branch-matrix" class="os-branch-empty">Загрузка...</div>
+      </div>
 
       <!-- Divider -->
       <div style="border-top:1px solid rgba(255,255,255,.2); margin-bottom:14px;"></div>
@@ -145,6 +165,11 @@ function fmtLocalDate(d) {
 function isSameDay(a, b) { return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate(); }
 function fmtNum(n) { return Math.round(n).toLocaleString('ru-RU'); }
 function fmtPct1(n) { var r = Math.round(n * 10) / 10; return (r % 1 === 0) ? String(Math.round(r)) : String(r).replace('.', ','); }
+function osrcEscape(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
 
 var MONTHS_RU_FULL = ['', 'Январь','Февраль','Март','Апрель','Май','Июнь',
                       'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
@@ -303,17 +328,17 @@ function redrawSourceChart(canvasId, items, labelMode, existing, onClickDrill) {
         names = selectedSources.slice();
     } else {
         var seen = {};
-        items.forEach(function (it) { Object.keys(it.series || {}).forEach(function (k) { seen[k] = true; }); });
+        items.forEach(function (it) { Object.keys(it.percentages || {}).forEach(function (k) { seen[k] = true; }); });
         names = Object.keys(seen);
     }
     var totals = {};
-    names.forEach(function (n) { totals[n] = items.reduce(function (s, it) { return s + ((it.series && it.series[n]) || 0); }, 0); });
+    names.forEach(function (n) { totals[n] = items.reduce(function (s, it) { return s + ((it.percentages && it.percentages[n]) || 0); }, 0); });
     names.sort(function (a, b) { return totals[b] - totals[a]; });
 
     var datasets = names.map(function (name) {
         return {
             label: name,
-            data: items.map(function (it) { return (it.series && it.series[name]) || 0; }),
+            data: items.map(function (it) { return (it.percentages && it.percentages[name]) || 0; }),
             backgroundColor: osrcColor(name),
             hoverBackgroundColor: osrcColor(name),
             borderRadius: 4, borderSkipped: false,
@@ -340,7 +365,7 @@ function redrawSourceChart(canvasId, items, labelMode, existing, onClickDrill) {
                             var d = new Date(raw + 'T00:00:00');
                             return raw.split('-').reverse().join('.') + ', ' + DOW[d.getDay()];
                         },
-                        label: function(ctx) { return ctx.dataset.label + ': ' + fmtNum(ctx.parsed.y) + ' ₽'; }
+                        label: function(ctx) { return ctx.dataset.label + ': ' + fmtPct1(ctx.parsed.y) + '%'; }
                     },
                     backgroundColor: 'rgba(0,0,0,.7)', titleColor: '#fff', bodyColor: '#fff',
                 }
@@ -348,12 +373,10 @@ function redrawSourceChart(canvasId, items, labelMode, existing, onClickDrill) {
             scales: {
                 x: { ticks: { color: 'rgba(255,255,255,.65)', font: { size: 10, weight: '600' } }, grid: { display: false }, border: { color: 'rgba(255,255,255,.15)' } },
                 y: {
-                    beginAtZero: true,
+                    beginAtZero: true, max: 100,
                     ticks: {
                         color: 'rgba(255,255,255,.5)', font: { size: 9 },
-                        callback: function(v) {
-                            return v >= 1000000 ? (v/1000000).toFixed(1) + 'М' : v >= 1000 ? Math.round(v/1000) + 'К' : v;
-                        }
+                        callback: function(v) { return v + '%'; }
                     },
                     grid: { color: 'rgba(255,255,255,.08)' }, border: { display: false }
                 }
@@ -362,7 +385,7 @@ function redrawSourceChart(canvasId, items, labelMode, existing, onClickDrill) {
                 if (!elements.length) return;
                 var idx = elements[0].index;
                 var month = items[idx];
-                if (!month.total) return;
+                if (!month.total_revenue && !month.total) return;
                 showSourceMonthDetail(month.month, month.year, MONTHS_RU_FULL[month.month]);
             } : undefined
         }
@@ -394,14 +417,38 @@ function showSourceMonthDetail(monthIdx, monthYear, monthLabel) {
         });
 }
 
-function renderSourceTotals(d) {
-    var big = document.getElementById('os-total');
-    if (!d || !d.count) { big.textContent = '—'; document.getElementById('os-count-label').textContent = 'нет заказов за период'; return; }
-    big.textContent = fmtNum(d.revenue);
-    var label = selectedSources.length
-        ? (d.count + ' заказов из ' + (selectedSources.length === 1 ? 'источника' : selectedSources.length + ' источников'))
-        : (d.count + ' заказов за период');
-    document.getElementById('os-count-label').textContent = label + ' · ' + fmtPct1(d.pct) + '% от выручки';
+function renderSourceBranchMatrix(d) {
+    var host = document.getElementById('os-branch-matrix');
+    if (!host) return;
+    if (!d || !d.ok || !d.branches || !d.branches.length) {
+        host.className = 'os-branch-empty';
+        host.textContent = 'Нет заказов за выбранный период';
+        return;
+    }
+
+    var sourceNames = selectedSources.length ? selectedSources.slice() : (d.source_names || []);
+    if (!sourceNames.length) {
+        host.className = 'os-branch-empty';
+        host.textContent = 'Нет источников заказов за выбранный период';
+        return;
+    }
+
+    var html = '<table class="os-branch-matrix"><thead><tr><th>Источник</th>';
+    d.branches.forEach(function (branch) {
+        html += '<th title="' + osrcEscape(branch.name) + '">' + osrcEscape(branch.name) + '</th>';
+    });
+    html += '</tr></thead><tbody>';
+    sourceNames.forEach(function (sourceName) {
+        html += '<tr><td><span class="os-swatch" style="background:' + osrcColor(sourceName) + '"></span>' + osrcEscape(sourceName) + '</td>';
+        d.branches.forEach(function (branch) {
+            var value = branch.shares && branch.shares[sourceName] != null ? branch.shares[sourceName] : 0;
+            html += '<td>' + fmtPct1(value) + '%</td>';
+        });
+        html += '</tr>';
+    });
+    html += '</tbody></table>';
+    host.className = '';
+    host.innerHTML = html;
 }
 
 function loadSourceCard(period) {
@@ -424,8 +471,9 @@ function loadSourceCard(period) {
         calBtn.style.borderColor = calActive ? 'rgba(255,255,255,.9)'  : 'rgba(255,255,255,.35)';
     }
 
-    document.getElementById('os-total').textContent = '…';
-    document.getElementById('os-count-label').textContent = '';
+    var branchMatrix = document.getElementById('os-branch-matrix');
+    branchMatrix.className = 'os-branch-empty';
+    branchMatrix.textContent = 'Загрузка...';
 
     var dayWrap     = document.getElementById('os-day-wrap');
     var yearWrap    = document.getElementById('os-year-wrap');
@@ -469,17 +517,17 @@ function loadSourceCard(period) {
             yearTo   = sourceYear === curYear2 ? fmtLocalDate(new Date()) : sourceYear + '-12-31';
             periodLabel = 'за ' + sourceYear;
         } else if (sourcePeriod === 'all') {
+            yearFrom = '2000-01-01';
+            yearTo   = fmtLocalDate(new Date());
             periodLabel = 'за всё время';
         } else {
             yearFrom = sourceCustomFrom; yearTo = sourceCustomTo;
             var fmtLabelM = function(s) { return s.split('-').reverse().join('.'); };
             periodLabel = fmtLabelM(yearFrom) + ' — ' + fmtLabelM(yearTo);
         }
-        document.getElementById('os-period-label').textContent = 'рублей ' + periodLabel;
+        document.getElementById('os-period-label').textContent = periodLabel + ' · % от выручки';
 
-        var summaryUrl = sourcePeriod === 'all'
-            ? null
-            : '/api/order-source-summary?date_from=' + yearFrom + '&date_to=' + yearTo + qsSource;
+        var summaryUrl = '/api/order-source-summary?date_from=' + yearFrom + '&date_to=' + yearTo + qsSource;
         var monthsUrl = sourcePeriod === 'all'
             ? '/api/order-source-all?' + qsSource.replace(/^&/, '')
             : '/api/order-source-months?date_from=' + yearFrom + '&date_to=' + yearTo + qsSource;
@@ -487,18 +535,8 @@ function loadSourceCard(period) {
         fetch(monthsUrl).then(function(r) { return r.json(); }).then(function(d) {
             if (!d.ok) return;
             sourceChart = redrawSourceChart('os-year-canvas', d.months, 'month', sourceChart, true);
-            if (sourcePeriod === 'all') {
-                var totalRevenue = d.months.reduce(function(s, m) { return s + m.total; }, 0);
-                document.getElementById('os-total').textContent = fmtNum(totalRevenue);
-                document.getElementById('os-count-label').textContent = '';
-            }
         });
-        if (summaryUrl) {
-            fetch(summaryUrl).then(function(r) { return r.json(); }).then(function(d) {
-                if (!d.ok) return;
-                renderSourceTotals(d);
-            });
-        }
+        fetch(summaryUrl).then(function(r) { return r.json(); }).then(renderSourceBranchMatrix);
         return;
     }
 
@@ -511,22 +549,22 @@ function loadSourceCard(period) {
     var dateTo, dateFrom;
     if (sourcePeriod === 'custom' && sourceCustomFrom && sourceCustomTo) {
         dateFrom = sourceCustomFrom; dateTo = sourceCustomTo;
-        document.getElementById('os-period-label').textContent = 'рублей · ' + fmtLabel(dateFrom) + ' — ' + fmtLabel(dateTo);
+        document.getElementById('os-period-label').textContent = fmtLabel(dateFrom) + ' — ' + fmtLabel(dateTo) + ' · % от выручки';
     } else if (sourcePeriod === 'today') {
         dateFrom = dateTo = fmtLocalDate(sourceTodayDate);
-        document.getElementById('os-period-label').textContent = 'рублей';
+        document.getElementById('os-period-label').textContent = fmtLabel(dateFrom) + ' · % от выручки';
     } else {
         var y = sourceMonthDate.getFullYear();
         var m = sourceMonthDate.getMonth();
         var lastDay = new Date(y, m + 1, 0).getDate();
         dateFrom = y + '-' + String(m + 1).padStart(2, '0') + '-01';
         dateTo   = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
-        document.getElementById('os-period-label').textContent = 'рублей';
+        document.getElementById('os-period-label').textContent = MONTHS_RU_FULL[m + 1] + ' ' + y + ' · % от выручки';
     }
 
     fetch('/api/order-source-summary?date_from=' + dateFrom + '&date_to=' + dateTo + qsSource)
         .then(function(r) { return r.json(); })
-        .then(renderSourceTotals);
+        .then(renderSourceBranchMatrix);
 
     if (sourcePeriod === 'month') {
         dayWrap.style.display = '';
