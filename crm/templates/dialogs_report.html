@@ -201,7 +201,7 @@
                     }
                     body.scrollTop = body.scrollHeight;
                     var headerText = dlgHeaderBase;
-                    if (d.order_info) headerText += ' · №' + d.order_info.order_number + ' · ' + d.order_info.branch_abbr;
+                    if (d.order_info) headerText += ' · №' + d.order_info.order_number + ' · ' + d.order_info.branch_name;
                     document.getElementById('dlgChatHeaderText').textContent = headerText;
                 } else if (d.messages.length) {
                     var wasAtBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 60;

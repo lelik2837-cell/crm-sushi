@@ -11620,7 +11620,7 @@ def _dialog_mark_read(conn, account_id, contact_ref):
 
 def _dialog_order_info(conn, account_id, contact_ref):
     """Последний заказ клиента этого диалога по номеру телефона (просьба пользователя
-    2026-09-13 показывать номер заказа и сокращённое название филиала рядом с номером и
+    2026-09-13 показывать номер заказа и полное название филиала рядом с номером и
     мессенджером при открытии диалога). contact_phone в messenger_messages нормализован к
     11 цифрам с «7» в начале (см. _normalize_ru_phone), а orders_report.phone хранится как
     есть из выгрузки — обычно 10 цифр без кода страны, поэтому сравниваем по последним 10
@@ -11634,15 +11634,14 @@ def _dialog_order_info(conn, account_id, contact_ref):
     if len(digits) < 10:
         return None
     order = conn.execute('''
-        SELECT o.order_number,
-               COALESCE(NULLIF(TRIM(b.abbr), ''), UPPER(SUBSTR(b.name, 1, 3)), UPPER(SUBSTR(o.branch_raw, 1, 3))) AS branch_abbr
+        SELECT o.order_number, COALESCE(b.name, o.branch_raw) AS branch_name
         FROM orders_report o LEFT JOIN branches b ON b.id = o.branch_id
         WHERE o.phone = ?
         ORDER BY o.received_at DESC LIMIT 1
     ''', (digits[-10:],)).fetchone()
     if not order:
         return None
-    return {'order_number': order['order_number'], 'branch_abbr': order['branch_abbr']}
+    return {'order_number': order['order_number'], 'branch_name': order['branch_name']}
 
 
 @app.route('/api/dialogs/thread/<int:account_id>/<contact_ref>/messages')
