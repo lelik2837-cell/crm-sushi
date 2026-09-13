@@ -27,8 +27,8 @@
 </style>
 
 <div class="row g-3 mb-4">
-  <div class="col-12">
-    <div id="osrc-card" style="background:linear-gradient(135deg,#0b2a3d 0%,#0e4a63 45%,#0f7d8f 100%); border-radius:20px; padding:28px 28px 24px; color:#fff; position:relative;">
+  <div class="col-lg-6">
+    <div id="osrc-card" style="background:linear-gradient(135deg,#0b2a3d 0%,#0e4a63 45%,#0f7d8f 100%); border-radius:20px; padding:28px 28px 24px; color:#fff; position:relative; height:100%;">
 
       <!-- Row 1: period buttons + calendar + source picker + branch selector -->
       <div style="display:flex; gap:6px; margin-bottom:10px; align-items:center; flex-wrap:wrap;">
@@ -125,32 +125,34 @@
 
     </div>
   </div>
-</div>
 
-<!-- ══ Список источников ══ -->
-<div class="card mb-4">
-  <div class="card-header bg-light d-flex align-items-center justify-content-between flex-wrap gap-2">
-    <span class="fw-bold"><i class="bi bi-signpost-split"></i> Источники заказов за период</span>
-    <a href="#" id="os-reset-link" onclick="osrcSetSources([]); return false;" class="small text-decoration-none" style="display:none;">
-      <i class="bi bi-x-circle me-1"></i>Сбросить выбор источников
-    </a>
-  </div>
-  <div class="table-responsive">
-    <table class="table table-sm table-hover mb-0 align-middle" id="osrcTable" style="font-size:12.5px">
-      <thead class="table-light">
-        <tr>
-          <th class="os-sort" style="cursor:pointer;user-select:none">Источник <span class="os-arrow text-muted"></span></th>
-          <th class="os-sort text-end" style="cursor:pointer;user-select:none">% от выручки <span class="os-arrow text-muted"></span></th>
-          <th class="os-sort text-end" style="cursor:pointer;user-select:none">Количество заказов <span class="os-arrow text-muted"></span></th>
-          <th class="os-sort text-end" style="cursor:pointer;user-select:none">Новых клиентов <span class="os-arrow text-muted"></span></th>
-          <th class="os-sort text-end" style="cursor:pointer;user-select:none">Средний чек <span class="os-arrow text-muted"></span></th>
-          <th class="os-sort text-end" style="cursor:pointer;user-select:none">Сумма выручки <span class="os-arrow text-muted"></span></th>
-        </tr>
-      </thead>
-      <tbody id="osrcTbody">
-        <tr><td colspan="6" class="text-center text-muted py-3">Загрузка...</td></tr>
-      </tbody>
-    </table>
+  <!-- ══ Список источников — справа от графика, на второй половине строки ══ -->
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header bg-light d-flex align-items-center justify-content-between flex-wrap gap-2">
+        <span class="fw-bold"><i class="bi bi-signpost-split"></i> Источники заказов за период</span>
+        <a href="#" id="os-reset-link" onclick="osrcSetSources([]); return false;" class="small text-decoration-none" style="display:none;">
+          <i class="bi bi-x-circle me-1"></i>Сбросить выбор источников
+        </a>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 align-middle" id="osrcTable" style="font-size:12.5px">
+          <thead class="table-light">
+            <tr>
+              <th class="os-sort" style="cursor:pointer;user-select:none">Источник <span class="os-arrow text-muted"></span></th>
+              <th class="os-sort text-end" style="cursor:pointer;user-select:none">% от выручки <span class="os-arrow text-muted"></span></th>
+              <th class="os-sort text-end" style="cursor:pointer;user-select:none">Количество заказов <span class="os-arrow text-muted"></span></th>
+              <th class="os-sort text-end" style="cursor:pointer;user-select:none">Новых клиентов <span class="os-arrow text-muted"></span></th>
+              <th class="os-sort text-end" style="cursor:pointer;user-select:none">Средний чек <span class="os-arrow text-muted"></span></th>
+              <th class="os-sort text-end" style="cursor:pointer;user-select:none">Сумма выручки <span class="os-arrow text-muted"></span></th>
+            </tr>
+          </thead>
+          <tbody id="osrcTbody">
+            <tr><td colspan="6" class="text-center text-muted py-3">Загрузка...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </div>
 
