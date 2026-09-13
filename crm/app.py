@@ -2395,6 +2395,8 @@ def init_db():
             # Источник заказа, сгруппированный в категории для статистики — см. _normalize_order_source.
             conn.execute("ALTER TABLE orders_report ADD COLUMN source TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_orders_report_delivery ON orders_report(delivery_at)")
+        # Для поиска последнего заказа клиента по телефону в «Диалогах» (см. _dialog_order_info).
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_orders_report_phone ON orders_report(phone)")
 
         # Одноразовая корректировка: заказ, переданный в доставку такси, iiko выгружал
         # второй строкой с тем же номером и префиксом «T»/«Т» (напр. 4629 и T4629,
@@ -11616,6 +11618,33 @@ def _dialog_mark_read(conn, account_id, contact_ref):
     conn.commit()
 
 
+def _dialog_order_info(conn, account_id, contact_ref):
+    """Последний заказ клиента этого диалога по номеру телефона (просьба пользователя
+    2026-09-13 показывать номер заказа и сокращённое название филиала рядом с номером и
+    мессенджером при открытии диалога). contact_phone в messenger_messages нормализован к
+    11 цифрам с «7» в начале (см. _normalize_ru_phone), а orders_report.phone хранится как
+    есть из выгрузки — обычно 10 цифр без кода страны, поэтому сравниваем по последним 10
+    цифрам. Если у диалога телефон вообще не известен (Telegram/MAX без привязки к заявке
+    на оценку) — вернёт None, это ожидаемо и ничего не показываем."""
+    phone_row = conn.execute(
+        'SELECT MAX(contact_phone) AS p FROM messenger_messages WHERE account_id=? AND contact_ref=?',
+        (account_id, contact_ref)
+    ).fetchone()
+    digits = re.sub(r'\D', '', phone_row['p'] or '')
+    if len(digits) < 10:
+        return None
+    order = conn.execute('''
+        SELECT o.order_number,
+               COALESCE(NULLIF(TRIM(b.abbr), ''), UPPER(SUBSTR(b.name, 1, 3)), UPPER(SUBSTR(o.branch_raw, 1, 3))) AS branch_abbr
+        FROM orders_report o LEFT JOIN branches b ON b.id = o.branch_id
+        WHERE o.phone = ?
+        ORDER BY o.received_at DESC LIMIT 1
+    ''', (digits[-10:],)).fetchone()
+    if not order:
+        return None
+    return {'order_number': order['order_number'], 'branch_abbr': order['branch_abbr']}
+
+
 @app.route('/api/dialogs/thread/<int:account_id>/<contact_ref>/messages')
 @login_required
 @menu_permission_required('dialogs_report')
@@ -11623,6 +11652,7 @@ def api_dialogs_thread_messages(account_id, contact_ref):
     after_id = request.args.get('after_id', type=int)
     with get_db() as conn:
         _dialog_mark_read(conn, account_id, contact_ref)
+        order_info = _dialog_order_info(conn, account_id, contact_ref)
         if after_id:
             rows = conn.execute('''
                 SELECT id, direction, text, image_blob IS NOT NULL AS has_image,
@@ -11649,7 +11679,7 @@ def api_dialogs_thread_messages(account_id, contact_ref):
         'image_url': url_for('api_messenger_message_image', message_id=r['id']) if r['has_image'] else None,
         'created_at': datetime_ru_short(r['created_at']),
     } for r in rows]
-    return jsonify({'ok': True, 'messages': messages})
+    return jsonify({'ok': True, 'messages': messages, 'order_info': order_info})
 
 
 @app.route('/api/dialogs/thread/<int:account_id>/<contact_ref>/send', methods=['POST'])
