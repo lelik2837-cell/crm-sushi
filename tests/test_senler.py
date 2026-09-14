@@ -135,6 +135,40 @@ class SenlerTests(unittest.TestCase):
         self.assertNotIn(stored['webhook_secret'],payload)
         self.assertEqual(Path(self.path+'.senler-key').stat().st_mode & 0o777,0o600)
 
+    def test_overview_subscriber_statistics_all_channels_and_filter(self):
+        vk=self.channel('vk');telegram=self.channel('telegram')
+        active_vk=self.sub(vk,'101','active')
+        pending_vk=self.sub(vk,'102','pending')
+        unsubscribed_vk=self.sub(vk,'103','unsubscribed')
+        active_telegram=self.sub(telegram,'201','active')
+        blocked_telegram=self.sub(telegram,'202','blocked')
+        with self.service.db() as conn:
+            conn.execute('UPDATE senler_subscribers SET consent_at=NULL WHERE id IN (?,?)',(pending_vk,blocked_telegram))
+            conn.execute('UPDATE senler_subscribers SET consent_at=? WHERE id=?',(now()-10*86400,unsubscribed_vk))
+            conn.execute('UPDATE senler_subscribers SET consent_at=? WHERE id=?',(now()-40*86400,active_telegram))
+
+        overview=self.client.get('/reports/senler/api/bootstrap').get_json()
+        self.assertEqual(overview['subscriber_stats'],{
+            'active':2,'blocked':1,'new_30':2,'pending':1,'total':5,'unsubscribed':1})
+        self.assertEqual(sum(day['n'] for day in overview['subscriber_activity']),2)
+        by_channel={item['id']:item for item in overview['subscriber_channels']}
+        self.assertEqual((by_channel[vk]['active'],by_channel[vk]['total'],by_channel[vk]['new_30']),(1,3,2))
+        self.assertEqual((by_channel[telegram]['active'],by_channel[telegram]['total'],by_channel[telegram]['new_30']),(1,2,0))
+
+        selected=self.client.get('/reports/senler/api/bootstrap?channel='+str(vk)).get_json()
+        self.assertEqual(selected['subscriber_stats']['total'],3)
+        self.assertEqual(selected['subscriber_stats']['active'],1)
+        self.assertEqual(selected['subscriber_stats']['new_30'],2)
+        self.assertEqual([item['id'] for item in selected['subscriber_channels']],[vk])
+        self.assertEqual(sum(day['n'] for day in selected['subscriber_activity']),2)
+
+        with self.client.session_transaction() as session:
+            session['user_id']=2
+        private=self.client.get('/reports/senler/api/bootstrap?channel='+str(vk)).get_json()
+        self.assertEqual(private['subscriber_stats']['total'],0)
+        self.assertEqual(private['subscriber_channels'],[])
+        self.assertEqual(private['subscriber_activity'],[])
+
     def test_subscription_button_settings_validation_and_owner_scope(self):
         channel=self.channel('vk');before=self.one('senler_channels')
         self.post('channels/{}/edit'.format(channel),{'name':'ВК','unsubscribe_label':'Не получать акции','unsubscribe_enabled':False})

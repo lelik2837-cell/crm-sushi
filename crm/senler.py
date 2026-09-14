@@ -133,9 +133,28 @@ def register_senler(app, get_db, database_path, item_visible):
             recent = [campaign_data(conn, r) for r in conn.execute('SELECT * FROM senler_campaigns WHERE owner_id=? ORDER BY id DESC LIMIT 5', (session['user_id'],))]
             activity = [dict(r) for r in conn.execute('''SELECT date(sent_at,'unixepoch','+7 hours') day,COUNT(*) n FROM senler_outbox
                 WHERE status='sent' AND sent_at>=?''' + delivery_scope + ' GROUP BY day ORDER BY day', [now() - 7 * 86400] + params)]
+            subscriber_activity = [dict(r) for r in conn.execute('''SELECT date(s.consent_at,'unixepoch','+7 hours') day,COUNT(*) n
+                FROM senler_subscribers s JOIN senler_channels c ON c.id=s.channel_id
+                WHERE c.owner_id=? AND s.consent_at>=?''' + (' AND s.channel_id=?' if channel_id else '') +
+                ' GROUP BY day ORDER BY day', [session['user_id'], now() - 30 * 86400] + ([channel_id] if channel_id else []))]
+            subscriber_channels = [dict(r) for r in conn.execute('''SELECT c.id,c.name,c.kind,
+                COUNT(s.id) total,
+                COALESCE(SUM(CASE WHEN s.status='active' THEN 1 ELSE 0 END),0) active,
+                COALESCE(SUM(CASE WHEN s.status='pending' THEN 1 ELSE 0 END),0) pending,
+                COALESCE(SUM(CASE WHEN s.status='unsubscribed' THEN 1 ELSE 0 END),0) unsubscribed,
+                COALESCE(SUM(CASE WHEN s.status='blocked' THEN 1 ELSE 0 END),0) blocked,
+                COALESCE(SUM(CASE WHEN s.consent_at>=? THEN 1 ELSE 0 END),0) new_30
+                FROM senler_channels c LEFT JOIN senler_subscribers s ON s.channel_id=c.id
+                WHERE c.owner_id=?''' + (' AND c.id=?' if channel_id else '') +
+                ' GROUP BY c.id ORDER BY c.id', [now() - 30 * 86400, session['user_id']] + ([channel_id] if channel_id else []))]
+            subscriber_stats = dict(status)
+            subscriber_stats['total'] = sum(status.values())
+            subscriber_stats['new_30'] = sum(item['n'] for item in subscriber_activity)
             unread = conn.execute('SELECT COALESCE(SUM(unread),0) n FROM senler_subscribers' + scope, params).fetchone()['n']
         return jsonify(channels=channels, groups=groups, stats=dict(status, sent=sent, errors=errors, active_bots=active_bots, running=running, unread=unread),
-                       recent=recent, activity=activity, timezone='Asia/Novosibirsk', server_time=now())
+                       recent=recent, activity=activity, subscriber_stats=subscriber_stats,
+                       subscriber_activity=subscriber_activity, subscriber_channels=subscriber_channels,
+                       timezone='Asia/Novosibirsk', server_time=now())
 
     @bp.post('/reports/senler/api/channels')
     def save_channel():

@@ -2,6 +2,7 @@
 {% block title %}Сенлер — CRM PAPA{% endblock %}
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='senler.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='senler-overview.css') }}">
 <section id="senler-app" class="sn-app" data-csrf="{{ senler_csrf }}">
     <header class="sn-header">
         <div><div class="sn-eyebrow">ОТЧЁТЫ / КОММУНИКАЦИИ</div><h1>Сенлер <span class="sn-owned"><i class="bi bi-lock me-1"></i>личный раздел</span></h1><p>Ваши подписчики, рассылки и разговоры</p></div>

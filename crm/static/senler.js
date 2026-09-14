@@ -23,7 +23,7 @@
   const head = (title, description, actions = '') => `<div class="sn-section-head"><div><h2>${title}</h2>${description ? `<p>${description}</p>` : ''}</div><div class="sn-actions">${actions}</div></div>`;
   const inputField = (label, name, value = '', extra = '', help = '') => `<div class="sn-field"><label for="${name}">${label}</label><input class="form-control${name==='ch-token'?' ym-disable-keys':''}" id="${name}" value="${esc(value)}" ${extra}>${help ? `<div class="sn-help">${help}</div>` : ''}</div>`;
   const qs = () => new URLSearchParams(location.search);
-  const link = (tab, extras = {}) => { const params = new URLSearchParams({tab}); if (state.channel) params.set('channel', state.channel); for (const [key, value] of Object.entries(extras)) if (value !== '' && value != null) params.set(key, value); return '?' + params.toString(); };
+  const link = (tab, extras = {}) => { const params = new URLSearchParams({tab}); if (state.channel) params.set('channel', state.channel); for (const [key, value] of Object.entries(extras)) { if (value !== '' && value != null) params.set(key, value); else params.delete(key); } return '?' + params.toString(); };
   const navLink = (tab, text, extras = {}, css = 'sn-link') => `<a class="${css}" href="${esc(link(tab, extras))}" data-go>${text}</a>`;
   const clone = value => JSON.parse(JSON.stringify(value));
   const replyAttempts = new Map();
@@ -121,10 +121,14 @@
     return `<div class="sn-panel flush"><div class="sn-table-scroll"><table class="sn-table"><thead><tr><th>Рассылка</th><th>Статус</th><th>Аудитория</th><th>Отправлено</th><th>Ошибки</th><th></th></tr></thead><tbody>${campaignRows(items)}</tbody></table></div></div>`;
   }
   function renderOverview() {
-    const b = state.boot, stats = b.stats;
+    const b = state.boot, stats = b.stats, subscriberStats = b.subscriber_stats || {};
+    const selectedChannel = b.channels.find(channel => channel.id === Number(state.channel));
     main.innerHTML = head('Всё под контролем', 'Общайтесь с подписчиками и возвращайте их за новым заказом', navLink('campaigns','<i class="bi bi-plus-lg me-1"></i>Новая рассылка',{edit:'new'},'btn btn-primary')) +
       `<div class="sn-stats">${[['Активные подписчики',stats.active,'people','Подписки в выбранных каналах'],['Отправлено',stats.sent,'send-check','За последние 30 дней'],['Чат-боты',stats.active_bots,'diagram-3','Включённые сценарии'],['Требуют внимания',stats.errors,'exclamation-circle','Ошибки отправки за 30 дней']].map(([label,value,icon,sub]) => `<div class="sn-stat"><div class="sn-stat-label">${label}<i class="bi bi-${icon}"></i></div><strong>${num(value)}</strong><small>${sub}</small></div>`).join('')}</div>` +
       (!b.channels.length || !stats.active ? `<div class="sn-panel"><h3>От подключения до первой рассылки</h3><div class="sn-start">${navLink('channels','<span class="sn-step-num">1</span><strong>Подключите каналы</strong><p>Сообщество ВК и боты Telegram и MAX</p>',{},'')}${navLink('subscribers','<span class="sn-step-num">2</span><strong>Перенесите подписчиков</strong><p>Импортируйте базу Senler и разделите её на группы</p>',{},'')}${navLink('campaigns','<span class="sn-step-num">3</span><strong>Создайте рассылку</strong><p>Выберите аудиторию, сообщение и время отправки</p>',{edit:'new'},'')}</div></div>` : '') +
+      head('Статистика подписчиков', selectedChannel ? `Канал: ${esc(selectedChannel.name)}` : 'Суммарно по всем каналам', state.channel ? navLink('overview','Показать все каналы',{channel:null}) : navLink('subscribers','Открыть базу <i class="bi bi-arrow-right ms-1"></i>')) +
+      `<div class="sn-subscriber-kpis">${[['Вся база',subscriberStats.total,'Всего записей'],['Активные',subscriberStats.active,'Можно отправлять'],['Новые',subscriberStats.new_30,'За 30 дней'],['Ожидают',subscriberStats.pending,'Нужно подтверждение'],['Неактивные',(subscriberStats.unsubscribed || 0) + (subscriberStats.blocked || 0),'Отписались или запретили']].map(([label,value,sub]) => `<div class="sn-subscriber-kpi"><span>${label}</span><strong>${num(value)}</strong><small>${sub}</small></div>`).join('')}</div>` +
+      `<div class="sn-subscriber-grid"><div class="sn-panel"><div class="sn-panel-title"><div><h3>Новые подписки за 30 дней</h3><p>По дате подтверждения или импорта</p></div><strong>${num(subscriberStats.new_30)}</strong></div>${subscriberActivityChart(b.subscriber_activity || [])}</div><div class="sn-panel"><div class="sn-panel-title"><div><h3>${state.channel ? 'Выбранный канал' : 'Подписчики по каналам'}</h3><p>Активные и вся база</p></div></div>${subscriberChannels(b.subscriber_channels || [])}</div></div>` +
       `<div class="sn-grid-2"><div class="sn-panel"><h3>Отправки за неделю</h3>${activityChart(b.activity)}</div><div class="sn-panel"><h3>Ваши каналы</h3>${b.channels.length ? b.channels.map(c => `<div class="d-flex justify-content-between align-items-center py-2"><div>${kindBadge(c.kind)} <span class="sn-small ms-1">${esc(c.name)}</span></div>${badge(c.status)}</div>`).join('') : '<p class="sn-muted sn-small">После подключения здесь появятся ваши сообщества и боты.</p>'}${navLink('channels','Управление каналами <i class="bi bi-arrow-right ms-1"></i>')}</div></div>` +
       head('Последние рассылки','',navLink('campaigns','Все рассылки <i class="bi bi-arrow-right ms-1"></i>')) +
       (b.recent.length ? campaignTable(b.recent) : empty('send','Здесь появится история рассылок','После первой отправки вы увидите её статус и результат.'));
@@ -137,6 +141,23 @@
     });
     const max = Math.max(1,...days.map(d => d.value));
     return `<div class="sn-bar-chart">${days.map(d => `<div class="sn-bar-col"><small>${num(d.value)}</small><div class="sn-bar" style="height:${Math.max(2,d.value / max * 95)}px"></div><small>${d.label}</small></div>`).join('')}</div>`;
+  }
+  function subscriberActivityChart(activity) {
+    const formatter = new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Novosibirsk',year:'numeric',month:'2-digit',day:'2-digit'});
+    const days = Array.from({length:30}, (_, i) => {
+      const stamp = new Date((state.boot.server_time - (29 - i) * 86400) * 1000);
+      const key = formatter.format(stamp);
+      return {label:stamp.toLocaleDateString('ru-RU',{timeZone:'Asia/Novosibirsk',day:'numeric',month:'short'}), value:activity.find(item => item.day === key)?.n || 0};
+    });
+    const max = Math.max(1,...days.map(day => day.value));
+    return `<div class="sn-subscriber-chart">${days.map((day, index) => `<div class="sn-subscriber-bar-col" title="${esc(day.label)}: ${num(day.value)}"><small>${day.value ? num(day.value) : ''}</small><div class="sn-subscriber-bar" style="height:${Math.max(3,day.value / max * 116)}px"></div>${(index % 5 === 0 || index === days.length - 1) ? `<span>${day.label}</span>` : ''}</div>`).join('')}</div>`;
+  }
+  function subscriberChannels(channels) {
+    if (!channels.length) return '<p class="sn-muted sn-small mb-0">Подключите канал, чтобы увидеть статистику.</p>';
+    return `<div class="sn-channel-stats">${channels.map(channel => {
+      const percent = channel.total ? Math.round(channel.active / channel.total * 100) : 0;
+      return `<a href="${esc(link('overview',{channel:channel.id}))}" data-go class="sn-channel-stat"><div class="sn-channel-stat-head"><div>${kindBadge(channel.kind)} <strong>${esc(channel.name)}</strong></div><span>${num(channel.active)} <small>из ${num(channel.total)}</small></span></div><div class="sn-progress"><span style="width:${percent}%"></span></div><div class="sn-channel-stat-foot"><span>${percent}% активных</span><span>+${num(channel.new_30)} за 30 дней</span></div></a>`;
+    }).join('')}</div>`;
   }
   function renderChannels() {
     main.innerHTML = head('Каналы','Подключение, состояние и ссылки для новых подписчиков',btn('<i class="bi bi-plus-lg me-1"></i>Подключить канал','channel-new','',true)) +
