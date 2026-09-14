@@ -91,6 +91,13 @@ def register_senler(app, get_db, database_path, item_visible):
         item['counts'] = counts
         item['total'] = sum(counts.values())
         if details:
+            item['subscription_buttons'] = {}
+            for snapshot in conn.execute('''SELECT channel_id,body_json FROM senler_outbox WHERE id IN
+                    (SELECT MIN(id) FROM senler_outbox WHERE campaign_id=? GROUP BY channel_id)''', (item['id'],)):
+                button = next((b for b in json.loads(snapshot['body_json']).get('buttons', [])
+                               if b.get('action') == 'callback' and b.get('value') == 'unsubscribe'), None)
+                item['subscription_buttons'][str(snapshot['channel_id'])] = {
+                    'unsubscribe_enabled': int(button is not None), 'unsubscribe_label': button['label'] if button else 'Отписаться'}
             item['deliveries'] = [dict(r) for r in conn.execute('''SELECT o.id,o.status,o.error,o.sent_at,s.name,s.external_user_id,c.name channel_name
                     FROM senler_outbox o JOIN senler_subscribers s ON s.id=o.subscriber_id JOIN senler_channels c ON c.id=o.channel_id
                     WHERE o.campaign_id=? ORDER BY CASE WHEN o.status IN ('error','unknown') THEN 0 ELSE 1 END,o.id DESC LIMIT 200''', (item['id'],))]
@@ -129,6 +136,7 @@ def register_senler(app, get_db, database_path, item_visible):
     @bp.post('/reports/senler/api/channels')
     def save_channel():
         data = body()
+        unsubscribe_label, unsubscribe_enabled = subscription_button_settings(data)
         kind, name, token = data.get('kind'), str(data.get('name', '')).strip(), str(data.get('token', '')).strip()
         if kind not in KINDS or not name or len(name) > 100:
             raise ValueError('Выберите мессенджер и введите название до 100 символов.')
@@ -150,8 +158,20 @@ def register_senler(app, get_db, database_path, item_visible):
         with service.db() as conn:
             item_id = conn.execute('''INSERT INTO senler_channels(owner_id,kind,name,external_id,token,webhook_secret,created_at)
                          VALUES (?,?,?,?,?,?,?)''', (session['user_id'], kind, name, external_id, encrypted, secrets.token_urlsafe(32), now())).lastrowid
+            conn.execute('UPDATE senler_channels SET unsubscribe_label=?,unsubscribe_enabled=? WHERE id=?',
+                         (unsubscribe_label, unsubscribe_enabled, item_id))
             service.audit(conn, 'channel_created', 'Канал №{}'.format(item_id), session['user_id'])
         return jsonify(id=item_id)
+
+    def subscription_button_settings(data, channel=None):
+        defaults = channel or {'unsubscribe_label': 'Отписаться', 'unsubscribe_enabled': True}
+        label = data.get('unsubscribe_label', defaults['unsubscribe_label'])
+        enabled = data.get('unsubscribe_enabled', bool(defaults['unsubscribe_enabled']))
+        if not isinstance(label, str) or not 1 <= len(label.strip()) <= 40:
+            raise ValueError('Текст кнопки отписки должен содержать от 1 до 40 символов.')
+        if not isinstance(enabled, bool):
+            raise ValueError('Укажите, показывать ли кнопку отписки.')
+        return label.strip(), enabled
 
     @bp.post('/reports/senler/api/channels/<int:item_id>/<action>')
     def channel_action(item_id, action):
@@ -159,6 +179,7 @@ def register_senler(app, get_db, database_path, item_visible):
             channel = dict(row(conn, 'senler_channels', item_id))
         if action == 'edit':
             data = body()
+            unsubscribe_label, unsubscribe_enabled = subscription_button_settings(data, channel)
             name = str(data.get('name', '')).strip()
             if not name or len(name) > 100:
                 raise ValueError('Введите название до 100 символов.')
@@ -167,8 +188,8 @@ def register_senler(app, get_db, database_path, item_visible):
                 raise ValueError('Введите ключ без пробелов, до 2048 символов.')
             encrypted = service.cipher().encrypt(token.encode()).decode() if token else channel['token']
             with service.db() as conn:
-                conn.execute('UPDATE senler_channels SET name=?,token=?,status=?,checked_at=? WHERE id=?',
-                    (name, encrypted, 'configured' if token else channel['status'], None if token else channel['checked_at'], item_id))
+                conn.execute('UPDATE senler_channels SET name=?,token=?,status=?,checked_at=?,unsubscribe_label=?,unsubscribe_enabled=? WHERE id=?',
+                    (name, encrypted, 'configured' if token else channel['status'], None if token else channel['checked_at'], unsubscribe_label, unsubscribe_enabled, item_id))
             return jsonify(ok=True)
         if action == 'pause':
             with service.db() as conn:

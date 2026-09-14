@@ -107,6 +107,13 @@ def init_schema(conn):
             id INTEGER PRIMARY KEY, action TEXT NOT NULL, detail TEXT NOT NULL, user_id INTEGER, created_at INTEGER NOT NULL
         );
     ''')
+    # Serialize upgrades when several gunicorn workers start together.
+    conn.execute('BEGIN IMMEDIATE')
+    columns = {row[1] for row in conn.execute('PRAGMA table_info(senler_channels)')}
+    if 'unsubscribe_label' not in columns:
+        conn.execute("ALTER TABLE senler_channels ADD COLUMN unsubscribe_label TEXT NOT NULL DEFAULT 'Отписаться'")
+    if 'unsubscribe_enabled' not in columns:
+        conn.execute('ALTER TABLE senler_channels ADD COLUMN unsubscribe_enabled INTEGER NOT NULL DEFAULT 1')
 
 
 def integer(value, label='Значение', minimum=1, maximum=2147483647):
@@ -337,6 +344,14 @@ class SenlerService:
         first_name = (sub['name'].split() or ['друг'])[0][:40]
         text = body['text'].replace('{имя}', first_name).replace('{name}', first_name)
         rendered = dict(body, text=text)
+        channel = conn.execute('SELECT unsubscribe_label,unsubscribe_enabled FROM senler_channels WHERE id=?', (sub['channel_id'],)).fetchone()
+        rendered['buttons'] = []
+        for button in body.get('buttons', []):
+            if button.get('action') == 'callback' and button.get('value') == 'unsubscribe':
+                if channel['unsubscribe_enabled']:
+                    rendered['buttons'].append(dict(button, label=channel['unsubscribe_label']))
+            else:
+                rendered['buttons'].append(dict(button))
         created = now()
         conn.execute('''INSERT OR IGNORE INTO senler_outbox
             (channel_id,subscriber_id,kind,campaign_id,run_id,node_id,body_json,dedupe_key,due_at,created_at)
@@ -393,7 +408,7 @@ class SenlerService:
             sub = conn.execute('SELECT * FROM senler_subscribers WHERE id=?', (sub['id'],)).fetchone()
             if changed:
                 self._start_bot(conn, sub, 'subscribe')
-            self.queue(conn, sub, {'text': 'Вы подписались. Чтобы отменить рассылку, нажмите «Отписаться» или отправьте /stop.',
+            self.queue(conn, sub, {'text': 'Вы подписались. Чтобы отменить рассылку, отправьте «Стоп» или /stop.',
                        'buttons': [{'label': 'Отписаться', 'action': 'callback', 'value': 'unsubscribe'}]}, 'consent:' + str(event_row['id']), kind='notice')
             return
         if sub['status'] != 'active':

@@ -12,7 +12,7 @@ from unittest.mock import patch, Mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'crm'))
 from flask import Flask, session
 from senler import register_senler
-from senler_core import SenlerService, dumps, now, parse_import, validate_definition
+from senler_core import SenlerService, dumps, init_schema, now, parse_import, validate_definition
 from senler_api import BotAPI, DeliveryError, parse_event
 
 
@@ -124,6 +124,66 @@ class SenlerTests(unittest.TestCase):
         self.assertNotIn(stored['token'],payload)
         self.assertNotIn(stored['webhook_secret'],payload)
         self.assertEqual(Path(self.path+'.senler-key').stat().st_mode & 0o777,0o600)
+
+    def test_subscription_button_settings_validation_and_owner_scope(self):
+        channel=self.channel('vk');before=self.one('senler_channels')
+        self.post('channels/{}/edit'.format(channel),{'name':'ВК','unsubscribe_label':'Не получать акции','unsubscribe_enabled':False})
+        saved=self.one('senler_channels')
+        self.assertEqual(saved['token'],before['token']);self.assertEqual(saved['status'],'connected')
+        self.assertEqual(saved['unsubscribe_label'],'Не получать акции');self.assertEqual(saved['unsubscribe_enabled'],0)
+        visible=self.client.get('/reports/senler/api/bootstrap').get_json()['channels'][0]
+        self.assertEqual(visible['unsubscribe_label'],'Не получать акции');self.assertEqual(visible['unsubscribe_enabled'],0)
+        for fields in [{'unsubscribe_label':''},{'unsubscribe_label':'x'*41},{'unsubscribe_enabled':'false'}]:
+            self.post('channels/{}/edit'.format(channel),dict(name='ВК',**fields),400)
+        self.post('channels/{}/edit'.format(channel),{'name':'Новое название'})
+        self.assertEqual(self.one('senler_channels')['unsubscribe_enabled'],0)
+        with self.client.session_transaction() as s:s['user_id']=2
+        self.post('channels/{}/edit'.format(channel),{'name':'Чужой канал','unsubscribe_label':'Другой текст','unsubscribe_enabled':True},400)
+        self.assertEqual(self.one('senler_channels')['unsubscribe_label'],'Не получать акции')
+
+    def test_campaign_buttons_follow_each_channel_and_keep_launch_snapshot(self):
+        vk=self.channel('vk');tg=self.channel();self.sub(vk);self.sub(tg)
+        self.post('channels/{}/edit'.format(vk),{'name':'ВК','unsubscribe_label':'Отказаться от акций','unsubscribe_enabled':True})
+        self.post('channels/{}/edit'.format(tg),{'name':'Telegram','unsubscribe_label':'Без акций','unsubscribe_enabled':False})
+        campaign=self.post('campaigns',{'name':'Акция','body':{'text':'Сегодня акция','buttons':[{'label':'Меню','action':'url','value':'https://example.com/menu'}]},'audience':{'channels':[vk,tg]}})['id']
+        self.post('campaigns/{}/launch'.format(campaign))
+        self.post('channels/{}/edit'.format(vk),{'name':'ВК','unsubscribe_label':'Новый текст','unsubscribe_enabled':False})
+        detail=self.client.get('/reports/senler/api/campaigns/'+str(campaign)).get_json()
+        self.assertEqual(detail['subscription_buttons'][str(vk)],{'unsubscribe_enabled':1,'unsubscribe_label':'Отказаться от акций'})
+        self.assertEqual(detail['subscription_buttons'][str(tg)]['unsubscribe_enabled'],0)
+        self.tick();self.tick()
+        sent={entry[0]:entry[2]['buttons'] for entry in FakeAPI.sent}
+        self.assertEqual([b['label'] for b in sent['vk']],['Меню','Отказаться от акций'])
+        self.assertEqual(sent['vk'][-1]['value'],'unsubscribe')
+        self.assertEqual([b['label'] for b in sent['telegram']],['Меню'])
+
+    def test_hidden_button_keeps_bot_navigation_and_stop_command(self):
+        channel=self.channel()
+        self.post('channels/{}/edit'.format(channel),{'name':'Бот','unsubscribe_enabled':False})
+        nodes=[{'id':'menu','type':'message','text':'Выберите','buttons':[{'label':'Далее','action':'goto','value':'finish'}]},
+               {'id':'finish','type':'message','text':'Готово','buttons':[]}]
+        self.bot(channel,nodes)
+        self.webhook(channel,self.message(123,'Подписаться',1));self.tick()
+        self.assertTrue(any(b['value'].startswith('sb:') for sent in FakeAPI.sent for b in sent[2]['buttons']))
+        self.assertFalse(any(b['value']=='unsubscribe' for sent in FakeAPI.sent for b in sent[2]['buttons']))
+        campaign=self.campaign([channel]);self.post('campaigns/{}/launch'.format(campaign))
+        self.webhook(channel,self.message(123,'Стоп',2));self.tick()
+        self.assertEqual(self.one('senler_subscribers')['status'],'unsubscribed')
+        self.assertEqual(self.one('senler_outbox','campaign_id=?',(campaign,))['status'],'cancelled')
+
+    def test_existing_channels_get_safe_button_defaults_on_upgrade(self):
+        channel=self.channel('vk');before=self.one('senler_channels')
+        with self.service.db() as conn:
+            conn.execute('ALTER TABLE senler_channels DROP COLUMN unsubscribe_label')
+            conn.execute('ALTER TABLE senler_channels DROP COLUMN unsubscribe_enabled')
+            init_schema(conn)
+        saved=self.one('senler_channels')
+        self.assertEqual(saved['unsubscribe_label'],'Отписаться');self.assertEqual(saved['unsubscribe_enabled'],1)
+        self.assertEqual(saved['token'],before['token']);self.assertEqual(saved['owner_id'],before['owner_id'])
+        self.post('channels/{}/edit'.format(channel),{'name':'ВК','unsubscribe_label':'Не получать','unsubscribe_enabled':False})
+        with self.service.db() as conn:init_schema(conn)
+        self.assertEqual(self.one('senler_channels')['unsubscribe_label'],'Не получать')
+        self.assertEqual(self.one('senler_channels')['unsubscribe_enabled'],0)
 
     def test_import_2500_preview_preserves_optouts_and_duplicates(self):
         channel=self.channel('vk');self.sub(channel,'1','unsubscribed')
