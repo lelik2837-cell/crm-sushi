@@ -91,6 +91,7 @@
   });
   async function render() {
     const generation = ++state.generation;
+    if (campaignTimer) { clearInterval(campaignTimer); campaignTimer = null; }
     const params = qs(); state.tab = tabs.includes(params.get('tab')) ? params.get('tab') : 'overview';
     state.channel = params.get('channel') || '';
     document.querySelectorAll('#sn-nav a').forEach(a => { a.classList.toggle('active', a.dataset.tab === state.tab); a.setAttribute('aria-current', a.dataset.tab === state.tab ? 'page' : 'false'); });
@@ -270,17 +271,33 @@
     const saved=await api('campaigns',{id:c.id,name:c.name,body:c.body,audience:c.audience,scheduled_local:c.sendMode==='schedule'?c.scheduled_at:''});c.id=saved.id;state.dirty=false;
     history.replaceState({},'',link('campaigns',{edit:c.id,step:state.wizard}));return saved.id;
   }
-  async function renderCampaignDetail(id) {
-    const generation = state.generation;
+  let campaignTimer = null;
+  async function loadCampaignDetail(id, generation) {
     const c=await api('campaigns/'+id);
-    if (generation !== state.generation) return;
+    if (generation !== state.generation) return null;
     const buttons=[btn('Создать копию','campaign-copy',`data-id="${id}"`)];
     if(c.status==='draft')buttons.push(navLink('campaigns','Продолжить',{edit:id},'btn btn-primary'));
     if(['running','scheduled'].includes(c.status))buttons.push(btn('Приостановить','campaign-pause',`data-id="${id}"`));
     if(c.status==='paused')buttons.push(btn('Продолжить отправку','campaign-resume',`data-id="${id}"`));
     if(['draft','paused','scheduled','running'].includes(c.status))buttons.push(btn('Отменить','campaign-cancel',`data-id="${id}"`));
+    const statTiles=[['Получателей',num(c.total)],['Отправлено',num(c.counts.sent)],['В очереди',num((c.counts.pending||0)+(c.counts.sending||0))],['Ошибки / неизвестно',num((c.counts.error||0)+(c.counts.unknown||0))]];
+    if(c.vk_sent)statTiles.push(['Прочитано в ВК',num(c.vk_read)+' из '+num(c.vk_sent)]);
     main.innerHTML=navLink('campaigns','<i class="bi bi-arrow-left"></i> К рассылкам',{},'sn-back')+head(esc(c.name),`Создана ${date(c.created_at)} · ${labels[c.status]}`,buttons.join(''))+
-      `<div class="sn-stats">${[['Получателей',c.total],['Отправлено',c.counts.sent],['В очереди',(c.counts.pending||0)+(c.counts.sending||0)],['Ошибки / неизвестно',(c.counts.error||0)+(c.counts.unknown||0)]].map(([l,n])=>`<div class="sn-stat"><div class="sn-stat-label">${l}</div><strong>${num(n)}</strong></div>`).join('')}</div><div class="sn-editor-layout"><div><div class="sn-panel"><h3>Параметры рассылки</h3><p class="sn-small">${c.audience.channels.map(channelName).map(esc).join(', ')}</p><p class="sn-muted sn-small">${c.audience.groups.length?c.audience.groups.map(groupName).map(esc).join(', '):'Все активные подписчики'}</p><p class="sn-small">${c.scheduled_at?'Запланирована на '+date(c.scheduled_at)+' · UTC+7':'Отправка сразу после запуска'}</p>${badge(c.status)}</div>${c.counts.unknown?'<div class="sn-note mb-3">У некоторых сообщений неизвестен результат: сервис мог принять сообщение до обрыва соединения. CRM не повторяет их автоматически, чтобы не отправить дубль. Проверьте соответствующие диалоги.</div>':''}${c.deliveries.length?`<div class="sn-panel flush"><div class="sn-table-scroll"><table class="sn-table"><thead><tr><th>Подписчик</th><th>Статус</th><th>Подробности</th></tr></thead><tbody>${c.deliveries.map(d=>`<tr><td>${esc(d.name||d.external_user_id)}<br><small>${esc(d.channel_name)}</small></td><td>${badge(d.status)}</td><td>${esc(d.error||date(d.sent_at))}</td></tr>`).join('')}</tbody></table></div><div class="sn-pagination">До 200 последних результатов; ошибки показаны первыми.</div></div>`:''}</div>${preview(c.body,c.audience.channels[0],c.subscription_buttons?.[c.audience.channels[0]])}</div>`;
+      `<div class="sn-stats">${statTiles.map(([l,v])=>`<div class="sn-stat"><div class="sn-stat-label">${l}</div><strong>${v}</strong></div>`).join('')}</div><div class="sn-editor-layout"><div><div class="sn-panel"><h3>Параметры рассылки</h3><p class="sn-small">${c.audience.channels.map(channelName).map(esc).join(', ')}</p><p class="sn-muted sn-small">${c.audience.groups.length?c.audience.groups.map(groupName).map(esc).join(', '):'Все активные подписчики'}</p><p class="sn-small">${c.scheduled_at?'Запланирована на '+date(c.scheduled_at)+' · UTC+7':'Отправка сразу после запуска'}</p>${badge(c.status)}</div>${c.counts.unknown?'<div class="sn-note mb-3">У некоторых сообщений неизвестен результат: сервис мог принять сообщение до обрыва соединения. CRM не повторяет их автоматически, чтобы не отправить дубль. Проверьте соответствующие диалоги.</div>':''}${c.deliveries.length?`<div class="sn-panel flush"><div class="sn-table-scroll"><table class="sn-table"><thead><tr><th>Подписчик</th><th>Статус</th><th>Подробности</th></tr></thead><tbody>${c.deliveries.map(d=>`<tr><td>${esc(d.name||d.external_user_id)}<br><small>${esc(d.channel_name)}</small></td><td>${badge(d.status)}</td><td>${esc(d.error||date(d.sent_at))}</td></tr>`).join('')}</tbody></table></div><div class="sn-pagination">До 200 последних результатов; ошибки показаны первыми.</div></div>`:''}</div>${preview(c.body,c.audience.channels[0],c.subscription_buttons?.[c.audience.channels[0]])}</div>`;
+    return c;
+  }
+  async function renderCampaignDetail(id) {
+    const generation = state.generation;
+    if (campaignTimer) { clearInterval(campaignTimer); campaignTimer = null; }
+    const c = await loadCampaignDetail(id, generation);
+    if (c && ['running','scheduled'].includes(c.status)) {
+      // Live progress while a broadcast is sending, without the visitor refreshing the page.
+      campaignTimer = setInterval(async () => {
+        if (generation !== state.generation) { clearInterval(campaignTimer); campaignTimer = null; return; }
+        const next = await loadCampaignDetail(id, generation).catch(() => null);
+        if (!next || !['running','scheduled'].includes(next.status)) { clearInterval(campaignTimer); campaignTimer = null; }
+      }, 2500);
+    }
   }
   async function renderBots() {
     const generation = state.generation;

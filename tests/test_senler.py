@@ -19,6 +19,7 @@ from senler_api import BotAPI, DeliveryError, parse_event
 class FakeAPI:
     sent = []
     failure = None
+    conversations = {}
 
     def __init__(self, channel, token):
         self.channel = dict(channel)
@@ -38,6 +39,15 @@ class FakeAPI:
     def acknowledge(self, event):
         pass
 
+    def vk(self, method, **params):
+        if method == 'messages.getConversationsById':
+            items = []
+            for peer_id in [p for p in params['peer_ids'].split(',') if p]:
+                if peer_id in self.conversations:
+                    items.append({'peer': {'id': int(peer_id)}, 'out_read': self.conversations[peer_id]})
+            return {'items': items}
+        return {}
+
 
 class SenlerTests(unittest.TestCase):
     def setUp(self):
@@ -56,7 +66,7 @@ class SenlerTests(unittest.TestCase):
         self.client = self.app.test_client()
         with self.client.session_transaction() as s:
             s.update(user_id=1, role='owner', senler_csrf='csrf-test')
-        FakeAPI.sent, FakeAPI.failure = [], None
+        FakeAPI.sent, FakeAPI.failure, FakeAPI.conversations = [], None, {}
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -271,6 +281,30 @@ class SenlerTests(unittest.TestCase):
         self.tick();self.assertFalse(FakeAPI.sent);self.assertIsNone(self.one('senler_outbox'))
         data['scheduled_local']='';self.post('campaigns',data)
         self.assertIsNone(self.one('senler_campaigns')['scheduled_at'])
+
+    def test_vk_read_receipts_polled_and_shown_in_campaign_stats(self):
+        channel=self.channel('vk');self.sub(channel,'777');self.sub(channel,'888')
+        campaign=self.campaign([channel]);self.post('campaigns/{}/launch'.format(campaign))
+        self.tick();self.tick()
+        with self.service.db() as conn:
+            rows={r['external_user_id']:dict(r) for r in conn.execute(
+                'SELECT o.*,s.external_user_id FROM senler_outbox o JOIN senler_subscribers s ON s.id=o.subscriber_id')}
+        self.assertEqual({r['status'] for r in rows.values()},{'sent'})
+        self.assertTrue(all(r['read_at'] is None for r in rows.values()))
+        detail=self.client.get('/reports/senler/api/campaigns/'+str(campaign)).get_json()
+        self.assertEqual(detail['vk_sent'],2);self.assertEqual(detail['vk_read'],0)
+        # 777's out_read matches its message id (read); 888's is one behind (still unread).
+        FakeAPI.conversations={'777':int(rows['777']['external_id']),'888':int(rows['888']['external_id'])-1}
+        self.service._poll_reads()
+        with self.service.db() as conn:
+            rows={r['external_user_id']:dict(r) for r in conn.execute(
+                'SELECT o.*,s.external_user_id FROM senler_outbox o JOIN senler_subscribers s ON s.id=o.subscriber_id')}
+        self.assertIsNotNone(rows['777']['read_at']);self.assertIsNone(rows['888']['read_at'])
+        detail=self.client.get('/reports/senler/api/campaigns/'+str(campaign)).get_json()
+        self.assertEqual(detail['vk_read'],1)
+        # A second poll is a no-op for the already-read message and does not error on the unread one.
+        self.service._poll_reads()
+        self.assertEqual(self.client.get('/reports/senler/api/campaigns/'+str(campaign)).get_json()['vk_read'],1)
 
     def test_bot_buttons_condition_delay_and_operator_handoff(self):
         channel=self.channel();sub=self.sub(channel)

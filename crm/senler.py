@@ -91,6 +91,10 @@ def register_senler(app, get_db, database_path, item_visible):
         item['counts'] = counts
         item['total'] = sum(counts.values())
         if details:
+            item['vk_sent'] = conn.execute("""SELECT COUNT(*) n FROM senler_outbox o JOIN senler_channels c ON c.id=o.channel_id
+                    WHERE o.campaign_id=? AND c.kind='vk' AND o.status='sent'""", (item['id'],)).fetchone()['n']
+            item['vk_read'] = conn.execute("""SELECT COUNT(*) n FROM senler_outbox o JOIN senler_channels c ON c.id=o.channel_id
+                    WHERE o.campaign_id=? AND c.kind='vk' AND o.read_at IS NOT NULL""", (item['id'],)).fetchone()['n']
             item['subscription_buttons'] = {}
             for snapshot in conn.execute('''SELECT channel_id,body_json FROM senler_outbox WHERE id IN
                     (SELECT MIN(id) FROM senler_outbox WHERE campaign_id=? GROUP BY channel_id)''', (item['id'],)):

@@ -114,6 +114,9 @@ def init_schema(conn):
         conn.execute("ALTER TABLE senler_channels ADD COLUMN unsubscribe_label TEXT NOT NULL DEFAULT 'Отписаться'")
     if 'unsubscribe_enabled' not in columns:
         conn.execute('ALTER TABLE senler_channels ADD COLUMN unsubscribe_enabled INTEGER NOT NULL DEFAULT 1')
+    outbox_columns = {row[1] for row in conn.execute('PRAGMA table_info(senler_outbox)')}
+    if 'read_at' not in outbox_columns:
+        conn.execute('ALTER TABLE senler_outbox ADD COLUMN read_at INTEGER')
 
 
 def integer(value, label='Значение', minimum=1, maximum=2147483647):
@@ -537,6 +540,45 @@ class SenlerService:
                         else:
                             self._advance_run(conn, run, node['next'])
 
+    def _poll_reads(self):
+        """Best-effort VK read receipts: the community token can look up, per dialog, the id of the
+        last outgoing message the person has read (`out_read`). Telegram and MAX expose no such API
+        for bots, so this stays VK-only. Never allowed to interrupt actual message delivery."""
+        with self.db() as conn:
+            rows = conn.execute('''SELECT DISTINCT o.channel_id,s.external_user_id FROM senler_outbox o
+                JOIN senler_subscribers s ON s.id=o.subscriber_id JOIN senler_channels c ON c.id=o.channel_id
+                WHERE c.kind='vk' AND c.status='connected' AND o.status='sent' AND o.read_at IS NULL
+                AND o.external_id!='' AND o.sent_at>? LIMIT 300''', (now() - 7 * 86400,)).fetchall()
+            if not rows:
+                return
+            peers_by_channel = {}
+            for r in rows:
+                peers_by_channel.setdefault(r['channel_id'], set()).add(r['external_user_id'])
+            channels = {cid: dict(conn.execute('SELECT * FROM senler_channels WHERE id=?', (cid,)).fetchone()) for cid in peers_by_channel}
+        for channel_id, peers in peers_by_channel.items():
+            try:
+                api = self.api(channels[channel_id])
+            except ValueError:
+                continue
+            peers = list(peers)
+            for i in range(0, len(peers), 100):
+                try:
+                    data = api.vk('messages.getConversationsById', peer_ids=','.join(peers[i:i + 100]))
+                except (DeliveryError, AttributeError):
+                    continue
+                items = (data or {}).get('items') or []
+                with self.db() as conn:
+                    for item in items:
+                        conv = item.get('conversation', item) if isinstance(item, dict) else {}
+                        peer_id = str((conv.get('peer') or {}).get('id') or '')
+                        out_read = conv.get('out_read')
+                        if not peer_id or not out_read:
+                            continue
+                        conn.execute('''UPDATE senler_outbox SET read_at=? WHERE channel_id=? AND status='sent' AND read_at IS NULL
+                            AND external_id!='' AND CAST(external_id AS INTEGER)<=? AND subscriber_id IN
+                            (SELECT id FROM senler_subscribers WHERE channel_id=? AND external_user_id=?)''',
+                            (now(), channel_id, out_read, channel_id, peer_id))
+
     def tick(self, seconds=18):
         deadline = time.monotonic() + seconds
         # The caller holds a process-shared flock. A claim left by a dead process
@@ -572,7 +614,7 @@ class SenlerService:
                     ORDER BY r.id LIMIT 30''', (now(),)).fetchall()
                 for run in runs:
                     self._step(conn, run)
-                job = conn.execute('''SELECT o.* FROM senler_outbox o JOIN senler_channels c ON c.id=o.channel_id
+                job = conn.execute('''SELECT o.*,c.kind AS channel_kind FROM senler_outbox o JOIN senler_channels c ON c.id=o.channel_id
                     LEFT JOIN senler_campaigns p ON p.id=o.campaign_id LEFT JOIN senler_runs r ON r.id=o.run_id
                     LEFT JOIN senler_bots b ON b.id=r.bot_id
                     WHERE o.status='pending' AND o.due_at<=? AND c.status='connected'
@@ -584,8 +626,9 @@ class SenlerService:
                     job['attempts'] += 1
             if job:
                 self._delivery(job)
-                # A conservative shared pace stays below API quotas and per-dialog limits.
-                time.sleep(0.6)
+                # VK's community token tolerates a faster pace (20 req/s cap, two calls per
+                # send) than the conservative shared default kept for Telegram/MAX.
+                time.sleep(0.2 if job['channel_kind'] == 'vk' else 0.6)
             elif not runs:
                 break
         with self.db() as conn:
@@ -593,3 +636,7 @@ class SenlerService:
                 AND NOT EXISTS(SELECT 1 FROM senler_outbox o WHERE o.campaign_id=senler_campaigns.id AND o.status IN ('pending','sending'))""", (now(),))
             conn.execute('DELETE FROM senler_imports WHERE created_at<?', (now() - 86400,))
             conn.execute('DELETE FROM senler_events WHERE processed_at IS NOT NULL AND created_at<?', (now() - 30 * 86400,))
+        try:
+            self._poll_reads()
+        except (DeliveryError, ValueError, KeyError, TypeError, AttributeError):
+            pass
