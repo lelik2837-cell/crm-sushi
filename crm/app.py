@@ -18491,12 +18491,23 @@ def guest_reviews_report():
             # разобрать, какому именно повтору принадлежит КОНКРЕТНЫЙ отзыв (эта эвристика уже
             # один раз ломала группировку отзывов, см. историю _group_guest_reviews): раз хотя бы
             # один заказ с таким номером принят в периоде — показываем ВСЕ отзывы этого номера
-            # целиком, без ограничения по review_at, ровно как их и объединяет _group_guest_reviews.
+            # целиком, ровно как их и объединяет _group_guest_reviews. НО без ограничения по
+            # review_at это тянуло отзывы за всю историю базы — если номер заказа переиспользован
+            # для заказа СЕГОДНЯ, а месяц назад с тем же номером был совсем другой, не связанный
+            # заказ со своим отзывом, этот старый отзыв тоже попадал в выборку за «сегодня» (баг,
+            # отзыв пользователя 2026-09-14 «отображаются заказы месячной давности с тем же
+            # номером»). Поэтому review_at всё же ограничен окном ±_ORDER_MERGE_WINDOW_DAYS вокруг
+            # периода — тем же, что и в досборке ниже (extra_gr) для date_mode == 'review', чтобы
+            # не заводить второе магическое число: этого достаточно, чтобы собрать дополняющий
+            # отзыв того же заказа через несколько дней, но не утянуть отзыв на не связанный заказ
+            # месячной/годовой давности с совпавшим номером.
+            wide_from = (datetime.strptime(date_from, '%Y-%m-%d') - timedelta(days=_ORDER_MERGE_WINDOW_DAYS)).strftime('%Y-%m-%d 00:00:00')
+            wide_to = (datetime.strptime(date_to, '%Y-%m-%d') + timedelta(days=_ORDER_MERGE_WINDOW_DAYS)).strftime('%Y-%m-%d 23:59:59')
             where = ['''EXISTS (
                 SELECT 1 FROM orders_report o2
                 WHERE o2.order_number = gr.order_number AND o2.received_at >= ? AND o2.received_at <= ?
-            )''']
-            params = [dt_from, dt_to]
+            )''', 'gr.review_at >= ?', 'gr.review_at <= ?']
+            params = [dt_from, dt_to, wide_from, wide_to]
             if branch_flt:
                 ph = ','.join('?' * len(branch_flt))
                 where.append(f'gr.branch_id IN ({ph})')
