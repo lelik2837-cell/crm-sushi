@@ -56,10 +56,12 @@
                     {% else %}<span class="text-muted">—</span>{% endif %}
                 </td>
                 <td class="text-end">
+                    {% if u.role != 'owner' or session.get('role') == 'owner' %}
                     <button class="btn btn-sm btn-outline-primary"
                             data-bs-toggle="modal" data-bs-target="#editModal{{ u.id }}">
                         <i class="bi bi-pencil"></i> Редактировать
                     </button>
+                    {% endif %}
                 </td>
             </tr>
             {% endfor %}
@@ -120,7 +122,7 @@
                             <option value="admin">Администратор</option>
                             <option value="director">Управляющий</option>
                             <option value="callcenter">Оператор колл-центра</option>
-                            <option value="owner">Владелец (полный доступ)</option>
+                            {% if session.get('role') == 'owner' %}<option value="owner">Владелец (полный доступ)</option>{% endif %}
                         </select>
                     </div>
                     <div class="mb-3">
@@ -180,7 +182,7 @@
                             <option value="admin">Администратор</option>
                             <option value="director">Управляющий</option>
                             <option value="callcenter">Оператор колл-центра</option>
-                            <option value="owner">Владелец (полный доступ)</option>
+                            {% if session.get('role') == 'owner' %}<option value="owner">Владелец (полный доступ)</option>{% endif %}
                         </select>
                     </div>
                     <div class="mb-3">
@@ -233,7 +235,7 @@
                             <option value="admin" {% if u.role == 'admin' %}selected{% endif %}>Администратор</option>
                             <option value="director" {% if u.role == 'director' %}selected{% endif %}>Управляющий</option>
                             <option value="callcenter" {% if u.role == 'callcenter' %}selected{% endif %}>Оператор колл-центра</option>
-                            <option value="owner" {% if u.role == 'owner' %}selected{% endif %}>Владелец (полный доступ)</option>
+                            {% if session.get('role') == 'owner' %}<option value="owner" {% if u.role == 'owner' %}selected{% endif %}>Владелец (полный доступ)</option>{% endif %}
                         </select>
                     </div>
                     <div class="mb-3">

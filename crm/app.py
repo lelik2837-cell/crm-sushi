@@ -2262,6 +2262,19 @@ def init_db():
                 "INSERT OR REPLACE INTO api_settings (key, value) VALUES ('role_perms_director_uniform_v1', '1')"
             )
 
+        # Одноразовая корректировка: открыть управляющему (director) раздел
+        # «Пользователи» — по просьбе владельца. Роль «owner» при этом защищена
+        # отдельными проверками в роутах add_user/edit_user/create_invite/reset_password.
+        if not conn.execute(
+            "SELECT 1 FROM api_settings WHERE key='role_perms_director_users_v1'"
+        ).fetchone():
+            conn.execute(
+                "UPDATE role_menu_permissions SET visible=1 WHERE role='director' AND item_code='users'"
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO api_settings (key, value) VALUES ('role_perms_director_users_v1', '1')"
+            )
+
         # Одноразовая корректировка: смены, где "Итого выручка" не заполнилась
         # (0/пусто) при импорте, хотя нал+безнал+онлайн реально были внесены —
         # пересчитываем total_revenue из частей, если их сумма больше 1.
@@ -7974,6 +7987,9 @@ def add_user():
     if password != password_confirm:
         flash('Пароли не совпадают', 'danger')
         return redirect(url_for('users'))
+    if session.get('role') != 'owner' and role == 'owner':
+        flash('Недостаточно прав для назначения роли «Владелец»', 'danger')
+        return redirect(url_for('users'))
     with get_db() as conn:
         existing = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()
         if existing:
@@ -8002,6 +8018,13 @@ def reset_password(user_id):
         flash('Введите пароль', 'danger')
         return redirect(url_for('users'))
     with get_db() as conn:
+        target = conn.execute('SELECT role FROM users WHERE id=?', (user_id,)).fetchone()
+        if not target:
+            flash('Пользователь не найден', 'danger')
+            return redirect(url_for('users'))
+        if session.get('role') != 'owner' and target['role'] == 'owner':
+            flash('Недостаточно прав для сброса пароля владельца', 'danger')
+            return redirect(url_for('users'))
         conn.execute(
             'UPDATE users SET password_hash=? WHERE id=?',
             (generate_password_hash(new_password, method='pbkdf2:sha256'), user_id)
@@ -8115,6 +8138,9 @@ def edit_user(user_id):
         if not u:
             flash('Пользователь не найден', 'danger')
             return redirect(url_for('users'))
+        if session.get('role') != 'owner' and (u['role'] == 'owner' or role == 'owner'):
+            flash('Недостаточно прав для изменения роли «Владелец»', 'danger')
+            return redirect(url_for('users'))
         existing = conn.execute('SELECT id FROM users WHERE username=? AND id!=?', (username, user_id)).fetchone()
         if existing:
             flash('Логин уже занят', 'danger')
@@ -8142,6 +8168,9 @@ def edit_user(user_id):
 @menu_permission_required('users')
 def create_invite():
     role = request.form.get('role', 'admin')
+    if session.get('role') != 'owner' and role == 'owner':
+        flash('Недостаточно прав для создания приглашения с ролью «Владелец»', 'danger')
+        return redirect(url_for('users'))
     branch_ids = [int(b) for b in request.form.getlist('branch_ids') if b.isdigit()]
     token = secrets.token_urlsafe(32)
     expires = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
