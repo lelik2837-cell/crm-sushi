@@ -438,6 +438,13 @@
                             </a>
                         </li>
                         {% endif %}
+                        {% if item_visible('senler') %}
+                        <li>
+                            <a class="dropdown-item {% if request.endpoint and request.endpoint.startswith('senler.') %}active{% endif %}" href="{{ url_for('senler.page') }}">
+                                <i class="bi bi-send-check me-2"></i>Сенлер
+                            </a>
+                        </li>
+                        {% endif %}
                         {% if item_visible('dialogs_report') %}
                         <li>
                             <a class="dropdown-item {% if request.endpoint=='dialogs_report' %}active{% endif %}" href="{{ url_for('dialogs_report') }}">

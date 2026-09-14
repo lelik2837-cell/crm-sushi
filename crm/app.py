@@ -152,6 +152,7 @@ MENU_ITEMS = [
     ('purchases',             'Накладные',                'reports',  True),
     ('bank',                  'Банк',                     'reports',  True),
     ('whatsapp_broadcast',    'Рассылка',                 'reports',  False),
+    ('senler',                'Сенлер',                   'reports',  False),
     ('dialogs_report',        'Диалоги',                  'reports',  False),
     ('points_accrual',        'Начисление баллов',        'reports',  False),
     ('guest_reviews_report',  'Отзывы',                   'reports',  False),
@@ -2853,6 +2854,8 @@ def item_visible(item_code):
     Если у пункта есть подпункты (MENU_SUBITEMS) — виден, если разрешён весь
     раздел целиком, либо доступ дан хотя бы на один подпункт (см. subitem_visible)."""
     role = session.get('role')
+    if item_code == 'senler':
+        return role == 'owner'
     if role == 'owner':
         return True
     if role not in ROLE_CONFIGURABLE:
@@ -8328,7 +8331,7 @@ def settings():
         today=date.today().isoformat(),
         formula_vars=FORMULA_VARS, role_labels=ROLE_LABELS,
         positions=positions, branch_groups_for_rates=branch_groups_for_rates,
-        role_perms=role_perms, menu_items=MENU_ITEMS, menu_group_labels=MENU_GROUP_LABELS,
+        role_perms=role_perms, menu_items=[m for m in MENU_ITEMS if m[0] != 'senler'], menu_group_labels=MENU_GROUP_LABELS,
         menu_subitems=MENU_SUBITEMS,
         role_configurable=ROLE_CONFIGURABLE, login_role_labels=LOGIN_ROLE_LABELS,
         salary_payout_rules=salary_payout_rules,
@@ -20209,6 +20212,10 @@ def contact_center_offsets_save():
 
 init_db()
 
+# Independent official bot/community channels and persistent campaign/flow queue.
+from senler import register_senler
+senler_service = register_senler(app, get_db, DATABASE, item_visible)
+
 # ─── АВТО-БЭКАП БАЗЫ КАЖДЫЙ ДЕНЬ В 03:00 ─────────────────────────────────────
 def _scheduled_backup():
     try:
@@ -20362,7 +20369,7 @@ def _scheduled_dialog_image_cleanup():
         print(f'[Диалоги] очистка фото: exception: {e}')
 
 
-def _run_once_across_workers(lock_name, fn):
+def _run_once_across_workers(lock_name, fn, quiet=False):
     """Гарантирует, что задача выполнится только в одном из нескольких gunicorn
     worker-процессов — без --preload каждый worker заводит свой независимый
     APScheduler, и без этой защиты все они выполнили бы одну и ту же задачу
@@ -20375,10 +20382,12 @@ def _run_once_across_workers(lock_name, fn):
     try:
         fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-        print(f'[Scheduler] {lock_name}: pid {pid} — уже выполняется в другом воркере, пропуск')
+        if not quiet:
+            print(f'[Scheduler] {lock_name}: pid {pid} — уже выполняется в другом воркере, пропуск')
         lock_file.close()
         return
-    print(f'[Scheduler] {lock_name}: pid {pid} захватил блокировку, выполняю')
+    if not quiet:
+        print(f'[Scheduler] {lock_name}: pid {pid} захватил блокировку, выполняю')
     try:
         fn()
     finally:
@@ -20387,6 +20396,8 @@ def _run_once_across_workers(lock_name, fn):
 
 
 try:
+    if os.environ.get('CRM_DISABLE_SCHEDULER') == '1':
+        raise ImportError('Планировщик отключён для изолированного тестового запуска')
     from apscheduler.schedulers.background import BackgroundScheduler
     _scheduler = BackgroundScheduler(timezone='Asia/Novosibirsk')
     _scheduler.add_job(lambda: _run_once_across_workers('sched_backup', _scheduled_backup),
@@ -20397,6 +20408,8 @@ try:
                         'interval', minutes=1)
     _scheduler.add_job(lambda: _run_once_across_workers('sched_dialog_image_cleanup', _scheduled_dialog_image_cleanup),
                         'cron', hour=3, minute=30)
+    _scheduler.add_job(lambda: _run_once_across_workers('sched_senler_' + hashlib.sha256(DATABASE.encode()).hexdigest()[:12], senler_service.tick, quiet=True),
+                        'interval', seconds=5, max_instances=1, coalesce=True)
     _scheduler.start()
     print('[Backup] Планировщик запущен — бэкап каждый день в 03:00 НСК, Сбербанк — раз в час, '
           'очистка фото в Диалогах старше 6 месяцев — раз в день в 03:30')

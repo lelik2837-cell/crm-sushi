@@ -26,3 +26,4 @@ env/
 # Системные
 .DS_Store
 .env
+*.senler-key

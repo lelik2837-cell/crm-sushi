@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+{% block title %}Сенлер — CRM PAPA{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='senler.css') }}">
+<section id="senler-app" class="sn-app" data-csrf="{{ senler_csrf }}">
+    <header class="sn-header">
+        <div><div class="sn-eyebrow">ОТЧЁТЫ / КОММУНИКАЦИИ</div><h1>Сенлер <span class="sn-owned"><i class="bi bi-lock me-1"></i>личный раздел</span></h1><p>Ваши подписчики, рассылки и разговоры</p></div>
+        <label class="sn-channel-filter"><span>Канал</span><select id="sn-channel" class="form-select" aria-label="Фильтр по каналу"><option value="">Все каналы</option></select></label>
+    </header>
+    <div class="sn-layout">
+        <aside class="sn-sidebar">
+            <nav aria-label="Разделы Сенлер" id="sn-nav">
+                <a href="?tab=overview" data-tab="overview"><i class="bi bi-grid-1x2"></i><span>Обзор</span></a>
+                <a href="?tab=subscribers" data-tab="subscribers"><i class="bi bi-people"></i><span>Подписчики</span></a>
+                <a href="?tab=campaigns" data-tab="campaigns"><i class="bi bi-send"></i><span>Рассылки</span></a>
+                <a href="?tab=bots" data-tab="bots"><i class="bi bi-diagram-3"></i><span>Чат-боты</span></a>
+                <a href="?tab=dialogs" data-tab="dialogs"><i class="bi bi-chat-square-text"></i><span>Диалоги</span><span id="sn-unread" class="sn-count" hidden></span></a>
+                <a href="?tab=channels" data-tab="channels"><i class="bi bi-plug"></i><span>Каналы</span></a>
+            </nav>
+            <div class="sn-sidebar-note"><span class="sn-dot"></span>Только для владельца<br><small>ВК · Telegram · MAX</small></div>
+        </aside>
+        <main id="sn-main" aria-live="polite"><div class="sn-empty"><div class="spinner-border spinner-border-sm" role="status"></div><p>Загружаем раздел…</p></div></main>
+    </div>
+</section>
+<div id="sn-toast" class="sn-toast" role="status" hidden></div>
+<dialog id="sn-modal" class="sn-modal"><div class="sn-modal-head"><h2 id="sn-modal-title"></h2><button type="button" class="sn-icon" id="sn-modal-close" aria-label="Закрыть"><i class="bi bi-x-lg"></i></button></div><div id="sn-modal-body"></div></dialog>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='senler.js') }}" defer></script>{% endblock %}
