@@ -1,9 +1,37 @@
 """Official community/bot APIs. No personal-account sessions or Senler dependency."""
 import json
 import os
+from functools import lru_cache
+from pathlib import Path
+import tempfile
 from urllib.parse import urlparse
 
 import requests
+
+
+@lru_cache(maxsize=None)
+def _max_ca_bundle(configured_path=''):
+    if configured_path:
+        return configured_path
+    standard_bundle = Path(requests.certs.where()).read_bytes().rstrip()
+    ministry_root = (Path(__file__).parent / 'certs' / 'russian_trusted_root_ca.pem').read_bytes().strip()
+    target = Path(tempfile.gettempdir()) / 'crm-senler-max-ca.pem'
+    expected = standard_bundle + b'\n' + ministry_root + b'\n'
+    try:
+        if target.read_bytes() == expected:
+            return str(target)
+    except FileNotFoundError:
+        pass
+    with tempfile.NamedTemporaryFile(dir=str(target.parent), prefix=target.name + '.', delete=False) as output:
+        output.write(expected)
+        temporary = output.name
+    os.replace(temporary, target)
+    return str(target)
+
+
+def max_ca_bundle():
+    """Return standard web roots plus the official Ministry root required by MAX."""
+    return _max_ca_bundle(os.environ.get('SENLER_MAX_CA_BUNDLE', ''))
 
 
 class DeliveryError(Exception):
@@ -75,7 +103,7 @@ class BotAPI:
     def max(self, method, path, params=None, payload=None, sending=False):
         return self._request(method, self.MAX_BASE + path, params=params,
                              json=payload, headers={'Authorization': self.token}, sending=sending,
-                             verify=os.environ.get('SENLER_MAX_CA_BUNDLE') or True)
+                             verify=max_ca_bundle())
 
     def identity(self):
         if self.kind == 'telegram':
@@ -199,7 +227,7 @@ class BotAPI:
         if parsed.scheme != 'https' or not any(parsed.hostname == d or (parsed.hostname or '').endswith('.' + d) for d in domains):
             raise DeliveryError('Сервис вернул неизвестный адрес загрузки.')
         return self._request('POST', url, files={field: ('image.' + asset['extension'], asset['data'], asset['mime'])}, allow_redirects=False,
-                             verify=(os.environ.get('SENLER_MAX_CA_BUNDLE') or True) if self.kind == 'max' else True)
+                             verify=max_ca_bundle() if self.kind == 'max' else True)
 
     def acknowledge(self, event):
         if not event.get('callback_id'):

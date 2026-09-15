@@ -510,6 +510,10 @@ class SenlerTests(unittest.TestCase):
             api=BotAPI(dict(channel,kind='max'),'private-token');api.send('42',{'text':'Текст','buttons':[]},91)
             self.assertEqual(send.call_args.args[1],'https://platform-api2.max.ru/messages')
             self.assertEqual(send.call_args.kwargs['headers'],{'Authorization':'private-token'})
+            bundle=Path(send.call_args.kwargs['verify'])
+            self.assertTrue(bundle.is_file())
+            ministry_root=Path(__file__).resolve().parents[1]/'crm'/'certs'/'russian_trusted_root_ca.pem'
+            self.assertIn(ministry_root.read_bytes().strip(),bundle.read_bytes())
         api=BotAPI(dict(channel,kind='vk'),'private-token')
         with patch.object(api,'vk',side_effect=[{'is_allowed':True},100]) as vk:
             api.send('42',{'text':'Текст','buttons':[]},91)
