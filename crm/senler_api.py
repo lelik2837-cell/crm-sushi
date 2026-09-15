@@ -42,6 +42,25 @@ class DeliveryError(Exception):
         self.blocked = blocked
 
 
+def telegram_request_options():
+    """Use the CRM's configured Telegram proxy, without changing other integrations."""
+    proxy = os.environ.get('SENLER_TELEGRAM_PROXY_URL', '').strip()
+    if not proxy:
+        return {}
+    try:
+        parsed = urlparse(proxy)
+        if (parsed.scheme not in ('http', 'https', 'socks5', 'socks5h') or not parsed.hostname
+                or not parsed.port or parsed.path not in ('', '/') or parsed.query or parsed.fragment
+                or any(char.isspace() for char in proxy)):
+            raise ValueError
+    except ValueError:
+        raise DeliveryError('Некорректный адрес прокси Telegram в настройках сервера CRM.') from None
+    # Resolve Telegram's hostname at the proxy too, not through a blocked local DNS.
+    if parsed.scheme == 'socks5':
+        proxy = parsed._replace(scheme='socks5h').geturl()
+    return {'proxies': {'http': proxy, 'https': proxy}}
+
+
 class BotAPI:
     VK_VERSION = '5.199'
     MAX_BASE = 'https://platform-api2.max.ru'
@@ -55,13 +74,18 @@ class BotAPI:
         # Never interpolate request exceptions: Telegram URLs contain the credential.
         try:
             response = requests.request(method, url, timeout=(5, 15), **kwargs)
+        except requests.exceptions.ProxyError:
+            raise DeliveryError('Не удалось подключиться через прокси. Проверьте прокси на сервере CRM.',
+                                uncertain=sending, retry_after=0 if sending else 30) from None
         except requests.exceptions.SSLError:
             raise DeliveryError('Не удалось проверить сертификат сервера. Проверьте доверенные сертификаты на сервере CRM.')
         except requests.exceptions.ConnectTimeout:
             raise DeliveryError('Сервис не отвечает при подключении.', retry_after=30)
         except requests.exceptions.RequestException:
-            raise DeliveryError('Соединение прервано. Результат отправки неизвестен.' if sending else 'Не удалось связаться с сервисом.',
-                                uncertain=sending, retry_after=30 if not sending else 0)
+            message = ('Не удалось связаться с Telegram API. Проверьте доступ к Telegram и прокси на сервере CRM.'
+                       if self.kind == 'telegram' else 'Не удалось связаться с сервисом.')
+            raise DeliveryError('Соединение прервано. Результат отправки неизвестен.' if sending else message,
+                                uncertain=sending, retry_after=30 if not sending else 0) from None
         try:
             data = response.json()
         except ValueError:
@@ -98,7 +122,7 @@ class BotAPI:
     def telegram(self, method, payload=None, files=None, sending=False):
         kwargs = {'data': payload, 'files': files} if files else {'json': payload or {}}
         return self._request('POST', 'https://api.telegram.org/bot' + self.token + '/' + method,
-                             sending=sending, **kwargs).get('result')
+                             sending=sending, **telegram_request_options(), **kwargs).get('result')
 
     def max(self, method, path, params=None, payload=None, sending=False):
         return self._request(method, self.MAX_BASE + path, params=params,

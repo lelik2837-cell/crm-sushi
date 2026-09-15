@@ -1,6 +1,9 @@
 FROM python:3.11-slim
 
 ENV TZ=Asia/Novosibirsk
+# The server already runs xray for Telegram/WhatsApp in this Compose network.
+# Only Senler's Telegram Bot API uses this proxy; override with "" for direct access.
+ENV SENLER_TELEGRAM_PROXY_URL=socks5h://xray:1080
 RUN apt-get update && apt-get install -y --no-install-recommends tzdata && \
     ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone && \
     rm -rf /var/lib/apt/lists/*
