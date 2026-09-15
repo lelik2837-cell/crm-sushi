@@ -526,6 +526,27 @@ class SenlerTests(unittest.TestCase):
             with self.assertRaises(DeliveryError) as error:api.send('42',{'text':'x'},1)
             self.assertNotIn('very-private-token',str(error.exception));self.assertTrue(error.exception.uncertain)
 
+    def test_failed_connect_records_the_failing_telegram_stage(self):
+        import requests
+        self.service.api_factory = BotAPI
+        channel = self.post('channels', {'kind': 'telegram', 'name': 'Telegram', 'token': 'private-token'})['id']
+        identity = Mock(ok=True, status_code=200, headers={})
+        identity.json.return_value = {'ok': True, 'result': {'id': 7, 'is_bot': True, 'username': 'test_bot'}}
+        with patch.dict(os.environ, {'SENLER_TELEGRAM_PROXY_URL': 'socks5h://proxy:1080', 'SENLER_PUBLIC_URL': 'https://crm.example'}):
+            with patch('senler_api.requests.request', side_effect=requests.ConnectionError('private-token')) as request:
+                result = self.post('channels/{}/connect'.format(channel), status=502)
+                self.assertIn('TG-TOKEN-PROXY-CONNECTION', result['error'])
+                request.assert_called_once()
+            with patch('senler_api.requests.request', side_effect=[identity, requests.ReadTimeout('private-token')]) as request:
+                result = self.post('channels/{}/connect'.format(channel), status=502)
+                self.assertIn('TG-WEBHOOK-PROXY-READ_TIMEOUT', result['error'])
+                self.assertEqual(request.call_count, 2)
+        stored = self.one('senler_channels', 'id=?', (channel,))
+        self.assertEqual(stored['status'], 'configured')
+        self.assertEqual(stored['last_error'], result['error'])
+        self.assertNotIn('private-token', stored['last_error'])
+        self.assertEqual(stored['external_id'], '7')
+
     def test_event_parsing_private_only(self):
         event=self.message(123,'hi',1);event['message']['chat']['type']='group'
         self.assertIsNone(parse_event('telegram',event))

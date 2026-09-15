@@ -2,6 +2,7 @@
 import io
 import json
 import os
+import socket
 from pathlib import Path
 import sys
 import unittest
@@ -10,11 +11,44 @@ from unittest.mock import Mock, patch
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'crm'))
-from senler_api import BotAPI, DeliveryError, telegram_request_options
+from senler_api import BotAPI, DeliveryError, telegram_request_options, network_error_code
 import check_telegram_network
 
 
 class TelegramNetworkTests(unittest.TestCase):
+    def test_network_codes_classify_nested_errors_without_exception_text(self):
+        from urllib3.exceptions import MaxRetryError, ProtocolError
+        dns = requests.ConnectionError(MaxRetryError(None, 'private-token', socket.gaierror(-2, 'private-password')))
+        reset = requests.ConnectionError(ProtocolError('private-token', ConnectionResetError(104, 'private-password')))
+        socks = OSError('private-token')
+        socks.socket_err = ConnectionRefusedError(111, 'private-password')
+        cases = [(dns, 'DNS'), (reset, 'CONNECTION_RESET'),
+                 (requests.ConnectionError(socks), 'CONNECTION_REFUSED'),
+                 (requests.ReadTimeout('private-token'), 'READ_TIMEOUT'),
+                 (requests.exceptions.InvalidSchema('private-password'), 'TRANSPORT_SETUP'),
+                 (requests.ConnectionError('private-token'), 'CONNECTION')]
+        for error, code in cases:
+            with self.subTest(code=code):
+                self.assertEqual(network_error_code(error), code)
+        # Exception graphs may contain cycles; diagnostics must remain bounded.
+        socks.__cause__ = socks
+        self.assertEqual(network_error_code(socks), 'CONNECTION_REFUSED')
+
+    def test_connection_error_identifies_operation_and_actual_route(self):
+        api = BotAPI({'kind': 'telegram'}, 'private-token')
+        for proxy, route in [('', 'DIRECT'), ('socks5h://user:private-password@proxy:1080', 'PROXY')]:
+            for method, operation in [('getMe', 'TOKEN'), ('setWebhook', 'WEBHOOK')]:
+                with self.subTest(route=route, operation=operation), \
+                        patch.dict(os.environ, {'SENLER_TELEGRAM_PROXY_URL': proxy}), \
+                        patch('senler_api.requests.request', side_effect=requests.ReadTimeout('private-token private-password')) as request:
+                    with self.assertRaises(DeliveryError) as error:
+                        api.telegram(method)
+                    self.assertIn('TG-{}-{}-READ_TIMEOUT'.format(operation, route), str(error.exception))
+                    self.assertNotIn('private-token', str(error.exception))
+                    self.assertNotIn('private-password', str(error.exception))
+                    self.assertEqual(error.exception.retry_after, 30)
+                    request.assert_called_once()
+
     def test_supported_proxy_routes_and_explicit_direct_mode(self):
         for value, expected in [
             ('socks5://xray:1080', 'socks5h://xray:1080'),

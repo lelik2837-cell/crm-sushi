@@ -1,6 +1,8 @@
 """Official community/bot APIs. No personal-account sessions or Senler dependency."""
 import json
 import os
+import errno
+import socket
 from functools import lru_cache
 from pathlib import Path
 import tempfile
@@ -35,11 +37,55 @@ def max_ca_bundle():
 
 
 class DeliveryError(Exception):
-    def __init__(self, message, retry_after=0, uncertain=False, blocked=False):
+    def __init__(self, message, retry_after=0, uncertain=False, blocked=False, network_code=''):
         super().__init__(message)
         self.retry_after = retry_after
         self.uncertain = uncertain
         self.blocked = blocked
+        self.network_code = network_code
+
+
+def network_error_code(error):
+    """Classify nested requests/urllib3/PySocks errors without logging their text."""
+    pending, errors, visited = [error], [], set()
+    while pending and len(errors) < 20:
+        current = pending.pop(0)
+        if not isinstance(current, BaseException) or id(current) in visited:
+            continue
+        visited.add(id(current))
+        errors.append(current)
+        pending.extend(getattr(current, name, None) for name in
+                       ('__cause__', '__context__', 'reason', 'socket_err', 'original_error'))
+        pending.extend(value for value in current.args if isinstance(value, BaseException))
+    # Specific underlying socket failures take priority over a generic wrapper.
+    rules = [
+        (socket.gaierror, 'DNS'),
+        (requests.exceptions.InvalidSchema, 'TRANSPORT_SETUP'),
+        (requests.exceptions.InvalidURL, 'INVALID_URL'),
+        (requests.exceptions.SSLError, 'TLS'),
+        (requests.exceptions.ConnectTimeout, 'CONNECT_TIMEOUT'),
+        (requests.exceptions.ReadTimeout, 'READ_TIMEOUT'),
+        (ConnectionRefusedError, 'CONNECTION_REFUSED'),
+        (ConnectionResetError, 'CONNECTION_RESET'),
+        (BrokenPipeError, 'BROKEN_PIPE'),
+        (TimeoutError, 'TIMEOUT'),
+    ]
+    for error_class, code in rules:
+        if any(isinstance(item, error_class) for item in errors):
+            return code
+    if any(isinstance(item, OSError) and item.errno in (errno.ENETUNREACH, errno.EHOSTUNREACH) for item in errors):
+        return 'ROUTE_UNAVAILABLE'
+    # Some urllib3/PySocks wrappers retain only a typed inner exception.
+    for name, code in [('ReadTimeoutError', 'READ_TIMEOUT'), ('ConnectTimeoutError', 'CONNECT_TIMEOUT'),
+                       ('RemoteDisconnected', 'REMOTE_CLOSED'), ('ProtocolError', 'HTTP_PROTOCOL'),
+                       ('SOCKS5AuthError', 'PROXY_AUTH'), ('SOCKS5Error', 'SOCKS_REPLY')]:
+        if any(type(item).__name__ == name for item in errors):
+            return code
+    if isinstance(error, requests.exceptions.ProxyError):
+        return 'PROXY_CONNECTION'
+    if isinstance(error, requests.exceptions.ConnectionError):
+        return 'CONNECTION'
+    return 'REQUEST'
 
 
 def telegram_request_options():
@@ -74,18 +120,19 @@ class BotAPI:
         # Never interpolate request exceptions: Telegram URLs contain the credential.
         try:
             response = requests.request(method, url, timeout=(5, 15), **kwargs)
-        except requests.exceptions.ProxyError:
-            raise DeliveryError('Не удалось подключиться через прокси. Проверьте прокси на сервере CRM.',
-                                uncertain=sending, retry_after=0 if sending else 30) from None
-        except requests.exceptions.SSLError:
-            raise DeliveryError('Не удалось проверить сертификат сервера. Проверьте доверенные сертификаты на сервере CRM.')
-        except requests.exceptions.ConnectTimeout:
-            raise DeliveryError('Сервис не отвечает при подключении.', retry_after=30)
-        except requests.exceptions.RequestException:
-            message = ('Не удалось связаться с Telegram API. Проверьте доступ к Telegram и прокси на сервере CRM.'
-                       if self.kind == 'telegram' else 'Не удалось связаться с сервисом.')
+        except requests.exceptions.RequestException as exc:
+            code = network_error_code(exc)
+            if isinstance(exc, requests.exceptions.SSLError):
+                raise DeliveryError('Не удалось проверить сертификат сервера. Проверьте доверенные сертификаты на сервере CRM.',
+                                    network_code=code) from None
+            if isinstance(exc, requests.exceptions.ConnectTimeout):
+                raise DeliveryError('Сервис не отвечает при подключении.', retry_after=30, network_code=code) from None
+            message = ('Не удалось подключиться через прокси. Проверьте прокси на сервере CRM.'
+                       if isinstance(exc, requests.exceptions.ProxyError) else
+                       'Не удалось связаться с Telegram API.' if self.kind == 'telegram' else
+                       'Не удалось связаться с сервисом.')
             raise DeliveryError('Соединение прервано. Результат отправки неизвестен.' if sending else message,
-                                uncertain=sending, retry_after=30 if not sending else 0) from None
+                                uncertain=sending, retry_after=30 if not sending else 0, network_code=code) from None
         try:
             data = response.json()
         except ValueError:
@@ -121,8 +168,23 @@ class BotAPI:
 
     def telegram(self, method, payload=None, files=None, sending=False):
         kwargs = {'data': payload, 'files': files} if files else {'json': payload or {}}
-        return self._request('POST', 'https://api.telegram.org/bot' + self.token + '/' + method,
-                             sending=sending, **telegram_request_options(), **kwargs).get('result')
+        options = telegram_request_options()
+        try:
+            return self._request('POST', 'https://api.telegram.org/bot' + self.token + '/' + method,
+                                 sending=sending, **options, **kwargs).get('result')
+        except DeliveryError as exc:
+            if not exc.network_code or sending:
+                raise
+            stage, operation = {
+                'getMe': ('проверка токена', 'TOKEN'),
+                'setWebhook': ('подключение приёма сообщений', 'WEBHOOK'),
+                'getWebhookInfo': ('проверка приёма сообщений', 'WEBHOOK_INFO'),
+            }.get(method, ('запрос к Telegram', 'API'))
+            route = 'PROXY' if options.get('proxies') else 'DIRECT'
+            code = 'TG-{}-{}-{}'.format(operation, route, exc.network_code)
+            raise DeliveryError('{} Этап: {}. Код диагностики: {}.'.format(exc, stage, code),
+                                retry_after=exc.retry_after, uncertain=exc.uncertain,
+                                blocked=exc.blocked, network_code=exc.network_code) from None
 
     def max(self, method, path, params=None, payload=None, sending=False):
         return self._request(method, self.MAX_BASE + path, params=params,
