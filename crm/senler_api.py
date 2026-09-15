@@ -3,12 +3,19 @@ import json
 import os
 import errno
 import socket
+import secrets
 from functools import lru_cache
 from pathlib import Path
 import tempfile
 from urllib.parse import urlparse
 
 import requests
+
+
+TRANSIENT_NETWORK_ERRORS = frozenset({
+    'READ_TIMEOUT', 'CONNECT_TIMEOUT', 'TIMEOUT', 'CONNECTION_RESET',
+    'REMOTE_CLOSED', 'CONNECTION', 'BROKEN_PIPE', 'HTTP_PROTOCOL',
+})
 
 
 @lru_cache(maxsize=None)
@@ -166,23 +173,20 @@ class BotAPI:
                              sending=method == 'messages.send',
                              data=dict(params, access_token=self.token, v=self.VK_VERSION)).get('response')
 
-    def telegram(self, method, payload=None, files=None, sending=False):
+    def telegram(self, method, payload=None, files=None, sending=False, timeout=None, retry=True):
         kwargs = {'data': payload, 'files': files} if files else {'json': payload or {}}
         options = telegram_request_options()
-        # Read-only checks may safely retry a transient tunnel failure. Sending and
-        # webhook registration each remain a single attempt. A complete connect
-        # stays within the web worker's 120-second request budget (2*35 + 35).
-        read_only = method in ('getMe', 'getWebhookInfo') and not sending
-        timeout = (5, 30) if method in ('getMe', 'getWebhookInfo', 'setWebhook') else (5, 15)
+        # Only read-only checks retry here. connect() reconciles an uncertain
+        # webhook registration before deciding whether to repeat that mutation.
+        read_only = method in ('getMe', 'getWebhookInfo') and not sending and retry
+        timeout = timeout or ((5, 30) if method in ('getMe', 'getWebhookInfo', 'setWebhook') else (5, 15))
         try:
             for attempt in range(2 if read_only else 1):
                 try:
                     return self._request('POST', 'https://api.telegram.org/bot' + self.token + '/' + method,
                                          sending=sending, timeout=timeout, **options, **kwargs).get('result')
                 except DeliveryError as exc:
-                    if not read_only or attempt or exc.network_code not in (
-                            'READ_TIMEOUT', 'CONNECT_TIMEOUT', 'TIMEOUT', 'CONNECTION_RESET',
-                            'REMOTE_CLOSED', 'CONNECTION', 'BROKEN_PIPE', 'HTTP_PROTOCOL'):
+                    if not read_only or attempt or exc.network_code not in TRANSIENT_NETWORK_ERRORS:
                         raise
         except DeliveryError as exc:
             if not exc.network_code or sending:
@@ -233,10 +237,32 @@ class BotAPI:
         if not url.startswith('https://'):
             raise DeliveryError('Для подключения нужен публичный HTTPS-адрес CRM.')
         if self.kind == 'telegram':
-            self.telegram('setWebhook', {'url': url, 'secret_token': secret,
-                                         'allowed_updates': ['message', 'callback_query', 'my_chat_member'],
-                                         'drop_pending_updates': False, 'max_connections': 4})
-            return ''
+            # A fresh marker lets getWebhookInfo prove THIS registration was
+            # applied, including its secret. A matching old URL alone cannot do
+            # that because Telegram does not return the configured secret_token.
+            parsed = urlparse(url)
+            marker = 'setup=' + secrets.token_urlsafe(16)
+            registration_url = parsed._replace(query=(parsed.query + '&' if parsed.query else '') + marker).geturl()
+            payload = {'url': registration_url, 'secret_token': secret,
+                       'allowed_updates': ['message', 'callback_query', 'my_chat_member'],
+                       'drop_pending_updates': False, 'max_connections': 4}
+            for attempt in range(2):
+                try:
+                    self.telegram('setWebhook', payload)
+                    return ''
+                except DeliveryError as exc:
+                    if exc.network_code not in TRANSIENT_NETWORK_ERRORS:
+                        raise
+                    try:
+                        info = self.telegram('getWebhookInfo', timeout=(3, 7), retry=False)
+                    except DeliveryError:
+                        info = None
+                    if isinstance(info, dict) and info.get('url') == registration_url:
+                        return ''
+                    if attempt:
+                        raise
+                    # Exactly the same registration, no queue clearing. Unlike
+                    # sendMessage, repeating setWebhook cannot duplicate messages.
         if self.kind == 'max':
             self.max('POST', '/subscriptions', payload={'url': url, 'secret': secret,
                      'update_types': ['message_created', 'message_callback', 'bot_started', 'bot_stopped']})

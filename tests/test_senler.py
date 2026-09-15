@@ -537,15 +537,44 @@ class SenlerTests(unittest.TestCase):
                 result = self.post('channels/{}/connect'.format(channel), status=502)
                 self.assertIn('TG-TOKEN-PROXY-CONNECTION', result['error'])
                 self.assertEqual(request.call_count, 2)
-            with patch('senler_api.requests.request', side_effect=[identity, requests.ReadTimeout('private-token')]) as request:
+            with patch('senler_api.requests.request', side_effect=[identity] + [requests.ReadTimeout('private-token')] * 4) as request:
                 result = self.post('channels/{}/connect'.format(channel), status=502)
                 self.assertIn('TG-WEBHOOK-PROXY-READ_TIMEOUT', result['error'])
-                self.assertEqual(request.call_count, 2)
+                self.assertEqual(request.call_count, 5)
         stored = self.one('senler_channels', 'id=?', (channel,))
         self.assertEqual(stored['status'], 'configured')
         self.assertEqual(stored['last_error'], result['error'])
         self.assertNotIn('private-token', stored['last_error'])
         self.assertEqual(stored['external_id'], '7')
+
+    def test_connect_reconciles_timeout_and_accepts_authenticated_marked_webhook(self):
+        import requests
+        self.service.api_factory = BotAPI
+        channel = self.post('channels', {'kind': 'telegram', 'name': 'Telegram', 'token': 'private-token'})['id']
+        registration = {}
+        def request(method, url, **kwargs):
+            response = Mock(ok=True, status_code=200, headers={})
+            if url.endswith('/getMe'):
+                result = {'id': 7, 'is_bot': True, 'username': 'test_bot'}
+            elif url.endswith('/setWebhook'):
+                registration.update(kwargs['json'])
+                raise requests.ReadTimeout('private-token')
+            else:
+                self.assertTrue(url.endswith('/getWebhookInfo'))
+                result = {'url': registration['url']}
+            response.json.return_value = {'ok': True, 'result': result}
+            return response
+        with patch.dict(os.environ, {'SENLER_PUBLIC_URL': 'https://crm.example'}), \
+                patch('senler_api.requests.request', side_effect=request):
+            self.post('channels/{}/connect'.format(channel))
+        stored = self.one('senler_channels', 'id=?', (channel,))
+        self.assertEqual(stored['status'], 'connected')
+        self.assertEqual(stored['last_error'], '')
+        callback = registration['url'].removeprefix('https://crm.example')
+        self.assertEqual(self.client.post(callback, json=self.message(123, '/start', 1)).status_code, 403)
+        response = self.client.post(callback, json=self.message(123, '/start', 1),
+                                    headers={'X-Telegram-Bot-Api-Secret-Token': stored['webhook_secret']})
+        self.assertEqual(response.status_code, 200)
 
     def test_event_parsing_private_only(self):
         event=self.message(123,'hi',1);event['message']['chat']['type']='group'

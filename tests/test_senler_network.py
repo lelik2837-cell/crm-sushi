@@ -16,6 +16,49 @@ import check_telegram_network
 
 
 class TelegramNetworkTests(unittest.TestCase):
+    def test_webhook_timeout_reconciles_only_the_current_registration(self):
+        api = BotAPI({'kind': 'telegram', 'webhook_secret': 'private-secret'}, 'private-token')
+        response = Mock(ok=True, status_code=200, headers={})
+        registration = {}
+        def request(method, url, **kwargs):
+            if url.endswith('/setWebhook'):
+                registration.update(kwargs['json'])
+                raise requests.ReadTimeout('private-token')
+            self.assertTrue(url.endswith('/getWebhookInfo'))
+            self.assertEqual(kwargs['timeout'], (3, 7))
+            response.json.return_value = {'ok': True, 'result': {'url': registration['url']}}
+            return response
+        with patch('senler_api.requests.request', side_effect=request) as send:
+            self.assertEqual(api.connect('https://crm.example/webhook'), '')
+            self.assertEqual(send.call_count, 2)
+        self.assertTrue(registration['url'].startswith('https://crm.example/webhook?setup='))
+        self.assertNotIn('private-secret', registration['url'])
+        self.assertNotIn('private-token', registration['url'])
+        self.assertFalse(registration['drop_pending_updates'])
+        self.assertEqual(registration['secret_token'], 'private-secret')
+
+    def test_webhook_old_registration_does_not_count_as_success_and_retries_identically(self):
+        api = BotAPI({'kind': 'telegram', 'webhook_secret': 'secret'}, 'private-token')
+        old = Mock(ok=True, status_code=200, headers={})
+        old.json.return_value = {'ok': True, 'result': {'url': 'https://crm.example/webhook'}}
+        accepted = Mock(ok=True, status_code=200, headers={})
+        accepted.json.return_value = {'ok': True, 'result': True}
+        with patch('senler_api.requests.request', side_effect=[requests.ReadTimeout(), old, accepted]) as send:
+            self.assertEqual(api.connect('https://crm.example/webhook'), '')
+        calls = send.call_args_list
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[0].kwargs['json'], calls[2].kwargs['json'])
+        self.assertFalse(calls[2].kwargs['json']['drop_pending_updates'])
+
+    def test_webhook_explicit_rejection_does_not_retry_or_reconcile(self):
+        rejected = Mock(ok=False, status_code=401, headers={})
+        rejected.json.return_value = {'ok': False, 'error_code': 401}
+        api = BotAPI({'kind': 'telegram', 'webhook_secret': 'secret'}, 'private-token')
+        with patch('senler_api.requests.request', return_value=rejected) as send:
+            with self.assertRaises(DeliveryError):
+                api.connect('https://crm.example/webhook')
+            send.assert_called_once()
+
     def test_network_codes_classify_nested_errors_without_exception_text(self):
         from urllib3.exceptions import MaxRetryError, ProtocolError
         dns = requests.ConnectionError(MaxRetryError(None, 'private-token', socket.gaierror(-2, 'private-password')))
