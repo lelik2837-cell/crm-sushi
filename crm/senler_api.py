@@ -116,10 +116,10 @@ class BotAPI:
         self.kind = channel['kind']
         self.token = token
 
-    def _request(self, method, url, sending=False, **kwargs):
+    def _request(self, method, url, sending=False, timeout=(5, 15), **kwargs):
         # Never interpolate request exceptions: Telegram URLs contain the credential.
         try:
-            response = requests.request(method, url, timeout=(5, 15), **kwargs)
+            response = requests.request(method, url, timeout=timeout, **kwargs)
         except requests.exceptions.RequestException as exc:
             code = network_error_code(exc)
             if isinstance(exc, requests.exceptions.SSLError):
@@ -169,9 +169,21 @@ class BotAPI:
     def telegram(self, method, payload=None, files=None, sending=False):
         kwargs = {'data': payload, 'files': files} if files else {'json': payload or {}}
         options = telegram_request_options()
+        # Read-only checks may safely retry a transient tunnel failure. Sending and
+        # webhook registration each remain a single attempt. A complete connect
+        # stays within the web worker's 120-second request budget (2*35 + 35).
+        read_only = method in ('getMe', 'getWebhookInfo') and not sending
+        timeout = (5, 30) if method in ('getMe', 'getWebhookInfo', 'setWebhook') else (5, 15)
         try:
-            return self._request('POST', 'https://api.telegram.org/bot' + self.token + '/' + method,
-                                 sending=sending, **options, **kwargs).get('result')
+            for attempt in range(2 if read_only else 1):
+                try:
+                    return self._request('POST', 'https://api.telegram.org/bot' + self.token + '/' + method,
+                                         sending=sending, timeout=timeout, **options, **kwargs).get('result')
+                except DeliveryError as exc:
+                    if not read_only or attempt or exc.network_code not in (
+                            'READ_TIMEOUT', 'CONNECT_TIMEOUT', 'TIMEOUT', 'CONNECTION_RESET',
+                            'REMOTE_CLOSED', 'CONNECTION', 'BROKEN_PIPE', 'HTTP_PROTOCOL'):
+                        raise
         except DeliveryError as exc:
             if not exc.network_code or sending:
                 raise

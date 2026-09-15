@@ -47,7 +47,27 @@ class TelegramNetworkTests(unittest.TestCase):
                     self.assertNotIn('private-token', str(error.exception))
                     self.assertNotIn('private-password', str(error.exception))
                     self.assertEqual(error.exception.retry_after, 30)
-                    request.assert_called_once()
+                    self.assertEqual(request.call_count, 2 if method == 'getMe' else 1)
+
+    def test_token_check_recovers_after_proxy_read_timeout(self):
+        response = Mock(ok=True, status_code=200, headers={})
+        response.json.return_value = {'ok': True, 'result': {'id': 7, 'is_bot': True, 'username': 'test_bot'}}
+        api = BotAPI({'kind': 'telegram'}, 'private-token')
+        with patch.dict(os.environ, {'SENLER_TELEGRAM_PROXY_URL': 'socks5h://xray:1080'}), \
+                patch('senler_api.requests.request', side_effect=[requests.ReadTimeout('private-token'), response]) as request:
+            self.assertEqual(api.identity()['external_id'], '7')
+        self.assertEqual(request.call_count, 2)
+        for call in request.call_args_list:
+            self.assertEqual(call.kwargs['timeout'], (5, 30))
+            self.assertEqual(call.kwargs['proxies']['https'], 'socks5h://xray:1080')
+
+    def test_token_rejection_is_not_retried(self):
+        response = Mock(ok=False, status_code=401, headers={})
+        response.json.return_value = {'ok': False, 'error_code': 401}
+        with patch('senler_api.requests.request', return_value=response) as request:
+            with self.assertRaises(DeliveryError):
+                BotAPI({'kind': 'telegram'}, 'private-token').identity()
+            request.assert_called_once()
 
     def test_supported_proxy_routes_and_explicit_direct_mode(self):
         for value, expected in [
@@ -104,7 +124,7 @@ class TelegramNetworkTests(unittest.TestCase):
                          ['getMe', 'setWebhook', 'sendMessage', 'sendPhoto', 'answerCallbackQuery'])
         for call in calls:
             self.assertEqual(call.kwargs['proxies']['https'], 'socks5h://xray:1080')
-            self.assertEqual(call.kwargs['timeout'], (5, 15))
+            self.assertEqual(call.kwargs['timeout'], (5, 30) if call.args[1].endswith(('/getMe', '/setWebhook')) else (5, 15))
             self.assertIsNot(call.kwargs.get('verify'), False)
         self.assertFalse(calls[1].kwargs['json']['drop_pending_updates'])
         self.assertIn('photo', calls[3].kwargs['files'])
@@ -133,7 +153,7 @@ class TelegramNetworkTests(unittest.TestCase):
                     self.assertNotIn('private-password', str(error.exception))
                     self.assertEqual(error.exception.uncertain, sending)
                     self.assertEqual(error.exception.retry_after, 0 if sending else 30)
-                    request.assert_called_once()
+                    self.assertEqual(request.call_count, 1 if sending or exception is requests.exceptions.ProxyError else 2)
 
     def test_server_diagnostic_uses_fake_token_and_sanitized_output(self):
         response = Mock(status_code=404)

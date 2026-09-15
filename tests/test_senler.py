@@ -536,7 +536,7 @@ class SenlerTests(unittest.TestCase):
             with patch('senler_api.requests.request', side_effect=requests.ConnectionError('private-token')) as request:
                 result = self.post('channels/{}/connect'.format(channel), status=502)
                 self.assertIn('TG-TOKEN-PROXY-CONNECTION', result['error'])
-                request.assert_called_once()
+                self.assertEqual(request.call_count, 2)
             with patch('senler_api.requests.request', side_effect=[identity, requests.ReadTimeout('private-token')]) as request:
                 result = self.post('channels/{}/connect'.format(channel), status=502)
                 self.assertIn('TG-WEBHOOK-PROXY-READ_TIMEOUT', result['error'])
