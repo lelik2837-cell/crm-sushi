@@ -495,15 +495,21 @@ class SenlerService:
             parts = callback.split(':')
             if len(parts) != 4 or not parts[1].isdigit():
                 return
-            run = conn.execute("SELECT * FROM senler_runs WHERE id=? AND subscriber_id=? AND status='waiting_reply'", (parts[1], sub['id'])).fetchone()
-            if not run or not secrets.compare_digest(parts[3], run['nonce']) or sub['bot_paused']:
+            # By owner's choice: any of the subscriber's own bot messages stays clickable, not
+            # only the latest one (people naturally scroll back up in Telegram and tap an older
+            # menu). The run just must not have moved past automation (handed off/finished/replaced
+            # by a fresh run from re-subscribing). The button is only honoured if the origin node
+            # it claims to come from really offered that exact target in the frozen scenario
+            # snapshot, so a forged/edited callback can't jump the conversation anywhere else.
+            run = conn.execute("SELECT * FROM senler_runs WHERE id=? AND subscriber_id=? AND status NOT IN ('paused','completed','cancelled')", (parts[1], sub['id'])).fetchone()
+            if not run or sub['bot_paused']:
                 return
-            node = next(n for n in json.loads(run['definition_json'])['nodes'] if n['id'] == run['node_id'])
-            if parts[2] not in [b['value'] for b in node.get('buttons', []) if b['action'] == 'goto']:
+            origin_id, target = parts[2], parts[3]
+            origin = next((n for n in json.loads(run['definition_json'])['nodes'] if n['id'] == origin_id), None)
+            if not origin or target not in [b['value'] for b in origin.get('buttons', []) if b['action'] == 'goto']:
                 return
-            # New nonce invalidates every button from the previous visit, including loops.
-            conn.execute("UPDATE senler_runs SET node_id=?,status='running',due_at=?,nonce=? WHERE id=?", (parts[2], now(), secrets.token_hex(4), run['id']))
-            label = next(b['label'] for b in node['buttons'] if b['value'] == parts[2])
+            conn.execute("UPDATE senler_runs SET node_id=?,status='running',due_at=?,nonce=? WHERE id=?", (target, now(), secrets.token_hex(4), run['id']))
+            label = next(b['label'] for b in origin['buttons'] if b['value'] == target)
             text = 'Кнопка: ' + label
             conn.execute("INSERT INTO senler_messages(subscriber_id,direction,text,created_at) VALUES (?,'in',?,?)", (sub['id'], text, now()))
             conn.execute('UPDATE senler_subscribers SET unread=unread+1 WHERE id=?', (sub['id'],))
@@ -514,8 +520,10 @@ class SenlerService:
             self._start_bot(conn, sub, 'subscribe')
 
     def _advance_run(self, conn, run, next_node, due_at=None):
-        conn.execute('UPDATE senler_runs SET node_id=?,status=?,due_at=? WHERE id=?',
-                     (next_node or '', 'running' if next_node else 'completed', due_at or now(), run['id']))
+        # nonce is no longer a security token (see the 'sb:' handler) — it only keeps the outbox
+        # dedupe_key unique if the same node is ever visited more than once in one conversation.
+        conn.execute('UPDATE senler_runs SET node_id=?,status=?,due_at=?,nonce=? WHERE id=?',
+                     (next_node or '', 'running' if next_node else 'completed', due_at or now(), secrets.token_hex(4), run['id']))
 
     def _step(self, conn, run):
         sub = conn.execute('SELECT * FROM senler_subscribers WHERE id=?', (run['subscriber_id'],)).fetchone()
@@ -530,7 +538,7 @@ class SenlerService:
             return
         kind = node['type']
         if kind == 'message':
-            buttons = [dict(b, action='callback', value='sb:{}:{}:{}'.format(run['id'], b['value'], run['nonce'])) if b['action'] == 'goto' else b for b in node['buttons']]
+            buttons = [dict(b, action='callback', value='sb:{}:{}:{}'.format(run['id'], node['id'], b['value'])) if b['action'] == 'goto' else b for b in node['buttons']]
             buttons.append({'label': 'Отписаться', 'action': 'callback', 'value': 'unsubscribe'})
             self.queue(conn, sub, dict(node, buttons=buttons), 'run:{}:{}:{}'.format(run['id'], node['id'], run['nonce']), run_id=run['id'], node_id=node['id'])
             conn.execute("UPDATE senler_runs SET status='waiting_send' WHERE id=?", (run['id'],))
@@ -546,7 +554,7 @@ class SenlerService:
                 conn.execute('DELETE FROM senler_group_members WHERE group_id=? AND subscriber_id=?', (node['group_id'], sub['id']))
             self._advance_run(conn, run, node['next'])
         elif kind == 'handoff':
-            conn.execute("UPDATE senler_runs SET status='paused',node_id=? WHERE id=?", (node['next'], run['id']))
+            conn.execute("UPDATE senler_runs SET status='paused',node_id=?,nonce=? WHERE id=?", (node['next'], secrets.token_hex(4), run['id']))
             conn.execute('UPDATE senler_subscribers SET bot_paused=1,unread=MAX(unread,1) WHERE id=?', (sub['id'],))
 
     def _delivery(self, job):

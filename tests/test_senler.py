@@ -220,7 +220,7 @@ class SenlerTests(unittest.TestCase):
                        'promotions', 'birthday', 'promotions', 'sale', 'order', 'menu'):
             current = FakeAPI.sent[-1][2]
             callback = next(b['value'] for b in current['buttons']
-                            if b['value'].startswith('sb:') and b['value'].split(':')[2] == target)
+                            if b['value'].startswith('sb:') and b['value'].split(':')[3] == target)
             update_id += 1
             self.webhook(channel, self.callback(123, callback, update_id))
             self.tick()
@@ -576,6 +576,38 @@ class SenlerTests(unittest.TestCase):
         self.assertEqual(self.one('senler_subscribers','id=?',(sub,))['bot_paused'],1)
         self.post('dialogs/{}/resume'.format(sub));self.tick()
         self.assertEqual(self.one('senler_runs')['status'],'completed')
+
+    def test_bot_buttons_from_older_messages_stay_clickable_but_forged_or_stale_targets_are_rejected(self):
+        channel=self.channel();self.sub(channel)
+        nodes=[{'id':'menu','type':'message','text':'Меню','buttons':[
+                    {'label':'A','action':'goto','value':'a'},
+                    {'label':'B','action':'goto','value':'b'}]},
+               {'id':'a','type':'message','text':'Ветка A','buttons':[{'label':'Назад','action':'goto','value':'menu'}]},
+               {'id':'b','type':'message','text':'Ветка B','buttons':[{'label':'Назад','action':'goto','value':'menu'}]}]
+        self.bot(channel,nodes)
+        self.webhook(channel,self.message(123,'/start',1));self.tick()
+        menu_message=FakeAPI.sent[-1][2]
+        button_a=next(b['value'] for b in menu_message['buttons'] if b['value'].startswith('sb:') and b['value'].split(':')[3]=='a')
+        button_b=next(b['value'] for b in menu_message['buttons'] if b['value'].startswith('sb:') and b['value'].split(':')[3]=='b')
+        run_id=self.one('senler_runs')['id']
+        # a forged callback claiming an option the menu never actually offered is ignored
+        forged='sb:{}:menu:not-a-real-target'.format(run_id)
+        sent_before=len(FakeAPI.sent)
+        self.webhook(channel,self.callback(123,forged,2));self.tick()
+        self.assertEqual(len(FakeAPI.sent),sent_before)
+        self.assertEqual(self.one('senler_runs')['node_id'],'menu')
+        # click A first — moves the run forward, so "menu" is no longer the freshest message
+        self.webhook(channel,self.callback(123,button_a,3));self.tick()
+        self.assertEqual((self.one('senler_runs')['node_id'],FakeAPI.sent[-1][2]['text']),('a','Ветка A'))
+        # scrolling back up and tapping B from the *older* menu message still works
+        self.webhook(channel,self.callback(123,button_b,4));self.tick()
+        self.assertEqual((self.one('senler_runs')['node_id'],FakeAPI.sent[-1][2]['text']),('b','Ветка B'))
+        # once the subscriber leaves the bot entirely, even a well-formed old callback does nothing
+        self.webhook(channel,self.message(123,'стоп',5));self.tick()
+        self.assertEqual(self.one('senler_runs')['status'],'cancelled')
+        sent_before=len(FakeAPI.sent)
+        self.webhook(channel,self.callback(123,button_a,6));self.tick()
+        self.assertEqual(len(FakeAPI.sent),sent_before)
 
     def test_bot_errors_endpoint_lists_failed_runs_with_reason_and_step(self):
         channel=self.channel();sub=self.sub(channel)
