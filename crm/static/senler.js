@@ -275,7 +275,10 @@
     if (channel.receive_mode !== 'polling' || channel.status !== 'connected') return '';
     if (channel.telegram_poll_error) return `<div class="sn-error">${esc(channel.telegram_poll_error)}</div>`;
     const current = channel.telegram_poll_at && state.boot.server_time - channel.telegram_poll_at < 90;
-    return `<div class="sn-help mb-3">${current ? 'Приём сообщений работает.' : channel.telegram_poll_at ? 'Приём сообщений не подтверждён. Обновите страницу через минуту.' : 'Ожидаем первое соединение с Telegram.'}${channel.telegram_poll_at ? '<br>Последняя связь: ' + date(channel.telegram_poll_at) : ''}</div>`;
+    // Healthy polling looks the same as VK/MAX (nothing extra); only surface this diagnostic
+    // when there's actually something to check, since it has no equivalent on webhook channels.
+    if (current) return '';
+    return `<div class="sn-help mb-3">${channel.telegram_poll_at ? 'Приём сообщений не подтверждён. Обновите страницу через минуту.' : 'Ожидаем первое соединение с Telegram.'}${channel.telegram_poll_at ? '<br>Последняя связь: ' + date(channel.telegram_poll_at) : ''}</div>`;
   }
   function channelForm(id) {
     const channel = state.boot.channels.find(c => c.id === Number(id));
