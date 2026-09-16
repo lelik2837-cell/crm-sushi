@@ -2,6 +2,7 @@
 import json
 import os
 import errno
+import re
 import socket
 import secrets
 from functools import lru_cache
@@ -137,6 +138,27 @@ def telegram_uses_polling():
     if mode not in ('polling', 'webhook'):
         raise DeliveryError('Режим приёма Telegram должен быть polling или webhook.')
     return mode == 'polling'
+
+
+# The message editor lets the owner mark bold text as **text**; MAX uses this exact
+# Markdown syntax natively, Telegram needs it converted to HTML, and VK community
+# messages don't support inline formatting at all, so the markers are stripped there.
+BOLD_MARKUP_RE = re.compile(r'\*\*(.+?)\*\*', re.S)
+
+
+def strip_bold_markup(text):
+    return BOLD_MARKUP_RE.sub(r'\1', text)
+
+
+def bold_markup_to_telegram_html(text):
+    escape = lambda value: value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    out, pos = [], 0
+    for match in BOLD_MARKUP_RE.finditer(text):
+        out.append(escape(text[pos:match.start()]))
+        out.append('<b>' + escape(match.group(1)) + '</b>')
+        pos = match.end()
+    out.append(escape(text[pos:]))
+    return ''.join(out)
 
 
 class BotAPI:
@@ -365,20 +387,21 @@ class BotAPI:
         buttons = body.get('buttons', [])
         keyboard = self._keyboard(buttons, self.kind)
         if self.kind == 'telegram':
-            payload = {'chat_id': external_user_id}
+            payload = {'chat_id': external_user_id, 'parse_mode': 'HTML'}
             if buttons:
                 payload['reply_markup'] = {'inline_keyboard': keyboard}
+            text = bold_markup_to_telegram_html(body['text'])
             if asset:
-                payload['caption'] = body['text']
+                payload['caption'] = text
                 if buttons:
                     payload['reply_markup'] = json.dumps(payload['reply_markup'])
                 sent = self.telegram('sendPhoto', payload, files={'photo': ('image.' + asset['extension'], asset['data'], asset['mime'])}, sending=True)
             else:
-                payload['text'] = body['text']
+                payload['text'] = text
                 sent = self.telegram('sendMessage', payload, sending=True)
             return str(sent['message_id'])
         if self.kind == 'max':
-            payload = {'text': body['text'], 'attachments': []}
+            payload = {'text': body['text'], 'format': 'markdown', 'attachments': []}
             if asset:
                 uploaded = asset.get('remote_payload') or self.upload_asset(asset, external_user_id)
                 payload['attachments'].append({'type': 'image', 'payload': uploaded})
@@ -389,7 +412,7 @@ class BotAPI:
         allowed = self.vk('messages.isMessagesFromGroupAllowed', group_id=self.channel['external_id'], user_id=external_user_id)
         if not allowed.get('is_allowed'):
             raise DeliveryError('Пользователь запретил сообщения сообщества.', blocked=True)
-        payload = {'user_id': external_user_id, 'message': body['text'], 'random_id': random_id}
+        payload = {'user_id': external_user_id, 'message': strip_bold_markup(body['text']), 'random_id': random_id}
         if buttons:
             payload['keyboard'] = json.dumps({'inline': True, 'buttons': keyboard}, ensure_ascii=False)
         if asset:

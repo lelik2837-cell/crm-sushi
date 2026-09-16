@@ -596,21 +596,26 @@ class SenlerTests(unittest.TestCase):
         response.json.return_value={'ok':True,'result':{'message_id':12}}
         with patch('senler_api.requests.request',return_value=response) as send:
             api=BotAPI(channel,'private-token')
-            api.send('42',{'text':'Текст','buttons':[{'label':'Отписаться','action':'callback','value':'unsubscribe'}]},91)
+            api.send('42',{'text':'Текст **жирным** & <b>','buttons':[{'label':'Отписаться','action':'callback','value':'unsubscribe'}]},91)
             args=send.call_args.kwargs['json'];self.assertEqual(args['chat_id'],'42');self.assertEqual(args['reply_markup']['inline_keyboard'][0][0]['callback_data'],'unsubscribe')
+            self.assertEqual(args['parse_mode'],'HTML')
+            self.assertEqual(args['text'],'Текст <b>жирным</b> &amp; &lt;b&gt;')
         response.json.return_value={'message':{'body':{'mid':'abc'}}}
         with patch('senler_api.requests.request',return_value=response) as send:
-            api=BotAPI(dict(channel,kind='max'),'private-token');api.send('42',{'text':'Текст','buttons':[]},91)
+            api=BotAPI(dict(channel,kind='max'),'private-token');api.send('42',{'text':'Текст **жирным**','buttons':[]},91)
             self.assertEqual(send.call_args.args[1],'https://platform-api2.max.ru/messages')
             self.assertEqual(send.call_args.kwargs['headers'],{'Authorization':'private-token'})
+            self.assertEqual(send.call_args.kwargs['json']['format'],'markdown')
+            self.assertEqual(send.call_args.kwargs['json']['text'],'Текст **жирным**')
             bundle=Path(send.call_args.kwargs['verify'])
             self.assertTrue(bundle.is_file())
             ministry_root=Path(__file__).resolve().parents[1]/'crm'/'certs'/'russian_trusted_root_ca.pem'
             self.assertIn(ministry_root.read_bytes().strip(),bundle.read_bytes())
         api=BotAPI(dict(channel,kind='vk'),'private-token')
         with patch.object(api,'vk',side_effect=[{'is_allowed':True},100]) as vk:
-            api.send('42',{'text':'Текст','buttons':[]},91)
+            api.send('42',{'text':'Текст **жирным**','buttons':[]},91)
             self.assertEqual(vk.call_args.kwargs['random_id'],91)
+            self.assertEqual(vk.call_args.kwargs['message'],'Текст жирным')
 
     def test_api_error_never_exposes_telegram_token(self):
         import requests
