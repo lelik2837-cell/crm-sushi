@@ -20,13 +20,21 @@
     .replace(/(?<!\w)_([^\n_]+?)_(?!\w)/g, '<em>$1</em>');
   const EMOJIS = ['😀','😊','😉','😍','🥳','😋','👍','🙏','🎉','🔥','⭐','❤️','✅','⏰','📢','🎁','💥','🍣','🍱','🍜','🍙','🥢','🍤','🐟','🍚','🌶️','🥤','🚀','📍','💬'];
   function wrapSelection(textarea, marker) {
-    const start = textarea.selectionStart, end = textarea.selectionEnd, value = textarea.value;
+    const value = textarea.value;
+    let start = textarea.selectionStart, end = textarea.selectionEnd;
+    // After a wrap, the selection sits just inside the markers (so typing continues the word),
+    // so a plain click can't be toggled off unless we also look just outside the selection.
+    const beforeStart = Math.max(0, start - marker.length);
+    if (value.slice(beforeStart, start) === marker && value.slice(end, end + marker.length) === marker) {
+      start = beforeStart; end += marker.length;
+    }
     const selected = value.slice(start, end);
     const already = selected.length >= marker.length * 2 && selected.startsWith(marker) && selected.endsWith(marker);
-    const inner = already ? selected.slice(marker.length, selected.length - marker.length) : marker + selected + marker;
-    textarea.value = value.slice(0, start) + inner + value.slice(end);
-    const caretStart = start + (already ? 0 : marker.length), caretEnd = caretStart + (already ? inner.length : selected.length);
-    textarea.focus(); textarea.setSelectionRange(caretStart, caretEnd);
+    const inner = already ? selected.slice(marker.length, selected.length - marker.length) : selected;
+    const next = already ? inner : marker + inner + marker;
+    textarea.value = value.slice(0, start) + next + value.slice(end);
+    const caretStart = already ? start : start + marker.length;
+    textarea.focus(); textarea.setSelectionRange(caretStart, caretStart + inner.length);
     textarea.dispatchEvent(new Event('input', {bubbles: true}));
   }
   function insertAtCursor(textarea, text) {
