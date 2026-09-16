@@ -379,19 +379,25 @@ class SenlerTests(unittest.TestCase):
 
     def test_campaign_buttons_follow_each_channel_and_keep_launch_snapshot(self):
         vk=self.channel('vk');tg=self.channel();self.sub(vk);self.sub(tg)
-        self.post('channels/{}/edit'.format(vk),{'name':'ВК','unsubscribe_label':'Отказаться от акций','unsubscribe_enabled':True})
+        self.post('channels/{}/edit'.format(vk),{'name':'ВК','unsubscribe_label':'Отказаться от акций','unsubscribe_enabled':True,
+                                                  'default_button_enabled':True,'default_button_label':'Меню бота','default_button_url':'https://example.com/menu-vk'})
         self.post('channels/{}/edit'.format(tg),{'name':'Telegram','unsubscribe_label':'Без акций','unsubscribe_enabled':False})
         campaign=self.post('campaigns',{'name':'Акция','body':{'text':'Сегодня акция','buttons':[{'label':'Меню','action':'url','value':'https://example.com/menu'}]},'audience':{'channels':[vk,tg]}})['id']
-        self.post('campaigns/{}/launch'.format(campaign))
-        self.post('channels/{}/edit'.format(vk),{'name':'ВК','unsubscribe_label':'Новый текст','unsubscribe_enabled':False})
+        self.post('campaigns/{}/launch'.format(campaign));self.tick()
+        self.post('channels/{}/edit'.format(vk),{'name':'ВК','unsubscribe_label':'Новый текст','unsubscribe_enabled':False,
+                                                  'default_button_enabled':False,'default_button_label':'','default_button_url':''})
         detail=self.client.get('/reports/senler/api/campaigns/'+str(campaign)).get_json()
-        self.assertEqual(detail['subscription_buttons'][str(vk)],{'unsubscribe_enabled':1,'unsubscribe_label':'Отказаться от акций'})
+        self.assertEqual(detail['subscription_buttons'][str(vk)],{'unsubscribe_enabled':1,'unsubscribe_label':'Отказаться от акций',
+                                                                    'default_button_enabled':1,'default_button_label':'Меню бота'})
         self.assertEqual(detail['subscription_buttons'][str(tg)]['unsubscribe_enabled'],0)
-        self.tick();self.tick()
-        sent={entry[0]:entry[2]['buttons'] for entry in FakeAPI.sent}
-        self.assertEqual([b['label'] for b in sent['vk']],['Меню','Отказаться от акций'])
-        self.assertEqual(sent['vk'][-1]['value'],'unsubscribe')
-        self.assertEqual([b['label'] for b in sent['telegram']],['Меню'])
+        self.assertEqual(detail['subscription_buttons'][str(tg)]['default_button_enabled'],0)
+        # the queued message really carries the owner's own button, then the resolved default one, then unsubscribe
+        vk_sent=next(sent for sent in FakeAPI.sent if sent[0]=='vk')
+        self.assertEqual([b['value'] for b in vk_sent[2]['buttons']],
+                          ['https://example.com/menu','https://example.com/menu-vk','unsubscribe'])
+        tg_sent=next(sent for sent in FakeAPI.sent if sent[0]=='telegram')
+        self.assertEqual([b['value'] for b in tg_sent[2]['buttons']],['https://example.com/menu'])
+        self.assertEqual([b['label'] for b in vk_sent[2]['buttons']],['Меню','Меню бота','Отказаться от акций'])
 
     def test_group_delete_removes_members_but_is_blocked_while_a_bot_uses_it(self):
         channel=self.channel();s1=self.sub(channel,'1');s2=self.sub(channel,'2')
@@ -442,6 +448,27 @@ class SenlerTests(unittest.TestCase):
         with self.service.db() as conn:init_schema(conn)
         self.assertEqual(self.one('senler_channels')['unsubscribe_label'],'Не получать')
         self.assertEqual(self.one('senler_channels')['unsubscribe_enabled'],0)
+
+    def test_existing_channels_get_default_button_disabled_on_upgrade(self):
+        channel=self.channel('vk')
+        with self.service.db() as conn:
+            conn.execute('ALTER TABLE senler_channels DROP COLUMN default_button_enabled')
+            conn.execute('ALTER TABLE senler_channels DROP COLUMN default_button_label')
+            conn.execute('ALTER TABLE senler_channels DROP COLUMN default_button_url')
+            init_schema(conn)
+        saved=self.one('senler_channels')
+        self.assertEqual((saved['default_button_enabled'],saved['default_button_label'],saved['default_button_url']),(0,'',''))
+        self.post('channels/{}/edit'.format(channel),{'name':'ВК','default_button_enabled':True,'default_button_label':'Меню','default_button_url':'https://example.com/menu'})
+        self.assertEqual(self.one('senler_channels')['default_button_label'],'Меню')
+
+    def test_default_button_requires_label_and_full_url_only_when_enabled(self):
+        channel=self.channel('vk')
+        # disabled: an incomplete draft (no url yet) is fine to save
+        self.post('channels/{}/edit'.format(channel),{'name':'ВК','default_button_enabled':False,'default_button_label':'Меню','default_button_url':''})
+        # enabling it without a valid https link is rejected
+        self.post('channels/{}/edit'.format(channel),{'name':'ВК','default_button_enabled':True,'default_button_label':'Меню','default_button_url':'not-a-url'},400)
+        self.post('channels/{}/edit'.format(channel),{'name':'ВК','default_button_enabled':True,'default_button_label':'','default_button_url':'https://example.com'},400)
+        self.assertEqual(self.one('senler_channels')['default_button_enabled'],0)
 
     def test_import_2500_preview_preserves_optouts_and_duplicates(self):
         channel=self.channel('vk');self.sub(channel,'1','unsubscribed')

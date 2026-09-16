@@ -100,10 +100,13 @@ def register_senler(app, get_db, database_path, item_visible):
             item['subscription_buttons'] = {}
             for snapshot in conn.execute('''SELECT channel_id,body_json FROM senler_outbox WHERE id IN
                     (SELECT MIN(id) FROM senler_outbox WHERE campaign_id=? GROUP BY channel_id)''', (item['id'],)):
-                button = next((b for b in json.loads(snapshot['body_json']).get('buttons', [])
-                               if b.get('action') == 'callback' and b.get('value') == 'unsubscribe'), None)
+                snapshot_buttons = json.loads(snapshot['body_json']).get('buttons', [])
+                button = next((b for b in snapshot_buttons if b.get('action') == 'callback' and b.get('value') == 'unsubscribe'), None)
+                default_button = next((b for b in snapshot_buttons if b.get('default')), None)
                 item['subscription_buttons'][str(snapshot['channel_id'])] = {
-                    'unsubscribe_enabled': int(button is not None), 'unsubscribe_label': button['label'] if button else 'Отписаться'}
+                    'unsubscribe_enabled': int(button is not None), 'unsubscribe_label': button['label'] if button else 'Отписаться',
+                    'default_button_enabled': int(default_button is not None),
+                    'default_button_label': default_button['label'] if default_button else ''}
             item['deliveries'] = [dict(r) for r in conn.execute('''SELECT o.id,o.status,o.error,o.sent_at,s.name,s.external_user_id,c.name channel_name
                     FROM senler_outbox o JOIN senler_subscribers s ON s.id=o.subscriber_id JOIN senler_channels c ON c.id=o.channel_id
                     WHERE o.campaign_id=? ORDER BY CASE WHEN o.status IN ('error','unknown') THEN 0 ELSE 1 END,o.id DESC LIMIT 200''', (item['id'],))]
@@ -165,6 +168,7 @@ def register_senler(app, get_db, database_path, item_visible):
     def save_channel():
         data = body()
         unsubscribe_label, unsubscribe_enabled = subscription_button_settings(data)
+        default_button_enabled, default_button_label, default_button_url = default_button_settings(data)
         kind, name, token = data.get('kind'), str(data.get('name', '')).strip(), str(data.get('token', '')).strip()
         if kind not in KINDS or not name or len(name) > 100:
             raise ValueError('Выберите мессенджер и введите название до 100 символов.')
@@ -188,8 +192,10 @@ def register_senler(app, get_db, database_path, item_visible):
             item_id = conn.execute('''INSERT INTO senler_channels(owner_id,kind,name,external_id,token,webhook_secret,created_at)
                          VALUES (?,?,?,?,?,?,?)''', (session['user_id'], kind, name, external_id, encrypted, secrets.token_urlsafe(32), now())).lastrowid
             conn.execute('''UPDATE senler_channels SET unsubscribe_label=?,unsubscribe_enabled=?,
-                         greeting_text=?,greeting_trigger=?,stop_text=? WHERE id=?''',
-                         (unsubscribe_label, unsubscribe_enabled, greeting_text, greeting_trigger, stop_text, item_id))
+                         greeting_text=?,greeting_trigger=?,stop_text=?,
+                         default_button_enabled=?,default_button_label=?,default_button_url=? WHERE id=?''',
+                         (unsubscribe_label, unsubscribe_enabled, greeting_text, greeting_trigger, stop_text,
+                          default_button_enabled, default_button_label, default_button_url, item_id))
             seed_default_menus(conn, item_id)
             service.audit(conn, 'channel_created', 'Канал №{}'.format(item_id), session['user_id'])
         return jsonify(id=item_id)
@@ -203,6 +209,28 @@ def register_senler(app, get_db, database_path, item_visible):
         if not isinstance(enabled, bool):
             raise ValueError('Укажите, показывать ли кнопку отписки.')
         return label.strip(), enabled
+
+    def default_button_settings(data, channel=None):
+        # Shown at the bottom of every campaign from this channel, right above Unsubscribe —
+        # e.g. a permanent "Menu" link back to the channel's own subscribe_url/bot chat.
+        defaults = channel or {'default_button_enabled': False, 'default_button_label': '', 'default_button_url': ''}
+        enabled = data.get('default_button_enabled', bool(defaults['default_button_enabled']))
+        label = data.get('default_button_label', defaults['default_button_label'])
+        url = data.get('default_button_url', defaults['default_button_url'])
+        if not isinstance(enabled, bool):
+            raise ValueError('Укажите, показывать ли кнопку по умолчанию.')
+        if not isinstance(label, str) or len(label) > 40:
+            raise ValueError('Текст кнопки по умолчанию: до 40 символов.')
+        if not isinstance(url, str) or len(url) > 2048:
+            raise ValueError('Слишком длинная ссылка в кнопке по умолчанию.')
+        label, url = label.strip(), url.strip()
+        if enabled:
+            if not label:
+                raise ValueError('Введите текст кнопки по умолчанию.')
+            parsed = urlparse(url)
+            if parsed.scheme not in ('https', 'http') or not parsed.hostname or parsed.username or parsed.password:
+                raise ValueError('В кнопке по умолчанию нужна полная ссылка https://…')
+        return enabled, label, url
 
     def message_settings(data, channel=None, kind=None):
         # A brand-new channel has no row to default from yet: VK mixes bot traffic with regular
@@ -227,6 +255,7 @@ def register_senler(app, get_db, database_path, item_visible):
         if action == 'edit':
             data = body()
             unsubscribe_label, unsubscribe_enabled = subscription_button_settings(data, channel)
+            default_button_enabled, default_button_label, default_button_url = default_button_settings(data, channel)
             greeting_text, greeting_trigger, stop_text = message_settings(data, channel)
             name = str(data.get('name', '')).strip()
             if not name or len(name) > 100:
@@ -237,9 +266,11 @@ def register_senler(app, get_db, database_path, item_visible):
             encrypted = service.cipher().encrypt(token.encode()).decode() if token else channel['token']
             with service.db() as conn:
                 conn.execute('''UPDATE senler_channels SET name=?,token=?,status=?,checked_at=?,unsubscribe_label=?,unsubscribe_enabled=?,
-                             greeting_text=?,greeting_trigger=?,stop_text=? WHERE id=?''',
+                             greeting_text=?,greeting_trigger=?,stop_text=?,
+                             default_button_enabled=?,default_button_label=?,default_button_url=? WHERE id=?''',
                     (name, encrypted, 'configured' if token else channel['status'], None if token else channel['checked_at'],
-                     unsubscribe_label, unsubscribe_enabled, greeting_text, greeting_trigger, stop_text, item_id))
+                     unsubscribe_label, unsubscribe_enabled, greeting_text, greeting_trigger, stop_text,
+                     default_button_enabled, default_button_label, default_button_url, item_id))
             return jsonify(ok=True)
         if action == 'pause':
             with service.db() as conn:
@@ -572,6 +603,9 @@ def register_senler(app, get_db, database_path, item_visible):
                     if scheduled_at <= now():
                         raise ValueError('Время отправки уже прошло. Выберите будущее время.')
                 message = json.loads(campaign['body_json'])
+                # Both placeholders are resolved per-recipient's own channel settings inside
+                # queue() (a multi-channel campaign sends the same body to several channels).
+                message['buttons'].append({'label': '', 'action': 'callback', 'value': 'default-button'})
                 message['buttons'].append({'label': 'Отписаться', 'action': 'callback', 'value': 'unsubscribe'})
                 for sub in subscribers:
                     service.queue(conn, sub, message, 'campaign:{}:{}'.format(item_id, sub['id']), kind='campaign', campaign_id=item_id, due_at=scheduled_at)

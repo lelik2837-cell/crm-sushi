@@ -143,6 +143,10 @@ def init_schema(conn):
     if 'stop_text' not in columns:
         conn.execute("ALTER TABLE senler_channels ADD COLUMN stop_text TEXT NOT NULL DEFAULT '{}'".format(
             DEFAULT_STOP_TEXT.replace("'", "''")))
+    if 'default_button_enabled' not in columns:
+        conn.execute('ALTER TABLE senler_channels ADD COLUMN default_button_enabled INTEGER NOT NULL DEFAULT 0')
+        conn.execute("ALTER TABLE senler_channels ADD COLUMN default_button_label TEXT NOT NULL DEFAULT ''")
+        conn.execute("ALTER TABLE senler_channels ADD COLUMN default_button_url TEXT NOT NULL DEFAULT ''")
     bot_columns = {row[1] for row in conn.execute('PRAGMA table_info(senler_bots)')}
     if 'template_key' not in bot_columns:
         conn.execute("ALTER TABLE senler_bots ADD COLUMN template_key TEXT NOT NULL DEFAULT ''")
@@ -418,12 +422,20 @@ class SenlerService:
         first_name = (sub['name'].split() or ['друг'])[0][:40]
         text = body['text'].replace('{имя}', first_name).replace('{name}', first_name)
         rendered = dict(body, text=text)
-        channel = conn.execute('SELECT unsubscribe_label,unsubscribe_enabled FROM senler_channels WHERE id=?', (sub['channel_id'],)).fetchone()
+        channel = conn.execute('''SELECT unsubscribe_label,unsubscribe_enabled,
+                                default_button_enabled,default_button_label,default_button_url
+                                FROM senler_channels WHERE id=?''', (sub['channel_id'],)).fetchone()
         rendered['buttons'] = []
         for button in body.get('buttons', []):
             if button.get('action') == 'callback' and button.get('value') == 'unsubscribe':
                 if channel['unsubscribe_enabled']:
                     rendered['buttons'].append(dict(button, label=channel['unsubscribe_label']))
+            elif button.get('action') == 'callback' and button.get('value') == 'default-button':
+                if channel['default_button_enabled']:
+                    # 'default': True survives into the rendered/queued body so a campaign's
+                    # detail page can later tell this button apart from one the owner added by
+                    # hand, even though its action/value no longer look like the placeholder.
+                    rendered['buttons'].append({'label': channel['default_button_label'], 'action': 'url', 'value': channel['default_button_url'], 'default': True})
             else:
                 rendered['buttons'].append(dict(button))
         created = now()

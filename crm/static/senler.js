@@ -287,6 +287,11 @@
         <div class="sn-panel mt-3"><h3>Кнопка отписки</h3>${inputField('Текст кнопки','ch-unsubscribe-label',channel?.unsubscribe_label || 'Отписаться','required maxlength="40"','До 40 символов. Нажатие отменяет подписку на рассылку.')}
         <label class="sn-check-row"><input id="ch-unsubscribe-enabled" type="checkbox" ${channel?.unsubscribe_enabled === 0 ? '' : 'checked'}><span>Показывать кнопку отписки</span></label>
         <div class="sn-help">Настройка действует для новых рассылок и сообщений бота. Сообщения, уже поставленные в очередь, сохраняют прежние настройки. Команды «Стоп» и /stop работают и без кнопки.</div></div>
+        <div class="sn-panel mt-3"><h3>Кнопка по умолчанию в рассылках</h3>
+        <label class="sn-check-row"><input id="ch-default-button-enabled" type="checkbox" ${channel?.default_button_enabled ? 'checked' : ''}><span>Добавлять кнопку в каждую рассылку этого канала</span></label>
+        ${inputField('Текст кнопки','ch-default-button-label',channel?.default_button_label || '','maxlength="40" placeholder="Например, Меню"')}
+        ${inputField('Ссылка','ch-default-button-url',channel?.default_button_url || '',`placeholder="${esc(channel?.subscribe_url || 'https://…')}"`)}
+        <div class="sn-help">Появляется внизу каждой рассылки этого канала, над кнопкой отписки — без ручного добавления в каждый раз. Например, «Ссылка для подписки» со страницы «Каналы» открывает чат с ботом и запускает сценарий «После подписки».</div></div>
         <div class="sn-panel mt-3"><h3>Приветствие новым подписчикам</h3>
         <div class="sn-field"><label for="ch-greeting-text">Текст приветствия</label><textarea class="form-control" id="ch-greeting-text" rows="3" maxlength="3500" required>${esc(channel?.greeting_text || DEFAULT_GREETING_TEXT)}</textarea></div>
         <div class="sn-field"><label for="ch-greeting-trigger">Когда отправлять</label><select class="form-select" id="ch-greeting-trigger">
@@ -310,6 +315,7 @@
       event.preventDefault(); const button = event.submitter; button.disabled = true;
       try {
         const data = {name:document.getElementById('ch-name').value,token:document.getElementById('ch-token').value,unsubscribe_label:document.getElementById('ch-unsubscribe-label').value,unsubscribe_enabled:document.getElementById('ch-unsubscribe-enabled').checked,
+          default_button_enabled:document.getElementById('ch-default-button-enabled').checked,default_button_label:document.getElementById('ch-default-button-label').value,default_button_url:document.getElementById('ch-default-button-url').value,
           greeting_text:document.getElementById('ch-greeting-text').value,greeting_trigger:document.getElementById('ch-greeting-trigger').value,stop_text:document.getElementById('ch-stop-text').value};
         if (channel) await api(`channels/${channel.id}/edit`,data);
         else {
@@ -386,7 +392,8 @@
     const name=channel?.name||'Ваше сообщество';
     const settings=savedSettings||channel;
     const unsubscribe=settings?.unsubscribe_enabled!==0;
-    return `<aside class="sn-preview"><div class="sn-preview-title">Как увидит подписчик</div><div class="sn-chat-top"><i class="bi bi-chat-dots me-2"></i>${esc(name)}</div><div class="sn-bubble">${body.asset_id?`<img alt="Картинка сообщения" src="${apiBase}assets/${Number(body.asset_id)}">`:''}<span>${formatPreview((body.text||'Текст вашего сообщения появится здесь…').replaceAll('{имя}','Алексей').replaceAll('{name}','Алексей'))}</span></div>${(body.buttons||[]).map(b=>`<div class="sn-preview-button${b.color&&b.color!=='secondary'?' '+b.color:''}">${esc(b.label||'Подпись кнопки')}</div>`).join('')}${unsubscribe?`<div class="sn-preview-button">${esc(settings?.unsubscribe_label||'Отписаться')}</div>`:''}<div class="sn-preview-time">Пример сообщения</div></aside>`;
+    const defaultButton=settings?.default_button_enabled;
+    return `<aside class="sn-preview"><div class="sn-preview-title">Как увидит подписчик</div><div class="sn-chat-top"><i class="bi bi-chat-dots me-2"></i>${esc(name)}</div><div class="sn-bubble">${body.asset_id?`<img alt="Картинка сообщения" src="${apiBase}assets/${Number(body.asset_id)}">`:''}<span>${formatPreview((body.text||'Текст вашего сообщения появится здесь…').replaceAll('{имя}','Алексей').replaceAll('{name}','Алексей'))}</span></div>${(body.buttons||[]).map(b=>`<div class="sn-preview-button${b.color&&b.color!=='secondary'?' '+b.color:''}">${esc(b.label||'Подпись кнопки')}</div>`).join('')}${defaultButton?`<div class="sn-preview-button">${esc(settings?.default_button_label||'Меню')}</div>`:''}${unsubscribe?`<div class="sn-preview-button">${esc(settings?.unsubscribe_label||'Отписаться')}</div>`:''}<div class="sn-preview-time">Пример сообщения</div></aside>`;
   }
   function messageFields(body, scope='campaign', nodes=[]) {
     const vkBot = scope !== 'campaign' && state.boot.channels.find(c => c.id === state.bot?.channel_id)?.kind === 'vk';
