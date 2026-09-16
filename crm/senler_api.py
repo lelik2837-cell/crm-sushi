@@ -44,12 +44,13 @@ def max_ca_bundle():
 
 
 class DeliveryError(Exception):
-    def __init__(self, message, retry_after=0, uncertain=False, blocked=False, network_code=''):
+    def __init__(self, message, retry_after=0, uncertain=False, blocked=False, network_code='', api_code=0):
         super().__init__(message)
         self.retry_after = retry_after
         self.uncertain = uncertain
         self.blocked = blocked
         self.network_code = network_code
+        self.api_code = api_code
 
 
 def network_error_code(error):
@@ -125,17 +126,23 @@ class BotAPI:
     VK_VERSION = '5.199'
     MAX_BASE = 'https://platform-api2.max.ru'
 
-    def __init__(self, channel, token):
+    def __init__(self, channel, token, requester=None):
         self.channel = dict(channel)
         self.kind = channel['kind']
         self.token = token
+        self.requester = requester
 
     def _request(self, method, url, sending=False, timeout=(5, 15), **kwargs):
         # Never interpolate request exceptions: Telegram URLs contain the credential.
         try:
-            response = requests.request(method, url, timeout=timeout, **kwargs)
+            response = (self.requester or requests.request)(method, url, timeout=timeout, **kwargs)
         except requests.exceptions.RequestException as exc:
             code = network_error_code(exc)
+            if self.kind == 'telegram' and isinstance(exc, requests.exceptions.ConnectTimeout):
+                # ConnectTimeout means the request has not reached Telegram.
+                # Other connection errors/read timeouts can be ambiguous.
+                raise DeliveryError('Не удалось установить соединение с Telegram. Запрос будет повторён.',
+                                    retry_after=2, network_code=code) from None
             if isinstance(exc, requests.exceptions.SSLError):
                 raise DeliveryError('Не удалось проверить сертификат сервера. Проверьте доверенные сертификаты на сервере CRM.',
                                     network_code=code) from None
@@ -165,6 +172,9 @@ class BotAPI:
             raise DeliveryError('Лимит сервиса: отправка продолжится автоматически.', retry_after=delay)
         if response.status_code >= 500:
             raise DeliveryError('Временная ошибка сервиса.', uncertain=sending, retry_after=30 if not sending else 0)
+        if self.kind == 'telegram' and code == 409:
+            raise DeliveryError('Приём Telegram занят другим подключением. Повторяем подключение.',
+                                retry_after=5, api_code=409)
         if data.get('code') == 'attachment.not.ready':
             raise DeliveryError('Картинка обрабатывается мессенджером.', retry_after=10)
         if not response.ok or error or data.get('ok') is False or data.get('success') is False or data.get('code'):
@@ -209,7 +219,7 @@ class BotAPI:
             code = 'TG-{}-{}-{}'.format(operation, route, exc.network_code)
             raise DeliveryError('{} Этап: {}. Код диагностики: {}.'.format(exc, stage, code),
                                 retry_after=exc.retry_after, uncertain=exc.uncertain,
-                                blocked=exc.blocked, network_code=exc.network_code) from None
+                                blocked=exc.blocked, network_code=exc.network_code, api_code=exc.api_code) from None
 
     def max(self, method, path, params=None, payload=None, sending=False):
         return self._request(method, self.MAX_BASE + path, params=params,
@@ -381,7 +391,8 @@ class BotAPI:
         if not event.get('callback_id'):
             return
         if self.kind == 'telegram':
-            self.telegram('answerCallbackQuery', {'callback_query_id': event['callback_id']})
+            self.telegram('answerCallbackQuery', {'callback_query_id': event['callback_id']},
+                          timeout=(5, 3), retry=False)
         elif self.kind == 'max':
             self.max('POST', '/answers', params={'callback_id': event['callback_id']}, payload={'notification': 'Готово'})
         else:

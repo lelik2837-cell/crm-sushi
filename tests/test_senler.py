@@ -21,7 +21,7 @@ class FakeAPI:
     failure = None
     conversations = {}
 
-    def __init__(self, channel, token):
+    def __init__(self, channel, token, requester=None):
         self.channel = dict(channel)
 
     def identity(self):

@@ -6,7 +6,9 @@ from pathlib import Path
 import tempfile
 import threading
 
-from senler_api import DeliveryError, parse_event, telegram_uses_polling
+import requests
+
+from senler_api import DeliveryError, TRANSIENT_NETWORK_ERRORS, parse_event, telegram_uses_polling
 from senler_core import dumps, now
 
 log = logging.getLogger(__name__)
@@ -98,7 +100,14 @@ class TelegramPoller:
                 fcntl.flock(lock, fcntl.LOCK_UN)
 
     def _receive(self, channel_id):
+        # One pool per receiver thread: reuse the TCP/TLS tunnel between polls.
+        # Sending and callbacks use separate connections, never a busy long poll.
+        with requests.Session() as session:
+            self._receive_session(channel_id, session.request)
+
+    def _receive_session(self, channel_id, requester):
         prepared_token = None
+        network_failures = 0
         while not self.stopped.is_set() and telegram_uses_polling():
             channel = self.channel(channel_id)
             if not channel:
@@ -109,16 +118,26 @@ class TelegramPoller:
                 self.stopped.wait(min(5, state['retry_at'] - now()))
                 continue
             try:
-                api = self.service.api(channel)
+                api = self.service.api(channel, requester=requester)
                 if prepared_token != channel['token']:
                     api.start_polling()
                     prepared_token = channel['token']
                 updates = api.get_updates(state['next_offset'] if state else 0)
                 if not self.save_updates(channel, updates):
                     return
+                network_failures = 0
             except DeliveryError as exc:
-                prepared_token = None
-                self.record_error(channel_id, str(exc), max(5, exc.retry_after or 30))
+                # A dropped getUpdates connection does not reinstall a webhook.
+                # Repeating deleteWebhook here added another slow VPN round trip.
+                if exc.api_code == 409:
+                    prepared_token = None
+                if exc.network_code in TRANSIENT_NETWORK_ERRORS or exc.network_code in ('DNS', 'CONNECTION_REFUSED'):
+                    network_failures += 1
+                    delay = min(10, 2 ** min(network_failures - 1, 4))
+                else:
+                    # Keep Telegram's explicit Retry-After (especially HTTP 429).
+                    delay = max(1, exc.retry_after or 30)
+                self.record_error(channel_id, str(exc), delay)
             except ValueError:
                 prepared_token = None
                 self.record_error(channel_id, 'Не удалось прочитать ключ бота Telegram. Проверьте настройки канала.', 60)
@@ -126,4 +145,3 @@ class TelegramPoller:
                 # A failed DB commit leaves the cursor unchanged. Retry the same
                 # batch; never confirm data that did not reach durable storage.
                 self.record_error(channel_id, 'Не удалось сохранить сообщения Telegram. Приём будет повторён.', 30)
-

@@ -172,7 +172,8 @@ class TelegramNetworkTests(unittest.TestCase):
                          ['getMe', 'setWebhook', 'sendMessage', 'sendPhoto', 'answerCallbackQuery'])
         for call in calls:
             self.assertEqual(call.kwargs['proxies']['https'], 'socks5h://xray:1080')
-            self.assertEqual(call.kwargs['timeout'], (5, 30) if call.args[1].endswith(('/getMe', '/setWebhook')) else (5, 15))
+            expected = (5, 3) if call.args[1].endswith('/answerCallbackQuery') else (5, 30) if call.args[1].endswith(('/getMe', '/setWebhook')) else (5, 15)
+            self.assertEqual(call.kwargs['timeout'], expected)
             self.assertIsNot(call.kwargs.get('verify'), False)
         self.assertFalse(calls[1].kwargs['json']['drop_pending_updates'])
         self.assertIn('photo', calls[3].kwargs['files'])
@@ -202,6 +203,28 @@ class TelegramNetworkTests(unittest.TestCase):
                     self.assertEqual(error.exception.uncertain, sending)
                     self.assertEqual(error.exception.retry_after, 0 if sending else 30)
                     self.assertEqual(request.call_count, 1 if sending or exception is requests.exceptions.ProxyError else 2)
+
+    def test_connect_timeout_is_safe_to_retry_but_read_timeout_is_not(self):
+        api = BotAPI({'kind': 'telegram'}, 'private-token')
+        for failure, uncertain, delay in [(requests.ConnectTimeout(), False, 2),
+                                          (requests.ReadTimeout(), True, 0),
+                                          (requests.ConnectionError(), True, 0)]:
+            with self.subTest(failure=type(failure).__name__), \
+                    patch('senler_api.requests.request', side_effect=failure) as call:
+                with self.assertRaises(DeliveryError) as error:
+                    api.send('42', {'text': 'test'}, 1)
+                self.assertEqual(error.exception.uncertain, uncertain)
+                self.assertEqual(error.exception.retry_after, delay)
+                call.assert_called_once()
+
+    def test_polling_conflict_is_identifiable_without_provider_error_text(self):
+        response = Mock(ok=False, status_code=409, headers={})
+        response.json.return_value = {'ok': False, 'error_code': 409, 'description': 'private-token'}
+        with patch('senler_api.requests.request', return_value=response):
+            with self.assertRaises(DeliveryError) as error:
+                BotAPI({'kind': 'telegram'}, 'private-token').get_updates(0)
+        self.assertEqual(error.exception.api_code, 409)
+        self.assertNotIn('private-token', str(error.exception))
 
     def test_server_diagnostic_uses_fake_token_and_sanitized_output(self):
         response = Mock(status_code=404)

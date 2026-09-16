@@ -37,7 +37,7 @@ class TelegramPollingTests(unittest.TestCase):
                 (owner_id,kind,name,external_id,token,webhook_secret,status,created_at)
                 VALUES (1,'telegram','Test','7',?,'test-secret','connected',?)''', (token, now())).lastrowid
         self.api = Mock()
-        self.service.api_factory = lambda *_: self.api
+        self.service.api_factory = lambda *_, **__: self.api
         self.poller = TelegramPoller(self.service)
         self.client = self.app.test_client()
         with self.client.session_transaction() as session:
@@ -211,6 +211,87 @@ class TelegramPollingTests(unittest.TestCase):
         self.assertEqual(data['receive_mode'], 'polling')
         self.assertEqual(data['telegram_poll_error'], 'Telegram временно недоступен.')
         self.assertNotIn('token', data)
+
+    def test_transient_poll_failure_retries_quickly_without_resetting_webhook_or_cursor(self):
+        clock, delays, offsets = [1000], [], []
+        def updates(offset):
+            offsets.append(offset)
+            if len(offsets) == 1:
+                raise DeliveryError('Temporary outage', network_code='READ_TIMEOUT', retry_after=30)
+            if len(offsets) == 2:
+                return [self.message(10)]
+            self.poller.stopped.set()
+            return []
+        def wait(delay):
+            delays.append(delay)
+            clock[0] += delay
+        self.api.get_updates.side_effect = updates
+        with patch('senler_telegram.now', side_effect=lambda: clock[0]), \
+                patch.object(self.poller.stopped, 'wait', side_effect=wait):
+            self.poller.run(self.channel_id)
+        self.assertEqual(delays, [1])
+        self.assertEqual(offsets, [0, 0, 11])
+        self.api.start_polling.assert_called_once()
+        self.assertEqual(self.row('senler_telegram_polling')['last_error'], '')
+
+    def test_real_polling_conflict_repeats_setup_without_dropping_pending_updates(self):
+        clock = [1000]
+        def updates(offset):
+            if self.api.get_updates.call_count == 1:
+                raise DeliveryError('Conflict', api_code=409, retry_after=5)
+            self.poller.stopped.set()
+            return [self.message(20)]
+        self.api.get_updates.side_effect = updates
+        with patch('senler_telegram.now', side_effect=lambda: clock[0]), \
+                patch.object(self.poller.stopped, 'wait', side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)):
+            self.poller.run(self.channel_id)
+        self.assertEqual(self.api.start_polling.call_count, 2)
+        self.assertEqual(self.row('senler_telegram_polling')['next_offset'], 21)
+
+    def test_polling_reuses_one_connection_pool_and_sending_uses_another(self):
+        factory = Mock(return_value=self.api)
+        self.service.api_factory = factory
+        channel = self.poller.channel(self.channel_id)
+        self.service.api(channel, reuse_connection=True)
+        sending_session = factory.call_args.kwargs['requester'].__self__
+        factory.reset_mock()
+        self.receive([[self.message(1)], [self.message(2)]])
+        sessions = [call.kwargs['requester'].__self__ for call in factory.call_args_list]
+        self.assertGreater(len(sessions), 1)
+        self.assertTrue(all(session is sessions[0] for session in sessions))
+        self.assertIsNot(sessions[0], sending_session)
+        self.service.api(channel, reuse_connection=True)
+        self.assertIs(factory.call_args.kwargs['requester'].__self__, sending_session)
+
+    def test_slow_vk_read_check_is_not_in_the_response_delivery_path(self):
+        self.receive([[self.message(1)]])
+        self.service.api_factory = FakeAPI
+        FakeAPI.sent, FakeAPI.failure, FakeAPI.conversations = [], None, {}
+        with patch.object(self.service, '_poll_reads', side_effect=AssertionError('Would block replies')) as reads, \
+                patch('senler_core.time.sleep'):
+            self.service.tick(seconds=0.2)
+        reads.assert_not_called()
+        self.assertEqual(len(FakeAPI.sent), 1)
+        self.assertEqual(self.row('senler_outbox')['status'], 'sent')
+
+    def test_unestablished_connection_retries_first_greeting_without_second_start(self):
+        self.receive([[self.message(1)]])
+        self.service.api_factory = FakeAPI
+        FakeAPI.sent, FakeAPI.conversations = [], {}
+        FakeAPI.failure = DeliveryError('Connection not established', retry_after=2)
+        self.addCleanup(setattr, FakeAPI, 'failure', None)
+        with patch('senler_core.time.sleep'):
+            self.service.tick(seconds=0.2)
+        first = self.row('senler_outbox')
+        self.assertEqual((first['status'], first['attempts']), ('pending', 1))
+        self.assertLessEqual(first['due_at'] - now(), 2)
+        with self.service.db() as conn:
+            conn.execute('UPDATE senler_outbox SET due_at=0')
+        FakeAPI.failure = None
+        with patch('senler_core.time.sleep'):
+            self.service.tick(seconds=0.2)
+        self.assertEqual((self.row('senler_outbox')['status'], self.row('senler_outbox')['attempts']), ('sent', 2))
+        self.assertEqual(len(FakeAPI.sent), 1)
 
     def test_poller_handles_start_subscribe_and_stop_through_existing_queue(self):
         self.receive([[self.message(1)]])

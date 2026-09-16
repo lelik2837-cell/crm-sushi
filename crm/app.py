@@ -20450,8 +20450,12 @@ try:
                         'interval', minutes=1)
     _scheduler.add_job(lambda: _run_once_across_workers('sched_dialog_image_cleanup', _scheduled_dialog_image_cleanup),
                         'cron', hour=3, minute=30)
+    # A second invocation can quickly skip the held flock while a network call
+    # is in flight; the actual queue still runs once across all workers.
     _scheduler.add_job(lambda: _run_once_across_workers('sched_senler_' + hashlib.sha256(DATABASE.encode()).hexdigest()[:12], senler_service.tick, quiet=True),
-                        'interval', seconds=5, max_instances=1, coalesce=True)
+                        'interval', seconds=1, max_instances=2, coalesce=True)
+    _scheduler.add_job(lambda: _run_once_across_workers('sched_senler_reads_' + hashlib.sha256(DATABASE.encode()).hexdigest()[:12], senler_service._poll_reads, quiet=True),
+                        'interval', seconds=60, max_instances=1, coalesce=True)
     _scheduler.add_job(_senler_telegram.refresh, 'interval', seconds=5,
                         max_instances=1, coalesce=True, next_run_time=datetime.now())
     _scheduler.start()

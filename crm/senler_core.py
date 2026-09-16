@@ -7,11 +7,13 @@ import os
 import re
 import secrets
 import time
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlparse
 
 from cryptography.fernet import Fernet, InvalidToken
+import requests
 
 from senler_api import BotAPI, DeliveryError
 
@@ -285,6 +287,7 @@ def parse_import(raw):
 class SenlerService:
     def __init__(self, get_db, database_path, api_factory=BotAPI):
         self.get_db, self.database_path, self.api_factory = get_db, database_path, api_factory
+        self._telegram_sessions = threading.local()
 
     @contextmanager
     def db(self):
@@ -315,11 +318,18 @@ class SenlerService:
         except (ValueError, TypeError):
             raise ValueError('Ключ шифрования каналов повреждён.')
 
-    def api(self, channel):
+    def api(self, channel, requester=None, reuse_connection=False):
         try:
             token = self.cipher().decrypt(channel['token'].encode()).decode()
         except InvalidToken:
             raise ValueError('Не удалось прочитать ключ канала. Проверьте ключ шифрования CRM.')
+        if requester is None and reuse_connection and channel['kind'] == 'telegram':
+            # Pool per sending thread, independent of the long-poll connection.
+            if not hasattr(self._telegram_sessions, 'session'):
+                self._telegram_sessions.session = requests.Session()
+            requester = self._telegram_sessions.session.request
+        if requester is not None:
+            return self.api_factory(channel, token, requester=requester)
         return self.api_factory(channel, token)
 
     def audit(self, conn, action, detail, user_id=None):
@@ -506,7 +516,7 @@ class SenlerService:
                     asset['remote_payload'] = json.loads(cached['payload_json'])
         state, external_id, error, delay, blocked = 'sent', '', '', 0, False
         try:
-            api = self.api(channel)
+            api = self.api(channel, reuse_connection=True)
             if asset and channel['kind'] in ('vk', 'max') and 'remote_payload' not in asset:
                 asset['remote_payload'] = api.upload_asset(asset, sub['external_user_id'])
                 with self.db() as conn:
@@ -606,7 +616,7 @@ class SenlerService:
                 channel = conn.execute('SELECT * FROM senler_channels WHERE id=?', (event['channel_id'],)).fetchone()
             if json.loads(event['body_json']).get('callback_id'):
                 try:
-                    self.api(channel).acknowledge(json.loads(event['body_json']))
+                    self.api(channel, reuse_connection=True).acknowledge(json.loads(event['body_json']))
                 except (DeliveryError, ValueError):
                     pass
         while time.monotonic() < deadline:
@@ -642,7 +652,3 @@ class SenlerService:
                 AND NOT EXISTS(SELECT 1 FROM senler_outbox o WHERE o.campaign_id=senler_campaigns.id AND o.status IN ('pending','sending'))""", (now(),))
             conn.execute('DELETE FROM senler_imports WHERE created_at<?', (now() - 86400,))
             conn.execute('DELETE FROM senler_events WHERE processed_at IS NOT NULL AND created_at<?', (now() - 30 * 86400,))
-        try:
-            self._poll_reads()
-        except (DeliveryError, ValueError, KeyError, TypeError, AttributeError):
-            pass
