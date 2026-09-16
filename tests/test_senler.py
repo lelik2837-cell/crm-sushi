@@ -116,6 +116,86 @@ class SenlerTests(unittest.TestCase):
     def campaign(self, channels, groups=None):
         return self.post('campaigns', {'name':'Выходные','body':{'text':'Привет, {имя}!','buttons':[]},'audience':{'channels':channels,'groups':groups or []}})['id']
 
+    def test_delivery_menu_is_seeded_as_editable_draft_for_each_channel(self):
+        for kind in ('telegram', 'vk', 'max'):
+            channel = self.channel(kind)
+            items = self.client.get('/reports/senler/api/bots?channel=' + str(channel)).get_json()['items']
+            self.assertEqual(len(items), 1)
+            bot = items[0]
+            self.assertEqual((bot['name'], bot['template_key'], bot['status'], bot['version']),
+                             ('Меню доставки', 'delivery_menu', 'draft', 0))
+            nodes = {n['id']: n for n in bot['definition']['nodes']}
+            self.assertEqual([b['value'] for b in nodes['menu']['buttons']],
+                             ['order', 'promotions', 'bonuses', 'operator', 'contacts'])
+            self.assertTrue(all(n['type'] == 'message' for n in nodes.values()))
+            self.assertIn('https://papasushi.ru/novokuznetsk', nodes['order']['text'])
+            self.assertIn('https://apps.apple.com/ru/app/id1510725657', nodes['order']['text'])
+            self.assertIn('https://play.google.com/store/apps/details?id=ru.dvfx.papasushi', nodes['order']['text'])
+            self.assertIn('https://t.me/papa_sushi', nodes['operator']['text'])
+            self.assertIn('https://papasushi.ru/novokuznetsk/bonus_card', nodes['bonuses']['text'])
+            self.assertEqual([b['value'] for b in nodes['promotions']['buttons']], ['birthday', 'sale', 'menu'])
+            self.assertNotIn('отзыв', dumps(bot['definition']).casefold())
+            with self.service.db() as conn:
+                validate_definition(bot['definition'], conn, 1)
+        self.assertFalse(FakeAPI.sent)
+        self.assertIsNone(self.one('senler_outbox'))
+
+    def test_menu_migration_preserves_user_edits_and_published_versions(self):
+        channel = self.channel()
+        custom_id, _ = self.bot(channel)
+        custom_before = self.one('senler_bots', 'id=?', (custom_id,))
+        preset = self.one('senler_bots', 'channel_id=? AND template_key=?', (channel, 'delivery_menu'))
+        # Simulate upgrading a channel that predates the starter menu.
+        with self.service.db() as conn:
+            conn.execute('DELETE FROM senler_bots WHERE id=?', (preset['id'],))
+        with self.service.db() as conn:
+            init_schema(conn)
+        self.assertEqual(self.one('senler_bots', 'id=?', (custom_id,)), custom_before)
+        bot = next(b for b in self.client.get('/reports/senler/api/bots').get_json()['items']
+                   if b['template_key'] == 'delivery_menu')
+        bot['name'] = 'Наше меню'
+        bot['definition']['nodes'][0]['text'] = 'Наше приветствие'
+        self.post('bots', bot)
+        self.post('bots/{}/publish'.format(bot['id']))
+        bot['definition']['nodes'][0]['text'] = 'Новая версия только в черновике'
+        self.post('bots', bot)
+        self.post('bots/{}/pause'.format(bot['id']))
+        before = self.one('senler_bots', 'id=?', (bot['id'],))
+        for _ in range(2):
+            with self.service.db() as conn:
+                init_schema(conn)
+        self.assertEqual(self.one('senler_bots', 'id=?', (bot['id'],)), before)
+        with self.service.db() as conn:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM senler_bots WHERE channel_id=?', (channel,)).fetchone()[0], 2)
+
+    def test_menu_can_navigate_all_branches_and_return_without_handoff(self):
+        channel = self.channel()
+        sub_id = self.sub(channel)
+        bot = self.one('senler_bots', 'channel_id=? AND template_key=?', (channel, 'delivery_menu'))
+        self.post('bots/{}/publish'.format(bot['id']))
+        self.webhook(channel, self.message(123, '/start', 1))
+        self.tick()
+        run = self.one('senler_runs', 'subscriber_id=?', (sub_id,))
+        self.assertEqual((run['node_id'], run['status']), ('menu', 'waiting_reply'))
+        update_id = 1
+        for target in ('order', 'menu', 'bonuses', 'menu', 'operator', 'menu', 'contacts', 'menu',
+                       'promotions', 'birthday', 'promotions', 'sale', 'order', 'menu'):
+            current = FakeAPI.sent[-1][2]
+            callback = next(b['value'] for b in current['buttons']
+                            if b['value'].startswith('sb:') and b['value'].split(':')[2] == target)
+            update_id += 1
+            self.webhook(channel, self.callback(123, callback, update_id))
+            self.tick()
+            run = self.one('senler_runs', 'id=?', (run['id'],))
+            self.assertEqual((run['node_id'], run['status']), (target, 'waiting_reply'))
+            self.assertEqual(self.one('senler_subscribers', 'id=?', (sub_id,))['bot_paused'], 0)
+            self.assertNotIn('[[', FakeAPI.sent[-1][2]['text'])
+        # The default remains scoped to explicit start/subscription, not every incoming message.
+        sent = len(FakeAPI.sent)
+        self.webhook(channel, self.message(123, 'Вопрос о доставке', update_id + 1))
+        self.tick()
+        self.assertEqual(len(FakeAPI.sent), sent)
+
     def test_access_and_csrf(self):
         self.assertEqual(self.client.post('/reports/senler/api/groups', json={'name':'x'}).status_code,403)
         with self.client.session_transaction() as s:

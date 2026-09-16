@@ -15,7 +15,7 @@ from flask import Blueprint, Response, jsonify, redirect, render_template, reque
 
 from senler_api import DeliveryError, parse_event, telegram_uses_polling
 from senler_core import (DEFAULT_GREETING_TEXT, DEFAULT_STOP_TEXT, KINDS, SenlerService, dumps, init_schema, integer,
-                         now, parse_import, validate_body, validate_definition)
+                         now, parse_import, seed_default_menus, validate_body, validate_definition)
 
 
 def register_senler(app, get_db, database_path, item_visible):
@@ -190,6 +190,7 @@ def register_senler(app, get_db, database_path, item_visible):
             conn.execute('''UPDATE senler_channels SET unsubscribe_label=?,unsubscribe_enabled=?,
                          greeting_text=?,greeting_trigger=?,stop_text=? WHERE id=?''',
                          (unsubscribe_label, unsubscribe_enabled, greeting_text, greeting_trigger, stop_text, item_id))
+            seed_default_menus(conn, item_id)
             service.audit(conn, 'channel_created', 'Канал №{}'.format(item_id), session['user_id'])
         return jsonify(id=item_id)
 

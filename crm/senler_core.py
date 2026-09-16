@@ -16,6 +16,7 @@ from cryptography.fernet import Fernet, InvalidToken
 import requests
 
 from senler_api import BotAPI, DeliveryError
+from senler_templates import DELIVERY_MENU_KEY, delivery_menu_definition
 
 KINDS = {'vk': 'ВКонтакте', 'telegram': 'Telegram', 'max': 'MAX'}
 STOP_WORDS = {'/stop', 'стоп', 'отписаться', 'unsubscribe'}
@@ -141,6 +142,22 @@ def init_schema(conn):
     if 'stop_text' not in columns:
         conn.execute("ALTER TABLE senler_channels ADD COLUMN stop_text TEXT NOT NULL DEFAULT '{}'".format(
             DEFAULT_STOP_TEXT.replace("'", "''")))
+    bot_columns = {row[1] for row in conn.execute('PRAGMA table_info(senler_bots)')}
+    if 'template_key' not in bot_columns:
+        conn.execute("ALTER TABLE senler_bots ADD COLUMN template_key TEXT NOT NULL DEFAULT ''")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS senler_bot_template ON senler_bots(channel_id,template_key) WHERE template_key != ''")
+    seed_default_menus(conn)
+
+
+def seed_default_menus(conn, channel_id=None):
+    """Install once per channel; never replace drafts, published flows or settings."""
+    conn.execute('''INSERT INTO senler_bots
+        (owner_id,name,channel_id,trigger_type,priority,draft_json,updated_at,template_key)
+        SELECT c.owner_id,?,c.id,'subscribe',10,?,?,? FROM senler_channels c
+        WHERE NOT EXISTS (SELECT 1 FROM senler_bots b WHERE b.channel_id=c.id AND b.template_key=?)'''
+        + (' AND c.id=?' if channel_id is not None else ''),
+        ['Меню доставки', dumps(delivery_menu_definition()), now(), DELIVERY_MENU_KEY, DELIVERY_MENU_KEY]
+        + ([channel_id] if channel_id is not None else []))
 
 
 def integer(value, label='Значение', minimum=1, maximum=2147483647):
