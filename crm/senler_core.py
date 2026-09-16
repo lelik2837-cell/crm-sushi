@@ -16,7 +16,7 @@ from cryptography.fernet import Fernet, InvalidToken
 import requests
 
 from senler_api import BotAPI, DeliveryError
-from senler_templates import DELIVERY_MENU_KEY, delivery_menu_definition
+from senler_templates import DELIVERY_MENU_KEY, delivery_menu_definition, upgrade_delivery_order
 
 KINDS = {'vk': 'ВКонтакте', 'telegram': 'Telegram', 'max': 'MAX'}
 STOP_WORDS = {'/stop', 'стоп', 'отписаться', 'unsubscribe'}
@@ -150,7 +150,7 @@ def init_schema(conn):
 
 
 def seed_default_menus(conn, channel_id=None):
-    """Install once per channel; never replace drafts, published flows or settings."""
+    """Install once per channel and upgrade the untouched legacy order step."""
     conn.execute('''INSERT INTO senler_bots
         (owner_id,name,channel_id,trigger_type,priority,draft_json,updated_at,template_key)
         SELECT c.owner_id,?,c.id,'subscribe',10,?,?,? FROM senler_channels c
@@ -158,6 +158,19 @@ def seed_default_menus(conn, channel_id=None):
         + (' AND c.id=?' if channel_id is not None else ''),
         ['Меню доставки', dumps(delivery_menu_definition()), now(), DELIVERY_MENU_KEY, DELIVERY_MENU_KEY]
         + ([channel_id] if channel_id is not None else []))
+    rows = conn.execute('''SELECT id,draft_json,published_json FROM senler_bots
+        WHERE template_key=?''' + (' AND channel_id=?' if channel_id is not None else ''),
+        [DELIVERY_MENU_KEY] + ([channel_id] if channel_id is not None else [])).fetchall()
+    for row in rows:
+        draft = json.loads(row['draft_json'])
+        published = json.loads(row['published_json']) if row['published_json'] else None
+        draft_changed = upgrade_delivery_order(draft)
+        published_changed = upgrade_delivery_order(published) if published else False
+        if draft_changed or published_changed:
+            conn.execute('''UPDATE senler_bots SET draft_json=?,published_json=?,
+                version=version+?,updated_at=? WHERE id=?''',
+                (dumps(draft), dumps(published) if published else None,
+                 int(published_changed), now(), row['id']))
 
 
 def integer(value, label='Значение', minimum=1, maximum=2147483647):

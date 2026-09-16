@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'crm'))
 from flask import Flask, session
 from senler import register_senler
 from senler_core import SenlerService, dumps, init_schema, now, parse_import, validate_definition
+from senler_templates import LEGACY_ORDER_BUTTONS, LEGACY_ORDER_TEXT
 from senler_api import BotAPI, DeliveryError, parse_event
 
 
@@ -128,9 +129,12 @@ class SenlerTests(unittest.TestCase):
             self.assertEqual([b['value'] for b in nodes['menu']['buttons']],
                              ['order', 'promotions', 'bonuses', 'operator', 'contacts'])
             self.assertTrue(all(n['type'] == 'message' for n in nodes.values()))
-            self.assertIn('https://papasushi.ru/novokuznetsk', nodes['order']['text'])
-            self.assertIn('https://apps.apple.com/ru/app/id1510725657', nodes['order']['text'])
-            self.assertIn('https://play.google.com/store/apps/details?id=ru.dvfx.papasushi', nodes['order']['text'])
+            self.assertEqual([(b['label'], b['action'], b['value']) for b in nodes['order']['buttons']], [
+                ('📱 App Store', 'url', 'https://apps.apple.com/ru/app/id1510725657'),
+                ('📱 Google Play', 'url', 'https://play.google.com/store/apps/details?id=ru.dvfx.papasushi'),
+                ('🌐 Сайт', 'url', 'https://papasushi.ru/novokuznetsk'),
+                ('🏠 Главное меню', 'goto', 'menu'),
+            ])
             self.assertIn('https://t.me/papa_sushi', nodes['operator']['text'])
             self.assertIn('https://papasushi.ru/novokuznetsk/bonus_card', nodes['bonuses']['text'])
             self.assertEqual([b['value'] for b in nodes['promotions']['buttons']], ['birthday', 'sale', 'menu'])
@@ -168,6 +172,40 @@ class SenlerTests(unittest.TestCase):
         with self.service.db() as conn:
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM senler_bots WHERE channel_id=?', (channel,)).fetchone()[0], 2)
 
+    def test_existing_menu_gets_order_links_without_losing_custom_content(self):
+        channels = [self.channel(kind) for kind in ('telegram', 'vk', 'max')]
+        rows = [self.one('senler_bots', 'channel_id=? AND template_key=?', (channel, 'delivery_menu'))
+                for channel in channels]
+        for index, row in enumerate(rows):
+            definition = json.loads(row['draft_json'])
+            order = next(node for node in definition['nodes'] if node['id'] == 'order')
+            order['buttons'] = [dict(button) for button in LEGACY_ORDER_BUTTONS]
+            order['text'] = LEGACY_ORDER_TEXT if index == 0 else 'Мой текст заказа'
+            definition['nodes'][0]['text'] = 'Моё главное меню'
+            if index == 2:
+                order['buttons'].insert(0, {'label': 'Своя ссылка', 'action': 'url', 'value': 'https://example.com'})
+            with self.service.db() as conn:
+                conn.execute('''UPDATE senler_bots SET draft_json=?,published_json=?,status='active',version=1
+                    WHERE id=?''', (dumps(definition), dumps(definition), row['id']))
+        before_custom = self.one('senler_bots', 'id=?', (rows[2]['id'],))
+
+        for _ in range(2):
+            with self.service.db() as conn:
+                init_schema(conn)
+
+        for index, row in enumerate(rows[:2]):
+            updated = self.one('senler_bots', 'id=?', (row['id'],))
+            self.assertEqual(updated['version'], 2)
+            for column in ('draft_json', 'published_json'):
+                definition = json.loads(updated[column])
+                self.assertEqual(definition['nodes'][0]['text'], 'Моё главное меню')
+                order = next(node for node in definition['nodes'] if node['id'] == 'order')
+                self.assertEqual([b['label'] for b in order['buttons'][:3]],
+                                 ['📱 App Store', '📱 Google Play', '🌐 Сайт'])
+                self.assertEqual(order['text'], '🍣 Выберите, где удобнее сделать заказ:'
+                                 if index == 0 else 'Мой текст заказа')
+        self.assertEqual(self.one('senler_bots', 'id=?', (rows[2]['id'],)), before_custom)
+
     def test_menu_can_navigate_all_branches_and_return_without_handoff(self):
         channel = self.channel()
         sub_id = self.sub(channel)
@@ -190,6 +228,9 @@ class SenlerTests(unittest.TestCase):
             self.assertEqual((run['node_id'], run['status']), (target, 'waiting_reply'))
             self.assertEqual(self.one('senler_subscribers', 'id=?', (sub_id,))['bot_paused'], 0)
             self.assertNotIn('[[', FakeAPI.sent[-1][2]['text'])
+            if target == 'order':
+                self.assertEqual([b['action'] for b in FakeAPI.sent[-1][2]['buttons'][:3]],
+                                 ['url', 'url', 'url'])
         # The default remains scoped to explicit start/subscription, not every incoming message.
         sent = len(FakeAPI.sent)
         self.webhook(channel, self.message(123, 'Вопрос о доставке', update_id + 1))

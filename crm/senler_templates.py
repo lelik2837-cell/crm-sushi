@@ -2,11 +2,41 @@
 
 Website and operator supplied by the owner. App links, addresses and the birthday
 offer checked on papasushi.ru/novokuznetsk on 2026-09-17; these are editable copies,
-not a live feed. Future changes must never overwrite an installed scenario.
+not a live feed. Only unchanged legacy order steps are upgraded automatically.
 """
 
 
 DELIVERY_MENU_KEY = 'delivery_menu'
+ORDER_TEXT = '🍣 Выберите, где удобнее сделать заказ:'
+LEGACY_ORDER_TEXT = (
+    '🍣 Закажите на сайте или в приложении — выбирайте удобный способ:\n\n'
+    '🌐 Сайт: https://papasushi.ru/novokuznetsk\n\n'
+    '📱 Приложение для iPhone: https://apps.apple.com/ru/app/id1510725657\n\n'
+    '📱 Приложение для Android: https://play.google.com/store/apps/details?id=ru.dvfx.papasushi'
+)
+LEGACY_ORDER_BUTTONS = [{'label': '🏠 Главное меню', 'action': 'goto', 'value': 'menu'}]
+
+
+def order_buttons():
+    return [
+        {'label': '📱 App Store', 'action': 'url', 'value': 'https://apps.apple.com/ru/app/id1510725657'},
+        {'label': '📱 Google Play', 'action': 'url', 'value': 'https://play.google.com/store/apps/details?id=ru.dvfx.papasushi'},
+        {'label': '🌐 Сайт', 'action': 'url', 'value': 'https://papasushi.ru/novokuznetsk'},
+        {'label': '🏠 Главное меню', 'action': 'goto', 'value': 'menu'},
+    ]
+
+
+def upgrade_delivery_order(definition):
+    """Upgrade the old one-button order step without replacing other edits."""
+    for node in definition.get('nodes', []):
+        if node.get('id') == 'order' and node.get('type') == 'message':
+            if node.get('buttons') != LEGACY_ORDER_BUTTONS:
+                return False
+            node['buttons'] = order_buttons()
+            if node.get('text') == LEGACY_ORDER_TEXT:
+                node['text'] = ORDER_TEXT
+            return True
+    return False
 
 
 def delivery_menu_definition():
@@ -30,11 +60,7 @@ def delivery_menu_definition():
                     button('💬 Связаться с оператором', 'operator'),
                     button('📍 Адреса и контакты', 'contacts'),
                 ]),
-        message('order', 'Сделать заказ',
-                '🍣 Закажите на сайте или в приложении — выбирайте удобный способ:\n\n'
-                '🌐 Сайт: https://papasushi.ru/novokuznetsk\n\n'
-                '📱 Приложение для iPhone: https://apps.apple.com/ru/app/id1510725657\n\n'
-                '📱 Приложение для Android: https://play.google.com/store/apps/details?id=ru.dvfx.papasushi', [back()]),
+        message('order', 'Сделать заказ', ORDER_TEXT, order_buttons()),
         message('promotions', 'Актуальные акции',
                 '🔥 Актуальные акции\n\nВыберите предложение, чтобы узнать подробности и условия:',
                 [button('🎂 Скидка 15% в день рождения', 'birthday'),
