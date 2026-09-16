@@ -117,6 +117,34 @@ class TelegramNetworkTests(unittest.TestCase):
                 BotAPI({'kind': 'telegram'}, 'private-token').identity()
             request.assert_called_once()
 
+    def test_relay_base_bypasses_vpn_proxy_and_sends_secret_header(self):
+        response = Mock(ok=True, status_code=200, headers={})
+        response.json.return_value = {'ok': True, 'result': True}
+        env = {'SENLER_TELEGRAM_PROXY_URL': 'socks5h://xray:1080',
+               'SENLER_TELEGRAM_API_BASE': 'https://relay.example/',
+               'SENLER_TELEGRAM_RELAY_SECRET': 'private-relay-secret'}
+        with patch.dict(os.environ, env), patch('senler_api.requests.request', return_value=response) as request:
+            BotAPI({'kind': 'telegram'}, 'private-token').telegram('getMe')
+        self.assertEqual(request.call_args.args[1], 'https://relay.example/botprivate-token/getMe')
+        self.assertNotIn('proxies', request.call_args.kwargs)
+        self.assertEqual(request.call_args.kwargs['headers'], {'X-Relay-Secret': 'private-relay-secret'})
+
+    def test_relay_base_without_secret_sends_no_header_and_reports_relay_route(self):
+        with patch.dict(os.environ, {'SENLER_TELEGRAM_API_BASE': 'https://relay.example'}), \
+                patch('senler_api.requests.request', side_effect=requests.ReadTimeout()) as request:
+            with self.assertRaises(DeliveryError) as error:
+                BotAPI({'kind': 'telegram'}, 'private-token').telegram('getMe')
+        self.assertNotIn('headers', request.call_args.kwargs)
+        self.assertIn('TG-TOKEN-RELAY-READ_TIMEOUT', str(error.exception))
+
+    def test_invalid_relay_base_fails_before_network(self):
+        for value in ['http://relay.example', 'relay.example', 'https://relay.example?x=1', 'https://relay example']:
+            with self.subTest(value=value), patch.dict(os.environ, {'SENLER_TELEGRAM_API_BASE': value}), \
+                    patch('senler_api.requests.request') as request:
+                with self.assertRaises(DeliveryError):
+                    BotAPI({'kind': 'telegram'}, 'private-token').telegram('getMe')
+                request.assert_not_called()
+
     def test_supported_proxy_routes_and_explicit_direct_mode(self):
         for value, expected in [
             ('socks5://xray:1080', 'socks5h://xray:1080'),

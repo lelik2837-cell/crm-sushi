@@ -115,6 +115,23 @@ def telegram_request_options():
     return {'proxies': {'http': proxy, 'https': proxy}}
 
 
+DEFAULT_TELEGRAM_BASE = 'https://api.telegram.org'
+
+
+def telegram_api_base():
+    """An optional relay (e.g. a Cloudflare Worker) placed in front of api.telegram.org,
+    for networks where reaching Telegram directly is unreliable but reaching the relay is not.
+    Unlike SENLER_TELEGRAM_PROXY_URL (a transport-level tunnel), this changes which host the
+    request targets; the relay is expected to forward it to the real Telegram API unchanged."""
+    base = os.environ.get('SENLER_TELEGRAM_API_BASE', '').strip().rstrip('/')
+    if not base:
+        return DEFAULT_TELEGRAM_BASE
+    parsed = urlparse(base)
+    if parsed.scheme != 'https' or not parsed.hostname or parsed.query or parsed.fragment or any(char.isspace() for char in base):
+        raise DeliveryError('Некорректный адрес узла Telegram в настройках сервера CRM.')
+    return base
+
+
 def telegram_uses_polling():
     mode = os.environ.get('SENLER_TELEGRAM_RECEIVE_MODE', 'polling').strip().lower()
     if mode not in ('polling', 'webhook'):
@@ -192,7 +209,15 @@ class BotAPI:
 
     def telegram(self, method, payload=None, files=None, sending=False, timeout=None, retry=True):
         kwargs = {'data': payload, 'files': files} if files else {'json': payload or {}}
-        options = telegram_request_options()
+        base = telegram_api_base()
+        relayed = base != DEFAULT_TELEGRAM_BASE
+        # A relay is reached directly, on the assumption it is chosen precisely because it is
+        # reachable where api.telegram.org itself is not; the VPN tunnel is not layered under it.
+        options = {} if relayed else telegram_request_options()
+        if relayed:
+            secret = os.environ.get('SENLER_TELEGRAM_RELAY_SECRET', '').strip()
+            if secret:
+                options['headers'] = {'X-Relay-Secret': secret}
         # Only read-only checks retry here. connect() reconciles an uncertain
         # webhook registration before deciding whether to repeat that mutation.
         read_only = method in ('getMe', 'getWebhookInfo') and not sending and retry
@@ -200,7 +225,7 @@ class BotAPI:
         try:
             for attempt in range(2 if read_only else 1):
                 try:
-                    return self._request('POST', 'https://api.telegram.org/bot' + self.token + '/' + method,
+                    return self._request('POST', base + '/bot' + self.token + '/' + method,
                                          sending=sending, timeout=timeout, **options, **kwargs).get('result')
                 except DeliveryError as exc:
                     if not read_only or attempt or exc.network_code not in TRANSIENT_NETWORK_ERRORS:
@@ -215,7 +240,7 @@ class BotAPI:
                 'deleteWebhook': ('переключение на получение сообщений', 'POLL_SETUP'),
                 'getUpdates': ('получение сообщений', 'POLL'),
             }.get(method, ('запрос к Telegram', 'API'))
-            route = 'PROXY' if options.get('proxies') else 'DIRECT'
+            route = 'RELAY' if relayed else 'PROXY' if options.get('proxies') else 'DIRECT'
             code = 'TG-{}-{}-{}'.format(operation, route, exc.network_code)
             raise DeliveryError('{} Этап: {}. Код диагностики: {}.'.format(exc, stage, code),
                                 retry_after=exc.retry_after, uncertain=exc.uncertain,
