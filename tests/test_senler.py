@@ -577,6 +577,28 @@ class SenlerTests(unittest.TestCase):
         self.post('dialogs/{}/resume'.format(sub));self.tick()
         self.assertEqual(self.one('senler_runs')['status'],'completed')
 
+    def test_bot_errors_endpoint_lists_failed_runs_with_reason_and_step(self):
+        channel=self.channel();sub=self.sub(channel)
+        nodes=[{'id':'greet','type':'message','title':'Приветствие','text':'Привет!','buttons':[],'next':'menu'},
+               {'id':'menu','type':'message','text':'Меню тут','buttons':[]}]
+        bot_id,_=self.bot(channel,nodes)
+        FakeAPI.failure=DeliveryError('Ключ недействителен.')
+        self.webhook(channel,self.message(123,'/start',1));self.tick()
+        FakeAPI.failure=None
+        run=self.one('senler_runs')
+        self.assertEqual((run['status'],run['node_id']),('error','greet'))
+        items=self.client.get('/reports/senler/api/bots/{}/errors'.format(bot_id),
+                               headers={'X-CSRF-Token':'csrf-test'}).get_json()['items']
+        self.assertEqual(len(items),1)
+        self.assertEqual(items[0]['error'],'Ключ недействителен.')
+        self.assertEqual((items[0]['subscriber_id'],items[0]['subscriber_name']),(sub,'Алексей'))
+        self.assertEqual((items[0]['step_title'],items[0]['step_type']),('Приветствие','message'))
+        # Once the underlying run is no longer in 'error' (e.g. retried successfully), it drops off the list.
+        with self.service.db() as conn:conn.execute("UPDATE senler_runs SET status='running',due_at=?",(now()-1,))
+        self.tick()
+        self.assertEqual(self.client.get('/reports/senler/api/bots/{}/errors'.format(bot_id),
+                          headers={'X-CSRF-Token':'csrf-test'}).get_json()['items'],[])
+
     def test_draft_does_not_replace_published_definition(self):
         channel=self.channel();sub=self.sub(channel);bot_id,data=self.bot(channel)
         data['id']=bot_id;data['definition']['nodes'][0]['text']='Новый текст'
@@ -696,7 +718,7 @@ class SenlerTests(unittest.TestCase):
         self.assertEqual(bootstrap['channels'],[]);self.assertEqual(bootstrap['groups'],[]);self.assertEqual(bootstrap['recent'],[])
         self.assertEqual(self.client.get('/reports/senler/api/subscribers').get_json()['total'],0)
         self.assertEqual(self.client.get('/reports/senler/api/bots').get_json()['items'],[])
-        for path in ['campaigns/'+str(campaign1),'dialogs/'+str(sub1),'assets/'+str(image)]:
+        for path in ['campaigns/'+str(campaign1),'dialogs/'+str(sub1),'assets/'+str(image),'bots/'+str(bot1)+'/errors']:
             self.assertEqual(self.client.get('/reports/senler/api/'+path).status_code,400,path)
         for path in ['channels/{}/pause'.format(channel1),'campaigns/{}/launch'.format(campaign1),'bots/{}/publish'.format(bot1),'dialogs/{}/takeover'.format(sub1)]:
             self.post(path,status=400)

@@ -640,6 +640,24 @@ def register_senler(app, get_db, database_path, item_visible):
             service.audit(conn, 'bot_' + action, 'Бот №{}'.format(item_id), session['user_id'])
         return jsonify(ok=True)
 
+    @bp.get('/reports/senler/api/bots/<int:item_id>/errors')
+    def bot_errors(item_id):
+        with service.db() as conn:
+            row(conn, 'senler_bots', item_id)
+            items = [dict(r) for r in conn.execute('''SELECT r.id run_id,r.error,r.node_id,r.definition_json,
+                    COALESCE((SELECT MAX(o.created_at) FROM senler_outbox o WHERE o.run_id=r.id),r.created_at) error_at,
+                    s.id subscriber_id,s.name subscriber_name,s.external_user_id,c.kind,c.name channel_name
+                    FROM senler_runs r JOIN senler_subscribers s ON s.id=r.subscriber_id JOIN senler_channels c ON c.id=s.channel_id
+                    WHERE r.bot_id=? AND r.status='error' ORDER BY r.id DESC LIMIT 100''', (item_id,))]
+            for item in items:
+                # The run keeps the scenario exactly as it was when this subscriber started it,
+                # so the failing step's title is still correct even if the bot changed since.
+                definition = json.loads(item.pop('definition_json'))
+                node = next((n for n in definition['nodes'] if n['id'] == item['node_id']), None)
+                item['step_title'] = (node or {}).get('title', '')
+                item['step_type'] = (node or {}).get('type', '')
+        return jsonify(items=items)
+
     @bp.get('/reports/senler/api/dialogs')
     def dialogs():
         channel = request.args.get('channel', type=int)
