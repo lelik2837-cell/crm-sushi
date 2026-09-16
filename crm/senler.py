@@ -354,6 +354,33 @@ def register_senler(app, get_db, database_path, item_visible):
             item_id = conn.execute('INSERT INTO senler_groups(owner_id,name,created_at) VALUES (?,?,?)', (session['user_id'], name, now())).lastrowid
         return jsonify(id=item_id)
 
+    @bp.post('/reports/senler/api/groups/<int:item_id>/delete')
+    def delete_group(item_id):
+        with service.db() as conn:
+            row(conn, 'senler_groups', item_id)
+            # A bot's "group" step INSERTs into senler_group_members with a foreign key on
+            # group_id: deleting a group a scenario still references would make that step
+            # fail the next time anyone reaches it (draft/published JSON, or an already
+            # snapshotted in-flight conversation — senler_runs.definition_json freezes its
+            # own copy at start, so a since-edited bot does not clear an old run's reference).
+            using_bots = []
+            for bot in conn.execute('SELECT name,draft_json,published_json FROM senler_bots WHERE owner_id=?', (session['user_id'],)).fetchall():
+                for raw in (bot['draft_json'], bot['published_json']):
+                    if raw and any(node.get('group_id') == item_id for node in json.loads(raw).get('nodes', [])):
+                        using_bots.append(bot['name'])
+                        break
+            if using_bots:
+                raise ValueError('Группа используется в шаге чат-бота «{}» — сначала уберите этот шаг и опубликуйте бота заново.'
+                                 .format('», «'.join(sorted(set(using_bots)))))
+            active_definitions = conn.execute('''SELECT DISTINCT r.definition_json FROM senler_runs r JOIN senler_bots b ON b.id=r.bot_id
+                WHERE b.owner_id=? AND r.status IN ('running','waiting_send','waiting_reply','paused')''', (session['user_id'],)).fetchall()
+            if any(node.get('group_id') == item_id for record in active_definitions for node in json.loads(record['definition_json']).get('nodes', [])):
+                raise ValueError('Группа используется в уже идущих разговорах бота — дождитесь их завершения или уберите шаг из сценария.')
+            conn.execute('DELETE FROM senler_group_members WHERE group_id=?', (item_id,))
+            conn.execute('DELETE FROM senler_groups WHERE id=?', (item_id,))
+            service.audit(conn, 'group_deleted', 'Группа №{}'.format(item_id), session['user_id'])
+        return jsonify(ok=True)
+
     @bp.post('/reports/senler/api/subscribers/bulk')
     def subscribers_bulk():
         data = body()

@@ -272,6 +272,28 @@ class SenlerTests(unittest.TestCase):
         self.assertEqual(sent['vk'][-1]['value'],'unsubscribe')
         self.assertEqual([b['label'] for b in sent['telegram']],['Меню'])
 
+    def test_group_delete_removes_members_but_is_blocked_while_a_bot_uses_it(self):
+        channel=self.channel();s1=self.sub(channel,'1');s2=self.sub(channel,'2')
+        group=self.post('groups',{'name':'Розыгрыш'})['id']
+        self.post('subscribers/bulk',{'ids':[s1,s2],'action':'add_group','group_id':group})
+        self.assertEqual(len(self.client.get('/reports/senler/api/subscribers?group={}'.format(group)).get_json()['items']),2)
+        nodes=[{'id':'add','type':'group','group_id':group,'mode':'add','next':'msg'},
+               {'id':'msg','type':'message','text':'Вы участвуете!','buttons':[]}]
+        bot_id,_=self.bot(channel,nodes,trigger='keyword')
+        self.post('groups/{}/delete'.format(group),{},400)
+        self.assertIsNotNone(self.one('senler_groups','id=?',(group,)))
+        plain=[{'id':'msg','type':'message','text':'Привет','buttons':[]}]
+        self.post('bots',{'id':bot_id,'name':'Бот','channel_id':channel,'trigger_type':'keyword','keywords':'слово','priority':10,'definition':{'entry':'msg','nodes':plain}})
+        self.post('bots/{}/publish'.format(bot_id))
+        group2=self.post('groups',{'name':'Розыгрыш 2'})['id']
+        with self.client.session_transaction() as s:s['user_id']=2
+        self.post('groups/{}/delete'.format(group2),{},400)
+        with self.client.session_transaction() as s:s['user_id']=1
+        self.assertIsNotNone(self.one('senler_groups','id=?',(group2,)))
+        self.post('groups/{}/delete'.format(group),{})
+        self.assertIsNone(self.one('senler_groups','id=?',(group,)))
+        self.assertIsNone(self.one('senler_group_members','group_id=?',(group,)))
+
     def test_hidden_button_keeps_bot_navigation_and_stop_command(self):
         channel=self.channel()
         self.post('channels/{}/edit'.format(channel),{'name':'Бот','unsubscribe_enabled':False})
