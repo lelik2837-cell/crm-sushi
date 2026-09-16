@@ -20,6 +20,10 @@ from senler_api import BotAPI, DeliveryError
 KINDS = {'vk': 'ВКонтакте', 'telegram': 'Telegram', 'max': 'MAX'}
 STOP_WORDS = {'/stop', 'стоп', 'отписаться', 'unsubscribe'}
 START_WORDS = {'/start', 'начать', 'подписаться', 'subscribe'}
+DEFAULT_GREETING_TEXT = ('Здесь можно получать наши новости и предложения. Подписаться на рассылку? '
+                         'Отменить подписку можно в любой момент командой /stop.')
+DEFAULT_STOP_TEXT = ('Жаль, что вы отписались — теперь вы не будете получать наши новости и акции. '
+                     'Если передумаете, можно подписаться снова.')
 
 
 def dumps(value):
@@ -125,6 +129,18 @@ def init_schema(conn):
     outbox_columns = {row[1] for row in conn.execute('PRAGMA table_info(senler_outbox)')}
     if 'read_at' not in outbox_columns:
         conn.execute('ALTER TABLE senler_outbox ADD COLUMN read_at INTEGER')
+    if 'greeting_text' not in columns:
+        conn.execute("ALTER TABLE senler_channels ADD COLUMN greeting_text TEXT NOT NULL DEFAULT '{}'".format(
+            DEFAULT_GREETING_TEXT.replace("'", "''")))
+    if 'greeting_trigger' not in columns:
+        conn.execute("ALTER TABLE senler_channels ADD COLUMN greeting_trigger TEXT NOT NULL DEFAULT 'on_message' "
+                     "CHECK(greeting_trigger IN ('on_message','off'))")
+        # VK mixes bot traffic with regular community messages (support questions, complaints);
+        # unlike Telegram/MAX, replying to every message there would be an unwanted auto-upsell.
+        conn.execute("UPDATE senler_channels SET greeting_trigger='off' WHERE kind='vk'")
+    if 'stop_text' not in columns:
+        conn.execute("ALTER TABLE senler_channels ADD COLUMN stop_text TEXT NOT NULL DEFAULT '{}'".format(
+            DEFAULT_STOP_TEXT.replace("'", "''")))
 
 
 def integer(value, label='Значение', minimum=1, maximum=2147483647):
@@ -405,6 +421,7 @@ class SenlerService:
     def _handle_event(self, conn, event_row):
         event = json.loads(event_row['body_json'])
         user_id, channel_id = event['user_id'], event_row['channel_id']
+        channel = conn.execute('SELECT * FROM senler_channels WHERE id=?', (channel_id,)).fetchone()
         conn.execute('''INSERT OR IGNORE INTO senler_subscribers(channel_id,external_user_id,name,username,source,created_at)
                         VALUES (?,?,?,?,?,?)''', (channel_id, user_id, event['name'][:160], event['username'][:100], 'bot', now()))
         sub = conn.execute('SELECT * FROM senler_subscribers WHERE channel_id=? AND external_user_id=?', (channel_id, user_id)).fetchone()
@@ -418,7 +435,15 @@ class SenlerService:
             conn.execute("INSERT INTO senler_messages(subscriber_id,direction,text,created_at) VALUES (?,'in',?,?)", (sub['id'], text, now()))
             conn.execute('UPDATE senler_subscribers SET unread=unread+1 WHERE id=?', (sub['id'],))
         if event['type'] == 'blocked' or command in STOP_WORDS or callback == 'unsubscribe':
-            self.stop_subscriber(conn, sub['id'], 'blocked' if event['type'] == 'blocked' else 'unsubscribed')
+            status = 'blocked' if event['type'] == 'blocked' else 'unsubscribed'
+            # Already-unsubscribed/blocked stays silent on a repeat "стоп": no re-sending the
+            # farewell, and a blocked subscriber can't receive a message anyway.
+            changed = sub['status'] not in ('unsubscribed', 'blocked')
+            self.stop_subscriber(conn, sub['id'], status)
+            if changed and status == 'unsubscribed':
+                self.queue(conn, sub, {'text': channel['stop_text'],
+                           'buttons': [{'label': 'Подписаться', 'action': 'callback', 'value': 'subscribe'}]},
+                           'stopmsg:' + str(event_row['id']), kind='notice')
             return
         if callback == 'subscribe' or command in {'подписаться', 'subscribe'}:
             changed = sub['status'] != 'active'
@@ -431,8 +456,8 @@ class SenlerService:
                        'buttons': [{'label': 'Отписаться', 'action': 'callback', 'value': 'unsubscribe'}]}, 'consent:' + str(event_row['id']), kind='notice')
             return
         if sub['status'] != 'active':
-            if event['type'] != 'allow' and (text or event['type'] == 'start'):
-                self.queue(conn, sub, {'text': 'Здесь можно получать наши новости и предложения. Подписаться на рассылку? Отменить подписку можно в любой момент командой /stop.',
+            if channel['greeting_trigger'] != 'off' and event['type'] != 'allow' and (text or event['type'] == 'start'):
+                self.queue(conn, sub, {'text': channel['greeting_text'],
                            'buttons': [{'label': 'Подписаться', 'action': 'callback', 'value': 'subscribe'}]},
                            'optin:' + str(event_row['id']), kind='consent')
             return

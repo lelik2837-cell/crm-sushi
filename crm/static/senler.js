@@ -9,6 +9,8 @@
   const state = {boot: null, tab: 'overview', channel: '', generation: 0, dirty: false, campaign: null, bot: null, wizard: 0, selected: new Set(), subscriberPage: 1, dialog: null};
   const labels = {active: 'Подписан', pending: 'Ожидает', unsubscribed: 'Отписался', blocked: 'Сообщения запрещены', configured: 'Не подключён', connected: 'Подключён', paused: 'На паузе', draft: 'Черновик', scheduled: 'По расписанию', running: 'Отправляется', completed: 'Завершено', cancelled: 'Отменено', sent: 'Отправлено', sending: 'Отправляется', error: 'Ошибка', unknown: 'Результат неизвестен'};
   const kinds = {vk: 'ВКонтакте', telegram: 'Telegram', max: 'MAX'};
+  const DEFAULT_GREETING_TEXT = 'Здесь можно получать наши новости и предложения. Подписаться на рассылку? Отменить подписку можно в любой момент командой /stop.';
+  const DEFAULT_STOP_TEXT = 'Жаль, что вы отписались — теперь вы не будете получать наши новости и акции. Если передумаете, можно подписаться снова.';
   const stepLabels = {message: 'Сообщение', delay: 'Задержка', condition: 'Условие', group: 'Группа подписчиков', handoff: 'Передать оператору'};
   const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[ch]));
   const num = value => Number(value || 0).toLocaleString('ru-RU');
@@ -177,17 +179,30 @@
         <div class="sn-panel mt-3"><h3>Кнопка отписки</h3>${inputField('Текст кнопки','ch-unsubscribe-label',channel?.unsubscribe_label || 'Отписаться','required maxlength="40"','До 40 символов. Нажатие отменяет подписку на рассылку.')}
         <label class="sn-check-row"><input id="ch-unsubscribe-enabled" type="checkbox" ${channel?.unsubscribe_enabled === 0 ? '' : 'checked'}><span>Показывать кнопку отписки</span></label>
         <div class="sn-help">Настройка действует для новых рассылок и сообщений бота. Сообщения, уже поставленные в очередь, сохраняют прежние настройки. Команды «Стоп» и /stop работают и без кнопки.</div></div>
+        <div class="sn-panel mt-3"><h3>Приветствие новым подписчикам</h3>
+        <div class="sn-field"><label for="ch-greeting-text">Текст приветствия</label><textarea class="form-control" id="ch-greeting-text" rows="3" maxlength="3500" required>${esc(channel?.greeting_text || DEFAULT_GREETING_TEXT)}</textarea></div>
+        <div class="sn-field"><label for="ch-greeting-trigger">Когда отправлять</label><select class="form-select" id="ch-greeting-trigger">
+          <option value="on_message" ${(channel?.greeting_trigger || 'on_message') === 'on_message' ? 'selected' : ''}>На любое входящее сообщение</option>
+          <option value="off" ${channel?.greeting_trigger === 'off' ? 'selected' : ''}>Не отправлять автоматически</option>
+        </select></div>
+        <div class="sn-help" id="ch-greeting-help"></div></div>
+        <div class="sn-panel mt-3"><h3>Сообщение при отмене подписки</h3>
+        <div class="sn-field"><label for="ch-stop-text">Текст</label><textarea class="form-control" id="ch-stop-text" rows="3" maxlength="3500" required>${esc(channel?.stop_text || DEFAULT_STOP_TEXT)}</textarea></div>
+        <div class="sn-help">Отправляется вместе с кнопкой «Подписаться», когда человек пишет «Стоп» или /stop, либо нажимает кнопку отписки.</div></div>
         <div id="ch-guide" class="sn-note"></div><div class="sn-modal-footer"><button class="btn btn-primary" type="submit">${channel ? 'Сохранить' : 'Сохранить и проверить'}</button></div></form>`);
     function guide() {
       const kind = channel?.kind || document.getElementById('ch-kind').value;
       document.getElementById('ch-vk').hidden = kind !== 'vk';
       document.getElementById('ch-guide').innerHTML = kind === 'vk' ? 'ВК → Управление сообществом → Работа с API → Создать ключ. Нужны права на сообщения, фотографии и управление настройками сообщества. Включите сообщения сообщества и возможности ботов. После проверки нажмите «Подключить» в карточке канала — CRM настроит приём событий.' : kind === 'telegram' ? 'Откройте <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a>, создайте бота командой /newbot и скопируйте токен. Если бот уже есть, используйте его действующий токен.' : 'Создайте бота в <a href="https://business.max.ru/" target="_blank" rel="noopener">MAX для бизнеса</a> и скопируйте его токен. CRM использует официальный Bot API MAX.';
+      document.getElementById('ch-greeting-help').textContent = kind === 'vk' ? 'В сообществе ВК люди часто пишут по другим вопросам, не связанным с рассылкой — по умолчанию бот не отвечает на входящие сами по себе. Подписаться можно в любой момент словом «Подписаться», даже при выключенной автоматической отправке.' : 'Показывается вместе с кнопкой «Подписаться» тому, кто ещё не подписан.';
+      if (!channel) document.getElementById('ch-greeting-trigger').value = kind === 'vk' ? 'off' : 'on_message';
     }
     guide(); if (!channel) document.getElementById('ch-kind').onchange = guide;
     document.getElementById('sn-channel-form').onsubmit = async event => {
       event.preventDefault(); const button = event.submitter; button.disabled = true;
       try {
-        const data = {name:document.getElementById('ch-name').value,token:document.getElementById('ch-token').value,unsubscribe_label:document.getElementById('ch-unsubscribe-label').value,unsubscribe_enabled:document.getElementById('ch-unsubscribe-enabled').checked};
+        const data = {name:document.getElementById('ch-name').value,token:document.getElementById('ch-token').value,unsubscribe_label:document.getElementById('ch-unsubscribe-label').value,unsubscribe_enabled:document.getElementById('ch-unsubscribe-enabled').checked,
+          greeting_text:document.getElementById('ch-greeting-text').value,greeting_trigger:document.getElementById('ch-greeting-trigger').value,stop_text:document.getElementById('ch-stop-text').value};
         if (channel) await api(`channels/${channel.id}/edit`,data);
         else {
           const created = await api('channels',{...data,kind:document.getElementById('ch-kind').value,external_id:document.getElementById('ch-id').value});

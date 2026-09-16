@@ -14,7 +14,8 @@ from zoneinfo import ZoneInfo
 from flask import Blueprint, Response, jsonify, redirect, render_template, request, session, url_for
 
 from senler_api import DeliveryError, parse_event, telegram_uses_polling
-from senler_core import KINDS, SenlerService, dumps, init_schema, integer, now, parse_import, validate_body, validate_definition
+from senler_core import (DEFAULT_GREETING_TEXT, DEFAULT_STOP_TEXT, KINDS, SenlerService, dumps, init_schema, integer,
+                         now, parse_import, validate_body, validate_definition)
 
 
 def register_senler(app, get_db, database_path, item_visible):
@@ -167,6 +168,7 @@ def register_senler(app, get_db, database_path, item_visible):
         kind, name, token = data.get('kind'), str(data.get('name', '')).strip(), str(data.get('token', '')).strip()
         if kind not in KINDS or not name or len(name) > 100:
             raise ValueError('Выберите мессенджер и введите название до 100 символов.')
+        greeting_text, greeting_trigger, stop_text = message_settings(data, kind=kind)
         if not token or len(token) > 2048 or any(c.isspace() for c in token):
             raise ValueError('Введите ключ сообщества или бота без пробелов.')
         external_id = ''
@@ -185,8 +187,9 @@ def register_senler(app, get_db, database_path, item_visible):
         with service.db() as conn:
             item_id = conn.execute('''INSERT INTO senler_channels(owner_id,kind,name,external_id,token,webhook_secret,created_at)
                          VALUES (?,?,?,?,?,?,?)''', (session['user_id'], kind, name, external_id, encrypted, secrets.token_urlsafe(32), now())).lastrowid
-            conn.execute('UPDATE senler_channels SET unsubscribe_label=?,unsubscribe_enabled=? WHERE id=?',
-                         (unsubscribe_label, unsubscribe_enabled, item_id))
+            conn.execute('''UPDATE senler_channels SET unsubscribe_label=?,unsubscribe_enabled=?,
+                         greeting_text=?,greeting_trigger=?,stop_text=? WHERE id=?''',
+                         (unsubscribe_label, unsubscribe_enabled, greeting_text, greeting_trigger, stop_text, item_id))
             service.audit(conn, 'channel_created', 'Канал №{}'.format(item_id), session['user_id'])
         return jsonify(id=item_id)
 
@@ -200,6 +203,22 @@ def register_senler(app, get_db, database_path, item_visible):
             raise ValueError('Укажите, показывать ли кнопку отписки.')
         return label.strip(), enabled
 
+    def message_settings(data, channel=None, kind=None):
+        # A brand-new channel has no row to default from yet: VK mixes bot traffic with regular
+        # community messages, so it starts silent; Telegram/MAX keep the long-standing behaviour.
+        defaults = channel or {'greeting_text': DEFAULT_GREETING_TEXT, 'stop_text': DEFAULT_STOP_TEXT,
+                               'greeting_trigger': 'off' if kind == 'vk' else 'on_message'}
+        greeting_text = data.get('greeting_text', defaults['greeting_text'])
+        greeting_trigger = data.get('greeting_trigger', defaults['greeting_trigger'])
+        stop_text = data.get('stop_text', defaults['stop_text'])
+        if not isinstance(greeting_text, str) or not 1 <= len(greeting_text.strip()) <= 3500:
+            raise ValueError('Текст приветствия должен содержать от 1 до 3500 символов.')
+        if greeting_trigger not in ('on_message', 'off'):
+            raise ValueError('Укажите, когда отправлять приветствие.')
+        if not isinstance(stop_text, str) or not 1 <= len(stop_text.strip()) <= 3500:
+            raise ValueError('Текст при отмене подписки должен содержать от 1 до 3500 символов.')
+        return greeting_text.strip(), greeting_trigger, stop_text.strip()
+
     @bp.post('/reports/senler/api/channels/<int:item_id>/<action>')
     def channel_action(item_id, action):
         with service.db() as conn:
@@ -207,6 +226,7 @@ def register_senler(app, get_db, database_path, item_visible):
         if action == 'edit':
             data = body()
             unsubscribe_label, unsubscribe_enabled = subscription_button_settings(data, channel)
+            greeting_text, greeting_trigger, stop_text = message_settings(data, channel)
             name = str(data.get('name', '')).strip()
             if not name or len(name) > 100:
                 raise ValueError('Введите название до 100 символов.')
@@ -215,8 +235,10 @@ def register_senler(app, get_db, database_path, item_visible):
                 raise ValueError('Введите ключ без пробелов, до 2048 символов.')
             encrypted = service.cipher().encrypt(token.encode()).decode() if token else channel['token']
             with service.db() as conn:
-                conn.execute('UPDATE senler_channels SET name=?,token=?,status=?,checked_at=?,unsubscribe_label=?,unsubscribe_enabled=? WHERE id=?',
-                    (name, encrypted, 'configured' if token else channel['status'], None if token else channel['checked_at'], unsubscribe_label, unsubscribe_enabled, item_id))
+                conn.execute('''UPDATE senler_channels SET name=?,token=?,status=?,checked_at=?,unsubscribe_label=?,unsubscribe_enabled=?,
+                             greeting_text=?,greeting_trigger=?,stop_text=? WHERE id=?''',
+                    (name, encrypted, 'configured' if token else channel['status'], None if token else channel['checked_at'],
+                     unsubscribe_label, unsubscribe_enabled, greeting_text, greeting_trigger, stop_text, item_id))
             return jsonify(ok=True)
         if action == 'pause':
             with service.db() as conn:

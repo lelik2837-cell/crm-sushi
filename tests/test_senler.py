@@ -185,6 +185,77 @@ class SenlerTests(unittest.TestCase):
         self.post('channels/{}/edit'.format(channel),{'name':'Чужой канал','unsubscribe_label':'Другой текст','unsubscribe_enabled':True},400)
         self.assertEqual(self.one('senler_channels')['unsubscribe_label'],'Не получать акции')
 
+    def test_channel_message_settings_defaults_differ_by_kind_and_are_configurable(self):
+        vk=self.channel('vk');tg=self.channel('telegram');mx=self.channel('max')
+        self.assertEqual(self.one('senler_channels','id=?',(vk,))['greeting_trigger'],'off')
+        self.assertEqual(self.one('senler_channels','id=?',(tg,))['greeting_trigger'],'on_message')
+        self.assertEqual(self.one('senler_channels','id=?',(mx,))['greeting_trigger'],'on_message')
+        self.assertIn('Здесь можно получать',self.one('senler_channels','id=?',(vk,))['greeting_text'])
+        self.assertIn('Жаль, что вы отписались',self.one('senler_channels','id=?',(vk,))['stop_text'])
+        for fields,status in [({'greeting_text':''},400),({'greeting_text':'x'*3501},400),
+                              ({'greeting_trigger':'always'},400),({'stop_text':''},400),({'stop_text':'x'*3501},400)]:
+            self.post('channels/{}/edit'.format(tg),dict(name='Telegram',**fields),status)
+        self.post('channels/{}/edit'.format(tg),{'name':'Telegram','greeting_text':'Особые условия для новых гостей!','greeting_trigger':'off','stop_text':'Очень жаль, возвращайтесь.'})
+        saved=self.one('senler_channels','id=?',(tg,))
+        self.assertEqual(saved['greeting_text'],'Особые условия для новых гостей!')
+        self.assertEqual(saved['greeting_trigger'],'off')
+        self.assertEqual(saved['stop_text'],'Очень жаль, возвращайтесь.')
+        self.post('channels/{}/edit'.format(tg),{'name':'Telegram'})
+        self.assertEqual(self.one('senler_channels','id=?',(tg,))['greeting_text'],'Особые условия для новых гостей!')
+
+    def test_existing_channels_get_message_defaults_by_kind_on_upgrade(self):
+        vk=self.channel('vk');tg=self.channel('telegram')
+        with self.service.db() as conn:
+            for column in ('greeting_text','greeting_trigger','stop_text'):
+                conn.execute('ALTER TABLE senler_channels DROP COLUMN '+column)
+            init_schema(conn)
+        self.assertEqual(self.one('senler_channels','id=?',(vk,))['greeting_trigger'],'off')
+        self.assertEqual(self.one('senler_channels','id=?',(tg,))['greeting_trigger'],'on_message')
+
+    def test_vk_silent_by_default_others_greet_and_greeting_text_is_configurable(self):
+        vk=self.channel('vk');tg=self.channel('telegram')
+        vk_secret=self.one('senler_channels','id=?',(vk,))['webhook_secret']
+        self.client.post('/api/senler/webhook/vk/'+str(vk),json={'type':'message_new','event_id':'1','group_id':123456,'secret':vk_secret,
+            'object':{'message':{'from_id':555,'peer_id':555,'text':'Сколько стоит доставка?'}}})
+        self.tick()
+        self.assertFalse(FakeAPI.sent)
+        self.assertEqual(self.one('senler_subscribers',"channel_id=? AND external_user_id='555'",(vk,))['status'],'pending')
+        self.webhook(tg,self.message(777,'Привет','1'));self.tick()
+        greeting=next(sent for sent in FakeAPI.sent if sent[1]=='777')
+        self.assertIn('Здесь можно получать',greeting[2]['text'])
+        self.assertEqual([b['value'] for b in greeting[2]['buttons']],['subscribe'])
+        self.post('channels/{}/edit'.format(tg),{'name':'Telegram','greeting_text':'Особое предложение! Подписаться?'})
+        self.webhook(tg,self.message(888,'Привет','2'));self.tick()
+        custom=next(sent for sent in FakeAPI.sent if sent[1]=='888')
+        self.assertEqual(custom[2]['text'],'Особое предложение! Подписаться?')
+        self.post('channels/{}/edit'.format(vk),{'name':'ВК','greeting_trigger':'on_message'})
+        self.client.post('/api/senler/webhook/vk/'+str(vk),json={'type':'message_new','event_id':'2','group_id':123456,'secret':vk_secret,
+            'object':{'message':{'from_id':666,'peer_id':666,'text':'Ещё вопрос'}}})
+        self.tick()
+        self.assertTrue(any(sent[1]=='666' for sent in FakeAPI.sent))
+
+    def test_stop_sends_configurable_farewell_once_but_blocked_sends_nothing(self):
+        channel=self.channel();self.sub(channel,'123','active')
+        self.webhook(channel,self.message(123,'Стоп','1'));self.tick()
+        self.assertEqual(self.one('senler_subscribers')['status'],'unsubscribed')
+        farewell=[sent for sent in FakeAPI.sent if sent[1]=='123']
+        self.assertEqual(len(farewell),1)
+        self.assertIn('Жаль, что вы отписались',farewell[0][2]['text'])
+        self.assertEqual([b['value'] for b in farewell[0][2]['buttons']],['subscribe'])
+        self.webhook(channel,self.message(123,'Стоп','2'));self.tick()
+        self.assertEqual(len([sent for sent in FakeAPI.sent if sent[1]=='123']),1)
+        self.post('channels/{}/edit'.format(channel),{'name':'Бот','stop_text':'Очень жаль! Возвращайтесь.'})
+        self.sub(channel,'321','active')
+        self.webhook(channel,self.message(321,'Стоп','3'));self.tick()
+        custom=next(sent for sent in FakeAPI.sent if sent[1]=='321')
+        self.assertEqual(custom[2]['text'],'Очень жаль! Возвращайтесь.')
+        vk=self.channel('vk');self.sub(vk,'999','active')
+        vk_secret=self.one('senler_channels','id=?',(vk,))['webhook_secret']
+        self.client.post('/api/senler/webhook/vk/'+str(vk),json={'type':'message_deny','event_id':'1','group_id':123456,'secret':vk_secret,'object':{'user_id':999}})
+        self.tick()
+        self.assertEqual(self.one('senler_subscribers','channel_id=? AND external_user_id=?',(vk,'999'))['status'],'blocked')
+        self.assertFalse(any(sent[1]=='999' for sent in FakeAPI.sent))
+
     def test_campaign_buttons_follow_each_channel_and_keep_launch_snapshot(self):
         vk=self.channel('vk');tg=self.channel();self.sub(vk);self.sub(tg)
         self.post('channels/{}/edit'.format(vk),{'name':'ВК','unsubscribe_label':'Отказаться от акций','unsubscribe_enabled':True})
