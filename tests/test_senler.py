@@ -617,6 +617,17 @@ class SenlerTests(unittest.TestCase):
             api.send('42',{'text':marked_up,'buttons':[]},91)
             self.assertEqual(vk.call_args.kwargs['random_id'],91)
             self.assertEqual(vk.call_args.kwargs['message'],'Текст жирным курсивом подчёркнутым ссылкой (https://example.com) промокод USE_CODE_2026 & <b>')
+        # The rich-text editor makes combined formatting easy (select a word, click Bold then
+        # Italic), so nested markup must resolve correctly rather than leaving inner markers literal.
+        nested='**жирное и _курсив внутри_ тоже**'
+        response.json.return_value={'ok':True,'result':{'message_id':13}}
+        with patch('senler_api.requests.request',return_value=response) as send:
+            BotAPI(channel,'private-token').send('42',{'text':nested,'buttons':[]},92)
+            self.assertEqual(send.call_args.kwargs['json']['text'],'<b>жирное и <i>курсив внутри</i> тоже</b>')
+        api_vk=BotAPI(dict(channel,kind='vk'),'private-token')
+        with patch.object(api_vk,'vk',side_effect=[{'is_allowed':True},100]) as vk:
+            api_vk.send('42',{'text':nested,'buttons':[]},92)
+            self.assertEqual(vk.call_args.kwargs['message'],'жирное и курсив внутри тоже')
 
     def test_api_error_never_exposes_telegram_token(self):
         import requests

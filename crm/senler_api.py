@@ -154,35 +154,41 @@ FORMAT_RE = re.compile(
     re.S)
 
 
-def strip_formatting(text):
-    out, pos = [], 0
-    for match in FORMAT_RE.finditer(text):
-        out.append(text[pos:match.start()])
-        if match.group('link_text') is not None:
-            out.append('{} ({})'.format(match.group('link_text'), match.group('link_url')))
-        else:
-            out.append(match.group('bold') or match.group('underline') or match.group('italic'))
-        pos = match.end()
-    out.append(text[pos:])
-    return ''.join(out)
-
-
-def format_to_telegram_html(text):
-    escape = lambda value: value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
+def _walk_formatting(text, escape, bold, italic, underline, link):
+    """Recursive so a browser-produced combo like bold-containing-italic (the rich text
+    editor makes this easy: select a word, click Bold then Italic) nests correctly instead
+    of only the outermost marker being recognised and the inner one left as literal text."""
     out, pos = [], 0
     for match in FORMAT_RE.finditer(text):
         out.append(escape(text[pos:match.start()]))
         if match.group('link_text') is not None:
-            out.append('<a href="{}">{}</a>'.format(escape(match.group('link_url')), escape(match.group('link_text'))))
+            inner = _walk_formatting(match.group('link_text'), escape, bold, italic, underline, link)
+            out.append(link(inner, match.group('link_url')))
         elif match.group('bold') is not None:
-            out.append('<b>{}</b>'.format(escape(match.group('bold'))))
+            out.append(bold(_walk_formatting(match.group('bold'), escape, bold, italic, underline, link)))
         elif match.group('underline') is not None:
-            out.append('<u>{}</u>'.format(escape(match.group('underline'))))
+            out.append(underline(_walk_formatting(match.group('underline'), escape, bold, italic, underline, link)))
         else:
-            out.append('<i>{}</i>'.format(escape(match.group('italic'))))
+            out.append(italic(_walk_formatting(match.group('italic'), escape, bold, italic, underline, link)))
         pos = match.end()
     out.append(escape(text[pos:]))
     return ''.join(out)
+
+
+def strip_formatting(text):
+    identity = lambda value: value
+    return _walk_formatting(text, identity, identity, identity, identity,
+                             lambda inner, url: '{} ({})'.format(inner, url))
+
+
+def format_to_telegram_html(text):
+    escape = lambda value: value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
+    return _walk_formatting(
+        text, escape,
+        lambda inner: '<b>{}</b>'.format(inner),
+        lambda inner: '<i>{}</i>'.format(inner),
+        lambda inner: '<u>{}</u>'.format(inner),
+        lambda inner, url: '<a href="{}">{}</a>'.format(escape(url), inner))
 
 
 class BotAPI:

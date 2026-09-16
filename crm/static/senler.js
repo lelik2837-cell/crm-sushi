@@ -13,50 +13,110 @@
   const DEFAULT_STOP_TEXT = 'Жаль, что вы отписались — теперь вы не будете получать наши новости и акции. Если передумаете, можно подписаться снова.';
   const stepLabels = {message: 'Сообщение', delay: 'Задержка', condition: 'Условие', group: 'Группа подписчиков', handoff: 'Передать оператору'};
   const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[ch]));
-  const formatPreview = value => esc(value)
-    .replace(/\[([^\]\n]+?)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-    .replace(/\*\*([^\n*]+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\+\+([^\n+]+?)\+\+/g, '<u>$1</u>')
-    .replace(/(?<!\w)_([^\n_]+?)_(?!\w)/g, '<em>$1</em>');
-  const EMOJIS = ['😀','😊','😉','😍','🥳','😋','👍','🙏','🎉','🔥','⭐','❤️','✅','⏰','📢','🎁','💥','🍣','🍱','🍜','🍙','🥢','🍤','🐟','🍚','🌶️','🥤','🚀','📍','💬'];
-  function wrapSelection(textarea, marker) {
-    const value = textarea.value;
-    let start = textarea.selectionStart, end = textarea.selectionEnd;
-    // After a wrap, the selection sits just inside the markers (so typing continues the word),
-    // so a plain click can't be toggled off unless we also look just outside the selection.
-    const beforeStart = Math.max(0, start - marker.length);
-    if (value.slice(beforeStart, start) === marker && value.slice(end, end + marker.length) === marker) {
-      start = beforeStart; end += marker.length;
+  // Shared with crm/senler_api.py's FORMAT_RE/_walk: **bold**, _italic_ (not mid-word, so
+  // promo codes like USE_CODE_2026 survive), ++underline++, [label](url). Recursive so
+  // combined formatting (bold containing italic, etc.) nests correctly instead of only
+  // matching the outermost marker.
+  function walkFormatting(text, escape, bold, italic, underline, link) {
+    const re = /\[(?<linkText>[^[\]\n]+)\]\((?<linkUrl>https?:\/\/[^\s)]+)\)|\*\*(?<bold>[^\n*]+?)\*\*|\+\+(?<underline>[^\n+]+?)\+\+|(?<!\w)_(?<italic>[^\n_]+?)_(?!\w)/g;
+    let out = '', pos = 0, m;
+    while ((m = re.exec(text))) {
+      out += escape(text.slice(pos, m.index));
+      const g = m.groups;
+      if (g.linkText !== undefined) out += link(walkFormatting(g.linkText, escape, bold, italic, underline, link), g.linkUrl);
+      else if (g.bold !== undefined) out += bold(walkFormatting(g.bold, escape, bold, italic, underline, link));
+      else if (g.underline !== undefined) out += underline(walkFormatting(g.underline, escape, bold, italic, underline, link));
+      else out += italic(walkFormatting(g.italic, escape, bold, italic, underline, link));
+      pos = re.lastIndex;
     }
-    const selected = value.slice(start, end);
-    const already = selected.length >= marker.length * 2 && selected.startsWith(marker) && selected.endsWith(marker);
-    const inner = already ? selected.slice(marker.length, selected.length - marker.length) : selected;
-    const next = already ? inner : marker + inner + marker;
-    textarea.value = value.slice(0, start) + next + value.slice(end);
-    const caretStart = already ? start : start + marker.length;
-    textarea.focus(); textarea.setSelectionRange(caretStart, caretStart + inner.length);
-    textarea.dispatchEvent(new Event('input', {bubbles: true}));
+    out += escape(text.slice(pos));
+    return out;
   }
-  function insertAtCursor(textarea, text) {
-    const start = textarea.selectionStart, end = textarea.selectionEnd, value = textarea.value;
-    textarea.value = value.slice(0, start) + text + value.slice(end);
-    const caret = start + text.length;
-    textarea.focus(); textarea.setSelectionRange(caret, caret);
-    textarea.dispatchEvent(new Event('input', {bubbles: true}));
+  const formatPreview = value => walkFormatting(value, esc,
+    s => '<strong>' + s + '</strong>', s => '<em>' + s + '</em>', s => '<u>' + s + '</u>',
+    (s, url) => '<a href="' + esc(url) + '" target="_blank" rel="noopener">' + s + '</a>');
+  const EMOJIS = ['😀','😊','😉','😍','🥳','😋','👍','🙏','🎉','🔥','⭐','❤️','✅','⏰','📢','🎁','💥','🍣','🍱','🍜','🍙','🥢','🍤','🐟','🍚','🌶️','🥤','🚀','📍','💬'];
+  // The message field is a contenteditable div so the owner sees real bold/italic/underline
+  // text instead of typing **/++/_ markers; editorToText serializes it back to that markup
+  // (matching walkFormatting/FORMAT_RE) only when the campaign is saved or sent.
+  function editorToText(root) {
+    function walk(node) {
+      if (node.nodeType === Node.TEXT_NODE) return node.textContent;
+      if (node.nodeType !== Node.ELEMENT_NODE) return '';
+      const tag = node.tagName.toLowerCase();
+      const inner = () => [...node.childNodes].map(walk).join('');
+      if (tag === 'br') return '\n';
+      if (tag === 'b' || tag === 'strong') return '**' + inner() + '**';
+      if (tag === 'u') return '++' + inner() + '++';
+      if (tag === 'i' || tag === 'em') return '_' + inner() + '_';
+      if (tag === 'a') {
+        const href = node.getAttribute('href') || '';
+        return /^https?:\/\//i.test(href) ? '[' + inner() + '](' + href + ')' : inner();
+      }
+      if (tag === 'div' || tag === 'p') return inner() + '\n';
+      return inner();
+    }
+    return [...root.childNodes].map(walk).join('').replace(/\n+$/, '');
   }
-  function insertLink(textarea) {
-    const start = textarea.selectionStart, end = textarea.selectionEnd, value = textarea.value;
-    const selected = value.slice(start, end) || 'ссылка';
+  function applyFormat(editor, command) {
+    editor.focus();
+    document.execCommand('styleWithCSS', false, false);
+    document.execCommand(command);
+    editor.dispatchEvent(new Event('input', {bubbles: true}));
+  }
+  function insertEmoji(editor, emoji) {
+    editor.focus();
+    document.execCommand('insertText', false, emoji);
+    editor.dispatchEvent(new Event('input', {bubbles: true}));
+  }
+  function applyLink(editor) {
+    editor.focus();
+    const selection = window.getSelection();
+    const hasSelection = selection && selection.rangeCount > 0 && !selection.isCollapsed && editor.contains(selection.anchorNode);
+    const label = hasSelection ? selection.toString() : 'ссылка';
+    const savedRange = hasSelection ? selection.getRangeAt(0).cloneRange() : null;
     const url = window.prompt('Ссылка (https://…)', 'https://');
-    if (!url) { textarea.focus(); return; }
+    if (!url) return;
     const trimmed = url.trim();
-    if (!/^https?:\/\/\S+$/i.test(trimmed)) { toast('Нужна полная ссылка https://…', true); textarea.focus(); return; }
-    const markup = '[' + selected + '](' + trimmed + ')';
-    textarea.value = value.slice(0, start) + markup + value.slice(end);
-    const caret = start + markup.length;
-    textarea.focus(); textarea.setSelectionRange(caret, caret);
-    textarea.dispatchEvent(new Event('input', {bubbles: true}));
+    if (!/^https?:\/\/\S+$/i.test(trimmed)) { toast('Нужна полная ссылка https://…', true); return; }
+    editor.focus();
+    const range = savedRange || (() => { const r = document.createRange(); r.selectNodeContents(editor); r.collapse(false); return r; })();
+    range.deleteContents();
+    const a = document.createElement('a');
+    a.href = trimmed; a.textContent = label;
+    range.insertNode(a);
+    range.setStartAfter(a); range.collapse(true);
+    const sel = window.getSelection();
+    sel.removeAllRanges(); sel.addRange(range);
+    editor.dispatchEvent(new Event('input', {bubbles: true}));
   }
+  function updateToolbarState(editor) {
+    const wrap = editor.closest('[data-message-wrap]');
+    if (!wrap) return;
+    wrap.querySelector('[data-action=fmt-bold]')?.classList.toggle('active', document.queryCommandState('bold'));
+    wrap.querySelector('[data-action=fmt-italic]')?.classList.toggle('active', document.queryCommandState('italic'));
+    wrap.querySelector('[data-action=fmt-underline]')?.classList.toggle('active', document.queryCommandState('underline'));
+  }
+  function wireMessageEditor(container) {
+    const editor = container.querySelector('[data-message-editor]');
+    if (!editor) return;
+    editor.addEventListener('paste', event => {
+      event.preventDefault();
+      const text = (event.clipboardData || window.clipboardData).getData('text/plain');
+      document.execCommand('insertText', false, text);
+    });
+    editor.addEventListener('input', () => {
+      if (!editor.textContent) editor.innerHTML = '';
+      updateToolbarState(editor);
+    });
+  }
+  document.addEventListener('selectionchange', () => {
+    const editor = document.activeElement;
+    if (editor && editor.matches && editor.matches('[data-message-editor]')) updateToolbarState(editor);
+  });
+  // Clicking a toolbar button would otherwise blur the editor first and clear the selection
+  // (mousedown's default focus-shift happens before click), losing what to format/link.
+  document.addEventListener('mousedown', event => { if (event.target.closest('.sn-editor-toolbar')) event.preventDefault(); });
   const num = value => Number(value || 0).toLocaleString('ru-RU');
   const date = value => value ? new Date(value * 1000).toLocaleString('ru-RU', {timeZone:'Asia/Novosibirsk', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '—';
   const badge = status => `<span class="sn-badge ${['active','connected','sent','completed'].includes(status) ? 'green' : ['running','scheduled','sending'].includes(status) ? 'blue' : ['error','unknown','blocked'].includes(status) ? 'red' : status === 'paused' ? 'orange' : ''}">${esc(labels[status] || status)}</span>`;
@@ -325,12 +385,13 @@
     return `<aside class="sn-preview"><div class="sn-preview-title">Как увидит подписчик</div><div class="sn-chat-top"><i class="bi bi-chat-dots me-2"></i>${esc(name)}</div><div class="sn-bubble">${body.asset_id?`<img alt="Картинка сообщения" src="${apiBase}assets/${Number(body.asset_id)}">`:''}<span>${formatPreview((body.text||'Текст вашего сообщения появится здесь…').replaceAll('{имя}','Алексей').replaceAll('{name}','Алексей'))}</span></div>${(body.buttons||[]).map(b=>`<div class="sn-preview-button">${esc(b.label||'Подпись кнопки')}</div>`).join('')}${unsubscribe?`<div class="sn-preview-button">${esc(settings?.unsubscribe_label||'Отписаться')}</div>`:''}<div class="sn-preview-time">Пример сообщения</div></aside>`;
   }
   function messageFields(body, scope='campaign', nodes=[]) {
-    return `<div class="sn-field" data-message-wrap><label>Текст сообщения</label><div class="sn-editor-toolbar" role="toolbar" aria-label="Форматирование текста"><button type="button" data-action="fmt-bold" title="Жирный" aria-label="Жирный"><i class="bi bi-type-bold"></i></button><button type="button" data-action="fmt-italic" title="Курсив" aria-label="Курсив"><i class="bi bi-type-italic"></i></button><button type="button" data-action="fmt-underline" title="Подчёркнутый" aria-label="Подчёркнутый"><i class="bi bi-type-underline"></i></button><button type="button" data-action="fmt-link" title="Ссылка" aria-label="Ссылка"><i class="bi bi-link-45deg"></i></button><span class="sn-editor-toolbar-sep"></span><div class="dropdown"><button type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Вставить эмодзи" aria-label="Вставить эмодзи"><i class="bi bi-emoji-smile"></i></button><div class="dropdown-menu dropdown-menu-end sn-emoji-menu">${EMOJIS.map(e=>`<button type="button" class="sn-emoji-btn" data-action="emoji-insert" data-emoji="${e}">${e}</button>`).join('')}</div></div></div><textarea class="form-control" data-message-text rows="7" maxlength="${body.asset_id?900:3500}" placeholder="Напишите предложение для подписчиков">${esc(body.text)}</textarea><div class="d-flex justify-content-between sn-help"><span>Персонализация: {имя}</span><span data-text-count>${body.text.length} / ${body.asset_id?900:3500}</span></div></div>
+    return `<div class="sn-field" data-message-wrap><label>Текст сообщения</label><div class="sn-editor-toolbar" role="toolbar" aria-label="Форматирование текста"><button type="button" data-action="fmt-bold" title="Жирный" aria-label="Жирный"><i class="bi bi-type-bold"></i></button><button type="button" data-action="fmt-italic" title="Курсив" aria-label="Курсив"><i class="bi bi-type-italic"></i></button><button type="button" data-action="fmt-underline" title="Подчёркнутый" aria-label="Подчёркнутый"><i class="bi bi-type-underline"></i></button><button type="button" data-action="fmt-link" title="Ссылка" aria-label="Ссылка"><i class="bi bi-link-45deg"></i></button><span class="sn-editor-toolbar-sep"></span><div class="dropdown"><button type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Вставить эмодзи" aria-label="Вставить эмодзи"><i class="bi bi-emoji-smile"></i></button><div class="dropdown-menu dropdown-menu-end sn-emoji-menu">${EMOJIS.map(e=>`<button type="button" class="sn-emoji-btn" data-action="emoji-insert" data-emoji="${e}">${e}</button>`).join('')}</div></div></div><div class="form-control sn-message-editor" data-message-editor contenteditable="true" role="textbox" aria-multiline="true" aria-label="Текст сообщения" data-placeholder="Напишите предложение для подписчиков">${formatPreview(body.text)}</div><div class="d-flex justify-content-between sn-help"><span>Персонализация: {имя}</span><span data-text-count>${body.text.length} / ${body.asset_id?900:3500}</span></div></div>
       <div class="sn-field"><label>Картинка</label>${body.asset_id?`<div><img class="sn-upload-preview" alt="Вложение" src="${apiBase}assets/${Number(body.asset_id)}"> ${btn('Убрать','asset-remove',`data-scope="${scope}"`)}</div>`:''}<input type="file" class="form-control" data-message-file data-scope="${scope}" accept="image/jpeg,image/png"><div class="sn-help">JPG или PNG, до 8 МБ. С картинкой текст короче: до 900 символов.</div></div>
       <div class="sn-field"><label>Кнопки под сообщением</label><div data-button-list>${(body.buttons||[]).map((b,i)=>`<div class="sn-button-row" data-button-index="${i}"><input class="form-control" data-button-label value="${esc(b.label)}" placeholder="Подпись кнопки" maxlength="40">${scope==='campaign'?`<input class="form-control" data-button-value value="${esc(b.value)}" placeholder="https://…">`:`<div class="d-flex gap-1"><select class="form-select" data-button-action style="max-width:100px"><option value="url" ${b.action==='url'?'selected':''}>Ссылка</option><option value="goto" ${b.action==='goto'?'selected':''}>К шагу</option></select>${b.action==='goto'?`<select class="form-select" data-button-value>${nodeOptions(nodes,b.value)}</select>`:`<input class="form-control" data-button-value value="${esc(b.value)}" placeholder="https://…">`}</div>`}<button type="button" class="sn-icon" data-action="button-remove" data-scope="${scope}" data-index="${i}" aria-label="Удалить кнопку"><i class="bi bi-x"></i></button></div>`).join('')}</div>${body.buttons.length<5?btn('<i class="bi bi-plus me-1"></i>Добавить кнопку','button-add',`data-scope="${scope}"`):''}<div class="sn-help">Текст и показ кнопки отписки задаются в настройках канала.</div></div>`;
   }
   function readMessage(container, current) {
-    return {...current,text:container.querySelector('[data-message-text]')?.value??current.text,buttons:[...container.querySelectorAll('[data-button-index]')].map(row=>({label:row.querySelector('[data-button-label]').value,action:row.querySelector('[data-button-action]')?.value||'url',value:row.querySelector('[data-button-value]').value}))};
+    const editor = container.querySelector('[data-message-editor]');
+    return {...current,text:editor?editorToText(editor):current.text,buttons:[...container.querySelectorAll('[data-button-index]')].map(row=>({label:row.querySelector('[data-button-label]').value,action:row.querySelector('[data-button-action]')?.value||'url',value:row.querySelector('[data-button-value]').value}))};
   }
   function collectCampaign() {
     const c=state.campaign;if(!c)return;
@@ -346,9 +407,10 @@
     if(state.wizard===2)content=`<h3>Когда отправить сообщение</h3><label class="sn-check-row"><input type="radio" name="send-mode" value="now" ${c.sendMode!=='schedule'?'checked':''}><span><strong>Сразу после запуска</strong><small>Сообщения будут отправляться постепенно из очереди</small></span></label><label class="sn-check-row"><input type="radio" name="send-mode" value="schedule" ${c.sendMode==='schedule'?'checked':''}><span><strong>В выбранное время</strong><small>Новосибирское время, UTC+7</small></span></label>${inputField('Дата и время','camp-scheduled',c.scheduled_at||'','type="datetime-local"')}<div class="sn-note">Перед каждой отправкой CRM проверяет статус подписки. Если человек отпишется после планирования, сообщение ему не уйдёт.</div>`;
     if(state.wizard===3)content=`<h3>${esc(c.name)}</h3><div class="sn-note"><strong>Аудитория</strong><br>${c.audience.channels.map(channelName).map(esc).join(', ')}<br>${c.audience.groups.length?c.audience.groups.map(groupName).map(esc).join(', '):'Все активные подписчики выбранных каналов'}<hr><strong id="sn-audience-count">Считаем получателей…</strong><hr><strong>Время отправки</strong><br>${c.sendMode==='schedule'?esc(c.scheduled_at.replace('T',' '))+' · UTC+7':'Сразу после нажатия «Запустить рассылку»'}</div><p class="sn-help mt-3">Сообщение и список получателей фиксируются при запуске. Можно приостановить или отменить оставшиеся отправки.</p>`;
     main.innerHTML=navLink('campaigns','<i class="bi bi-arrow-left"></i> К рассылкам',{},'sn-back')+head(c.id?'Редактирование рассылки':'Новая рассылка','Четыре понятных шага до отправки',btn('Сохранить черновик','campaign-save'))+`<div class="sn-panel"><ol class="sn-wizard">${['Аудитория','Сообщение','Время','Проверка'].map((s,i)=>`<li class="${i===state.wizard?'active':''}"><b>${i+1}</b>${s}</li>`).join('')}</ol><div class="sn-editor-layout"><div>${content}</div><div id="sn-campaign-preview">${preview(c.body,c.audience.channels[0])}</div></div><div class="sn-form-footer"><div>${state.wizard?btn('← Назад','campaign-prev'):''}</div>${state.wizard<3?btn('Далее →','campaign-next','',true):btn(c.sendMode==='schedule'?'Запланировать рассылку':'Запустить рассылку','campaign-launch','id="sn-launch" disabled',true)}</div></div>`;
-    main.querySelectorAll('input,textarea,select').forEach(e=>e.addEventListener('input',()=>{state.dirty=true;collectCampaign();if(state.wizard===1){document.getElementById('sn-campaign-preview').innerHTML=preview(c.body,c.audience.channels[0]);const count=main.querySelector('[data-text-count]');count.textContent=`${c.body.text.length} / ${c.body.asset_id?900:3500}`;}}));
+    main.querySelectorAll('input,textarea,select,[contenteditable]').forEach(e=>e.addEventListener('input',()=>{state.dirty=true;collectCampaign();if(state.wizard===1){document.getElementById('sn-campaign-preview').innerHTML=preview(c.body,c.audience.channels[0]);const limit=c.body.asset_id?900:3500,count=main.querySelector('[data-text-count]');count.textContent=`${c.body.text.length} / ${limit}`;count.classList.toggle('sn-over-limit',c.body.text.length>limit);}}));
     if(state.wizard===2){const field=document.getElementById('camp-scheduled');field.disabled=c.sendMode!=='schedule';main.querySelectorAll('[name="send-mode"]').forEach(el=>el.addEventListener('change',()=>{field.disabled=el.value!=='schedule';}));}
     wireUploads();
+    wireMessageEditor(main);
     history.replaceState({},'',link('campaigns',{edit:c.id||'new',step:state.wizard}));
     if(state.wizard===3)api('audience',c.audience).then(result=>{if(state.wizard!==3||state.campaign!==c)return;document.getElementById('sn-audience-count').textContent='Получателей: '+num(result.total);const button=document.getElementById('sn-launch');button.disabled=result.total===0;if(result.total)button.textContent=(c.sendMode==='schedule'?'Запланировать · ':'Отправить · ')+num(result.total);}).catch(e=>toast(e.message,true));
   }
@@ -417,8 +479,9 @@
     main.innerHTML=navLink('bots','<i class="bi bi-arrow-left"></i> К чат-ботам',{},'sn-back')+head(b.id?esc(b.name||'Редактор бота'):'Новый чат-бот','Соберите шаги и укажите, куда ведут кнопки',`${btn('<i class="bi bi-play-circle me-1"></i>Симулятор','bot-simulate')}${btn('Сохранить черновик','bot-save')}${btn('Опубликовать','bot-publish','',true)}`)+
       `<div class="sn-panel"><div class="sn-step-cols">${inputField('Название бота','bot-name',b.name,'placeholder="Например, Приветствие и меню" maxlength="120"')}<div class="sn-field"><label for="bot-channel">Канал</label><select id="bot-channel" class="form-select" ${b.id?'disabled':''}>${options(state.boot.channels,b.channel_id)}</select></div><div class="sn-field"><label for="bot-trigger">Когда запускать</label><select id="bot-trigger" class="form-select"><option value="subscribe" ${b.trigger_type==='subscribe'?'selected':''}>После подписки / команды «Начать»</option><option value="keyword" ${b.trigger_type==='keyword'?'selected':''}>По ключевому слову</option><option value="any" ${b.trigger_type==='any'?'selected':''}>На любое входящее сообщение</option></select></div>${inputField('Приоритет','bot-priority',b.priority,'type="number" min="1" max="100"','При совпадении правил запускается бот с меньшим числом.')}</div><div id="bot-keywords-wrap" ${b.trigger_type!=='keyword'?'hidden':''}>${inputField('Ключевые слова через запятую','bot-keywords',b.keywords,'placeholder="меню, акция, промокод"','Сравниваем целое сообщение, без учёта регистра.')}</div><div class="sn-field mb-0"><label for="bot-entry">Первый шаг</label><select class="form-select" id="bot-entry">${nodeOptions(nodes,b.definition.entry,'Выберите шаг')}</select></div></div>
       <div class="sn-flow-bar">${Object.entries(stepLabels).map(([type,label])=>btn('<i class="bi bi-plus me-1"></i>'+label,'node-add',`data-type="${type}"`)).join('')}</div><div class="sn-bot-editor-grid"><aside class="sn-flow-outline"><div class="sn-eyebrow px-2">ШАГИ СЦЕНАРИЯ</div>${nodes.map((n,i)=>`<button type="button" class="${n.id===active.id?'active':''}" data-action="node-open" data-id="${n.id}"><span>${i+1}</span><div><strong>${esc(n.title||stepLabels[n.type])}</strong><small>${stepLabels[n.type]}${n.id===b.definition.entry?' · начало':''}</small></div></button>`).join('')}<p class="sn-help px-2 mt-3">Выберите шаг слева. Справа настройте сообщение и переходы.</p></aside><div id="sn-nodes">${renderNode(active,nodes.indexOf(active),nodes)}</div></div><div class="sn-form-footer"><span class="sn-help">Изменения начнут работать после публикации</span><div class="sn-actions">${btn('Симулятор','bot-simulate')}${btn('Сохранить черновик','bot-save','',true)}</div></div>`;
-    main.querySelectorAll('input,textarea,select').forEach(el=>el.addEventListener('input',()=>{state.dirty=true;collectBot();if(el.id==='bot-trigger')document.getElementById('bot-keywords-wrap').hidden=el.value!=='keyword';}));
+    main.querySelectorAll('input,textarea,select,[contenteditable]').forEach(el=>el.addEventListener('input',()=>{state.dirty=true;collectBot();if(el.id==='bot-trigger')document.getElementById('bot-keywords-wrap').hidden=el.value!=='keyword';}));
     main.querySelectorAll('[data-button-action]').forEach(el=>el.addEventListener('change',()=>{collectBot();renderBotEditor();}));
+    wireMessageEditor(main);
     wireUploads();
   }
   function renderNode(n,index,nodes) {
@@ -508,12 +571,12 @@
       else if(action==='import-new')importForm();
       else if(action==='import-confirm'){await api('import/confirm',{id,group_id:document.getElementById('imp-group').value,consent:document.getElementById('imp-consent').checked});modal.close();await loadBoot();await renderSubscribers();toast('База импортирована');}
       else if(action.startsWith('bulk-')){if(action==='bulk-unsubscribe'&&!window.confirm('Отписать выбранных людей от всех рассылок этого канала?'))return;await api('subscribers/bulk',{ids:[...state.selected],action:action.slice(5),group_id:document.getElementById('sn-bulk-group').value});await loadBoot();await renderSubscribers();toast('Изменения сохранены');}
-      else if(action==='fmt-bold')wrapSelection(button.closest('[data-message-wrap]').querySelector('[data-message-text]'),'**');
-      else if(action==='fmt-italic')wrapSelection(button.closest('[data-message-wrap]').querySelector('[data-message-text]'),'_');
-      else if(action==='fmt-underline')wrapSelection(button.closest('[data-message-wrap]').querySelector('[data-message-text]'),'++');
-      else if(action==='fmt-link')insertLink(button.closest('[data-message-wrap]').querySelector('[data-message-text]'));
-      else if(action==='emoji-insert')insertAtCursor(button.closest('[data-message-wrap]').querySelector('[data-message-text]'),button.dataset.emoji);
-      else if(action==='campaign-next'){collectCampaign();if(state.wizard===0&&(!state.campaign.name.trim()||!state.campaign.audience.channels.length))throw new Error('Введите название и выберите хотя бы один канал.');if(state.wizard===1&&!state.campaign.body.text.trim())throw new Error('Добавьте текст сообщения.');if(state.wizard===2&&state.campaign.sendMode==='schedule'&&!state.campaign.scheduled_at)throw new Error('Выберите дату и время.');state.wizard++;renderCampaignEditor();}
+      else if(action==='fmt-bold')applyFormat(button.closest('[data-message-wrap]').querySelector('[data-message-editor]'),'bold');
+      else if(action==='fmt-italic')applyFormat(button.closest('[data-message-wrap]').querySelector('[data-message-editor]'),'italic');
+      else if(action==='fmt-underline')applyFormat(button.closest('[data-message-wrap]').querySelector('[data-message-editor]'),'underline');
+      else if(action==='fmt-link')applyLink(button.closest('[data-message-wrap]').querySelector('[data-message-editor]'));
+      else if(action==='emoji-insert')insertEmoji(button.closest('[data-message-wrap]').querySelector('[data-message-editor]'),button.dataset.emoji);
+      else if(action==='campaign-next'){collectCampaign();if(state.wizard===0&&(!state.campaign.name.trim()||!state.campaign.audience.channels.length))throw new Error('Введите название и выберите хотя бы один канал.');if(state.wizard===1&&!state.campaign.body.text.trim())throw new Error('Добавьте текст сообщения.');if(state.wizard===1&&state.campaign.body.text.length>(state.campaign.body.asset_id?900:3500))throw new Error('Слишком длинный текст сообщения. Сократите его.');if(state.wizard===2&&state.campaign.sendMode==='schedule'&&!state.campaign.scheduled_at)throw new Error('Выберите дату и время.');state.wizard++;renderCampaignEditor();}
       else if(action==='campaign-prev'){collectCampaign();state.wizard--;renderCampaignEditor();}
       else if(action==='campaign-save'){await saveCampaign();toast('Черновик сохранён');}
       else if(action==='campaign-launch'){const id=await saveCampaign();await api('campaigns/'+id+'/launch',{scheduled_at:state.campaign.sendMode==='schedule'?state.campaign.scheduled_at:null});state.dirty=false;await navigate(link('campaigns',{id}));toast('Рассылка поставлена в очередь');}
