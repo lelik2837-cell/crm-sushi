@@ -644,6 +644,19 @@ class SenlerTests(unittest.TestCase):
                       [{'id':'a','type':'message','text':'x','next':'b'},{'id':'b','type':'delay','minutes':1,'next':'a'}]]:
             self.post('bots',dict(name='Invalid',channel_id=channel,trigger_type='subscribe',definition={'entry':'a','nodes':nodes}),400)
 
+    def test_button_color_validated_and_saved_for_goto_buttons_only(self):
+        channel=self.channel('vk')
+        nodes=[{'id':'menu','type':'message','text':'Меню','buttons':[
+                    {'label':'Акция','action':'goto','value':'promo','color':'positive'}],'next':''},
+               {'id':'promo','type':'message','text':'Акция','buttons':[],'next':''}]
+        bot_id,_=self.bot(channel,nodes)
+        saved=self.one('senler_bots','id=?',(bot_id,))
+        self.assertEqual(json.loads(saved['draft_json'])['nodes'][0]['buttons'][0]['color'],'positive')
+        bad_nodes=[{'id':'menu','type':'message','text':'Меню','buttons':[
+                        {'label':'Акция','action':'goto','value':'promo','color':'rainbow'}],'next':''},
+                   {'id':'promo','type':'message','text':'Акция','buttons':[],'next':''}]
+        self.post('bots',dict(name='Bad',channel_id=channel,trigger_type='subscribe',definition={'entry':'menu','nodes':bad_nodes}),400)
+
     def test_reply_idempotency_and_takeover(self):
         channel=self.channel();sub=self.sub(channel)
         for _ in range(2):self.post('dialogs/{}/reply'.format(sub),{'text':'Здравствуйте','request_key':'same-logical-send'})
@@ -803,6 +816,21 @@ class SenlerTests(unittest.TestCase):
         with patch.object(api_vk,'vk',side_effect=[{'is_allowed':True},100]) as vk:
             api_vk.send('42',{'text':nested,'buttons':[]},92)
             self.assertEqual(vk.call_args.kwargs['message'],'жирное и курсив внутри тоже')
+
+    def test_vk_button_color_is_forwarded_other_channels_ignore_it(self):
+        channel={'kind':'vk','external_id':'7','webhook_secret':'secret'}
+        buttons=[{'label':'Акция','action':'callback','value':'promo','color':'positive'},
+                 {'label':'Сайт','action':'url','value':'https://example.com'}]
+        api=BotAPI(dict(channel,kind='vk'),'private-token')
+        with patch.object(api,'vk',side_effect=[{'is_allowed':True},100]) as vk:
+            api.send('42',{'text':'Текст','buttons':buttons},91)
+            keyboard=json.loads(vk.call_args.kwargs['keyboard'])
+            self.assertEqual([row[0].get('color') for row in keyboard['buttons']],['positive',None])
+        response=Mock(ok=True,status_code=200,headers={})
+        response.json.return_value={'ok':True,'result':{'message_id':1}}
+        with patch('senler_api.requests.request',return_value=response) as send:
+            BotAPI(dict(channel,kind='telegram'),'private-token').send('42',{'text':'Текст','buttons':buttons},91)
+            self.assertNotIn('color',send.call_args.kwargs['json']['reply_markup']['inline_keyboard'][0][0])
 
     def test_api_error_never_exposes_telegram_token(self):
         import requests

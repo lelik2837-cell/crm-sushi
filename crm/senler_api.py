@@ -409,7 +409,7 @@ class BotAPI:
                     'type': 'callback', 'label': button['label'], 'payload': json.dumps({'senler': button['value']})}
                 item = {'action': action}
                 if button['action'] != 'url':
-                    item['color'] = 'secondary'
+                    item['color'] = button.get('color') or 'secondary'
             rows.append([item])
         return rows
 

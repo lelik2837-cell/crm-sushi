@@ -21,6 +21,7 @@ from senler_templates import DELIVERY_MENU_KEY, delivery_menu_definition, upgrad
 KINDS = {'vk': 'ВКонтакте', 'telegram': 'Telegram', 'max': 'MAX'}
 STOP_WORDS = {'/stop', 'стоп', 'отписаться', 'unsubscribe'}
 START_WORDS = {'/start', 'начать', 'подписаться', 'subscribe'}
+BUTTON_COLORS = {'secondary', 'primary', 'positive', 'negative'}
 DEFAULT_GREETING_TEXT = ('Здесь можно получать наши новости и предложения. Подписаться на рассылку? '
                          'Отменить подписку можно в любой момент командой /stop.')
 DEFAULT_STOP_TEXT = ('Жаль, что вы отписались — теперь вы не будете получать наши новости и акции. '
@@ -203,13 +204,21 @@ def validate_body(body, allow_goto=False):
         action, value = raw.get('action', 'url'), str(raw.get('value', '')).strip()
         if not label or len(label) > 40:
             raise ValueError('Подпись кнопки: от 1 до 40 символов.')
+        button = {'label': label, 'action': action, 'value': value}
         if action == 'url':
             parsed = urlparse(value)
             if parsed.scheme not in ('https', 'http') or not parsed.hostname or parsed.username or parsed.password:
                 raise ValueError('В кнопке нужна полная ссылка https://…')
         elif action != 'goto' or not allow_goto or not re.fullmatch(r'[a-zA-Z0-9_-]{1,24}', value):
             raise ValueError('Выберите действие кнопки.')
-        buttons.append({'label': label, 'action': action, 'value': value})
+        else:
+            # Colour is VK-only (VK is the only one of the three whose keyboard buttons support
+            # it); Telegram/MAX ignore it. Open-link buttons stay uncoloured on VK too.
+            color = raw.get('color', 'secondary')
+            if color not in BUTTON_COLORS:
+                raise ValueError('Недопустимый цвет кнопки.')
+            button['color'] = color
+        buttons.append(button)
     return {'text': text, 'asset_id': asset_id, 'buttons': buttons}
 
 
