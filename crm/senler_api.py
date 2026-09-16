@@ -140,22 +140,46 @@ def telegram_uses_polling():
     return mode == 'polling'
 
 
-# The message editor lets the owner mark bold text as **text**; MAX uses this exact
-# Markdown syntax natively, Telegram needs it converted to HTML, and VK community
-# messages don't support inline formatting at all, so the markers are stripped there.
-BOLD_MARKUP_RE = re.compile(r'\*\*(.+?)\*\*', re.S)
+# The message editor lets the owner mark up text as **bold**, _italic_, ++underline++
+# and [label](url) links. MAX uses this exact Markdown syntax natively (dev.max.ru's
+# formatting table: **strong**/__strong__, *emphasized*/_emphasized_, ++underline++,
+# [Inline URL](url)), Telegram needs it converted to HTML, and VK community messages
+# don't support inline formatting or links at all, so both are flattened to plain text.
+FORMAT_RE = re.compile(
+    r'\[(?P<link_text>[^\[\]\n]+)\]\((?P<link_url>https?://[^\s)]+)\)'
+    r'|\*\*(?P<bold>[^\n*]+?)\*\*'
+    r'|\+\+(?P<underline>[^\n+]+?)\+\+'
+    # (?<!\w)…(?!\w): a lone underscore inside a word (promo codes, snake_case) stays literal.
+    r'|(?<!\w)_(?P<italic>[^\n_]+?)_(?!\w)',
+    re.S)
 
 
-def strip_bold_markup(text):
-    return BOLD_MARKUP_RE.sub(r'\1', text)
-
-
-def bold_markup_to_telegram_html(text):
-    escape = lambda value: value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+def strip_formatting(text):
     out, pos = [], 0
-    for match in BOLD_MARKUP_RE.finditer(text):
+    for match in FORMAT_RE.finditer(text):
+        out.append(text[pos:match.start()])
+        if match.group('link_text') is not None:
+            out.append('{} ({})'.format(match.group('link_text'), match.group('link_url')))
+        else:
+            out.append(match.group('bold') or match.group('underline') or match.group('italic'))
+        pos = match.end()
+    out.append(text[pos:])
+    return ''.join(out)
+
+
+def format_to_telegram_html(text):
+    escape = lambda value: value.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
+    out, pos = [], 0
+    for match in FORMAT_RE.finditer(text):
         out.append(escape(text[pos:match.start()]))
-        out.append('<b>' + escape(match.group(1)) + '</b>')
+        if match.group('link_text') is not None:
+            out.append('<a href="{}">{}</a>'.format(escape(match.group('link_url')), escape(match.group('link_text'))))
+        elif match.group('bold') is not None:
+            out.append('<b>{}</b>'.format(escape(match.group('bold'))))
+        elif match.group('underline') is not None:
+            out.append('<u>{}</u>'.format(escape(match.group('underline'))))
+        else:
+            out.append('<i>{}</i>'.format(escape(match.group('italic'))))
         pos = match.end()
     out.append(escape(text[pos:]))
     return ''.join(out)
@@ -390,7 +414,7 @@ class BotAPI:
             payload = {'chat_id': external_user_id, 'parse_mode': 'HTML'}
             if buttons:
                 payload['reply_markup'] = {'inline_keyboard': keyboard}
-            text = bold_markup_to_telegram_html(body['text'])
+            text = format_to_telegram_html(body['text'])
             if asset:
                 payload['caption'] = text
                 if buttons:
@@ -412,7 +436,7 @@ class BotAPI:
         allowed = self.vk('messages.isMessagesFromGroupAllowed', group_id=self.channel['external_id'], user_id=external_user_id)
         if not allowed.get('is_allowed'):
             raise DeliveryError('Пользователь запретил сообщения сообщества.', blocked=True)
-        payload = {'user_id': external_user_id, 'message': strip_bold_markup(body['text']), 'random_id': random_id}
+        payload = {'user_id': external_user_id, 'message': strip_formatting(body['text']), 'random_id': random_id}
         if buttons:
             payload['keyboard'] = json.dumps({'inline': True, 'buttons': keyboard}, ensure_ascii=False)
         if asset:

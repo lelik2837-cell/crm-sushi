@@ -13,7 +13,11 @@
   const DEFAULT_STOP_TEXT = 'Жаль, что вы отписались — теперь вы не будете получать наши новости и акции. Если передумаете, можно подписаться снова.';
   const stepLabels = {message: 'Сообщение', delay: 'Задержка', condition: 'Условие', group: 'Группа подписчиков', handoff: 'Передать оператору'};
   const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[ch]));
-  const formatPreview = value => esc(value).replace(/\*\*([^\n*]+?)\*\*/g, '<strong>$1</strong>');
+  const formatPreview = value => esc(value)
+    .replace(/\[([^\]\n]+?)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/\*\*([^\n*]+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\+\+([^\n+]+?)\+\+/g, '<u>$1</u>')
+    .replace(/(?<!\w)_([^\n_]+?)_(?!\w)/g, '<em>$1</em>');
   const EMOJIS = ['😀','😊','😉','😍','🥳','😋','👍','🙏','🎉','🔥','⭐','❤️','✅','⏰','📢','🎁','💥','🍣','🍱','🍜','🍙','🥢','🍤','🐟','🍚','🌶️','🥤','🚀','📍','💬'];
   function wrapSelection(textarea, marker) {
     const start = textarea.selectionStart, end = textarea.selectionEnd, value = textarea.value;
@@ -29,6 +33,19 @@
     const start = textarea.selectionStart, end = textarea.selectionEnd, value = textarea.value;
     textarea.value = value.slice(0, start) + text + value.slice(end);
     const caret = start + text.length;
+    textarea.focus(); textarea.setSelectionRange(caret, caret);
+    textarea.dispatchEvent(new Event('input', {bubbles: true}));
+  }
+  function insertLink(textarea) {
+    const start = textarea.selectionStart, end = textarea.selectionEnd, value = textarea.value;
+    const selected = value.slice(start, end) || 'ссылка';
+    const url = window.prompt('Ссылка (https://…)', 'https://');
+    if (!url) { textarea.focus(); return; }
+    const trimmed = url.trim();
+    if (!/^https?:\/\/\S+$/i.test(trimmed)) { toast('Нужна полная ссылка https://…', true); textarea.focus(); return; }
+    const markup = '[' + selected + '](' + trimmed + ')';
+    textarea.value = value.slice(0, start) + markup + value.slice(end);
+    const caret = start + markup.length;
     textarea.focus(); textarea.setSelectionRange(caret, caret);
     textarea.dispatchEvent(new Event('input', {bubbles: true}));
   }
@@ -300,7 +317,7 @@
     return `<aside class="sn-preview"><div class="sn-preview-title">Как увидит подписчик</div><div class="sn-chat-top"><i class="bi bi-chat-dots me-2"></i>${esc(name)}</div><div class="sn-bubble">${body.asset_id?`<img alt="Картинка сообщения" src="${apiBase}assets/${Number(body.asset_id)}">`:''}<span>${formatPreview((body.text||'Текст вашего сообщения появится здесь…').replaceAll('{имя}','Алексей').replaceAll('{name}','Алексей'))}</span></div>${(body.buttons||[]).map(b=>`<div class="sn-preview-button">${esc(b.label||'Подпись кнопки')}</div>`).join('')}${unsubscribe?`<div class="sn-preview-button">${esc(settings?.unsubscribe_label||'Отписаться')}</div>`:''}<div class="sn-preview-time">Пример сообщения</div></aside>`;
   }
   function messageFields(body, scope='campaign', nodes=[]) {
-    return `<div class="sn-field" data-message-wrap><div class="d-flex justify-content-between align-items-center mb-2"><label class="mb-0">Текст сообщения</label><div class="sn-editor-toolbar" role="toolbar" aria-label="Форматирование текста"><button type="button" class="sn-icon" data-action="fmt-bold" title="Жирный текст" aria-label="Жирный текст"><i class="bi bi-type-bold"></i></button><div class="dropdown"><button type="button" class="sn-icon" data-bs-toggle="dropdown" aria-expanded="false" title="Вставить эмодзи" aria-label="Вставить эмодзи"><i class="bi bi-emoji-smile"></i></button><div class="dropdown-menu dropdown-menu-end sn-emoji-menu">${EMOJIS.map(e=>`<button type="button" class="sn-emoji-btn" data-action="emoji-insert" data-emoji="${e}">${e}</button>`).join('')}</div></div></div></div><textarea class="form-control" data-message-text rows="7" maxlength="${body.asset_id?900:3500}" placeholder="Напишите предложение для подписчиков">${esc(body.text)}</textarea><div class="d-flex justify-content-between sn-help"><span>Персонализация: {имя} · **текст** — жирным шрифтом</span><span data-text-count>${body.text.length} / ${body.asset_id?900:3500}</span></div></div>
+    return `<div class="sn-field" data-message-wrap><label>Текст сообщения</label><div class="sn-editor-toolbar" role="toolbar" aria-label="Форматирование текста"><button type="button" data-action="fmt-bold" title="Жирный" aria-label="Жирный"><i class="bi bi-type-bold"></i></button><button type="button" data-action="fmt-italic" title="Курсив" aria-label="Курсив"><i class="bi bi-type-italic"></i></button><button type="button" data-action="fmt-underline" title="Подчёркнутый" aria-label="Подчёркнутый"><i class="bi bi-type-underline"></i></button><button type="button" data-action="fmt-link" title="Ссылка" aria-label="Ссылка"><i class="bi bi-link-45deg"></i></button><span class="sn-editor-toolbar-sep"></span><div class="dropdown"><button type="button" data-bs-toggle="dropdown" aria-expanded="false" title="Вставить эмодзи" aria-label="Вставить эмодзи"><i class="bi bi-emoji-smile"></i></button><div class="dropdown-menu dropdown-menu-end sn-emoji-menu">${EMOJIS.map(e=>`<button type="button" class="sn-emoji-btn" data-action="emoji-insert" data-emoji="${e}">${e}</button>`).join('')}</div></div></div><textarea class="form-control" data-message-text rows="7" maxlength="${body.asset_id?900:3500}" placeholder="Напишите предложение для подписчиков">${esc(body.text)}</textarea><div class="d-flex justify-content-between sn-help"><span>Персонализация: {имя}</span><span data-text-count>${body.text.length} / ${body.asset_id?900:3500}</span></div></div>
       <div class="sn-field"><label>Картинка</label>${body.asset_id?`<div><img class="sn-upload-preview" alt="Вложение" src="${apiBase}assets/${Number(body.asset_id)}"> ${btn('Убрать','asset-remove',`data-scope="${scope}"`)}</div>`:''}<input type="file" class="form-control" data-message-file data-scope="${scope}" accept="image/jpeg,image/png"><div class="sn-help">JPG или PNG, до 8 МБ. С картинкой текст короче: до 900 символов.</div></div>
       <div class="sn-field"><label>Кнопки под сообщением</label><div data-button-list>${(body.buttons||[]).map((b,i)=>`<div class="sn-button-row" data-button-index="${i}"><input class="form-control" data-button-label value="${esc(b.label)}" placeholder="Подпись кнопки" maxlength="40">${scope==='campaign'?`<input class="form-control" data-button-value value="${esc(b.value)}" placeholder="https://…">`:`<div class="d-flex gap-1"><select class="form-select" data-button-action style="max-width:100px"><option value="url" ${b.action==='url'?'selected':''}>Ссылка</option><option value="goto" ${b.action==='goto'?'selected':''}>К шагу</option></select>${b.action==='goto'?`<select class="form-select" data-button-value>${nodeOptions(nodes,b.value)}</select>`:`<input class="form-control" data-button-value value="${esc(b.value)}" placeholder="https://…">`}</div>`}<button type="button" class="sn-icon" data-action="button-remove" data-scope="${scope}" data-index="${i}" aria-label="Удалить кнопку"><i class="bi bi-x"></i></button></div>`).join('')}</div>${body.buttons.length<5?btn('<i class="bi bi-plus me-1"></i>Добавить кнопку','button-add',`data-scope="${scope}"`):''}<div class="sn-help">Текст и показ кнопки отписки задаются в настройках канала.</div></div>`;
   }
@@ -484,6 +501,9 @@
       else if(action==='import-confirm'){await api('import/confirm',{id,group_id:document.getElementById('imp-group').value,consent:document.getElementById('imp-consent').checked});modal.close();await loadBoot();await renderSubscribers();toast('База импортирована');}
       else if(action.startsWith('bulk-')){if(action==='bulk-unsubscribe'&&!window.confirm('Отписать выбранных людей от всех рассылок этого канала?'))return;await api('subscribers/bulk',{ids:[...state.selected],action:action.slice(5),group_id:document.getElementById('sn-bulk-group').value});await loadBoot();await renderSubscribers();toast('Изменения сохранены');}
       else if(action==='fmt-bold')wrapSelection(button.closest('[data-message-wrap]').querySelector('[data-message-text]'),'**');
+      else if(action==='fmt-italic')wrapSelection(button.closest('[data-message-wrap]').querySelector('[data-message-text]'),'_');
+      else if(action==='fmt-underline')wrapSelection(button.closest('[data-message-wrap]').querySelector('[data-message-text]'),'++');
+      else if(action==='fmt-link')insertLink(button.closest('[data-message-wrap]').querySelector('[data-message-text]'));
       else if(action==='emoji-insert')insertAtCursor(button.closest('[data-message-wrap]').querySelector('[data-message-text]'),button.dataset.emoji);
       else if(action==='campaign-next'){collectCampaign();if(state.wizard===0&&(!state.campaign.name.trim()||!state.campaign.audience.channels.length))throw new Error('Введите название и выберите хотя бы один канал.');if(state.wizard===1&&!state.campaign.body.text.trim())throw new Error('Добавьте текст сообщения.');if(state.wizard===2&&state.campaign.sendMode==='schedule'&&!state.campaign.scheduled_at)throw new Error('Выберите дату и время.');state.wizard++;renderCampaignEditor();}
       else if(action==='campaign-prev'){collectCampaign();state.wizard--;renderCampaignEditor();}
