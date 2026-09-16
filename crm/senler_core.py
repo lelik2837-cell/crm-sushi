@@ -103,6 +103,12 @@ def init_schema(conn):
             event_key TEXT NOT NULL, body_json TEXT NOT NULL, created_at INTEGER NOT NULL, processed_at INTEGER,
             UNIQUE(channel_id,event_key)
         );
+        CREATE TABLE IF NOT EXISTS senler_telegram_polling (
+            channel_id INTEGER PRIMARY KEY REFERENCES senler_channels(id),
+            next_offset INTEGER NOT NULL DEFAULT 0,
+            polled_at INTEGER, received_at INTEGER,
+            last_error TEXT NOT NULL DEFAULT '', retry_at INTEGER NOT NULL DEFAULT 0
+        );
         CREATE TABLE IF NOT EXISTS senler_audit (
             id INTEGER PRIMARY KEY, action TEXT NOT NULL, detail TEXT NOT NULL, user_id INTEGER, created_at INTEGER NOT NULL
         );

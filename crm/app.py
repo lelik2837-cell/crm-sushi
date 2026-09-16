@@ -20439,6 +20439,8 @@ try:
     if os.environ.get('CRM_DISABLE_SCHEDULER') == '1':
         raise ImportError('Планировщик отключён для изолированного тестового запуска')
     from apscheduler.schedulers.background import BackgroundScheduler
+    from senler_telegram import TelegramPoller
+    _senler_telegram = TelegramPoller(senler_service)
     _scheduler = BackgroundScheduler(timezone='Asia/Novosibirsk')
     _scheduler.add_job(lambda: _run_once_across_workers('sched_backup', _scheduled_backup),
                         'cron', hour=3, minute=0)
@@ -20450,6 +20452,8 @@ try:
                         'cron', hour=3, minute=30)
     _scheduler.add_job(lambda: _run_once_across_workers('sched_senler_' + hashlib.sha256(DATABASE.encode()).hexdigest()[:12], senler_service.tick, quiet=True),
                         'interval', seconds=5, max_instances=1, coalesce=True)
+    _scheduler.add_job(_senler_telegram.refresh, 'interval', seconds=5,
+                        max_instances=1, coalesce=True, next_run_time=datetime.now())
     _scheduler.start()
     print('[Backup] Планировщик запущен — бэкап каждый день в 03:00 НСК, Сбербанк — раз в час, '
           'очистка фото в Диалогах старше 6 месяцев — раз в день в 03:30')

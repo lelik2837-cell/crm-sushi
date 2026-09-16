@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 from flask import Blueprint, Response, jsonify, redirect, render_template, request, session, url_for
 
-from senler_api import DeliveryError, parse_event
+from senler_api import DeliveryError, parse_event, telegram_uses_polling
 from senler_core import KINDS, SenlerService, dumps, init_schema, integer, now, parse_import, validate_body, validate_definition
 
 
@@ -81,6 +81,7 @@ def register_senler(app, get_db, database_path, item_visible):
         channel.pop('confirmation', None)
         channel.pop('callback_server_id', None)
         channel['kind_label'] = KINDS[channel['kind']]
+        channel['receive_mode'] = 'polling' if channel['kind'] == 'telegram' and telegram_uses_polling() else 'webhook'
         return channel
 
     def campaign_data(conn, record, details=False):
@@ -117,8 +118,11 @@ def register_senler(app, get_db, database_path, item_visible):
         channel_id = request.args.get('channel', type=int)
         with service.db() as conn:
             channels = [public_channel(r) for r in conn.execute('''SELECT c.*,
+                p.polled_at AS telegram_poll_at,p.received_at AS telegram_received_at,
+                COALESCE(p.last_error,'') AS telegram_poll_error,
                 (SELECT COUNT(*) FROM senler_subscribers s WHERE s.channel_id=c.id AND s.status='active') subscribers
-                FROM senler_channels c WHERE c.owner_id=? ORDER BY c.id''', (session['user_id'],))]
+                FROM senler_channels c LEFT JOIN senler_telegram_polling p ON p.channel_id=c.id
+                WHERE c.owner_id=? ORDER BY c.id''', (session['user_id'],))]
             groups = [dict(r) for r in conn.execute('''SELECT g.*,COUNT(m.subscriber_id) members FROM senler_groups g
                 LEFT JOIN senler_group_members m ON m.group_id=g.id WHERE g.owner_id=? GROUP BY g.id ORDER BY g.name''', (session['user_id'],))]
             scope = ' WHERE channel_id IN (SELECT id FROM senler_channels WHERE owner_id=?)' + (' AND channel_id=?' if channel_id else '')

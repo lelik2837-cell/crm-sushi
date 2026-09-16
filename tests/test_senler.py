@@ -532,7 +532,7 @@ class SenlerTests(unittest.TestCase):
         channel = self.post('channels', {'kind': 'telegram', 'name': 'Telegram', 'token': 'private-token'})['id']
         identity = Mock(ok=True, status_code=200, headers={})
         identity.json.return_value = {'ok': True, 'result': {'id': 7, 'is_bot': True, 'username': 'test_bot'}}
-        with patch.dict(os.environ, {'SENLER_TELEGRAM_PROXY_URL': 'socks5h://proxy:1080', 'SENLER_PUBLIC_URL': 'https://crm.example'}):
+        with patch.dict(os.environ, {'SENLER_TELEGRAM_PROXY_URL': 'socks5h://proxy:1080', 'SENLER_PUBLIC_URL': 'https://crm.example', 'SENLER_TELEGRAM_RECEIVE_MODE': 'webhook'}):
             with patch('senler_api.requests.request', side_effect=requests.ConnectionError('private-token')) as request:
                 result = self.post('channels/{}/connect'.format(channel), status=502)
                 self.assertIn('TG-TOKEN-PROXY-CONNECTION', result['error'])
@@ -564,7 +564,7 @@ class SenlerTests(unittest.TestCase):
                 result = {'url': registration['url']}
             response.json.return_value = {'ok': True, 'result': result}
             return response
-        with patch.dict(os.environ, {'SENLER_PUBLIC_URL': 'https://crm.example'}), \
+        with patch.dict(os.environ, {'SENLER_PUBLIC_URL': 'https://crm.example', 'SENLER_TELEGRAM_RECEIVE_MODE': 'webhook'}), \
                 patch('senler_api.requests.request', side_effect=request):
             self.post('channels/{}/connect'.format(channel))
         stored = self.one('senler_channels', 'id=?', (channel,))

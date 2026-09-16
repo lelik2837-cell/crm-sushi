@@ -16,6 +16,11 @@ import check_telegram_network
 
 
 class TelegramNetworkTests(unittest.TestCase):
+    def setUp(self):
+        mode = patch.dict(os.environ, {'SENLER_TELEGRAM_RECEIVE_MODE': 'webhook'})
+        mode.start()
+        self.addCleanup(mode.stop)
+
     def test_webhook_timeout_reconciles_only_the_current_registration(self):
         api = BotAPI({'kind': 'telegram', 'webhook_secret': 'private-secret'}, 'private-token')
         response = Mock(ok=True, status_code=200, headers={})

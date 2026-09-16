@@ -114,6 +114,13 @@ def telegram_request_options():
     return {'proxies': {'http': proxy, 'https': proxy}}
 
 
+def telegram_uses_polling():
+    mode = os.environ.get('SENLER_TELEGRAM_RECEIVE_MODE', 'polling').strip().lower()
+    if mode not in ('polling', 'webhook'):
+        raise DeliveryError('Режим приёма Telegram должен быть polling или webhook.')
+    return mode == 'polling'
+
+
 class BotAPI:
     VK_VERSION = '5.199'
     MAX_BASE = 'https://platform-api2.max.ru'
@@ -179,7 +186,7 @@ class BotAPI:
         # Only read-only checks retry here. connect() reconciles an uncertain
         # webhook registration before deciding whether to repeat that mutation.
         read_only = method in ('getMe', 'getWebhookInfo') and not sending and retry
-        timeout = timeout or ((5, 30) if method in ('getMe', 'getWebhookInfo', 'setWebhook') else (5, 15))
+        timeout = timeout or ((5, 30) if method in ('getMe', 'getWebhookInfo', 'setWebhook', 'deleteWebhook') else (5, 15))
         try:
             for attempt in range(2 if read_only else 1):
                 try:
@@ -195,6 +202,8 @@ class BotAPI:
                 'getMe': ('проверка токена', 'TOKEN'),
                 'setWebhook': ('подключение приёма сообщений', 'WEBHOOK'),
                 'getWebhookInfo': ('проверка приёма сообщений', 'WEBHOOK_INFO'),
+                'deleteWebhook': ('переключение на получение сообщений', 'POLL_SETUP'),
+                'getUpdates': ('получение сообщений', 'POLL'),
             }.get(method, ('запрос к Telegram', 'API'))
             route = 'PROXY' if options.get('proxies') else 'DIRECT'
             code = 'TG-{}-{}-{}'.format(operation, route, exc.network_code)
@@ -233,6 +242,9 @@ class BotAPI:
                 'confirmation': confirmation['code']}
 
     def connect(self, url):
+        if self.kind == 'telegram' and telegram_uses_polling():
+            self.start_polling()
+            return ''
         secret = self.channel['webhook_secret']
         if not url.startswith('https://'):
             raise DeliveryError('Для подключения нужен публичный HTTPS-адрес CRM.')
@@ -283,6 +295,18 @@ class BotAPI:
         if not confirmed or confirmed[0].get('status') != 'ok':
             raise DeliveryError('ВК ещё не подтвердил приём событий. Через несколько секунд нажмите «Подключить» ещё раз. Если ошибка повторится, проверьте сервер «CRM Сенлер» в настройках Callback API сообщества.')
         return str(server_id)
+
+    def start_polling(self):
+        # Idempotent on retries/restarts. Never discard Telegram's pending queue.
+        result = self.telegram('deleteWebhook', {'drop_pending_updates': False})
+        if result is not True:
+            raise DeliveryError('Telegram не подтвердил переключение приёма сообщений.')
+
+    def get_updates(self, offset):
+        return self.telegram('getUpdates', {
+            'offset': offset, 'limit': 100, 'timeout': 25,
+            'allowed_updates': ['message', 'callback_query', 'my_chat_member'],
+        }, timeout=(5, 35), retry=False)
 
     @staticmethod
     def _keyboard(buttons, kind):
