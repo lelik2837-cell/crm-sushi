@@ -20388,6 +20388,70 @@ def _scheduled_rating_requests():
         print(f'[Оценка заказа] exception: {e}')
 
 
+def _send_senler_health_email(conn, unhealthy, recovered):
+    to_emails = [r['email'] for r in conn.execute("SELECT DISTINCT email FROM users WHERE role='owner' AND email!=''").fetchall()]
+    if not to_emails:
+        return
+    if recovered:
+        subject = 'CRMPAPA — приём Telegram в Сенлере восстановлен'
+        text = 'Приём сообщений Telegram в разделе «Отчёты → Сенлер» снова работает в обычном режиме.'
+    else:
+        subject = 'CRMPAPA — приём Telegram в Сенлере не работает'
+        text = ('Приём сообщений Telegram ({}) не отвечает более 5 минут подряд. Подписчики могут не '
+                'получать ответы бота. Проверьте раздел «Отчёты → Сенлер → Каналы».').format(
+                ', '.join(c['name'] for c in unhealthy))
+    msg = MIMEMultipart('alternative')
+    msg['Subject'] = subject
+    msg['From'] = SMTP_FROM
+    msg['To'] = ', '.join(to_emails)
+    msg.attach(MIMEText(text, 'plain', 'utf-8'))
+    raw = msg.as_string()
+    def _do_send():
+        try:
+            srv = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15)
+            srv.starttls()
+            srv.login(SMTP_USER, SMTP_PASSWORD)
+            srv.sendmail(SMTP_USER, to_emails, raw)
+            srv.quit()
+        except Exception as e:
+            logging.error(f'Senler health email error: {e}')
+    threading.Thread(target=_do_send, daemon=True).start()
+
+
+def _scheduled_senler_telegram_health_check():
+    """Просьба пользователя 2026-09-16: узнавать о сбое приёма Telegram в Сенлере не только
+    когда сами заходим проверить бота, а автоматически, письмом на почту. senler_telegram_polling
+    уже ведёт last_error/polled_at за каждый цикл опроса (crm/senler_telegram.py) — здесь просто
+    читаем то же состояние. Порог 5 минут без успешного опроса/с ошибкой отсеивает короткие
+    сетевые заминки; state в api_settings не даёт слать повторное письмо каждые 5 минут, пока
+    проблема не решена (не чаще раза в час), и шлёт отдельное письмо о восстановлении один раз."""
+    try:
+        import time
+        with get_db() as conn:
+            rows = conn.execute('''SELECT c.id,c.name,p.last_error,p.polled_at
+                FROM senler_channels c LEFT JOIN senler_telegram_polling p ON p.channel_id=c.id
+                WHERE c.kind='telegram' AND c.status='connected' ''').fetchall()
+            now_ts = int(time.time())
+            unhealthy = [dict(r) for r in rows if r['last_error'] or not r['polled_at'] or now_ts - r['polled_at'] > 300]
+            state_row = conn.execute("SELECT value FROM api_settings WHERE key='senler_telegram_alert_state'").fetchone()
+            state = _json_lib.loads(state_row['value']) if state_row else {}
+            if unhealthy:
+                alerting_since = state.get('alerting_since') or now_ts
+                alert_sent_at = state.get('alert_sent_at')
+                if now_ts - alerting_since >= 300 and (not alert_sent_at or now_ts - alert_sent_at >= 3600):
+                    _send_senler_health_email(conn, unhealthy, recovered=False)
+                    alert_sent_at = now_ts
+                conn.execute("INSERT OR REPLACE INTO api_settings (key,value) VALUES ('senler_telegram_alert_state',?)",
+                             (_json_lib.dumps({'alerting_since': alerting_since, 'alert_sent_at': alert_sent_at}),))
+            elif state.get('alerting_since'):
+                if state.get('alert_sent_at'):
+                    _send_senler_health_email(conn, [], recovered=True)
+                conn.execute("DELETE FROM api_settings WHERE key='senler_telegram_alert_state'")
+            conn.commit()
+    except Exception as e:
+        print(f'[Сенлер] проверка состояния Telegram: exception: {e}')
+
+
 def _scheduled_dialog_image_cleanup():
     """Просьба пользователя 2026-09-06: фото в «Диалогах» не хранить бессрочно — старше
     6 месяцев удалять сам блоб (иначе crm.db растёт бесконечно от накопленных вложений), а
@@ -20458,6 +20522,8 @@ try:
                         'interval', seconds=60, max_instances=1, coalesce=True)
     _scheduler.add_job(_senler_telegram.refresh, 'interval', seconds=5,
                         max_instances=1, coalesce=True, next_run_time=datetime.now())
+    _scheduler.add_job(lambda: _run_once_across_workers('sched_senler_tg_health_' + hashlib.sha256(DATABASE.encode()).hexdigest()[:12], _scheduled_senler_telegram_health_check, quiet=True),
+                        'interval', minutes=5, max_instances=1, coalesce=True)
     _scheduler.start()
     print('[Backup] Планировщик запущен — бэкап каждый день в 03:00 НСК, Сбербанк — раз в час, '
           'очистка фото в Диалогах старше 6 месяцев — раз в день в 03:30')
