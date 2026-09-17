@@ -1,0 +1,41 @@
+<div class="modal fade" id="{{ modal_id }}" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('vacancy_field_add') }}">
+                <input type="hidden" name="position_id" value="{{ position_id or '' }}">
+                <div class="modal-header">
+                    <h5 class="modal-title">{{ title }}</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Текст вопроса</label>
+                        <input type="text" name="label" class="form-control" placeholder="Например «Есть ли опыт работы?»" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-semibold">Тип ответа</label>
+                        <select name="field_type" class="form-select"
+                                onchange="document.getElementById('{{ modal_id }}_options').classList.toggle('d-none', this.value!=='select')">
+                            <option value="text">Короткий текст</option>
+                            <option value="textarea">Текст в несколько строк</option>
+                            <option value="select">Один вариант из списка</option>
+                            <option value="branches">Филиалы (можно отметить несколько)</option>
+                        </select>
+                    </div>
+                    <div class="mb-3 d-none" id="{{ modal_id }}_options">
+                        <label class="form-label small fw-semibold">Варианты ответа</label>
+                        <textarea name="options" class="form-control" rows="3" placeholder="Каждый вариант с новой строки, например:&#10;Да&#10;Нет"></textarea>
+                    </div>
+                    <div class="form-check">
+                        <input type="checkbox" name="is_required" value="1" class="form-check-input" id="{{ modal_id }}_required">
+                        <label class="form-check-label" for="{{ modal_id }}_required">Обязательный вопрос</label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Добавить вопрос</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>

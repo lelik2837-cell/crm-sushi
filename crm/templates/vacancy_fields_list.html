@@ -1,0 +1,69 @@
+{% set type_labels = {'text': 'Короткий текст', 'textarea': 'Текст в несколько строк', 'select': 'Список', 'branches': 'Филиалы'} %}
+{% if fields %}
+<div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+        <thead class="table-light">
+            <tr><th>Вопрос</th><th>Тип</th><th>Обязательный</th><th class="text-end">Действия</th></tr>
+        </thead>
+        <tbody>
+        {% for f in fields %}
+        <tr class="{% if not f.is_active %}text-muted{% endif %}">
+            <td>{{ f.label }}{% if not f.is_active %} <span class="badge bg-secondary">скрыт из формы</span>{% endif %}</td>
+            <td class="text-nowrap">{{ type_labels.get(f.field_type, f.field_type) }}</td>
+            <td>{% if f.is_required %}<i class="bi bi-check-lg text-success"></i>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+            <td class="text-end text-nowrap">
+                <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editFieldModal{{ f.id }}" title="Изменить">
+                    <i class="bi bi-pencil"></i>
+                </button>
+                <form method="POST" action="{{ url_for('vacancy_field_delete', field_id=f.id) }}" class="d-inline"
+                      onsubmit="return confirm('Удалить вопрос «{{ f.label }}»? Если на него уже есть ответы — вопрос будет только скрыт из формы, ответы сохранятся.')">
+                    <button class="btn btn-sm btn-outline-danger" title="Удалить"><i class="bi bi-trash"></i></button>
+                </form>
+            </td>
+        </tr>
+
+        <!-- Модалка редактирования вопроса -->
+        <div class="modal fade" id="editFieldModal{{ f.id }}" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <form method="POST" action="{{ url_for('vacancy_field_edit', field_id=f.id) }}">
+                        <div class="modal-header">
+                            <h5 class="modal-title">Вопрос</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="mb-3">
+                                <label class="form-label small fw-semibold">Текст вопроса</label>
+                                <input type="text" name="label" class="form-control" value="{{ f.label }}" required>
+                            </div>
+                            {% if f.field_type == 'select' %}
+                            <div class="mb-3">
+                                <label class="form-label small fw-semibold">Варианты ответа</label>
+                                <textarea name="options" class="form-control" rows="3">{{ f.options|fromjson|join('\n') }}</textarea>
+                                <div class="form-text">Каждый вариант с новой строки</div>
+                            </div>
+                            {% endif %}
+                            <div class="form-check mb-2">
+                                <input type="checkbox" name="is_required" value="1" class="form-check-input" id="fieldReq{{ f.id }}" {% if f.is_required %}checked{% endif %}>
+                                <label class="form-check-label" for="fieldReq{{ f.id }}">Обязательный вопрос</label>
+                            </div>
+                            <div class="form-check">
+                                <input type="checkbox" name="is_active" value="1" class="form-check-input" id="fieldAct{{ f.id }}" {% if f.is_active %}checked{% endif %}>
+                                <label class="form-check-label" for="fieldAct{{ f.id }}">Показывать в форме на сайте</label>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                            <button type="submit" class="btn btn-primary">Сохранить</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="text-muted small p-3">Вопросов пока нет</div>
+{% endif %}

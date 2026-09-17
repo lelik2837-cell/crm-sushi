@@ -20,118 +20,139 @@
 </ul>
 
 {% if active_tab == 'settings' %}
-<div class="row g-4">
-    <div class="col-lg-6">
-        <div class="card mb-4">
-            <div class="card-header bg-light fw-semibold">Позиции</div>
-            <div class="table-responsive">
-                <table class="table mb-0 align-middle">
-                    <thead class="table-light"><tr><th>Название</th><th>Активна</th><th></th></tr></thead>
-                    <tbody>
-                    {% for p in all_positions %}
-                    <tr>
-                        <td>
-                            <input type="text" name="name" form="pos-{{ p.id }}" value="{{ p.name }}" class="form-control form-control-sm">
-                        </td>
-                        <td>
-                            <input type="checkbox" name="is_active" value="1" form="pos-{{ p.id }}" class="form-check-input" {% if p.is_active %}checked{% endif %}>
-                        </td>
-                        <td class="text-end text-nowrap">
-                            <form id="pos-{{ p.id }}" method="POST" action="{{ url_for('vacancy_position_edit', pos_id=p.id) }}" class="d-inline"></form>
-                            <button class="btn btn-sm btn-outline-secondary" type="submit" form="pos-{{ p.id }}">Сохранить</button>
-                            <form method="POST" action="{{ url_for('vacancy_position_delete', pos_id=p.id) }}" class="d-inline"
-                                  onsubmit="return confirm('Удалить позицию «{{ p.name }}»? Если по ней уже есть заявки — позиция будет только скрыта.')">
-                                <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
-                            </form>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-            <div class="card-body">
-                <form method="POST" action="{{ url_for('vacancy_position_add') }}" class="d-flex gap-2">
-                    <input type="text" name="name" class="form-control form-control-sm" placeholder="Новая позиция, например «Оператор»" required>
-                    <button class="btn btn-sm btn-success text-nowrap"><i class="bi bi-plus-lg"></i> Добавить</button>
-                </form>
-            </div>
-        </div>
+<p class="text-muted mb-4">Здесь настраивается, что спрашивает форма на вашем сайте — отдельно для каждой позиции, плюс общие вопросы, которые показываются всегда. Изменения применяются сразу.</p>
 
-        <div class="card">
-            <div class="card-header bg-light fw-semibold"><i class="bi bi-link-45deg me-1"></i>Форма для сайта</div>
-            <div class="card-body">
-                <p class="text-muted small mb-2">Вставьте этот код на страницу вашего сайта — форма подстроится под вопросы ниже автоматически.</p>
-                <div class="input-group input-group-sm mb-2">
-                    <textarea class="form-control font-monospace" style="resize:none" rows="3" readonly id="iframe_snippet">&lt;iframe src="{{ base_url }}/vacancy/apply/{{ token }}" style="width:100%;height:900px;border:0;"&gt;&lt;/iframe&gt;</textarea>
-                    <button class="btn btn-outline-secondary" type="button" onclick="copySnippet()"><i class="bi bi-copy"></i></button>
+<div class="card mb-4">
+    <div class="card-header bg-light fw-semibold"><i class="bi bi-link-45deg me-1"></i>Форма для сайта</div>
+    <div class="card-body">
+        <p class="text-muted small mb-2">Вставьте этот код на страницу вашего сайта — форма подстроится под вопросы ниже автоматически.</p>
+        <div class="input-group input-group-sm mb-2">
+            <textarea class="form-control font-monospace" style="resize:none" rows="3" readonly id="iframe_snippet">&lt;iframe src="{{ base_url }}/vacancy/apply/{{ token }}" style="width:100%;height:900px;border:0;"&gt;&lt;/iframe&gt;</textarea>
+            <button class="btn btn-outline-secondary" type="button" onclick="copySnippet()"><i class="bi bi-copy"></i></button>
+        </div>
+        <form method="POST" action="{{ url_for('vacancy_token_regenerate') }}"
+              onsubmit="return confirm('Старая ссылка перестанет работать — обновите код на сайте. Продолжить?')">
+            <button class="btn btn-sm btn-outline-danger"><i class="bi bi-arrow-repeat me-1"></i>Обновить ссылку</button>
+        </form>
+    </div>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <h5 class="mb-0">Общие вопросы <span class="text-muted small fw-normal">— показываются на любой позиции</span></h5>
+    <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#addFieldModalCommon">
+        <i class="bi bi-plus-lg"></i> Добавить вопрос
+    </button>
+</div>
+<div class="card mb-4">
+    {% with fields = common_fields %}
+    {% include 'vacancy_fields_list.html' %}
+    {% endwith %}
+</div>
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <h5 class="mb-0">Позиции и их вопросы</h5>
+    <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addPositionModal">
+        <i class="bi bi-plus-lg"></i> Добавить позицию
+    </button>
+</div>
+
+{% if not all_positions %}
+<div class="alert alert-info">Позиций пока нет — добавьте первую кнопкой выше.</div>
+{% else %}
+<div class="accordion mb-4" id="positionsAccordion">
+    {% for p in all_positions %}
+    <div class="accordion-item">
+        <h2 class="accordion-header">
+            <button class="accordion-button {% if not loop.first %}collapsed{% endif %}" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#posBody{{ p.id }}">
+                <span class="fw-semibold">{{ p.name }}</span>
+                {% if not p.is_active %}<span class="badge bg-secondary ms-2">скрыта из формы</span>{% endif %}
+                <span class="badge bg-light text-dark border ms-2">{{ fields_by_position.get(p.id, [])|length }} вопрос.</span>
+            </button>
+        </h2>
+        <div id="posBody{{ p.id }}" class="accordion-collapse collapse {% if loop.first %}show{% endif %}" data-bs-parent="#positionsAccordion">
+            <div class="accordion-body">
+                <div class="d-flex justify-content-end gap-2 mb-3">
+                    <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editPositionModal{{ p.id }}">
+                        <i class="bi bi-pencil"></i> Название / видимость
+                    </button>
+                    <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#addFieldModal{{ p.id }}">
+                        <i class="bi bi-plus-lg"></i> Добавить вопрос
+                    </button>
                 </div>
-                <form method="POST" action="{{ url_for('vacancy_token_regenerate') }}"
-                      onsubmit="return confirm('Старая ссылка перестанет работать — обновите код на сайте. Продолжить?')">
-                    <button class="btn btn-sm btn-outline-danger"><i class="bi bi-arrow-repeat me-1"></i>Обновить ссылку</button>
+                {% with fields = fields_by_position.get(p.id, []) %}
+                {% include 'vacancy_fields_list.html' %}
+                {% endwith %}
+                <form method="POST" action="{{ url_for('vacancy_position_delete', pos_id=p.id) }}" class="mt-3"
+                      onsubmit="return confirm('Удалить позицию «{{ p.name }}» целиком вместе с её вопросами? Если по ней уже есть заявки — позиция будет только скрыта из формы, заявки и ответы сохранятся.')">
+                    <button class="btn btn-sm btn-link text-danger p-0"><i class="bi bi-trash me-1"></i>Удалить позицию</button>
                 </form>
             </div>
         </div>
     </div>
 
-    <div class="col-lg-6">
-        <div class="card mb-4">
-            <div class="card-header bg-light fw-semibold">Общие вопросы (для всех позиций)</div>
-            {% with fields = common_fields %}
-            {% include 'vacancy_fields_table.html' %}
-            {% endwith %}
-        </div>
-
-        {% for p in all_positions %}
-        <div class="card mb-4">
-            <div class="card-header bg-light fw-semibold">Вопросы: {{ p.name }}</div>
-            {% with fields = fields_by_position.get(p.id, []) %}
-            {% include 'vacancy_fields_table.html' %}
-            {% endwith %}
-        </div>
-        {% endfor %}
-
-        <div class="card">
-            <div class="card-header bg-light fw-semibold">Добавить вопрос</div>
-            <div class="card-body">
-                <form method="POST" action="{{ url_for('vacancy_field_add') }}">
-                    <div class="mb-2">
-                        <label class="form-label small">Текст вопроса</label>
-                        <input type="text" name="label" class="form-control form-control-sm" required>
+    <!-- Модалка: название / видимость позиции -->
+    <div class="modal fade" id="editPositionModal{{ p.id }}" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <form method="POST" action="{{ url_for('vacancy_position_edit', pos_id=p.id) }}">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Позиция «{{ p.name }}»</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                     </div>
-                    <div class="row g-2 mb-2">
-                        <div class="col-6">
-                            <label class="form-label small">Позиция</label>
-                            <select name="position_id" class="form-select form-select-sm">
-                                <option value="">Общий для всех</option>
-                                {% for p in all_positions %}
-                                <option value="{{ p.id }}">{{ p.name }}</option>
-                                {% endfor %}
-                            </select>
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label small fw-semibold">Название</label>
+                            <input type="text" name="name" class="form-control" value="{{ p.name }}" required>
                         </div>
-                        <div class="col-6">
-                            <label class="form-label small">Тип поля</label>
-                            <select name="field_type" class="form-select form-select-sm" onchange="document.getElementById('new_field_options').classList.toggle('d-none', this.value!=='select')">
-                                <option value="text">Короткий текст</option>
-                                <option value="textarea">Текст (несколько строк)</option>
-                                <option value="select">Один вариант из списка</option>
-                                <option value="branches">Филиалы (галочки)</option>
-                            </select>
+                        <div class="form-check">
+                            <input type="checkbox" name="is_active" value="1" class="form-check-input" id="posActive{{ p.id }}" {% if p.is_active %}checked{% endif %}>
+                            <label class="form-check-label" for="posActive{{ p.id }}">Показывать в форме на сайте</label>
                         </div>
                     </div>
-                    <div class="mb-2 d-none" id="new_field_options">
-                        <label class="form-label small">Варианты ответа (каждый с новой строки)</label>
-                        <textarea name="options" class="form-control form-control-sm" rows="3" placeholder="Да&#10;Нет"></textarea>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                        <button type="submit" class="btn btn-primary">Сохранить</button>
                     </div>
-                    <div class="form-check mb-3">
-                        <input type="checkbox" name="is_required" value="1" class="form-check-input" id="new_field_required">
-                        <label class="form-check-label small" for="new_field_required">Обязательный вопрос</label>
-                    </div>
-                    <button class="btn btn-sm btn-success"><i class="bi bi-plus-lg"></i> Добавить вопрос</button>
                 </form>
             </div>
+        </div>
+    </div>
+
+    <!-- Модалка: добавить вопрос к этой позиции -->
+    {% with modal_id='addFieldModal'~p.id, position_id=p.id, title='Новый вопрос — ' ~ p.name %}
+    {% include 'vacancy_field_add_modal.html' %}
+    {% endwith %}
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Модалка: добавить позицию -->
+<div class="modal fade" id="addPositionModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="POST" action="{{ url_for('vacancy_position_add') }}">
+                <div class="modal-header">
+                    <h5 class="modal-title">Новая позиция</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <label class="form-label small fw-semibold">Название</label>
+                    <input type="text" name="name" class="form-control" placeholder="Например «Оператор»" required autofocus>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Добавить</button>
+                </div>
+            </form>
         </div>
     </div>
 </div>
+
+<!-- Модалка: добавить общий вопрос -->
+{% with modal_id='addFieldModalCommon', position_id='', title='Новый общий вопрос' %}
+{% include 'vacancy_field_add_modal.html' %}
+{% endwith %}
 
 {% else %}
 
