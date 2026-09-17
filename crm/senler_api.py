@@ -303,6 +303,22 @@ class BotAPI:
                              json=payload, headers={'Authorization': self.token}, sending=sending,
                              verify=max_ca_bundle())
 
+    def telegram_file(self, file_path):
+        """Downloads a file from Telegram's file API and returns its raw bytes. Kept separate
+        from telegram(): that method expects a JSON response, while a file download does not,
+        and the URL below embeds the bot token so it must never reach the browser directly."""
+        base = telegram_api_base()
+        relayed = base != DEFAULT_TELEGRAM_BASE
+        options = {} if relayed else telegram_request_options()
+        if relayed:
+            secret = os.environ.get('SENLER_TELEGRAM_RELAY_SECRET', '').strip()
+            if secret:
+                options['headers'] = {'X-Relay-Secret': secret}
+        response = (self.requester or requests.request)('GET', base + '/file/bot' + self.token + '/' + file_path,
+                                                          timeout=(5, 15), **options)
+        response.raise_for_status()
+        return response.content, response.headers.get('Content-Type') or 'image/jpeg'
+
     def identity(self):
         if self.kind == 'telegram':
             me = self.telegram('getMe')

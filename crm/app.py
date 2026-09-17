@@ -20520,6 +20520,8 @@ try:
                         'interval', seconds=1, max_instances=2, coalesce=True)
     _scheduler.add_job(lambda: _run_once_across_workers('sched_senler_reads_' + hashlib.sha256(DATABASE.encode()).hexdigest()[:12], senler_service._poll_reads, quiet=True),
                         'interval', seconds=60, max_instances=1, coalesce=True)
+    _scheduler.add_job(lambda: _run_once_across_workers('sched_senler_avatars_' + hashlib.sha256(DATABASE.encode()).hexdigest()[:12], senler_service._poll_avatars, quiet=True),
+                        'interval', seconds=90, max_instances=1, coalesce=True)
     _scheduler.add_job(_senler_telegram.refresh, 'interval', seconds=5,
                         max_instances=1, coalesce=True, next_run_time=datetime.now())
     _scheduler.add_job(lambda: _run_once_across_workers('sched_senler_tg_health_' + hashlib.sha256(DATABASE.encode()).hexdigest()[:12], _scheduled_senler_telegram_health_check, quiet=True),

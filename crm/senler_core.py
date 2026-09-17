@@ -56,6 +56,10 @@ def init_schema(conn):
             UNIQUE(channel_id,external_user_id)
         );
         CREATE INDEX IF NOT EXISTS senler_subscriber_status ON senler_subscribers(channel_id,status);
+        CREATE TABLE IF NOT EXISTS senler_avatars (
+            subscriber_id INTEGER PRIMARY KEY REFERENCES senler_subscribers(id),
+            url TEXT NOT NULL DEFAULT '', data BLOB, mime TEXT NOT NULL DEFAULT '', checked_at INTEGER NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS senler_groups (id INTEGER PRIMARY KEY, owner_id INTEGER NOT NULL, name TEXT NOT NULL, created_at INTEGER NOT NULL, UNIQUE(owner_id,name));
         CREATE TABLE IF NOT EXISTS senler_group_members (
             group_id INTEGER NOT NULL REFERENCES senler_groups(id), subscriber_id INTEGER NOT NULL REFERENCES senler_subscribers(id),
@@ -678,6 +682,64 @@ class SenlerService:
                             AND external_id!='' AND CAST(external_id AS INTEGER)<=? AND subscriber_id IN
                             (SELECT id FROM senler_subscribers WHERE channel_id=? AND external_user_id=?)''',
                             (now(), channel_id, out_read, channel_id, peer_id))
+
+    def _poll_avatars(self):
+        """Best-effort subscriber photos for the list. VK's photo_100 is a public CDN link and
+        can be used as-is; Telegram has no such public link (it would embed the bot token), so
+        the file is downloaded once and cached, served back through our own avatar route. MAX has
+        no documented endpoint to fetch a user's photo outside of chat membership, so its
+        subscribers stay without one — just the profile link. Refreshed every 30 days so a
+        changed photo eventually catches up, never allowed to interrupt message delivery."""
+        with self.db() as conn:
+            rows = [dict(r) for r in conn.execute('''SELECT s.id,s.channel_id,s.external_user_id FROM senler_subscribers s
+                JOIN senler_channels c ON c.id=s.channel_id WHERE c.kind IN ('vk','telegram') AND c.status='connected'
+                AND NOT EXISTS(SELECT 1 FROM senler_avatars a WHERE a.subscriber_id=s.id AND a.checked_at>?)
+                ORDER BY s.id LIMIT 60''', (now() - 30 * 86400,)).fetchall()]
+            if not rows:
+                return
+            channel_ids = {r['channel_id'] for r in rows}
+            channels = {cid: dict(conn.execute('SELECT * FROM senler_channels WHERE id=?', (cid,)).fetchone()) for cid in channel_ids}
+        by_channel = {}
+        for r in rows:
+            by_channel.setdefault(r['channel_id'], []).append(r)
+        for channel_id, subs in by_channel.items():
+            channel = channels[channel_id]
+            try:
+                api = self.api(channel)
+            except ValueError:
+                continue
+            if channel['kind'] == 'vk':
+                by_id = {sub['external_user_id']: sub['id'] for sub in subs}
+                ids = list(by_id)
+                for i in range(0, len(ids), 300):
+                    chunk = ids[i:i + 300]
+                    try:
+                        result = api.vk('users.get', user_ids=','.join(chunk), fields='photo_100') or []
+                    except (DeliveryError, AttributeError):
+                        continue
+                    photos = {str(item['id']): item.get('photo_100', '') for item in result if isinstance(item, dict)}
+                    with self.db() as conn:
+                        for uid in chunk:
+                            conn.execute('''INSERT INTO senler_avatars(subscriber_id,url,checked_at) VALUES (?,?,?)
+                                ON CONFLICT(subscriber_id) DO UPDATE SET url=excluded.url,data=NULL,mime='',checked_at=excluded.checked_at''',
+                                (by_id[uid], photos.get(uid, ''), now()))
+            else:
+                for sub in subs:
+                    data, mime = None, ''
+                    try:
+                        photos = api.telegram('getUserProfilePhotos', {'user_id': int(sub['external_user_id']), 'limit': 1})
+                        sizes = (photos or {}).get('photos') or []
+                        if sizes:
+                            info = api.telegram('getFile', {'file_id': sizes[0][0]['file_id']})
+                            file_path = (info or {}).get('file_path', '')
+                            if file_path:
+                                data, mime = api.telegram_file(file_path)
+                    except (DeliveryError, AttributeError, KeyError, IndexError, ValueError, requests.exceptions.RequestException):
+                        pass
+                    with self.db() as conn:
+                        conn.execute('''INSERT INTO senler_avatars(subscriber_id,url,data,mime,checked_at) VALUES (?,'',?,?,?)
+                            ON CONFLICT(subscriber_id) DO UPDATE SET url='',data=excluded.data,mime=excluded.mime,checked_at=excluded.checked_at''',
+                            (sub['id'], data, mime, now()))
 
     def tick(self, seconds=18):
         deadline = time.monotonic() + seconds

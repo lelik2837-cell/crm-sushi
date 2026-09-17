@@ -357,10 +357,20 @@ def register_senler(app, get_db, database_path, item_visible):
         page_number = max(1, request.args.get('page', 1, type=int) or 1)
         with service.db() as conn:
             total = conn.execute('SELECT COUNT(*) n FROM senler_subscribers s WHERE ' + where, params).fetchone()['n']
-            items = [dict(r) for r in conn.execute('''SELECT s.*,c.name channel_name,c.kind,
+            items = [dict(r) for r in conn.execute('''SELECT s.*,c.name channel_name,c.kind,a.url avatar_url,(a.data IS NOT NULL) avatar_file,
                 (SELECT GROUP_CONCAT(g.name, ', ') FROM senler_group_members m JOIN senler_groups g ON g.id=m.group_id WHERE m.subscriber_id=s.id) groups
-                FROM senler_subscribers s JOIN senler_channels c ON c.id=s.channel_id WHERE ''' + where + ' ORDER BY s.id DESC LIMIT 50 OFFSET ?', params + [(page_number - 1) * 50])]
+                FROM senler_subscribers s JOIN senler_channels c ON c.id=s.channel_id LEFT JOIN senler_avatars a ON a.subscriber_id=s.id
+                WHERE ''' + where + ' ORDER BY s.id DESC LIMIT 50 OFFSET ?', params + [(page_number - 1) * 50])]
         return jsonify(items=items, total=total, page=page_number, pages=max(1, (total + 49) // 50))
+
+    @bp.get('/reports/senler/api/subscribers/<int:item_id>/avatar')
+    def subscriber_avatar(item_id):
+        with service.db() as conn:
+            row(conn, 'senler_subscribers', item_id)
+            cached = conn.execute('SELECT data,mime FROM senler_avatars WHERE subscriber_id=?', (item_id,)).fetchone()
+        if not cached or not cached['data']:
+            return '', 404
+        return Response(cached['data'], mimetype=cached['mime'] or 'image/jpeg', headers={'Cache-Control': 'private, max-age=604800'})
 
     @bp.get('/reports/senler/api/subscribers/export')
     def export_subscribers():
