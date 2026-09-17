@@ -31,7 +31,7 @@
     {% else %}
     <a class="back-link" href="{{ url_for('vacancy_apply', token=token) }}"><span aria-hidden="true">←</span> Все вакансии</a>
     <header class="application-header"><h1>Давайте знакомиться</h1><p>Заполните анкету, и мы свяжемся с вами,<br class="desktop-break"> чтобы обсудить работу.</p></header>
-    <div class="selected-job"><span class="selected-job-art">{% if position_images.get(selected_job.id) %}<img src="{{ url_for('vacancy_public_image', token=token, pos_id=selected_job.id, v=position_images[selected_job.id]) }}" alt="" width="56" height="56">{% else %}{% with code=selected_job.code %}{% include 'vacancy_icon.html' %}{% endwith %}{% endif %}</span><div><span class="selected-job-label">Ваша вакансия</span><strong>{{ selected_job.name }}</strong>{% if position_descriptions.get(selected_job.id) %}<span class="selected-job-desc">{{ position_descriptions.get(selected_job.id) }}</span>{% endif %}</div><a href="{{ url_for('vacancy_apply', token=token) }}">Изменить</a></div>
+    <div class="selected-job"><div><span class="selected-job-label">Ваша вакансия</span><strong>{{ selected_job.name }}</strong>{% if position_descriptions.get(selected_job.id) %}<span class="selected-job-desc">{{ position_descriptions.get(selected_job.id) }}</span>{% endif %}</div><a href="{{ url_for('vacancy_apply', token=token) }}">Изменить</a></div>
     {% macro render_field(f) %}
         {% if f.field_type == 'branches' %}
         {% set field_branches = (branches|selectattr('id', 'in', f.options|fromjson)|list) if f.options else branches %}
