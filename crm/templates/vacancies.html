@@ -42,7 +42,9 @@
                 <label class="form-label fw-semibold" for="vacancy_public_link">Ссылка на форму</label>
                 <div class="input-group mb-4"><input class="form-control" id="vacancy_public_link" readonly value="{{ base_url }}{{ url_for('vacancy_apply', token=token) }}"><button type="button" class="btn btn-outline-secondary" data-copy="vacancy_public_link">Копировать</button></div>
                 <label class="form-label fw-semibold" for="iframe_snippet">Код для вставки на сайт</label>
-                <textarea class="form-control font-monospace mb-2" rows="4" readonly id="iframe_snippet">&lt;iframe src="{{ base_url }}{{ url_for('vacancy_apply', token=token) }}" style="width:100%;height:900px;border:0;"&gt;&lt;/iframe&gt;</textarea>
+                <textarea class="form-control font-monospace mb-2" rows="5" readonly id="iframe_snippet">&lt;iframe title="Вакансии ПАПА СУШИ" src="{{ base_url }}{{ url_for('vacancy_apply', token=token) }}" style="display:block;width:100%;height:980px;border:0;"&gt;&lt;/iframe&gt;
+&lt;script src="{{ base_url }}{{ url_for('static', filename='vacancy-embed.js') }}" defer&gt;&lt;/script&gt;</textarea>
+                <p class="form-text">Высота блока подстроится под карточки и выбранную анкету. Если редактор сайта не разрешает JavaScript, вставьте только iframe — внутри него останется обычная прокрутка.</p>
                 <button type="button" class="btn btn-outline-secondary" data-copy="iframe_snippet"><i class="bi bi-copy me-1"></i>Копировать код</button>
                 <p id="vacancy-copy-status" class="small text-muted mt-2" role="status"></p>
                 <details class="vacancy-danger-zone"><summary>Заменить ссылку на форму</summary><p class="small text-muted mt-3">Старая ссылка перестанет работать. После замены обновите ссылку и код на сайте.</p><form method="POST" action="{{ url_for('vacancy_token_regenerate') }}" data-confirm="Заменить ссылку? Старая ссылка и код формы на сайте перестанут работать.">
@@ -58,6 +60,26 @@
                 <div class="vacancy-base-fields"><i class="bi bi-lock"></i><div><strong>Имя, телефон и выбор вакансии уже есть в форме</strong><span>Это базовые поля. Добавляйте ниже только дополнительные вопросы.</span></div></div>
                 {% else %}
                 <div class="vacancy-position-bar"><span class="vacancy-state {{ 'is-hidden' if not settings_position.is_active }}"><i class="bi {{ 'bi-eye' if settings_position.is_active else 'bi-eye-slash' }} me-1"></i>{{ 'Вакансия видна в форме' if settings_position.is_active else 'Вакансия скрыта из формы' }}</span><button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editPositionModal">Название и видимость</button></div>
+                {% set card = position_cards.get(settings_position.id, {}) %}
+                <div class="vacancy-card-settings">
+                    <div class="vacancy-card-thumb">{% if card.get('image_digest') %}<img src="{{ url_for('vacancy_position_image', pos_id=settings_position.id, v=card.image_digest) }}" alt="Картинка вакансии">{% else %}{% with code=settings_position.code %}{% include 'vacancy_icon.html' %}{% endwith %}{% endif %}</div>
+                    <div><strong>Карточка на сайте</strong><p>{{ card.get('description', card_descriptions.get(settings_position.code, 'Найдите своё место в команде ПАПА СУШИ.')) or 'Добавьте короткое описание вакансии' }}</p></div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editCardModal">Картинка и описание</button>
+                </div>
+                <div class="modal fade" id="editCardModal" tabindex="-1" aria-labelledby="editCardTitle" aria-hidden="true"><div class="modal-dialog"><div class="modal-content">
+                    <form method="POST" action="{{ url_for('vacancy_position_card', pos_id=settings_position.id) }}" enctype="multipart/form-data">
+                        <input type="hidden" name="section" value="{{ settings_section }}">
+                        <div class="modal-header"><h5 class="modal-title" id="editCardTitle">Карточка: {{ settings_position.name }}</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button></div>
+                        <div class="modal-body">
+                            <div class="vacancy-card-upload-preview" data-card-preview>{% if card.get('image_digest') %}<img src="{{ url_for('vacancy_position_image', pos_id=settings_position.id, v=card.image_digest) }}" alt="Текущая картинка">{% else %}{% with code=settings_position.code %}{% include 'vacancy_icon.html' %}{% endwith %}{% endif %}</div>
+                            <label class="form-label fw-semibold" for="card-image">Картинка вакансии</label><input type="file" id="card-image" name="image" accept="image/png,image/jpeg,image/webp" class="form-control" data-card-image>
+                            <div class="form-text mb-3">PNG, JPG или WebP до 5 МБ. Для персонажей лучше PNG с прозрачным фоном. Без картинки появится стандартная иконка.</div>
+                            {% if card.get('image_digest') %}<div class="form-check mb-3"><input class="form-check-input" type="checkbox" name="remove_image" value="1" id="remove-card-image"><label class="form-check-label" for="remove-card-image">Убрать картинку и вернуть иконку</label></div>{% endif %}
+                            <label class="form-label fw-semibold" for="card-description">Короткое описание</label><textarea class="form-control" id="card-description" name="description" rows="3" maxlength="180" placeholder="Чем предстоит заниматься?">{{ card.get('description', card_descriptions.get(settings_position.code, 'Найдите своё место в команде ПАПА СУШИ.')) }}</textarea><div class="form-text">До 180 символов. Появится на карточке под названием вакансии.</div>
+                        </div>
+                        <div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary">Сохранить карточку</button></div>
+                    </form>
+                </div></div></div>
                 <a class="vacancy-common-link" href="{{ url_for('vacancies', tab='settings', section='common') }}"><i class="bi bi-ui-checks me-1"></i>Также используются общие вопросы <i class="bi bi-arrow-right ms-1"></i></a>
                 {% endif %}
                 {% include 'vacancy_fields_list.html' %}

@@ -1,0 +1,16 @@
+{# Default illustrations use the same stroke style; uploaded PNGs replace them. #}
+<svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+{% if code == 'courier' %}
+<circle cx="15" cy="47" r="9"/><circle cx="49" cy="47" r="9"/><path d="m15 47 13-22 12 22H15m13-22h13l8 22M24 19h9m8 6 3-8h7"/><path d="M8 10h17v15H8zM13 10v6h7v-6"/>
+{% elif code == 'admin' %}
+<circle cx="32" cy="23" r="10"/><path d="M16 54v-5a16 16 0 0 1 32 0v5M18 26v-5a14 14 0 0 1 28 0v5M15 23h5v11h-5zm29 0h5v11h-5zM46 34v5H35"/><path d="m26 40 6 7 6-7M32 47v8"/>
+{% elif code == 'cook' %}
+<path d="M20 33v-6a10 10 0 0 1-2-20 10 10 0 0 1 14 0 10 10 0 0 1 14 0 10 10 0 0 1-2 20v6H20zm0-7h24M22 36a10 10 0 0 0 20 0M14 58v-4a16 16 0 0 1 36 0v4M25 49v9m14-9v9"/>
+{% elif code == 'kitchen' %}
+<path d="M10 34h44a22 22 0 0 1-44 0Zm9 23h26M21 34 10 13m32 21 12-24M28 26c-8-8 8-8 0-16m10 16c-8-8 8-8 0-16"/>
+{% elif code == 'manager' %}
+<rect x="8" y="23" width="48" height="31" rx="6"/><path d="M23 23v-6a5 5 0 0 1 5-5h8a5 5 0 0 1 5 5v6M8 34c14 7 34 7 48 0"/><rect x="28" y="34" width="8" height="10" rx="2"/>
+{% else %}
+<circle cx="32" cy="20" r="10"/><path d="M13 55v-5a19 19 0 0 1 38 0v5M25 41l7 7 7-7"/>
+{% endif %}
+</svg>

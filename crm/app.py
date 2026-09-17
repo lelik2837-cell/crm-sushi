@@ -2883,6 +2883,12 @@ def init_db():
                 token TEXT UNIQUE NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS job_position_cards (
+                position_id INTEGER PRIMARY KEY REFERENCES job_positions(id) ON DELETE CASCADE,
+                description TEXT NOT NULL DEFAULT '',
+                image_data BLOB,
+                image_digest TEXT
+            );
             CREATE INDEX IF NOT EXISTS idx_job_positions_owner ON job_positions(owner_id);
             CREATE INDEX IF NOT EXISTS idx_job_fields_owner ON job_application_fields(owner_id);
             CREATE INDEX IF NOT EXISTS idx_job_applications_owner ON job_applications(owner_id, position_id);
@@ -20477,6 +20483,10 @@ def vacancies():
                 (fields_by_position.setdefault(f['position_id'], []) if f['position_id'] else common_fields).append(f)
 
         all_positions = positions
+        position_cards = {r['position_id']: dict(r) for r in conn.execute(
+            'SELECT c.position_id, c.description, c.image_digest FROM job_position_cards c '
+            'JOIN job_positions p ON p.id=c.position_id WHERE p.owner_id=?', (owner_id,)
+        ).fetchall()}
         settings_section = request.args.get('section', 'common')
         settings_position = next(
             (p for p in all_positions if settings_section == f"position-{p['id']}"), None
@@ -20490,6 +20500,7 @@ def vacancies():
         current_position=current_position, applications=applications,
         common_fields=common_fields, fields_by_position=fields_by_position,
         settings_section=settings_section, settings_position=settings_position,
+        position_cards=position_cards, card_descriptions=JOB_CARD_DESCRIPTIONS,
         token=token, base_url=request.host_url.rstrip('/'), status_labels=JOB_STATUS_LABELS,
     )
 
@@ -20593,6 +20604,105 @@ def vacancy_position_edit(pos_id):
     return _vacancy_settings_redirect()
 
 
+JOB_CARD_DESCRIPTIONS = {
+    'admin': 'Встречайте гостей и помогайте команде работать слаженно.',
+    'courier': 'Доставляйте любимые блюда и хорошее настроение.',
+    'cook': 'Готовьте блюда, за которыми гости возвращаются снова.',
+    'kitchen': 'Помогайте на кухне и поддерживайте порядок.',
+    'manager': 'Развивайте команду и организуйте работу ресторана.',
+}
+
+
+def _job_card_image_response(row):
+    if not row or not row['image_data']:
+        return Response(status=404)
+    response = Response(row['image_data'], mimetype='image/png')
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['Cache-Control'] = 'private, max-age=86400'
+    response.set_etag(row['image_digest'])
+    return response.make_conditional(request)
+
+
+@app.route('/vacancies/settings/position/<int:pos_id>/image')
+@login_required
+@menu_permission_required('vacancies')
+def vacancy_position_image(pos_id):
+    with get_db() as conn:
+        row = conn.execute(
+            'SELECT c.image_data, c.image_digest FROM job_position_cards c '
+            'JOIN job_positions p ON p.id=c.position_id WHERE p.id=? AND p.owner_id=?',
+            (pos_id, session['user_id'])
+        ).fetchone()
+    return _job_card_image_response(row)
+
+
+@app.route('/vacancies/settings/position/<int:pos_id>/card', methods=['POST'])
+@login_required
+@menu_permission_required('vacancies')
+def vacancy_position_card(pos_id):
+    owner_id = session['user_id']
+    with get_db() as conn:
+        if not conn.execute('SELECT 1 FROM job_positions WHERE id=? AND owner_id=?', (pos_id, owner_id)).fetchone():
+            return Response(status=404)
+    if request.content_length and request.content_length > 6 * 1024 * 1024:
+        flash('Картинка слишком большая. Выберите файл до 5 МБ.', 'danger')
+        return _vacancy_settings_redirect(f'position-{pos_id}')
+    description = request.form.get('description', '').strip()
+    if len(description) > 180:
+        flash('Описание должно быть не длиннее 180 символов.', 'danger')
+        return _vacancy_settings_redirect(f'position-{pos_id}')
+    upload = request.files.get('image')
+    image_data = None
+    if upload and upload.filename:
+        from PIL import Image, UnidentifiedImageError
+        try:
+            raw = upload.read(5 * 1024 * 1024 + 1)
+            if len(raw) > 5 * 1024 * 1024:
+                raise ValueError('Файл больше 5 МБ.')
+            with Image.open(io.BytesIO(raw)) as source:
+                if source.format not in ('PNG', 'JPEG', 'WEBP'):
+                    raise ValueError('Выберите картинку PNG, JPG или WebP.')
+                if source.width * source.height > 16000000:
+                    raise ValueError('Размер картинки должен быть не больше 16 мегапикселей.')
+                source.load()
+                from PIL import ImageOps
+                picture = ImageOps.exif_transpose(source).convert('RGBA')
+                picture.thumbnail((768, 768), Image.Resampling.LANCZOS)
+                picture.info.clear()
+                output = io.BytesIO()
+                picture.save(output, format='PNG', optimize=True)
+                image_data = output.getvalue()
+        except (ValueError, OSError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
+            message = str(exc) if isinstance(exc, ValueError) else 'Не удалось прочитать картинку. Выберите другой PNG, JPG или WebP.'
+            flash(message, 'danger')
+            return _vacancy_settings_redirect(f'position-{pos_id}')
+    with get_db() as conn:
+        conn.execute(
+            'INSERT INTO job_position_cards(position_id, description) VALUES (?,?) '
+            'ON CONFLICT(position_id) DO UPDATE SET description=excluded.description', (pos_id, description)
+        )
+        if image_data:
+            conn.execute('UPDATE job_position_cards SET image_data=?, image_digest=? WHERE position_id=?',
+                         (image_data, hashlib.sha256(image_data).hexdigest(), pos_id))
+        elif request.form.get('remove_image'):
+            conn.execute('UPDATE job_position_cards SET image_data=NULL, image_digest=NULL WHERE position_id=?', (pos_id,))
+        conn.commit()
+    flash('Карточка вакансии сохранена', 'success')
+    return _vacancy_settings_redirect(f'position-{pos_id}')
+
+
+@app.route('/vacancy/apply/<token>/image/<int:pos_id>')
+def vacancy_public_image(token, pos_id):
+    with get_db() as conn:
+        row = conn.execute(
+            'SELECT c.image_data, c.image_digest FROM job_position_cards c '
+            'JOIN job_positions p ON p.id=c.position_id '
+            'JOIN job_vacancy_tokens t ON t.owner_id=p.owner_id '
+            'WHERE t.token=? AND p.id=? AND p.is_active=1', (token, pos_id)
+        ).fetchone()
+    return _job_card_image_response(row)
+
+
 @app.route('/vacancies/settings/position/<int:pos_id>/delete', methods=['POST'])
 @login_required
 @menu_permission_required('vacancies')
@@ -20608,6 +20718,7 @@ def vacancy_position_delete(pos_id):
             flash('На эту позицию уже есть заявки — она скрыта из формы, но не удалена (данные сохранены)', 'warning')
         else:
             conn.execute('DELETE FROM job_application_fields WHERE position_id=?', (pos_id,))
+            conn.execute('DELETE FROM job_position_cards WHERE position_id=?', (pos_id,))
             conn.execute('DELETE FROM job_positions WHERE id=?', (pos_id,))
             flash('Позиция удалена', 'success')
         conn.commit()
@@ -20725,8 +20836,16 @@ def _vacancy_public_context(conn, owner_id, token):
     ).fetchall():
         fields_by_position.setdefault(f['position_id'], []).append(f)
     branches = conn.execute('SELECT id, name FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+    cards = {r['position_id']: dict(r) for r in conn.execute(
+        'SELECT c.position_id, c.description, c.image_digest FROM job_position_cards c '
+        'JOIN job_positions p ON p.id=c.position_id WHERE p.owner_id=?', (owner_id,)
+    ).fetchall()}
     return dict(token=token, positions=positions, common_fields=common_fields,
-                fields_by_position=fields_by_position, branches=branches)
+                fields_by_position=fields_by_position, branches=branches,
+                position_images={pid: c['image_digest'] for pid, c in cards.items() if c['image_digest']},
+                position_descriptions={p['id']: cards[p['id']]['description'] if p['id'] in cards
+                                       else JOB_CARD_DESCRIPTIONS.get(p['code'], 'Найдите своё место в команде ПАПА СУШИ.')
+                                       for p in positions})
 
 
 @app.route('/vacancy/apply/<token>', methods=['GET'])
@@ -20736,7 +20855,8 @@ def vacancy_apply(token):
         if not row:
             return render_template('vacancy_public.html', invalid=True), 404
         ctx = _vacancy_public_context(conn, row['owner_id'], token)
-    return render_template('vacancy_public.html', invalid=False, submitted=False, **ctx)
+    selected_job = next((p for p in ctx['positions'] if p['id'] == request.args.get('position', type=int)), None)
+    return render_template('vacancy_public.html', invalid=False, submitted=False, selected_job=selected_job, **ctx)
 
 
 @app.route('/vacancy/apply/<token>', methods=['POST'])
@@ -20779,7 +20899,7 @@ def vacancy_apply_submit(token):
             flash('Проверьте, что заполнены все обязательные поля', 'danger')
             ctx = _vacancy_public_context(conn, owner_id, token)
             return render_template('vacancy_public.html', invalid=False, submitted=False,
-                                    form_values=request.form, selected_position=position_id, **ctx)
+                                    form_values=request.form, selected_job=position, **ctx)
 
         full_name = request.form.get('full_name', '').strip()
         app_id = conn.execute(

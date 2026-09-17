@@ -63,4 +63,25 @@
             }
         });
     });
+    page.querySelectorAll('[data-card-image]').forEach(input => {
+        let objectUrl;
+        input.addEventListener('change', () => {
+            input.setCustomValidity('');
+            const file = input.files[0];
+            if (!file) return;
+            if (file.size > 5 * 1024 * 1024) {
+                input.setCustomValidity('Выберите картинку до 5 МБ');
+                input.reportValidity();
+                return;
+            }
+            if (objectUrl) URL.revokeObjectURL(objectUrl);
+            objectUrl = URL.createObjectURL(file);
+            const image = new Image();
+            image.alt = 'Предпросмотр картинки';
+            image.src = objectUrl;
+            input.closest('form').querySelector('[data-card-preview]').replaceChildren(image);
+            const remove = input.closest('form').querySelector('[name="remove_image"]');
+            if (remove) remove.checked = false;
+        });
+    });
 })();
