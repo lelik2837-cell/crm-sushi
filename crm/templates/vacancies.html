@@ -1,0 +1,218 @@
+{% extends 'base.html' %}
+{% block title %}Вакансии{% endblock %}
+
+{% block content %}
+<h3 class="mb-4"><i class="bi bi-person-vcard me-2"></i>Вакансии</h3>
+
+<ul class="nav nav-tabs mb-4">
+    {% for p in positions %}
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == p.code %}active{% endif %}" href="{{ url_for('vacancies') }}?tab={{ p.code }}">
+            {{ p.name }}
+        </a>
+    </li>
+    {% endfor %}
+    <li class="nav-item">
+        <a class="nav-link {% if active_tab == 'settings' %}active{% endif %}" href="{{ url_for('vacancies') }}?tab=settings">
+            <i class="bi bi-gear me-1"></i>Настройки полей
+        </a>
+    </li>
+</ul>
+
+{% if active_tab == 'settings' %}
+<div class="row g-4">
+    <div class="col-lg-6">
+        <div class="card mb-4">
+            <div class="card-header bg-light fw-semibold">Позиции</div>
+            <div class="table-responsive">
+                <table class="table mb-0 align-middle">
+                    <thead class="table-light"><tr><th>Название</th><th>Активна</th><th></th></tr></thead>
+                    <tbody>
+                    {% for p in all_positions %}
+                    <tr>
+                        <td>
+                            <input type="text" name="name" form="pos-{{ p.id }}" value="{{ p.name }}" class="form-control form-control-sm">
+                        </td>
+                        <td>
+                            <input type="checkbox" name="is_active" value="1" form="pos-{{ p.id }}" class="form-check-input" {% if p.is_active %}checked{% endif %}>
+                        </td>
+                        <td class="text-end text-nowrap">
+                            <form id="pos-{{ p.id }}" method="POST" action="{{ url_for('vacancy_position_edit', pos_id=p.id) }}" class="d-inline"></form>
+                            <button class="btn btn-sm btn-outline-secondary" type="submit" form="pos-{{ p.id }}">Сохранить</button>
+                            <form method="POST" action="{{ url_for('vacancy_position_delete', pos_id=p.id) }}" class="d-inline"
+                                  onsubmit="return confirm('Удалить позицию «{{ p.name }}»? Если по ней уже есть заявки — позиция будет только скрыта.')">
+                                <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('vacancy_position_add') }}" class="d-flex gap-2">
+                    <input type="text" name="name" class="form-control form-control-sm" placeholder="Новая позиция, например «Оператор»" required>
+                    <button class="btn btn-sm btn-success text-nowrap"><i class="bi bi-plus-lg"></i> Добавить</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header bg-light fw-semibold"><i class="bi bi-link-45deg me-1"></i>Форма для сайта</div>
+            <div class="card-body">
+                <p class="text-muted small mb-2">Вставьте этот код на страницу вашего сайта — форма подстроится под вопросы ниже автоматически.</p>
+                <div class="input-group input-group-sm mb-2">
+                    <textarea class="form-control font-monospace" style="resize:none" rows="3" readonly id="iframe_snippet">&lt;iframe src="{{ base_url }}/vacancy/apply/{{ token }}" style="width:100%;height:900px;border:0;"&gt;&lt;/iframe&gt;</textarea>
+                    <button class="btn btn-outline-secondary" type="button" onclick="copySnippet()"><i class="bi bi-copy"></i></button>
+                </div>
+                <form method="POST" action="{{ url_for('vacancy_token_regenerate') }}"
+                      onsubmit="return confirm('Старая ссылка перестанет работать — обновите код на сайте. Продолжить?')">
+                    <button class="btn btn-sm btn-outline-danger"><i class="bi bi-arrow-repeat me-1"></i>Обновить ссылку</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6">
+        <div class="card mb-4">
+            <div class="card-header bg-light fw-semibold">Общие вопросы (для всех позиций)</div>
+            {% with fields = common_fields %}
+            {% include 'vacancy_fields_table.html' %}
+            {% endwith %}
+        </div>
+
+        {% for p in all_positions %}
+        <div class="card mb-4">
+            <div class="card-header bg-light fw-semibold">Вопросы: {{ p.name }}</div>
+            {% with fields = fields_by_position.get(p.id, []) %}
+            {% include 'vacancy_fields_table.html' %}
+            {% endwith %}
+        </div>
+        {% endfor %}
+
+        <div class="card">
+            <div class="card-header bg-light fw-semibold">Добавить вопрос</div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('vacancy_field_add') }}">
+                    <div class="mb-2">
+                        <label class="form-label small">Текст вопроса</label>
+                        <input type="text" name="label" class="form-control form-control-sm" required>
+                    </div>
+                    <div class="row g-2 mb-2">
+                        <div class="col-6">
+                            <label class="form-label small">Позиция</label>
+                            <select name="position_id" class="form-select form-select-sm">
+                                <option value="">Общий для всех</option>
+                                {% for p in all_positions %}
+                                <option value="{{ p.id }}">{{ p.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small">Тип поля</label>
+                            <select name="field_type" class="form-select form-select-sm" onchange="document.getElementById('new_field_options').classList.toggle('d-none', this.value!=='select')">
+                                <option value="text">Короткий текст</option>
+                                <option value="textarea">Текст (несколько строк)</option>
+                                <option value="select">Один вариант из списка</option>
+                                <option value="branches">Филиалы (галочки)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="mb-2 d-none" id="new_field_options">
+                        <label class="form-label small">Варианты ответа (каждый с новой строки)</label>
+                        <textarea name="options" class="form-control form-control-sm" rows="3" placeholder="Да&#10;Нет"></textarea>
+                    </div>
+                    <div class="form-check mb-3">
+                        <input type="checkbox" name="is_required" value="1" class="form-check-input" id="new_field_required">
+                        <label class="form-check-label small" for="new_field_required">Обязательный вопрос</label>
+                    </div>
+                    <button class="btn btn-sm btn-success"><i class="bi bi-plus-lg"></i> Добавить вопрос</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% else %}
+
+{% if not current_position %}
+<div class="alert alert-info">Нет активных позиций. Добавьте их во вкладке «Настройки полей».</div>
+{% else %}
+<div class="card">
+    <div class="table-responsive">
+        <table class="table mb-0 align-middle">
+            <thead class="table-light">
+                <tr><th>Дата</th><th>Имя</th><th>Телефон</th><th>Статус</th><th></th></tr>
+            </thead>
+            <tbody>
+            {% for item in applications %}
+            <tr style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#app-{{ item.row.id }}">
+                <td>{{ item.row.created_at|datetime_fmt if item.row.created_at else '' }}</td>
+                <td>{{ item.row.full_name or '—' }}</td>
+                <td>{{ item.row.phone|phone_fmt }}</td>
+                <td><span class="badge bg-{{ status_labels[item.row.status][1] }}">{{ status_labels[item.row.status][0] }}</span></td>
+                <td><i class="bi bi-chevron-down"></i></td>
+            </tr>
+            <tr class="collapse" id="app-{{ item.row.id }}">
+                <td colspan="5" class="bg-light">
+                    <div class="row g-3 py-2">
+                        <div class="col-md-6">
+                            {% if item.answers %}
+                            <dl class="row mb-0 small">
+                                {% for v in item.answers %}
+                                <dt class="col-5 text-muted fw-normal">{{ v.label }}</dt>
+                                <dd class="col-7">{{ v.value or '—' }}</dd>
+                                {% endfor %}
+                            </dl>
+                            {% else %}
+                            <span class="text-muted small">Дополнительных ответов нет</span>
+                            {% endif %}
+                        </div>
+                        <div class="col-md-6">
+                            <form method="POST" action="{{ url_for('vacancy_application_status', app_id=item.row.id) }}" class="d-flex gap-2 mb-2">
+                                <input type="hidden" name="tab" value="{{ active_tab }}">
+                                <select name="status" class="form-select form-select-sm" onchange="this.form.submit()">
+                                    {% for code, (label, _color) in status_labels.items() %}
+                                    <option value="{{ code }}" {% if item.row.status == code %}selected{% endif %}>{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </form>
+                            <form method="POST" action="{{ url_for('vacancy_application_note', app_id=item.row.id) }}" class="mb-2">
+                                <input type="hidden" name="tab" value="{{ active_tab }}">
+                                <textarea name="internal_note" class="form-control form-control-sm mb-1" rows="2" placeholder="Заметка для себя">{{ item.row.internal_note }}</textarea>
+                                <button class="btn btn-sm btn-outline-secondary">Сохранить заметку</button>
+                            </form>
+                            <form method="POST" action="{{ url_for('vacancy_application_delete', app_id=item.row.id) }}"
+                                  onsubmit="return confirm('Удалить заявку?')">
+                                <input type="hidden" name="tab" value="{{ active_tab }}">
+                                <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i> Удалить заявку</button>
+                            </form>
+                        </div>
+                    </div>
+                </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="5" class="text-center text-muted py-4">Заявок пока нет</td></tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function copySnippet() {
+    var el = document.getElementById('iframe_snippet');
+    el.select();
+    navigator.clipboard.writeText(el.value).then(function () {
+        var btn = el.parentElement.querySelector('button');
+        var icon = btn.querySelector('i');
+        icon.className = 'bi bi-check';
+        setTimeout(function () { icon.className = 'bi bi-copy'; }, 1500);
+    });
+}
+</script>
+{% endblock %}

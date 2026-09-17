@@ -1,0 +1,34 @@
+{% set type_labels = {'text': 'Текст', 'textarea': 'Текст (много строк)', 'select': 'Список', 'branches': 'Филиалы'} %}
+{% if fields %}
+<div class="table-responsive">
+    <table class="table mb-0 align-middle small">
+        <thead class="table-light"><tr><th>Вопрос</th><th>Тип</th><th>Обяз.</th><th>Вкл.</th><th></th></tr></thead>
+        <tbody>
+        {% for f in fields %}
+        <tr>
+            <td>
+                <input type="text" name="label" form="field-{{ f.id }}" value="{{ f.label }}" class="form-control form-control-sm mb-1">
+                {% if f.field_type == 'select' %}
+                <textarea name="options" form="field-{{ f.id }}" class="form-control form-control-sm" rows="2"
+                          placeholder="Варианты, по одному на строку">{{ f.options|fromjson|join('\n') }}</textarea>
+                {% endif %}
+            </td>
+            <td class="text-nowrap">{{ type_labels.get(f.field_type, f.field_type) }}</td>
+            <td><input type="checkbox" name="is_required" value="1" form="field-{{ f.id }}" class="form-check-input" {% if f.is_required %}checked{% endif %}></td>
+            <td><input type="checkbox" name="is_active" value="1" form="field-{{ f.id }}" class="form-check-input" {% if f.is_active %}checked{% endif %}></td>
+            <td class="text-end text-nowrap">
+                <form id="field-{{ f.id }}" method="POST" action="{{ url_for('vacancy_field_edit', field_id=f.id) }}"></form>
+                <button class="btn btn-sm btn-outline-secondary" type="submit" form="field-{{ f.id }}">Сохранить</button>
+                <form method="POST" action="{{ url_for('vacancy_field_delete', field_id=f.id) }}" class="d-inline"
+                      onsubmit="return confirm('Удалить вопрос «{{ f.label }}»? Если на него уже есть ответы — вопрос будет только скрыт.')">
+                    <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="card-body text-muted small">Вопросов пока нет</div>
+{% endif %}

@@ -57,6 +57,17 @@ SMTP_PASSWORD = 'ciznzwgctjqpvbli'
 SMTP_FROM     = 'CRMPAPA <papasushi42@gmail.com>'
 
 
+@app.template_filter('fromjson')
+def fromjson(val):
+    """JSON-строка (напр. options у select-вопроса вакансии) → Python-объект."""
+    if not val:
+        return []
+    try:
+        return _json_lib.loads(val)
+    except Exception:
+        return []
+
+
 @app.template_filter('datefmt')
 def datefmt(val):
     """Конвертирует YYYY-MM-DD → DD-MM-YYYY для отображения."""
@@ -159,6 +170,7 @@ MENU_ITEMS = [
     ('uniform_issuance',      'Выдача формы',             'reports',  False),
     ('call_center',           'Колл-центр',               'reports',  False),
     ('contact_center_report', 'Контакт-центр',            'reports',  False),
+    ('vacancies',             'Вакансии',                 'reports',  False),
     ('employees',             'Сотрудники',               'settings', True),
     ('history',               'История изменений',        'settings', True),
     ('import_shifts',         'Импорт смен',              'settings', False),
@@ -2824,7 +2836,146 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_point_accruals_status ON point_accruals(status);
         ''')
 
+        # Вакансии/отклики (форма встраивается на сайт владельца через iframe, см.
+        # _ensure_job_defaults). owner_id — первый шаг к изоляции данных по владельцу
+        # (users.id с role='owner'): каждый владелец видит и настраивает только свои
+        # позиции/вопросы/заявки, остальной CRM пока остаётся общим.
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS job_positions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_id INTEGER NOT NULL REFERENCES users(id),
+                code TEXT NOT NULL,
+                name TEXT NOT NULL,
+                sort_order INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS job_application_fields (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_id INTEGER NOT NULL REFERENCES users(id),
+                position_id INTEGER REFERENCES job_positions(id),
+                label TEXT NOT NULL,
+                field_type TEXT NOT NULL CHECK(field_type IN ('text','textarea','select','branches')),
+                options TEXT,
+                is_required INTEGER DEFAULT 0,
+                sort_order INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS job_applications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_id INTEGER NOT NULL REFERENCES users(id),
+                position_id INTEGER NOT NULL REFERENCES job_positions(id),
+                full_name TEXT,
+                phone TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'new' CHECK(status IN ('new','in_progress','invited','rejected','hired')),
+                internal_note TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS job_application_values (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                application_id INTEGER NOT NULL REFERENCES job_applications(id) ON DELETE CASCADE,
+                field_id INTEGER NOT NULL REFERENCES job_application_fields(id),
+                value TEXT
+            );
+            CREATE TABLE IF NOT EXISTS job_vacancy_tokens (
+                owner_id INTEGER PRIMARY KEY REFERENCES users(id),
+                token TEXT UNIQUE NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_job_positions_owner ON job_positions(owner_id);
+            CREATE INDEX IF NOT EXISTS idx_job_fields_owner ON job_application_fields(owner_id);
+            CREATE INDEX IF NOT EXISTS idx_job_applications_owner ON job_applications(owner_id, position_id);
+            CREATE INDEX IF NOT EXISTS idx_job_values_application ON job_application_values(application_id);
+        ''')
+
         conn.commit()
+
+
+# ─── Вакансии/отклики — дефолтный набор позиций и вопросов ──────────────────
+# Сеется один раз лениво на owner_id (см. _ensure_job_defaults), дальше каждый
+# владелец редактирует свой набор независимо через конструктор.
+DEFAULT_JOB_POSITIONS = [
+    ('admin',   'Администратор'),
+    ('courier', 'Курьер'),
+    ('cook',    'Повар'),
+    ('kitchen', 'Кухонный работник'),
+    ('manager', 'Управляющий'),
+]
+
+_WORK_TYPE_OPTIONS = ['Постоянная', 'Временная', 'Любая']
+
+# (label, field_type, options, is_required, sort_order)
+DEFAULT_JOB_FIELDS_COMMON = [
+    ('Район проживания', 'text', None, 0, 1),
+    ('В каких филиалах готовы работать', 'branches', None, 0, 2),
+]
+
+DEFAULT_JOB_FIELDS_BY_POSITION = {
+    'courier': [
+        ('Есть личный автомобиль?', 'select', ['Да', 'Нет'], 1, 10),
+        ('Постоянная или временная работа?', 'select', _WORK_TYPE_OPTIONS, 1, 11),
+        ('Опыт работы курьером', 'textarea', None, 0, 12),
+    ],
+    'admin': [
+        ('Постоянная или временная работа?', 'select', _WORK_TYPE_OPTIONS, 1, 10),
+        ('Стаж и опыт работы администратором', 'textarea', None, 0, 11),
+    ],
+    'cook': [
+        ('Постоянная или временная работа?', 'select', _WORK_TYPE_OPTIONS, 1, 10),
+        ('Стаж и опыт работы поваром', 'textarea', None, 0, 11),
+    ],
+    'kitchen': [
+        ('Постоянная или временная работа?', 'select', _WORK_TYPE_OPTIONS, 1, 10),
+        ('Стаж и опыт работы', 'textarea', None, 0, 11),
+    ],
+    'manager': [
+        ('Постоянная или временная работа?', 'select', _WORK_TYPE_OPTIONS, 1, 10),
+        ('Опыт руководящей работы', 'textarea', None, 0, 11),
+    ],
+}
+
+
+def _ensure_job_defaults(conn, owner_id):
+    """Лениво сеет дефолтные позиции/вопросы для owner_id при первом обращении
+    к разделу «Вакансии» — дальше владелец редактирует свой набор независимо."""
+    if conn.execute('SELECT 1 FROM job_positions WHERE owner_id=?', (owner_id,)).fetchone():
+        return
+    position_ids = {}
+    for i, (code, name) in enumerate(DEFAULT_JOB_POSITIONS):
+        cur = conn.execute(
+            'INSERT INTO job_positions (owner_id, code, name, sort_order) VALUES (?,?,?,?)',
+            (owner_id, code, name, i)
+        )
+        position_ids[code] = cur.lastrowid
+    for label, ftype, options, required, sort_order in DEFAULT_JOB_FIELDS_COMMON:
+        conn.execute(
+            'INSERT INTO job_application_fields (owner_id, position_id, label, field_type, options, is_required, sort_order) '
+            'VALUES (?,NULL,?,?,?,?,?)',
+            (owner_id, label, ftype, _json_lib.dumps(options) if options else None, required, sort_order)
+        )
+    for code, fields in DEFAULT_JOB_FIELDS_BY_POSITION.items():
+        pos_id = position_ids.get(code)
+        if not pos_id:
+            continue
+        for label, ftype, options, required, sort_order in fields:
+            conn.execute(
+                'INSERT INTO job_application_fields (owner_id, position_id, label, field_type, options, is_required, sort_order) '
+                'VALUES (?,?,?,?,?,?,?)',
+                (owner_id, pos_id, label, ftype, _json_lib.dumps(options) if options else None, required, sort_order)
+            )
+    conn.commit()
+
+
+def _job_vacancy_token(conn, owner_id):
+    """Публичный токен формы вакансий владельца — создаётся при первом обращении."""
+    row = conn.execute('SELECT token FROM job_vacancy_tokens WHERE owner_id=?', (owner_id,)).fetchone()
+    if row:
+        return row['token']
+    token = secrets.token_urlsafe(24)
+    conn.execute('INSERT INTO job_vacancy_tokens (owner_id, token) VALUES (?,?)', (owner_id, token))
+    conn.commit()
+    return token
 
 
 def login_required(f):
@@ -2867,7 +3018,7 @@ def item_visible(item_code):
     Если у пункта есть подпункты (MENU_SUBITEMS) — виден, если разрешён весь
     раздел целиком, либо доступ дан хотя бы на один подпункт (см. subitem_visible)."""
     role = session.get('role')
-    if item_code == 'senler':
+    if item_code in ('senler', 'vacancies'):
         return role == 'owner'
     if role == 'owner':
         return True
@@ -20255,6 +20406,388 @@ init_db()
 # Independent official bot/community channels and persistent campaign/flow queue.
 from senler import register_senler
 senler_service = register_senler(app, get_db, DATABASE, item_visible)
+
+
+# ─── Вакансии/отклики ────────────────────────────────────────────────────────
+# Раздел виден только владельцу (item_visible('vacancies') == role=='owner') и
+# изолирован по owner_id=session['user_id'] — первый шаг к мультидоступу
+# (см. DEFAULT_JOB_POSITIONS выше): другой владелец видит и настраивает
+# полностью свой набор позиций/вопросов/заявок, не пересекаясь с этим.
+
+JOB_STATUS_LABELS = {
+    'new':         ('Новая',      'primary'),
+    'in_progress': ('В работе',   'warning'),
+    'invited':     ('Приглашён',  'info'),
+    'rejected':    ('Отказ',      'danger'),
+    'hired':       ('Принят',     'success'),
+}
+
+
+@app.route('/vacancies')
+@login_required
+@menu_permission_required('vacancies')
+def vacancies():
+    owner_id = session['user_id']
+    with get_db() as conn:
+        _ensure_job_defaults(conn, owner_id)
+        positions = conn.execute(
+            'SELECT * FROM job_positions WHERE owner_id=? AND is_active=1 ORDER BY sort_order, name',
+            (owner_id,)
+        ).fetchall()
+
+        tab_codes = [p['code'] for p in positions] + ['settings']
+        active_tab = request.args.get('tab') or (positions[0]['code'] if positions else 'settings')
+        if active_tab not in tab_codes:
+            active_tab = tab_codes[0]
+
+        applications = []
+        current_position = next((p for p in positions if p['code'] == active_tab), None)
+        if current_position:
+            apps = conn.execute(
+                'SELECT * FROM job_applications WHERE owner_id=? AND position_id=? ORDER BY created_at DESC',
+                (owner_id, current_position['id'])
+            ).fetchall()
+            values_by_app = {}
+            if apps:
+                placeholders = ','.join('?' * len(apps))
+                branch_names = {b['id']: b['name'] for b in conn.execute('SELECT id, name FROM branches').fetchall()}
+                rows = conn.execute(
+                    f'''SELECT v.application_id, v.value, f.label, f.field_type
+                        FROM job_application_values v
+                        JOIN job_application_fields f ON f.id = v.field_id
+                        WHERE v.application_id IN ({placeholders})
+                        ORDER BY f.sort_order''',
+                    [a['id'] for a in apps]
+                ).fetchall()
+                for r in rows:
+                    val = r['value']
+                    if r['field_type'] == 'branches' and val:
+                        try:
+                            val = ', '.join(branch_names.get(i, '?') for i in _json_lib.loads(val))
+                        except Exception:
+                            pass
+                    values_by_app.setdefault(r['application_id'], []).append({'label': r['label'], 'value': val})
+            applications = [{'row': a, 'answers': values_by_app.get(a['id'], [])} for a in apps]
+
+        common_fields, fields_by_position = [], {}
+        if active_tab == 'settings':
+            for f in conn.execute(
+                'SELECT * FROM job_application_fields WHERE owner_id=? ORDER BY sort_order, id', (owner_id,)
+            ).fetchall():
+                (fields_by_position.setdefault(f['position_id'], []) if f['position_id'] else common_fields).append(f)
+
+        all_positions = conn.execute(
+            'SELECT * FROM job_positions WHERE owner_id=? ORDER BY sort_order, name', (owner_id,)
+        ).fetchall()
+        token = _job_vacancy_token(conn, owner_id)
+
+    return render_template(
+        'vacancies.html', positions=positions, all_positions=all_positions, active_tab=active_tab,
+        current_position=current_position, applications=applications,
+        common_fields=common_fields, fields_by_position=fields_by_position,
+        token=token, base_url=request.host_url.rstrip('/'), status_labels=JOB_STATUS_LABELS,
+    )
+
+
+@app.route('/vacancies/application/<int:app_id>/status', methods=['POST'])
+@login_required
+@menu_permission_required('vacancies')
+def vacancy_application_status(app_id):
+    status = request.form.get('status')
+    tab = request.form.get('tab', '')
+    if status in JOB_STATUS_LABELS:
+        with get_db() as conn:
+            conn.execute(
+                'UPDATE job_applications SET status=? WHERE id=? AND owner_id=?',
+                (status, app_id, session['user_id'])
+            )
+            conn.commit()
+    return redirect(url_for('vacancies', tab=tab))
+
+
+@app.route('/vacancies/application/<int:app_id>/note', methods=['POST'])
+@login_required
+@menu_permission_required('vacancies')
+def vacancy_application_note(app_id):
+    note = request.form.get('internal_note', '').strip()
+    tab = request.form.get('tab', '')
+    with get_db() as conn:
+        conn.execute(
+            'UPDATE job_applications SET internal_note=? WHERE id=? AND owner_id=?',
+            (note, app_id, session['user_id'])
+        )
+        conn.commit()
+    flash('Заметка сохранена', 'success')
+    return redirect(url_for('vacancies', tab=tab))
+
+
+@app.route('/vacancies/application/<int:app_id>/delete', methods=['POST'])
+@login_required
+@menu_permission_required('vacancies')
+def vacancy_application_delete(app_id):
+    tab = request.form.get('tab', '')
+    with get_db() as conn:
+        conn.execute('DELETE FROM job_applications WHERE id=? AND owner_id=?', (app_id, session['user_id']))
+        conn.commit()
+    flash('Заявка удалена', 'success')
+    return redirect(url_for('vacancies', tab=tab))
+
+
+@app.route('/vacancies/settings/position/add', methods=['POST'])
+@login_required
+@menu_permission_required('vacancies')
+def vacancy_position_add():
+    owner_id = session['user_id']
+    name = request.form.get('name', '').strip()
+    if not name:
+        flash('Укажите название позиции', 'danger')
+        return redirect(url_for('vacancies', tab='settings'))
+    with get_db() as conn:
+        base_code = re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_') or secrets.token_hex(4)
+        code, i = base_code, 1
+        while conn.execute('SELECT 1 FROM job_positions WHERE owner_id=? AND code=?', (owner_id, code)).fetchone():
+            i += 1
+            code = f'{base_code}_{i}'
+        max_sort = conn.execute(
+            'SELECT COALESCE(MAX(sort_order), -1) FROM job_positions WHERE owner_id=?', (owner_id,)
+        ).fetchone()[0]
+        conn.execute(
+            'INSERT INTO job_positions (owner_id, code, name, sort_order) VALUES (?,?,?,?)',
+            (owner_id, code, name, max_sort + 1)
+        )
+        conn.commit()
+    flash('Позиция добавлена', 'success')
+    return redirect(url_for('vacancies', tab='settings'))
+
+
+@app.route('/vacancies/settings/position/<int:pos_id>/edit', methods=['POST'])
+@login_required
+@menu_permission_required('vacancies')
+def vacancy_position_edit(pos_id):
+    owner_id = session['user_id']
+    name = request.form.get('name', '').strip()
+    is_active = 1 if request.form.get('is_active') else 0
+    with get_db() as conn:
+        pos = conn.execute('SELECT * FROM job_positions WHERE id=? AND owner_id=?', (pos_id, owner_id)).fetchone()
+        if not pos:
+            flash('Позиция не найдена', 'danger')
+            return redirect(url_for('vacancies', tab='settings'))
+        conn.execute(
+            "UPDATE job_positions SET name=COALESCE(NULLIF(?, ''), name), is_active=? WHERE id=?",
+            (name, is_active, pos_id)
+        )
+        conn.commit()
+    flash('Позиция обновлена', 'success')
+    return redirect(url_for('vacancies', tab='settings'))
+
+
+@app.route('/vacancies/settings/position/<int:pos_id>/delete', methods=['POST'])
+@login_required
+@menu_permission_required('vacancies')
+def vacancy_position_delete(pos_id):
+    owner_id = session['user_id']
+    with get_db() as conn:
+        pos = conn.execute('SELECT * FROM job_positions WHERE id=? AND owner_id=?', (pos_id, owner_id)).fetchone()
+        if not pos:
+            flash('Позиция не найдена', 'danger')
+            return redirect(url_for('vacancies', tab='settings'))
+        if conn.execute('SELECT 1 FROM job_applications WHERE position_id=?', (pos_id,)).fetchone():
+            conn.execute('UPDATE job_positions SET is_active=0 WHERE id=?', (pos_id,))
+            flash('На эту позицию уже есть заявки — она скрыта из формы, но не удалена (данные сохранены)', 'warning')
+        else:
+            conn.execute('DELETE FROM job_application_fields WHERE position_id=?', (pos_id,))
+            conn.execute('DELETE FROM job_positions WHERE id=?', (pos_id,))
+            flash('Позиция удалена', 'success')
+        conn.commit()
+    return redirect(url_for('vacancies', tab='settings'))
+
+
+@app.route('/vacancies/settings/field/add', methods=['POST'])
+@login_required
+@menu_permission_required('vacancies')
+def vacancy_field_add():
+    owner_id = session['user_id']
+    label = request.form.get('label', '').strip()
+    field_type = request.form.get('field_type', 'text')
+    position_id = request.form.get('position_id', type=int) or None
+    is_required = 1 if request.form.get('is_required') else 0
+    options = [o.strip() for o in request.form.get('options', '').split('\n') if o.strip()] if field_type == 'select' else None
+    if not label or field_type not in ('text', 'textarea', 'select', 'branches'):
+        flash('Заполните вопрос корректно', 'danger')
+        return redirect(url_for('vacancies', tab='settings'))
+    with get_db() as conn:
+        if position_id and not conn.execute(
+            'SELECT 1 FROM job_positions WHERE id=? AND owner_id=?', (position_id, owner_id)
+        ).fetchone():
+            flash('Позиция не найдена', 'danger')
+            return redirect(url_for('vacancies', tab='settings'))
+        max_sort = conn.execute(
+            'SELECT COALESCE(MAX(sort_order), -1) FROM job_application_fields WHERE owner_id=?', (owner_id,)
+        ).fetchone()[0]
+        conn.execute(
+            'INSERT INTO job_application_fields (owner_id, position_id, label, field_type, options, is_required, sort_order) '
+            'VALUES (?,?,?,?,?,?,?)',
+            (owner_id, position_id, label, field_type, _json_lib.dumps(options) if options else None, is_required, max_sort + 1)
+        )
+        conn.commit()
+    flash('Вопрос добавлен', 'success')
+    return redirect(url_for('vacancies', tab='settings'))
+
+
+@app.route('/vacancies/settings/field/<int:field_id>/edit', methods=['POST'])
+@login_required
+@menu_permission_required('vacancies')
+def vacancy_field_edit(field_id):
+    owner_id = session['user_id']
+    label = request.form.get('label', '').strip()
+    is_required = 1 if request.form.get('is_required') else 0
+    is_active = 1 if request.form.get('is_active') else 0
+    with get_db() as conn:
+        field = conn.execute('SELECT * FROM job_application_fields WHERE id=? AND owner_id=?', (field_id, owner_id)).fetchone()
+        if not field:
+            flash('Вопрос не найден', 'danger')
+            return redirect(url_for('vacancies', tab='settings'))
+        options = field['options']
+        if field['field_type'] == 'select':
+            opts = [o.strip() for o in request.form.get('options', '').split('\n') if o.strip()]
+            options = _json_lib.dumps(opts) if opts else options
+        conn.execute(
+            "UPDATE job_application_fields SET label=COALESCE(NULLIF(?, ''), label), is_required=?, is_active=?, options=? WHERE id=?",
+            (label, is_required, is_active, options, field_id)
+        )
+        conn.commit()
+    flash('Вопрос обновлён', 'success')
+    return redirect(url_for('vacancies', tab='settings'))
+
+
+@app.route('/vacancies/settings/field/<int:field_id>/delete', methods=['POST'])
+@login_required
+@menu_permission_required('vacancies')
+def vacancy_field_delete(field_id):
+    owner_id = session['user_id']
+    with get_db() as conn:
+        field = conn.execute('SELECT * FROM job_application_fields WHERE id=? AND owner_id=?', (field_id, owner_id)).fetchone()
+        if not field:
+            flash('Вопрос не найден', 'danger')
+            return redirect(url_for('vacancies', tab='settings'))
+        if conn.execute('SELECT 1 FROM job_application_values WHERE field_id=?', (field_id,)).fetchone():
+            conn.execute('UPDATE job_application_fields SET is_active=0 WHERE id=?', (field_id,))
+            flash('На этот вопрос уже есть ответы — он скрыт из формы, но не удалён (ответы сохранены)', 'warning')
+        else:
+            conn.execute('DELETE FROM job_application_fields WHERE id=?', (field_id,))
+            flash('Вопрос удалён', 'success')
+        conn.commit()
+    return redirect(url_for('vacancies', tab='settings'))
+
+
+@app.route('/vacancies/settings/token/regenerate', methods=['POST'])
+@login_required
+@menu_permission_required('vacancies')
+def vacancy_token_regenerate():
+    owner_id = session['user_id']
+    with get_db() as conn:
+        conn.execute('DELETE FROM job_vacancy_tokens WHERE owner_id=?', (owner_id,))
+        conn.execute('INSERT INTO job_vacancy_tokens (owner_id, token) VALUES (?,?)', (owner_id, secrets.token_urlsafe(24)))
+        conn.commit()
+    flash('Ссылка на форму обновлена — старая ссылка перестала работать', 'success')
+    return redirect(url_for('vacancies', tab='settings'))
+
+
+# ─── Публичная форма вакансий (без логина — токен сам является авторизацией,
+# по образцу /api/revenue-webhook/<token>) — эту страницу владелец вставляет
+# на свой сайт через <iframe>.
+
+def _vacancy_public_context(conn, owner_id, token):
+    _ensure_job_defaults(conn, owner_id)
+    positions = conn.execute(
+        'SELECT * FROM job_positions WHERE owner_id=? AND is_active=1 ORDER BY sort_order, name', (owner_id,)
+    ).fetchall()
+    common_fields = conn.execute(
+        'SELECT * FROM job_application_fields WHERE owner_id=? AND position_id IS NULL AND is_active=1 ORDER BY sort_order',
+        (owner_id,)
+    ).fetchall()
+    fields_by_position = {}
+    for f in conn.execute(
+        'SELECT * FROM job_application_fields WHERE owner_id=? AND position_id IS NOT NULL AND is_active=1 ORDER BY sort_order',
+        (owner_id,)
+    ).fetchall():
+        fields_by_position.setdefault(f['position_id'], []).append(f)
+    branches = conn.execute('SELECT id, name FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+    return dict(token=token, positions=positions, common_fields=common_fields,
+                fields_by_position=fields_by_position, branches=branches)
+
+
+@app.route('/vacancy/apply/<token>', methods=['GET'])
+def vacancy_apply(token):
+    with get_db() as conn:
+        row = conn.execute('SELECT owner_id FROM job_vacancy_tokens WHERE token=?', (token,)).fetchone()
+        if not row:
+            return render_template('vacancy_public.html', invalid=True), 404
+        ctx = _vacancy_public_context(conn, row['owner_id'], token)
+    return render_template('vacancy_public.html', invalid=False, submitted=False, **ctx)
+
+
+@app.route('/vacancy/apply/<token>', methods=['POST'])
+def vacancy_apply_submit(token):
+    with get_db() as conn:
+        row = conn.execute('SELECT owner_id FROM job_vacancy_tokens WHERE token=?', (token,)).fetchone()
+        if not row:
+            return render_template('vacancy_public.html', invalid=True), 404
+        owner_id = row['owner_id']
+
+        # honeypot: скрытое поле, реальный посетитель его не видит и не заполняет —
+        # если оно пришло заполненным, тихо показываем «успех», ничего не сохраняя
+        if request.form.get('website'):
+            return render_template('vacancy_public.html', invalid=False, submitted=True, token=token)
+
+        _ensure_job_defaults(conn, owner_id)
+        position_id = request.form.get('position_id', type=int)
+        phone = request.form.get('phone', '').strip()
+        position = conn.execute(
+            'SELECT * FROM job_positions WHERE id=? AND owner_id=? AND is_active=1', (position_id, owner_id)
+        ).fetchone()
+        common_fields = conn.execute(
+            'SELECT * FROM job_application_fields WHERE owner_id=? AND position_id IS NULL AND is_active=1',
+            (owner_id,)
+        ).fetchall()
+        position_fields = conn.execute(
+            'SELECT * FROM job_application_fields WHERE owner_id=? AND position_id=? AND is_active=1',
+            (owner_id, position_id)
+        ).fetchall() if position else []
+        all_fields = list(common_fields) + list(position_fields)
+
+        missing_required = not position or not phone or any(
+            f['is_required'] and not (
+                request.form.getlist(f'field_{f["id"]}') if f['field_type'] == 'branches'
+                else request.form.get(f'field_{f["id"]}', '').strip()
+            )
+            for f in all_fields
+        )
+        if missing_required:
+            flash('Проверьте, что заполнены все обязательные поля', 'danger')
+            ctx = _vacancy_public_context(conn, owner_id, token)
+            return render_template('vacancy_public.html', invalid=False, submitted=False,
+                                    form_values=request.form, selected_position=position_id, **ctx)
+
+        full_name = request.form.get('full_name', '').strip()
+        app_id = conn.execute(
+            'INSERT INTO job_applications (owner_id, position_id, full_name, phone) VALUES (?,?,?,?)',
+            (owner_id, position_id, full_name or None, phone)
+        ).lastrowid
+        for f in all_fields:
+            if f['field_type'] == 'branches':
+                ids = [int(b) for b in request.form.getlist(f'field_{f["id"]}') if b.isdigit()]
+                value = _json_lib.dumps(ids) if ids else None
+            else:
+                value = request.form.get(f'field_{f["id"]}', '').strip() or None
+            if value is not None:
+                conn.execute(
+                    'INSERT INTO job_application_values (application_id, field_id, value) VALUES (?,?,?)',
+                    (app_id, f['id'], value)
+                )
+        conn.commit()
+    return render_template('vacancy_public.html', invalid=False, submitted=True, token=token)
+
 
 # ─── АВТО-БЭКАП БАЗЫ КАЖДЫЙ ДЕНЬ В 03:00 ─────────────────────────────────────
 def _scheduled_backup():
