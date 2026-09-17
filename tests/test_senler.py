@@ -21,6 +21,8 @@ class FakeAPI:
     sent = []
     failure = None
     conversations = {}
+    vk_photos = {}
+    telegram_photos = {}
 
     def __init__(self, channel, token, requester=None):
         self.channel = dict(channel)
@@ -47,7 +49,22 @@ class FakeAPI:
                 if peer_id in self.conversations:
                     items.append({'peer': {'id': int(peer_id)}, 'out_read': self.conversations[peer_id]})
             return {'items': items}
+        if method == 'users.get':
+            return [{'id': int(uid), 'photo_100': self.vk_photos.get(uid, '')} for uid in params['user_ids'].split(',') if uid]
         return {}
+
+    def telegram(self, method, payload=None, **kwargs):
+        if method == 'getUserProfilePhotos':
+            uid = str(payload['user_id'])
+            if uid in self.telegram_photos:
+                return {'total_count': 1, 'photos': [[{'file_id': 'fid-' + uid}]]}
+            return {'total_count': 0, 'photos': []}
+        if method == 'getFile':
+            return {'file_id': payload['file_id'], 'file_path': 'photos/' + payload['file_id'] + '.jpg'}
+        return {}
+
+    def telegram_file(self, file_path):
+        return b'FAKE-AVATAR-BYTES', 'image/jpeg'
 
 
 class SenlerTests(unittest.TestCase):
@@ -68,6 +85,7 @@ class SenlerTests(unittest.TestCase):
         with self.client.session_transaction() as s:
             s.update(user_id=1, role='owner', senler_csrf='csrf-test')
         FakeAPI.sent, FakeAPI.failure, FakeAPI.conversations = [], None, {}
+        FakeAPI.vk_photos, FakeAPI.telegram_photos = {}, {}
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -580,6 +598,30 @@ class SenlerTests(unittest.TestCase):
         # A second poll is a no-op for the already-read message and does not error on the unread one.
         self.service._poll_reads()
         self.assertEqual(self.client.get('/reports/senler/api/campaigns/'+str(campaign)).get_json()['vk_read'],1)
+
+    def test_subscriber_avatars_fetched_cached_and_served_with_owner_scope(self):
+        vk_channel=self.channel('vk');vk_sub=self.sub(vk_channel,'555')
+        tg_channel=self.channel('telegram');tg_sub=self.sub(tg_channel,'777')
+        max_channel=self.channel('max');max_sub=self.sub(max_channel,'999')
+        FakeAPI.vk_photos={'555':'https://vk.example/photo555.jpg'}
+        FakeAPI.telegram_photos={'777':True}
+        self.service._poll_avatars()
+        items={i['id']:i for i in self.client.get('/reports/senler/api/subscribers').get_json()['items']}
+        self.assertEqual(items[vk_sub]['avatar_url'],'https://vk.example/photo555.jpg');self.assertEqual(items[vk_sub]['avatar_file'],0)
+        self.assertEqual(items[tg_sub]['avatar_url'],'');self.assertEqual(items[tg_sub]['avatar_file'],1)
+        # MAX has no documented endpoint to fetch a photo outside of chat membership: never queried, no row at all.
+        self.assertEqual((items[max_sub]['avatar_url'],items[max_sub]['avatar_file']),(None,0))
+        tg_avatar=self.client.get('/reports/senler/api/subscribers/{}/avatar'.format(tg_sub))
+        self.assertEqual((tg_avatar.status_code,tg_avatar.content_type,tg_avatar.data),(200,'image/jpeg',b'FAKE-AVATAR-BYTES'))
+        # VK is hotlinked straight to its own CDN, never cached locally, so the proxy route has nothing to serve.
+        self.assertEqual(self.client.get('/reports/senler/api/subscribers/{}/avatar'.format(vk_sub)).status_code,404)
+        # A second poll is a no-op: freshly checked rows are skipped until the 30-day refresh window passes.
+        FakeAPI.vk_photos={'555':'https://vk.example/changed.jpg'}
+        self.service._poll_avatars()
+        self.assertEqual(self.one('senler_avatars','subscriber_id=?',(vk_sub,))['url'],'https://vk.example/photo555.jpg')
+        with self.client.session_transaction() as session:
+            session['user_id']=2
+        self.assertEqual(self.client.get('/reports/senler/api/subscribers/{}/avatar'.format(tg_sub)).status_code,400)
 
     def test_bot_buttons_condition_delay_and_operator_handoff(self):
         channel=self.channel();sub=self.sub(channel)
