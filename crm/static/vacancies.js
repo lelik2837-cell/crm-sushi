@@ -41,6 +41,8 @@
             const isSelect = select.value === 'select';
             form.querySelector('[data-field-options]').hidden = !isSelect;
             form.querySelector('[name="options"]').required = isSelect;
+            const branchesBlock = form.querySelector('[data-field-branches]');
+            if (branchesBlock) branchesBlock.hidden = select.value !== 'branches';
             form.querySelector('[data-type-hint]').textContent = descriptions[select.value];
         };
         select.addEventListener('change', update);

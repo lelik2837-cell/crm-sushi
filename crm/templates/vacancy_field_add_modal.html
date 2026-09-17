@@ -9,6 +9,17 @@
                 <div class="mb-3"><label class="form-label fw-semibold" for="{{ modal_id }}_label">Текст вопроса</label><input type="text" name="label" id="{{ modal_id }}_label" class="form-control" placeholder="Например, есть ли опыт работы?" required></div>
                 <div class="mb-3"><label class="form-label fw-semibold" for="{{ modal_id }}_type">Как кандидат будет отвечать</label><select name="field_type" class="form-select" id="{{ modal_id }}_type" data-field-type aria-describedby="{{ modal_id }}_hint"><option value="text">Короткий текст</option><option value="textarea">Развёрнутый ответ</option><option value="select">Один вариант из списка</option><option value="branches">Выбор филиалов</option></select><div class="form-text" id="{{ modal_id }}_hint" data-type-hint>Одна строка — например, возраст или район проживания.</div></div>
                 <div class="mb-3" data-field-options hidden><label class="form-label fw-semibold" for="{{ modal_id }}_options">Варианты ответа</label><textarea name="options" class="form-control" id="{{ modal_id }}_options" rows="4" placeholder="Да&#10;Нет"></textarea><div class="form-text">Каждый вариант с новой строки.</div></div>
+                <div class="mb-3" data-field-branches hidden>
+                    <label class="form-label fw-semibold">Какие филиалы показывать</label>
+                    <div class="vacancy-branch-check-list">
+                        {% for b in branches %}
+                        <div class="form-check"><input type="checkbox" class="form-check-input" name="branch_ids" value="{{ b.id }}" id="{{ modal_id }}_br{{ b.id }}" checked><label class="form-check-label" for="{{ modal_id }}_br{{ b.id }}">{{ b.name }}</label></div>
+                        {% else %}
+                        <p class="form-text mb-0">В CRM пока нет ни одного филиала.</p>
+                        {% endfor %}
+                    </div>
+                    <div class="form-text">По умолчанию отмечены все — снимите галочки с тех, что не нужны в этом вопросе.</div>
+                </div>
                 <div class="vacancy-switch"><div class="form-check form-switch"><input type="checkbox" name="is_required" value="1" class="form-check-input" id="{{ modal_id }}_required"><label class="form-check-label" for="{{ modal_id }}_required">Обязательный вопрос</label></div><div class="form-text">Без ответа кандидат не сможет отправить заявку.</div></div>
             </div>
             <div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Отмена</button><button type="submit" class="btn btn-primary">Добавить вопрос</button></div>

@@ -4,7 +4,7 @@
 {% for f in fields %}
     <div class="vacancy-field {{ 'field-hidden' if not f.is_active }}">
         <div class="vacancy-field-icon"><i class="bi bi-{{ type_icons.get(f.field_type, 'input-cursor-text') }}"></i></div>
-        <div class="vacancy-field-description"><div class="vacancy-field-name">{{ f.label }}</div><div class="vacancy-field-meta"><span>{{ type_labels.get(f.field_type, f.field_type) }}</span><span>{{ 'Обязательный' if f.is_required else 'Необязательный' }}</span>{% if not f.is_active %}<span class="vacancy-hidden-label">Скрыт из формы</span>{% endif %}</div>{% if f.field_type == 'select' %}<div class="vacancy-field-options">{{ (f.options|fromjson)|join(' · ') }}</div>{% endif %}</div>
+        <div class="vacancy-field-description"><div class="vacancy-field-name">{{ f.label }}</div><div class="vacancy-field-meta"><span>{{ type_labels.get(f.field_type, f.field_type) }}</span><span>{{ 'Обязательный' if f.is_required else 'Необязательный' }}</span>{% if not f.is_active %}<span class="vacancy-hidden-label">Скрыт из формы</span>{% endif %}</div>{% if f.field_type == 'select' %}<div class="vacancy-field-options">{{ (f.options|fromjson)|join(' · ') }}</div>{% elif f.field_type == 'branches' %}<div class="vacancy-field-options">{{ (branches|selectattr('id', 'in', f.options|fromjson)|map(attribute='name')|join(' · ')) if f.options else 'Все филиалы' }}</div>{% endif %}</div>
         <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editFieldModal{{ f.id }}" aria-label="Изменить вопрос: {{ f.label }}"><i class="bi bi-pencil me-1"></i>Изменить</button>
     </div>
 {% else %}
@@ -20,7 +20,18 @@
             <div class="modal-body">
                 <p class="vacancy-modal-context"><i class="bi bi-{{ 'ui-checks' if is_common else 'briefcase' }} me-1"></i>{{ 'Для всех вакансий' if is_common else settings_position.name }} · {{ type_labels.get(f.field_type, f.field_type) }}</p>
                 <label class="form-label fw-semibold" for="fieldLabel{{ f.id }}">Текст вопроса</label><input type="text" name="label" id="fieldLabel{{ f.id }}" class="form-control mb-3" value="{{ f.label }}" required>
-                {% if f.field_type == 'select' %}<label class="form-label fw-semibold" for="fieldOptions{{ f.id }}">Варианты ответа</label><textarea name="options" id="fieldOptions{{ f.id }}" class="form-control" rows="4" required>{{ (f.options|fromjson)|join('\n') }}</textarea><div class="form-text mb-3">Каждый вариант с новой строки.</div>{% endif %}
+                {% if f.field_type == 'select' %}<label class="form-label fw-semibold" for="fieldOptions{{ f.id }}">Варианты ответа</label><textarea name="options" id="fieldOptions{{ f.id }}" class="form-control" rows="4" required>{{ (f.options|fromjson)|join('\n') }}</textarea><div class="form-text mb-3">Каждый вариант с новой строки.</div>
+                {% elif f.field_type == 'branches' %}
+                {% set selected_branch_ids = f.options|fromjson if f.options else branches|map(attribute='id')|list %}
+                <label class="form-label fw-semibold">Какие филиалы показывать</label>
+                <div class="vacancy-branch-check-list mb-3">
+                    {% for b in branches %}
+                    <div class="form-check"><input type="checkbox" class="form-check-input" name="branch_ids" value="{{ b.id }}" id="fieldBr{{ f.id }}_{{ b.id }}" {% if b.id in selected_branch_ids %}checked{% endif %}><label class="form-check-label" for="fieldBr{{ f.id }}_{{ b.id }}">{{ b.name }}</label></div>
+                    {% else %}
+                    <p class="form-text mb-0">В CRM пока нет ни одного филиала.</p>
+                    {% endfor %}
+                </div>
+                {% endif %}
                 <div class="vacancy-switch"><div class="form-check form-switch"><input type="checkbox" name="is_required" value="1" class="form-check-input" id="fieldReq{{ f.id }}" {% if f.is_required %}checked{% endif %}><label class="form-check-label" for="fieldReq{{ f.id }}">Обязательный вопрос</label></div><div class="form-text">Без ответа кандидат не сможет отправить заявку.</div></div>
                 <div class="vacancy-switch"><div class="form-check form-switch"><input type="checkbox" name="is_active" value="1" class="form-check-input" id="fieldAct{{ f.id }}" {% if f.is_active %}checked{% endif %}><label class="form-check-label" for="fieldAct{{ f.id }}">Показывать в форме</label></div><div class="form-text">Выключите, чтобы скрыть вопрос и сохранить прежние ответы.</div></div>
             </div>

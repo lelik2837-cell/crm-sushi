@@ -15,7 +15,7 @@
 {% else %}
     {% with messages = get_flashed_messages(with_categories=true) %}{% for cat, msg in messages %}<div class="form-alert" role="alert">{{ msg }}</div>{% endfor %}{% endwith %}
     {% if not selected_job %}
-    <header class="careers-header"><div class="eyebrow"><span class="brand-dot"></span>ПАПА СУШИ · КОМАНДА</div><h1>Хорошая работа.<br>В хорошей команде.</h1><p>Станьте частью ПАПА СУШИ.<br>Выберите вакансию и расскажите немного о себе.</p></header>
+    <header class="careers-header"><h1>{{ vacancy_settings.intro_title }}</h1><p>{{ vacancy_settings.intro_text }}</p></header>
     <div class="section-label"><h2>Кем хотите работать?</h2><span>Шаг 1 из 2</span></div>
     <div class="job-grid">
         {% for p in positions %}
@@ -23,19 +23,20 @@
             <span class="job-art {{ 'has-image' if position_images.get(p.id) }}">
                 {% if position_images.get(p.id) %}<img src="{{ url_for('vacancy_public_image', token=token, pos_id=p.id, v=position_images[p.id]) }}" alt="" width="120" height="120">{% else %}{% with code=p.code %}{% include 'vacancy_icon.html' %}{% endwith %}{% endif %}
             </span>
-            <span class="job-name">{{ p.name }}</span><span class="job-description">{{ position_descriptions.get(p.id, '') }}</span><span class="job-card-footer">Откликнуться<span class="arrow" aria-hidden="true">↗</span></span>
+            <span class="job-name">{{ p.name }}</span><span class="job-description">{{ position_descriptions.get(p.id, '') }}</span><span class="job-card-footer">Откликнуться<span class="arrow" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 11 11 5M6 5h5v5"/></svg></span></span>
         </a>
         {% else %}<div class="empty-state"><h2>Сейчас нет открытых вакансий</h2><p>Загляните позже — здесь появятся новые предложения.</p></div>{% endfor %}
     </div>
     {% if positions %}<p class="careers-footnote">Выберите то, что вам ближе. Мы будем рады познакомиться.</p>{% endif %}
     {% else %}
     <a class="back-link" href="{{ url_for('vacancy_apply', token=token) }}"><span aria-hidden="true">←</span> Все вакансии</a>
-    <header class="application-header"><div class="eyebrow">ПАПА СУШИ · КОМАНДА</div><h1>Давайте знакомиться</h1><p>Заполните анкету, и мы свяжемся с вами,<br class="desktop-break"> чтобы обсудить работу.</p></header>
-    <div class="selected-job"><span class="selected-job-art">{% if position_images.get(selected_job.id) %}<img src="{{ url_for('vacancy_public_image', token=token, pos_id=selected_job.id, v=position_images[selected_job.id]) }}" alt="" width="56" height="56">{% else %}{% with code=selected_job.code %}{% include 'vacancy_icon.html' %}{% endwith %}{% endif %}</span><div><span class="selected-job-label">Ваша вакансия</span><strong>{{ selected_job.name }}</strong></div><a href="{{ url_for('vacancy_apply', token=token) }}">Изменить</a></div>
+    <header class="application-header"><h1>Давайте знакомиться</h1><p>Заполните анкету, и мы свяжемся с вами,<br class="desktop-break"> чтобы обсудить работу.</p></header>
+    <div class="selected-job"><span class="selected-job-art">{% if position_images.get(selected_job.id) %}<img src="{{ url_for('vacancy_public_image', token=token, pos_id=selected_job.id, v=position_images[selected_job.id]) }}" alt="" width="56" height="56">{% else %}{% with code=selected_job.code %}{% include 'vacancy_icon.html' %}{% endwith %}{% endif %}</span><div><span class="selected-job-label">Ваша вакансия</span><strong>{{ selected_job.name }}</strong>{% if position_descriptions.get(selected_job.id) %}<span class="selected-job-desc">{{ position_descriptions.get(selected_job.id) }}</span>{% endif %}</div><a href="{{ url_for('vacancy_apply', token=token) }}">Изменить</a></div>
     {% macro render_field(f) %}
         {% if f.field_type == 'branches' %}
+        {% set field_branches = (branches|selectattr('id', 'in', f.options|fromjson)|list) if f.options else branches %}
         <fieldset class="branch-field" data-branch-group {% if f.is_required %}data-required="true"{% endif %}><legend>{{ f.label }}{% if f.is_required %}<span class="required"> *</span>{% endif %}</legend><p class="field-hint">Можно выбрать несколько филиалов</p><div class="branch-options">
-            {% for b in branches %}<label class="branch-option"><input type="checkbox" name="field_{{ f.id }}" value="{{ b.id }}" {% if form_values and (b.id|string) in form_values.getlist('field_' ~ f.id) %}checked{% endif %}><span>{{ b.name }}</span></label>{% else %}<p class="field-hint">Список филиалов пока не заполнен.</p>{% endfor %}
+            {% for b in field_branches %}<label class="branch-option"><input type="checkbox" name="field_{{ f.id }}" value="{{ b.id }}" {% if form_values and (b.id|string) in form_values.getlist('field_' ~ f.id) %}checked{% endif %}><span>{{ b.name }}</span></label>{% else %}<p class="field-hint">Список филиалов пока не заполнен.</p>{% endfor %}
         </div></fieldset>
         {% else %}
         <div class="input-field {{ 'textarea-field' if f.field_type == 'textarea' }}"><label for="field_{{ f.id }}">{{ f.label }}{% if f.is_required %}<span class="required"> *</span>{% endif %}</label>
@@ -54,6 +55,7 @@
         {% if common_fields or fields_by_position.get(selected_job.id) %}<div class="section-label about-label"><h2>Немного о вас</h2><span><span class="required">*</span> Обязательные поля</span></div>{% endif %}
         {% for f in common_fields %}{{ render_field(f) }}{% endfor %}
         {% for f in fields_by_position.get(selected_job.id, []) %}{{ render_field(f) }}{% endfor %}
+        <label class="consent-field"><input type="checkbox" name="consent" required {% if form_values and form_values.get('consent') %}checked{% endif %}><span>Даю согласие на {% if vacancy_settings.consent_url %}<a href="{{ vacancy_settings.consent_url }}" target="_blank" rel="noopener">обработку персональных данных</a>{% else %}обработку персональных данных{% endif %}</span></label>
         <div class="submit-area"><button type="submit" class="button button-primary">Отправить отклик <span aria-hidden="true">→</span></button><p>Используем ваш телефон, чтобы связаться с вами по вакансии.</p></div>
     </form>
     {% endif %}

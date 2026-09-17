@@ -27,7 +27,8 @@ p { line-height:1.6; }
 .job-art img { object-fit:contain; width:100%; height:100%; }
 .job-name { font-size:18px; font-weight:700; letter-spacing:-.35px; overflow-wrap:anywhere; margin-bottom:17px; }
 .job-card-footer { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:auto; color:#8b6470; font-size:11px; font-weight:600; }
-.arrow { display:grid; place-items:center; width:28px; height:28px; border-radius:50%; color:var(--red); background:#fff1f4; font-size:18px; }
+.arrow { display:grid; place-items:center; width:28px; height:28px; border-radius:50%; color:var(--red); background:#fff1f4; flex-shrink:0; }
+.arrow svg { width:14px; height:14px; }
 .job-card:hover .arrow { background:var(--red); color:#fff; }
 .careers-footnote { text-align:center; color:#8a95a2; font-size:11px; margin:22px 0 0; }
 .back-link { display:inline-flex; align-items:center; gap:9px; text-decoration:none; font-size:12px; font-weight:600; color:#778493; margin-bottom:28px; }
@@ -40,6 +41,7 @@ p { line-height:1.6; }
 .selected-job-art svg { width:40px; height:40px; }
 .selected-job-label { display:block; font-size:11px; color:#94747b; margin-bottom:3px; }
 .selected-job strong { display:block; font-size:15px; overflow-wrap:anywhere; }
+.selected-job-desc { display:block; font-size:12px; color:#8d7078; margin-top:2px; overflow-wrap:anywhere; }
 .selected-job a { font-size:11px; color:#d12648; margin-left:auto; text-underline-offset:3px; }
 .form-section-label { margin-bottom:13px; }
 .input-field { border:1px solid var(--line); border-radius:14px; padding:10px 15px 9px; margin-bottom:9px; background:#fff; }
@@ -59,6 +61,9 @@ p { line-height:1.6; }
 .branch-option { display:flex; align-items:center; gap:8px; border:1px solid var(--line); border-radius:10px; padding:10px 12px; cursor:pointer; font-size:12px; }
 .branch-option:has(input:checked) { border-color:#f49aac; background:#fff5f7; }
 .branch-option input { width:16px; height:16px; accent-color:var(--red); margin:0; flex-shrink:0; }
+.consent-field { display:flex; align-items:flex-start; gap:10px; margin-top:18px; font-size:12px; color:#5c6675; line-height:1.5; cursor:pointer; }
+.consent-field input { width:18px; height:18px; margin-top:1px; accent-color:var(--red); flex-shrink:0; }
+.consent-field a { color:var(--red); text-decoration:underline; }
 .submit-area { margin-top:24px; }
 .button { display:flex; align-items:center; justify-content:center; gap:14px; min-height:46px; border-radius:12px; border:0; padding:12px 20px; text-decoration:none; font-size:13px; font-weight:700; cursor:pointer; }
 .button-primary { width:100%; background:var(--red); color:white; }
@@ -77,7 +82,7 @@ p { line-height:1.6; }
 .empty-state { grid-column:1/-1; padding:32px 18px; background:#f7f8fa; border-radius:16px; }
 .empty-state p { margin-bottom:0; color:#788593; }
 .honeypot-field { position:absolute; left:-9999px; top:-9999px; }
-@media(max-width:420px) { .careers { padding:22px 14px 28px; } h1 { font-size:30px; letter-spacing:-.9px; } .job-card { padding:16px 13px 13px; border-radius:15px; } .job-name { font-size:16px; } .job-art { width:74px; height:74px; border-radius:20px; margin-bottom:16px; } .job-art svg { width:46px; height:46px; } .job-art.has-image { width:96px; height:86px; } .job-card-footer { font-size:10px; } .arrow { width:24px; height:24px; } .selected-job { gap:10px; padding:12px; } .selected-job strong { font-size:14px; } .application-header h1 { font-size:27px; } .input-field input,.input-field select,.input-field textarea { font-size:16px; } .desktop-break { display:none; } }
+@media(max-width:420px) { .careers { padding:22px 14px 28px; } h1 { font-size:30px; letter-spacing:-.9px; } .job-card { padding:16px 13px 13px; border-radius:15px; } .job-name { font-size:16px; } .job-art { width:74px; height:74px; border-radius:20px; margin-bottom:16px; } .job-art svg { width:46px; height:46px; } .job-art.has-image { width:96px; height:86px; } .job-card-footer { font-size:10px; } .arrow { width:24px; height:24px; } .arrow svg { width:12px; height:12px; } .selected-job { gap:10px; padding:12px; } .selected-job strong { font-size:14px; } .application-header h1 { font-size:27px; } .input-field input,.input-field select,.input-field textarea { font-size:16px; } .desktop-break { display:none; } }
 @media(prefers-reduced-motion:reduce) { .job-card { transition:none; } }
 
 .job-name { margin-bottom:8px; }

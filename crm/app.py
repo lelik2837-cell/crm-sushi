@@ -2889,11 +2889,22 @@ def init_db():
                 image_data BLOB,
                 image_digest TEXT
             );
+            CREATE TABLE IF NOT EXISTS job_vacancy_settings (
+                owner_id INTEGER PRIMARY KEY REFERENCES users(id),
+                intro_title TEXT,
+                intro_text TEXT,
+                consent_url TEXT
+            );
             CREATE INDEX IF NOT EXISTS idx_job_positions_owner ON job_positions(owner_id);
             CREATE INDEX IF NOT EXISTS idx_job_fields_owner ON job_application_fields(owner_id);
             CREATE INDEX IF NOT EXISTS idx_job_applications_owner ON job_applications(owner_id, position_id);
             CREATE INDEX IF NOT EXISTS idx_job_values_application ON job_application_values(application_id);
         ''')
+        # Согласие на обработку персональных данных (152-ФЗ) — отметка времени
+        # для уже существующей таблицы, CREATE TABLE IF NOT EXISTS её не добавит.
+        _job_app_cols = [r[1] for r in conn.execute("PRAGMA table_info(job_applications)").fetchall()]
+        if 'consent_at' not in _job_app_cols:
+            conn.execute("ALTER TABLE job_applications ADD COLUMN consent_at TIMESTAMP")
 
         conn.commit()
 
@@ -2982,6 +2993,22 @@ def _job_vacancy_token(conn, owner_id):
     conn.execute('INSERT INTO job_vacancy_tokens (owner_id, token) VALUES (?,?)', (owner_id, token))
     conn.commit()
     return token
+
+
+JOB_VACANCY_INTRO_TITLE = 'Хорошая работа. В хорошей команде.'
+JOB_VACANCY_INTRO_TEXT = 'Станьте частью нашей команды. Выберите вакансию и расскажите немного о себе.'
+
+
+def _job_vacancy_settings(conn, owner_id):
+    """Настройки текста и согласия на главной странице формы — с дефолтами, если владелец их не менял."""
+    row = conn.execute(
+        'SELECT intro_title, intro_text, consent_url FROM job_vacancy_settings WHERE owner_id=?', (owner_id,)
+    ).fetchone()
+    return {
+        'intro_title': (row['intro_title'] if row and row['intro_title'] else JOB_VACANCY_INTRO_TITLE),
+        'intro_text': (row['intro_text'] if row and row['intro_text'] else JOB_VACANCY_INTRO_TEXT),
+        'consent_url': (row['consent_url'] if row else '') or '',
+    }
 
 
 def login_required(f):
@@ -20494,6 +20521,8 @@ def vacancies():
         if settings_section not in ('common', 'publish') and settings_position is None:
             settings_section = 'common'
         token = _job_vacancy_token(conn, owner_id)
+        branches = conn.execute('SELECT id, name FROM branches WHERE is_active=1 ORDER BY name').fetchall()
+        vacancy_settings = _job_vacancy_settings(conn, owner_id)
 
     return render_template(
         'vacancies.html', positions=positions, all_positions=all_positions, active_tab=active_tab,
@@ -20501,8 +20530,29 @@ def vacancies():
         common_fields=common_fields, fields_by_position=fields_by_position,
         settings_section=settings_section, settings_position=settings_position,
         position_cards=position_cards, card_descriptions=JOB_CARD_DESCRIPTIONS,
+        branches=branches, vacancy_settings=vacancy_settings,
         token=token, base_url=request.host_url.rstrip('/'), status_labels=JOB_STATUS_LABELS,
     )
+
+
+@app.route('/vacancies/settings/public-page', methods=['POST'])
+@login_required
+@menu_permission_required('vacancies')
+def vacancy_public_page_settings():
+    owner_id = session['user_id']
+    intro_title = request.form.get('intro_title', '').strip()
+    intro_text = request.form.get('intro_text', '').strip()
+    consent_url = request.form.get('consent_url', '').strip()
+    with get_db() as conn:
+        conn.execute(
+            'INSERT INTO job_vacancy_settings (owner_id, intro_title, intro_text, consent_url) VALUES (?,?,?,?) '
+            'ON CONFLICT(owner_id) DO UPDATE SET intro_title=excluded.intro_title, intro_text=excluded.intro_text, '
+            'consent_url=excluded.consent_url',
+            (owner_id, intro_title or None, intro_text or None, consent_url or None)
+        )
+        conn.commit()
+    flash('Текст главной страницы сохранён', 'success')
+    return _vacancy_settings_redirect('publish')
 
 
 @app.route('/vacancies/application/<int:app_id>/status', methods=['POST'])
@@ -20660,8 +20710,12 @@ def vacancy_position_card(pos_id):
             if len(raw) > 5 * 1024 * 1024:
                 raise ValueError('Файл больше 5 МБ.')
             with Image.open(io.BytesIO(raw)) as source:
-                if source.format not in ('PNG', 'JPEG', 'WEBP'):
-                    raise ValueError('Выберите картинку PNG, JPG или WebP.')
+                # Формат входного файла не ограничиваем жёстким списком — всё равно
+                # пересохраняем в PNG ниже; раньше строгая проверка source.format
+                # (например, 'MPO' у некоторых телефонных JPEG или нестандартный
+                # репорт формата у части PNG) отклоняла реально валидные картинки.
+                # Настоящая защита — decompression-bomb лимит и try/except ниже,
+                # который ловит файлы, которые Pillow вообще не смог декодировать.
                 if source.width * source.height > 16000000:
                     raise ValueError('Размер картинки должен быть не больше 16 мегапикселей.')
                 source.load()
@@ -20735,6 +20789,11 @@ def vacancy_field_add():
     position_id = request.form.get('position_id', type=int) or None
     is_required = 1 if request.form.get('is_required') else 0
     options = [o.strip() for o in request.form.get('options', '').split('\n') if o.strip()] if field_type == 'select' else None
+    if field_type == 'branches':
+        # Пусто (владелец не снимал галочек / клиент без JS) — без ограничения,
+        # показываем все активные филиалы; отмеченный явный список — только его.
+        branch_ids = [int(b) for b in request.form.getlist('branch_ids') if b.isdigit()]
+        options = branch_ids or None
     if not label or field_type not in ('text', 'textarea', 'select', 'branches') or (field_type == 'select' and not options):
         flash('Заполните вопрос корректно', 'danger')
         return _vacancy_settings_redirect()
@@ -20774,6 +20833,9 @@ def vacancy_field_edit(field_id):
         if field['field_type'] == 'select':
             opts = [o.strip() for o in request.form.get('options', '').split('\n') if o.strip()]
             options = _json_lib.dumps(opts) if opts else options
+        elif field['field_type'] == 'branches':
+            branch_ids = [int(b) for b in request.form.getlist('branch_ids') if b.isdigit()]
+            options = _json_lib.dumps(branch_ids) if branch_ids else None
         conn.execute(
             "UPDATE job_application_fields SET label=COALESCE(NULLIF(?, ''), label), is_required=?, is_active=?, options=? WHERE id=?",
             (label, is_required, is_active, options, field_id)
@@ -20845,7 +20907,8 @@ def _vacancy_public_context(conn, owner_id, token):
                 position_images={pid: c['image_digest'] for pid, c in cards.items() if c['image_digest']},
                 position_descriptions={p['id']: cards[p['id']]['description'] if p['id'] in cards
                                        else JOB_CARD_DESCRIPTIONS.get(p['code'], 'Найдите своё место в команде ПАПА СУШИ.')
-                                       for p in positions})
+                                       for p in positions},
+                vacancy_settings=_job_vacancy_settings(conn, owner_id))
 
 
 @app.route('/vacancy/apply/<token>', methods=['GET'])
@@ -20888,7 +20951,8 @@ def vacancy_apply_submit(token):
         ).fetchall() if position else []
         all_fields = list(common_fields) + list(position_fields)
 
-        missing_required = not position or not phone or any(
+        consent_given = bool(request.form.get('consent'))
+        missing_required = not position or not phone or not consent_given or any(
             f['is_required'] and not (
                 request.form.getlist(f'field_{f["id"]}') if f['field_type'] == 'branches'
                 else request.form.get(f'field_{f["id"]}', '').strip()
@@ -20896,15 +20960,15 @@ def vacancy_apply_submit(token):
             for f in all_fields
         )
         if missing_required:
-            flash('Проверьте, что заполнены все обязательные поля', 'danger')
+            flash('Проверьте, что заполнены все обязательные поля и отмечено согласие на обработку персональных данных', 'danger')
             ctx = _vacancy_public_context(conn, owner_id, token)
             return render_template('vacancy_public.html', invalid=False, submitted=False,
                                     form_values=request.form, selected_job=position, **ctx)
 
         full_name = request.form.get('full_name', '').strip()
         app_id = conn.execute(
-            'INSERT INTO job_applications (owner_id, position_id, full_name, phone) VALUES (?,?,?,?)',
-            (owner_id, position_id, full_name or None, phone)
+            'INSERT INTO job_applications (owner_id, position_id, full_name, phone, consent_at) VALUES (?,?,?,?,?)',
+            (owner_id, position_id, full_name or None, phone, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
         ).lastrowid
         for f in all_fields:
             if f['field_type'] == 'branches':

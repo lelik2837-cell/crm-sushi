@@ -43,8 +43,9 @@ class VacancyPublicTests(unittest.TestCase):
         with self.client.session_transaction() as session:
             session.update(user_id=self.owner, role='owner')
         with self.module.get_db() as conn:
-            for table in ('job_application_values', 'job_applications', 'job_position_cards', 'job_application_fields', 'job_positions', 'job_vacancy_tokens'):
+            for table in ('job_application_values', 'job_applications', 'job_position_cards', 'job_application_fields', 'job_positions', 'job_vacancy_tokens', 'job_vacancy_settings'):
                 conn.execute('DELETE FROM ' + table)
+            conn.execute("DELETE FROM branches WHERE name != 'КВАДРАТ'")
             conn.commit()
             self.module._ensure_job_defaults(conn, self.owner)
             self.positions = conn.execute('SELECT * FROM job_positions WHERE owner_id=? ORDER BY sort_order', (self.owner,)).fetchall()
@@ -87,7 +88,7 @@ class VacancyPublicTests(unittest.TestCase):
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM job_applications').fetchone()[0], 0)
 
     def test_submission_and_honeypot(self):
-        data = {'position_id': self.pos['id'], 'phone': '+79990000000', 'full_name': 'Тест'}
+        data = {'position_id': self.pos['id'], 'phone': '+79990000000', 'full_name': 'Тест', 'consent': '1'}
         with self.module.get_db() as conn:
             fields = conn.execute('SELECT * FROM job_application_fields WHERE position_id=? OR position_id IS NULL', (self.pos['id'],)).fetchall()
         for field in fields:
@@ -99,6 +100,46 @@ class VacancyPublicTests(unittest.TestCase):
             row = conn.execute('SELECT * FROM job_applications').fetchall()
             self.assertEqual(len(row), 1)
             self.assertEqual(row[0]['position_id'], self.pos['id'])
+            self.assertIsNotNone(row[0]['consent_at'])
+
+    def test_consent_required(self):
+        data = {'position_id': self.pos['id'], 'phone': '+79990000000', 'full_name': 'Тест'}
+        with self.module.get_db() as conn:
+            fields = conn.execute('SELECT * FROM job_application_fields WHERE position_id=? OR position_id IS NULL', (self.pos['id'],)).fetchall()
+        for field in fields:
+            if field['is_required']:
+                data[f'field_{field["id"]}'] = self.module.fromjson(field['options'])[0] if field['field_type'] == 'select' else 'Опыт есть'
+        html = self.client.post(self.public, data=data).get_data(as_text=True)
+        self.assertIn('Проверьте', html)
+        with self.module.get_db() as conn:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM job_applications').fetchone()[0], 0)
+
+    def test_intro_text_and_consent_link_customizable(self):
+        home = self.client.get(self.public).get_data(as_text=True)
+        self.assertIn('Хорошая работа', home)
+        self.client.post('/vacancies/settings/public-page', data={
+            'intro_title': 'Ищем звёзд', 'intro_text': 'Пишите нам', 'consent_url': 'https://example.com/policy',
+        })
+        home = self.client.get(self.public).get_data(as_text=True)
+        self.assertIn('Ищем звёзд', home)
+        self.assertIn('Пишите нам', home)
+        self.assertNotIn('Хорошая работа', home)
+        form = self.client.get(self.public + f'?position={self.pos["id"]}').get_data(as_text=True)
+        self.assertIn('href="https://example.com/policy"', form)
+
+    def test_branches_field_can_be_restricted_to_subset(self):
+        with self.module.get_db() as conn:
+            other_branch = conn.execute("INSERT INTO branches (name) VALUES ('Вторая точка')").lastrowid
+            main_branch = conn.execute("SELECT id FROM branches WHERE name='КВАДРАТ'").fetchone()[0]
+            branches_field = conn.execute(
+                "SELECT id FROM job_application_fields WHERE owner_id=? AND field_type='branches' LIMIT 1", (self.owner,)
+            ).fetchone()[0]
+        self.client.post(f'/vacancies/settings/field/{branches_field}/edit', data={
+            'label': 'В каких филиалах готовы работать', 'is_active': '1', 'branch_ids': [str(main_branch)],
+        })
+        html = self.client.get(self.public + f'?position={self.pos["id"]}').get_data(as_text=True)
+        self.assertIn('КВАДРАТ', html)
+        self.assertNotIn('Вторая точка', html)
 
     def test_image_persists_alpha_description_and_etag(self):
         result = self.upload()

@@ -38,7 +38,21 @@
         <section class="vacancy-workspace" aria-labelledby="settings-title">
         {% if settings_section == 'publish' %}
             <div class="vacancy-panel">
-                <h4 id="settings-title">Размещение на сайте</h4><p class="text-muted">Отправьте кандидату ссылку или встроите форму на сайт. Сохранённые изменения вопросов появятся в ней автоматически.</p>
+                <h4 id="settings-title">Текст на главной странице</h4><p class="text-muted">Заголовок и подпись над карточками вакансий, а также ссылка на документ о согласии на обработку персональных данных — кандидат увидит её перед отправкой отклика.</p>
+                <form method="POST" action="{{ url_for('vacancy_public_page_settings') }}" class="vacancy-intro-fields">
+                    <input type="hidden" name="section" value="{{ settings_section }}">
+                    <label class="form-label fw-semibold" for="intro_title">Заголовок</label>
+                    <input class="form-control mb-3" id="intro_title" name="intro_title" value="{{ vacancy_settings.intro_title }}" maxlength="120">
+                    <label class="form-label fw-semibold" for="intro_text">Текст под заголовком</label>
+                    <textarea class="form-control mb-3" id="intro_text" name="intro_text" rows="2" maxlength="240">{{ vacancy_settings.intro_text }}</textarea>
+                    <label class="form-label fw-semibold" for="consent_url">Ссылка на документ о согласии на обработку персональных данных</label>
+                    <input class="form-control mb-2" id="consent_url" name="consent_url" type="url" placeholder="https://..." value="{{ vacancy_settings.consent_url }}">
+                    <div class="form-text mb-3">Если оставить пустым, в форме будет только текст без ссылки.</div>
+                    <button class="btn btn-primary">Сохранить текст</button>
+                </form>
+            </div>
+            <div class="vacancy-panel">
+                <h4 id="settings-title-2">Размещение на сайте</h4><p class="text-muted">Отправьте кандидату ссылку или встроите форму на сайт. Сохранённые изменения вопросов появятся в ней автоматически.</p>
                 <label class="form-label fw-semibold" for="vacancy_public_link">Ссылка на форму</label>
                 <div class="input-group mb-4"><input class="form-control" id="vacancy_public_link" readonly value="{{ base_url }}{{ url_for('vacancy_apply', token=token) }}"><button type="button" class="btn btn-outline-secondary" data-copy="vacancy_public_link">Копировать</button></div>
                 <label class="form-label fw-semibold" for="iframe_snippet">Код для вставки на сайт</label>
