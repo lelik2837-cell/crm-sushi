@@ -684,16 +684,20 @@ class SenlerService:
                             (now(), channel_id, out_read, channel_id, peer_id))
 
     def _poll_avatars(self):
-        """Best-effort subscriber photos for the list. VK's photo_100 is a public CDN link and
-        can be used as-is; Telegram has no such public link (it would embed the bot token), so
-        the file is downloaded once and cached, served back through our own avatar route. MAX has
-        no documented endpoint to fetch a user's photo outside of chat membership, so its
-        subscribers stay without one — just the profile link. Refreshed every 30 days so a
-        changed photo eventually catches up, never allowed to interrupt message delivery."""
+        """Best-effort subscriber photos (and, for VK, names) for the list. VK's message events
+        never carry the sender's name (unlike Telegram/MAX), so it is filled in here from the
+        same users.get call as the photo; a blank name is retried every tick regardless of the
+        photo's own throttle, since it costs nothing extra to ask again. VK's photo_100 is a
+        public CDN link and can be used as-is; Telegram has no such public link (it would embed
+        the bot token), so the file is downloaded once and cached, served back through our own
+        avatar route. MAX has no documented endpoint to fetch a user's photo outside of chat
+        membership, so its subscribers stay without one — just the profile link. Photos are
+        refreshed every 30 days so a changed one eventually catches up, never allowed to
+        interrupt message delivery."""
         with self.db() as conn:
             rows = [dict(r) for r in conn.execute('''SELECT s.id,s.channel_id,s.external_user_id FROM senler_subscribers s
                 JOIN senler_channels c ON c.id=s.channel_id WHERE c.kind IN ('vk','telegram') AND c.status='connected'
-                AND NOT EXISTS(SELECT 1 FROM senler_avatars a WHERE a.subscriber_id=s.id AND a.checked_at>?)
+                AND (s.name='' OR NOT EXISTS(SELECT 1 FROM senler_avatars a WHERE a.subscriber_id=s.id AND a.checked_at>?))
                 ORDER BY s.id LIMIT 60''', (now() - 30 * 86400,)).fetchall()]
             if not rows:
                 return
@@ -714,15 +718,21 @@ class SenlerService:
                 for i in range(0, len(ids), 300):
                     chunk = ids[i:i + 300]
                     try:
-                        result = api.vk('users.get', user_ids=','.join(chunk), fields='photo_100') or []
+                        result = api.vk('users.get', user_ids=','.join(chunk), fields='photo_100,screen_name') or []
                     except (DeliveryError, AttributeError):
                         continue
-                    photos = {str(item['id']): item.get('photo_100', '') for item in result if isinstance(item, dict)}
+                    profiles = {str(item['id']): item for item in result if isinstance(item, dict)}
                     with self.db() as conn:
                         for uid in chunk:
+                            profile = profiles.get(uid, {})
                             conn.execute('''INSERT INTO senler_avatars(subscriber_id,url,checked_at) VALUES (?,?,?)
                                 ON CONFLICT(subscriber_id) DO UPDATE SET url=excluded.url,data=NULL,mime='',checked_at=excluded.checked_at''',
-                                (by_id[uid], photos.get(uid, ''), now()))
+                                (by_id[uid], profile.get('photo_100', ''), now()))
+                            name = ' '.join(filter(None, [profile.get('first_name'), profile.get('last_name')]))[:160]
+                            username = (profile.get('screen_name') or '')[:100]
+                            conn.execute('''UPDATE senler_subscribers SET name=CASE WHEN ?!='' THEN ? ELSE name END,
+                                username=CASE WHEN ?!='' THEN ? ELSE username END WHERE id=?''',
+                                (name, name, username, username, by_id[uid]))
             else:
                 for sub in subs:
                     data, mime = None, ''

@@ -22,6 +22,7 @@ class FakeAPI:
     failure = None
     conversations = {}
     vk_photos = {}
+    vk_names = {}
     telegram_photos = {}
 
     def __init__(self, channel, token, requester=None):
@@ -50,7 +51,8 @@ class FakeAPI:
                     items.append({'peer': {'id': int(peer_id)}, 'out_read': self.conversations[peer_id]})
             return {'items': items}
         if method == 'users.get':
-            return [{'id': int(uid), 'photo_100': self.vk_photos.get(uid, '')} for uid in params['user_ids'].split(',') if uid]
+            return [dict({'id': int(uid), 'photo_100': self.vk_photos.get(uid, '')}, **self.vk_names.get(uid, {}))
+                    for uid in params['user_ids'].split(',') if uid]
         return {}
 
     def telegram(self, method, payload=None, **kwargs):
@@ -85,7 +87,7 @@ class SenlerTests(unittest.TestCase):
         with self.client.session_transaction() as s:
             s.update(user_id=1, role='owner', senler_csrf='csrf-test')
         FakeAPI.sent, FakeAPI.failure, FakeAPI.conversations = [], None, {}
-        FakeAPI.vk_photos, FakeAPI.telegram_photos = {}, {}
+        FakeAPI.vk_photos, FakeAPI.vk_names, FakeAPI.telegram_photos = {}, {}, {}
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -100,10 +102,10 @@ class SenlerTests(unittest.TestCase):
         self.post('channels/{}/connect'.format(data['id']))
         return data['id']
 
-    def sub(self, channel_id, external_id='123', status='active'):
+    def sub(self, channel_id, external_id='123', status='active', name='Алексей Тест'):
         with self.service.db() as conn:
             return conn.execute('''INSERT INTO senler_subscribers(channel_id,external_user_id,status,name,created_at,consent_at)
-                VALUES (?,?,?,?,?,?)''', (channel_id, external_id, status, 'Алексей Тест', now(), now())).lastrowid
+                VALUES (?,?,?,?,?,?)''', (channel_id, external_id, status, name, now(), now())).lastrowid
 
     def one(self, table, where='1=1', params=()):
         with self.service.db() as conn:
@@ -615,13 +617,36 @@ class SenlerTests(unittest.TestCase):
         self.assertEqual((tg_avatar.status_code,tg_avatar.content_type,tg_avatar.data),(200,'image/jpeg',b'FAKE-AVATAR-BYTES'))
         # VK is hotlinked straight to its own CDN, never cached locally, so the proxy route has nothing to serve.
         self.assertEqual(self.client.get('/reports/senler/api/subscribers/{}/avatar'.format(vk_sub)).status_code,404)
-        # A second poll is a no-op: freshly checked rows are skipped until the 30-day refresh window passes.
+        # A second poll is a no-op: this subscriber already has a name and a freshly checked photo,
+        # so it is skipped entirely until the 30-day refresh window passes.
         FakeAPI.vk_photos={'555':'https://vk.example/changed.jpg'}
         self.service._poll_avatars()
         self.assertEqual(self.one('senler_avatars','subscriber_id=?',(vk_sub,))['url'],'https://vk.example/photo555.jpg')
         with self.client.session_transaction() as session:
             session['user_id']=2
         self.assertEqual(self.client.get('/reports/senler/api/subscribers/{}/avatar'.format(tg_sub)).status_code,400)
+
+    def test_vk_name_and_username_backfilled_from_the_same_photo_call_and_retried_while_blank(self):
+        # Real VK message events never carry the sender's name (unlike Telegram/MAX), so a VK
+        # subscriber genuinely starts out with a blank name until users.get fills it in.
+        channel=self.channel('vk');sub=self.sub(channel,'555',name='')
+        FakeAPI.vk_photos={'555':'https://vk.example/photo555.jpg'}
+        FakeAPI.vk_names={'555':{'screen_name':'ivan_petrov'}}  # deactivated/hidden profiles can omit first/last name
+        self.service._poll_avatars()
+        stored=self.one('senler_subscribers','id=?',(sub,))
+        self.assertEqual((stored['name'],stored['username']),('','ivan_petrov'))
+        # The name is still blank, so the next poll retries this subscriber even though its photo
+        # was just checked — and the same call happens to refresh the photo too, at no extra cost.
+        FakeAPI.vk_photos={'555':'https://vk.example/photo555-v2.jpg'}
+        FakeAPI.vk_names={'555':{'first_name':'Иван','last_name':'Петров','screen_name':'ivan_petrov'}}
+        self.service._poll_avatars()
+        stored=self.one('senler_subscribers','id=?',(sub,))
+        self.assertEqual((stored['name'],stored['username']),('Иван Петров','ivan_petrov'))
+        self.assertEqual(self.one('senler_avatars','subscriber_id=?',(sub,))['url'],'https://vk.example/photo555-v2.jpg')
+        # Now that the name is filled in, a further poll leaves it alone until the photo itself is due.
+        FakeAPI.vk_names={'555':{'first_name':'Другое','last_name':'Имя','screen_name':'ivan_petrov'}}
+        self.service._poll_avatars()
+        self.assertEqual(self.one('senler_subscribers','id=?',(sub,))['name'],'Иван Петров')
 
     def test_bot_buttons_condition_delay_and_operator_handoff(self):
         channel=self.channel();sub=self.sub(channel)
