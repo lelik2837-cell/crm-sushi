@@ -20431,11 +20431,11 @@ def vacancies():
     with get_db() as conn:
         _ensure_job_defaults(conn, owner_id)
         positions = conn.execute(
-            'SELECT * FROM job_positions WHERE owner_id=? AND is_active=1 ORDER BY sort_order, name',
+            'SELECT * FROM job_positions WHERE owner_id=? ORDER BY sort_order, name',
             (owner_id,)
         ).fetchall()
 
-        tab_codes = [p['code'] for p in positions] + ['settings']
+        tab_codes = [p['code'] for p in positions] + ['settings', 'applications']
         active_tab = request.args.get('tab') or (positions[0]['code'] if positions else 'settings')
         if active_tab not in tab_codes:
             active_tab = tab_codes[0]
@@ -20476,15 +20476,20 @@ def vacancies():
             ).fetchall():
                 (fields_by_position.setdefault(f['position_id'], []) if f['position_id'] else common_fields).append(f)
 
-        all_positions = conn.execute(
-            'SELECT * FROM job_positions WHERE owner_id=? ORDER BY sort_order, name', (owner_id,)
-        ).fetchall()
+        all_positions = positions
+        settings_section = request.args.get('section', 'common')
+        settings_position = next(
+            (p for p in all_positions if settings_section == f"position-{p['id']}"), None
+        )
+        if settings_section not in ('common', 'publish') and settings_position is None:
+            settings_section = 'common'
         token = _job_vacancy_token(conn, owner_id)
 
     return render_template(
         'vacancies.html', positions=positions, all_positions=all_positions, active_tab=active_tab,
         current_position=current_position, applications=applications,
         common_fields=common_fields, fields_by_position=fields_by_position,
+        settings_section=settings_section, settings_position=settings_position,
         token=token, base_url=request.host_url.rstrip('/'), status_labels=JOB_STATUS_LABELS,
     )
 
@@ -20533,6 +20538,13 @@ def vacancy_application_delete(app_id):
     return redirect(url_for('vacancies', tab=tab))
 
 
+def _vacancy_settings_redirect(section=None):
+    section = section or request.form.get('section', 'common')
+    if section not in ('common', 'publish') and not re.fullmatch(r'position-\d+', section):
+        section = 'common'
+    return redirect(url_for('vacancies', tab='settings', section=section))
+
+
 @app.route('/vacancies/settings/position/add', methods=['POST'])
 @login_required
 @menu_permission_required('vacancies')
@@ -20541,7 +20553,7 @@ def vacancy_position_add():
     name = request.form.get('name', '').strip()
     if not name:
         flash('Укажите название позиции', 'danger')
-        return redirect(url_for('vacancies', tab='settings'))
+        return _vacancy_settings_redirect()
     with get_db() as conn:
         base_code = re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_') or secrets.token_hex(4)
         code, i = base_code, 1
@@ -20551,13 +20563,13 @@ def vacancy_position_add():
         max_sort = conn.execute(
             'SELECT COALESCE(MAX(sort_order), -1) FROM job_positions WHERE owner_id=?', (owner_id,)
         ).fetchone()[0]
-        conn.execute(
+        position_cursor = conn.execute(
             'INSERT INTO job_positions (owner_id, code, name, sort_order) VALUES (?,?,?,?)',
             (owner_id, code, name, max_sort + 1)
         )
         conn.commit()
-    flash('Позиция добавлена', 'success')
-    return redirect(url_for('vacancies', tab='settings'))
+    flash('Вакансия добавлена', 'success')
+    return _vacancy_settings_redirect(f'position-{position_cursor.lastrowid}')
 
 
 @app.route('/vacancies/settings/position/<int:pos_id>/edit', methods=['POST'])
@@ -20571,14 +20583,14 @@ def vacancy_position_edit(pos_id):
         pos = conn.execute('SELECT * FROM job_positions WHERE id=? AND owner_id=?', (pos_id, owner_id)).fetchone()
         if not pos:
             flash('Позиция не найдена', 'danger')
-            return redirect(url_for('vacancies', tab='settings'))
+            return _vacancy_settings_redirect()
         conn.execute(
             "UPDATE job_positions SET name=COALESCE(NULLIF(?, ''), name), is_active=? WHERE id=?",
             (name, is_active, pos_id)
         )
         conn.commit()
     flash('Позиция обновлена', 'success')
-    return redirect(url_for('vacancies', tab='settings'))
+    return _vacancy_settings_redirect()
 
 
 @app.route('/vacancies/settings/position/<int:pos_id>/delete', methods=['POST'])
@@ -20590,7 +20602,7 @@ def vacancy_position_delete(pos_id):
         pos = conn.execute('SELECT * FROM job_positions WHERE id=? AND owner_id=?', (pos_id, owner_id)).fetchone()
         if not pos:
             flash('Позиция не найдена', 'danger')
-            return redirect(url_for('vacancies', tab='settings'))
+            return _vacancy_settings_redirect()
         if conn.execute('SELECT 1 FROM job_applications WHERE position_id=?', (pos_id,)).fetchone():
             conn.execute('UPDATE job_positions SET is_active=0 WHERE id=?', (pos_id,))
             flash('На эту позицию уже есть заявки — она скрыта из формы, но не удалена (данные сохранены)', 'warning')
@@ -20599,7 +20611,7 @@ def vacancy_position_delete(pos_id):
             conn.execute('DELETE FROM job_positions WHERE id=?', (pos_id,))
             flash('Позиция удалена', 'success')
         conn.commit()
-    return redirect(url_for('vacancies', tab='settings'))
+    return _vacancy_settings_redirect()
 
 
 @app.route('/vacancies/settings/field/add', methods=['POST'])
@@ -20612,15 +20624,15 @@ def vacancy_field_add():
     position_id = request.form.get('position_id', type=int) or None
     is_required = 1 if request.form.get('is_required') else 0
     options = [o.strip() for o in request.form.get('options', '').split('\n') if o.strip()] if field_type == 'select' else None
-    if not label or field_type not in ('text', 'textarea', 'select', 'branches'):
+    if not label or field_type not in ('text', 'textarea', 'select', 'branches') or (field_type == 'select' and not options):
         flash('Заполните вопрос корректно', 'danger')
-        return redirect(url_for('vacancies', tab='settings'))
+        return _vacancy_settings_redirect()
     with get_db() as conn:
         if position_id and not conn.execute(
             'SELECT 1 FROM job_positions WHERE id=? AND owner_id=?', (position_id, owner_id)
         ).fetchone():
             flash('Позиция не найдена', 'danger')
-            return redirect(url_for('vacancies', tab='settings'))
+            return _vacancy_settings_redirect()
         max_sort = conn.execute(
             'SELECT COALESCE(MAX(sort_order), -1) FROM job_application_fields WHERE owner_id=?', (owner_id,)
         ).fetchone()[0]
@@ -20631,7 +20643,7 @@ def vacancy_field_add():
         )
         conn.commit()
     flash('Вопрос добавлен', 'success')
-    return redirect(url_for('vacancies', tab='settings'))
+    return _vacancy_settings_redirect()
 
 
 @app.route('/vacancies/settings/field/<int:field_id>/edit', methods=['POST'])
@@ -20646,7 +20658,7 @@ def vacancy_field_edit(field_id):
         field = conn.execute('SELECT * FROM job_application_fields WHERE id=? AND owner_id=?', (field_id, owner_id)).fetchone()
         if not field:
             flash('Вопрос не найден', 'danger')
-            return redirect(url_for('vacancies', tab='settings'))
+            return _vacancy_settings_redirect()
         options = field['options']
         if field['field_type'] == 'select':
             opts = [o.strip() for o in request.form.get('options', '').split('\n') if o.strip()]
@@ -20657,7 +20669,7 @@ def vacancy_field_edit(field_id):
         )
         conn.commit()
     flash('Вопрос обновлён', 'success')
-    return redirect(url_for('vacancies', tab='settings'))
+    return _vacancy_settings_redirect()
 
 
 @app.route('/vacancies/settings/field/<int:field_id>/delete', methods=['POST'])
@@ -20669,7 +20681,7 @@ def vacancy_field_delete(field_id):
         field = conn.execute('SELECT * FROM job_application_fields WHERE id=? AND owner_id=?', (field_id, owner_id)).fetchone()
         if not field:
             flash('Вопрос не найден', 'danger')
-            return redirect(url_for('vacancies', tab='settings'))
+            return _vacancy_settings_redirect()
         if conn.execute('SELECT 1 FROM job_application_values WHERE field_id=?', (field_id,)).fetchone():
             conn.execute('UPDATE job_application_fields SET is_active=0 WHERE id=?', (field_id,))
             flash('На этот вопрос уже есть ответы — он скрыт из формы, но не удалён (ответы сохранены)', 'warning')
@@ -20677,7 +20689,7 @@ def vacancy_field_delete(field_id):
             conn.execute('DELETE FROM job_application_fields WHERE id=?', (field_id,))
             flash('Вопрос удалён', 'success')
         conn.commit()
-    return redirect(url_for('vacancies', tab='settings'))
+    return _vacancy_settings_redirect()
 
 
 @app.route('/vacancies/settings/token/regenerate', methods=['POST'])
@@ -20690,7 +20702,7 @@ def vacancy_token_regenerate():
         conn.execute('INSERT INTO job_vacancy_tokens (owner_id, token) VALUES (?,?)', (owner_id, secrets.token_urlsafe(24)))
         conn.commit()
     flash('Ссылка на форму обновлена — старая ссылка перестала работать', 'success')
-    return redirect(url_for('vacancies', tab='settings'))
+    return _vacancy_settings_redirect()
 
 
 # ─── Публичная форма вакансий (без логина — токен сам является авторизацией,

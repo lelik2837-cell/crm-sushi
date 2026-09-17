@@ -1,163 +1,92 @@
 {% extends 'base.html' %}
 {% block title %}Вакансии{% endblock %}
-
 {% block content %}
-<h3 class="mb-4"><i class="bi bi-person-vcard me-2"></i>Вакансии</h3>
-
-<ul class="nav nav-tabs mb-4">
-    {% for p in positions %}
-    <li class="nav-item">
-        <a class="nav-link {% if active_tab == p.code %}active{% endif %}" href="{{ url_for('vacancies') }}?tab={{ p.code }}">
-            {{ p.name }}
-        </a>
-    </li>
-    {% endfor %}
-    <li class="nav-item">
-        <a class="nav-link {% if active_tab == 'settings' %}active{% endif %}" href="{{ url_for('vacancies') }}?tab=settings">
-            <i class="bi bi-gear me-1"></i>Настройки полей
-        </a>
-    </li>
-</ul>
-
+<link rel="stylesheet" href="{{ url_for('static', filename='vacancies.css') }}">
+<div class="vacancy-page" data-tab="{{ active_tab }}" data-section="{{ settings_section }}">
+    <div class="vacancy-heading">
+        <div><div class="vacancy-eyebrow">Отчёты / Подбор команды</div><h3>Вакансии</h3><p class="text-muted mb-0">Отклики кандидатов и форма для приёма заявок</p></div>
+        <a class="btn btn-outline-secondary" href="{{ url_for('vacancy_apply', token=token) }}" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right me-2"></i>Открыть форму</a>
+    </div>
+    <nav class="vacancy-tabs" aria-label="Разделы вакансий">
+        <a class="{{ 'active' if active_tab != 'settings' }}" href="{{ url_for('vacancies', tab=positions[0].code if positions else 'applications') }}" {% if active_tab != 'settings' %}aria-current="page"{% endif %}><i class="bi bi-inbox"></i> Отклики</a>
+        <a class="{{ 'active' if active_tab == 'settings' }}" href="{{ url_for('vacancies', tab='settings') }}" {% if active_tab == 'settings' %}aria-current="page"{% endif %}><i class="bi bi-sliders"></i> Настройка формы</a>
+    </nav>
 {% if active_tab == 'settings' %}
-<p class="text-muted mb-4">Здесь настраивается, что спрашивает форма на вашем сайте — отдельно для каждой позиции, плюс общие вопросы, которые показываются всегда. Изменения применяются сразу.</p>
-
-<div class="card mb-4">
-    <div class="card-header bg-light fw-semibold"><i class="bi bi-link-45deg me-1"></i>Форма для сайта</div>
-    <div class="card-body">
-        <p class="text-muted small mb-2">Вставьте этот код на страницу вашего сайта — форма подстроится под вопросы ниже автоматически.</p>
-        <div class="input-group input-group-sm mb-2">
-            <textarea class="form-control font-monospace" style="resize:none" rows="3" readonly id="iframe_snippet">&lt;iframe src="{{ base_url }}/vacancy/apply/{{ token }}" style="width:100%;height:900px;border:0;"&gt;&lt;/iframe&gt;</textarea>
-            <button class="btn btn-outline-secondary" type="button" onclick="copySnippet()"><i class="bi bi-copy"></i></button>
-        </div>
-        <form method="POST" action="{{ url_for('vacancy_token_regenerate') }}"
-              onsubmit="return confirm('Старая ссылка перестанет работать — обновите код на сайте. Продолжить?')">
-            <button class="btn btn-sm btn-outline-danger"><i class="bi bi-arrow-repeat me-1"></i>Обновить ссылку</button>
-        </form>
-    </div>
-</div>
-
-<div class="d-flex justify-content-between align-items-center mb-2">
-    <h5 class="mb-0">Общие вопросы <span class="text-muted small fw-normal">— показываются на любой позиции</span></h5>
-    <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#addFieldModalCommon">
-        <i class="bi bi-plus-lg"></i> Добавить вопрос
-    </button>
-</div>
-<div class="card mb-4">
-    {% with fields = common_fields %}
-    {% include 'vacancy_fields_list.html' %}
-    {% endwith %}
-</div>
-
-<div class="d-flex justify-content-between align-items-center mb-2">
-    <h5 class="mb-0">Позиции и их вопросы</h5>
-    <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addPositionModal">
-        <i class="bi bi-plus-lg"></i> Добавить позицию
-    </button>
-</div>
-
-{% if not all_positions %}
-<div class="alert alert-info">Позиций пока нет — добавьте первую кнопкой выше.</div>
-{% else %}
-<div class="accordion mb-4" id="positionsAccordion">
-    {% for p in all_positions %}
-    <div class="accordion-item">
-        <h2 class="accordion-header">
-            <button class="accordion-button {% if not loop.first %}collapsed{% endif %}" type="button"
-                    data-bs-toggle="collapse" data-bs-target="#posBody{{ p.id }}">
-                <span class="fw-semibold">{{ p.name }}</span>
-                {% if not p.is_active %}<span class="badge bg-secondary ms-2">скрыта из формы</span>{% endif %}
-                <span class="badge bg-light text-dark border ms-2">{{ fields_by_position.get(p.id, [])|length }} вопрос.</span>
-            </button>
-        </h2>
-        <div id="posBody{{ p.id }}" class="accordion-collapse collapse {% if loop.first %}show{% endif %}" data-bs-parent="#positionsAccordion">
-            <div class="accordion-body">
-                <div class="d-flex justify-content-end gap-2 mb-3">
-                    <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editPositionModal{{ p.id }}">
-                        <i class="bi bi-pencil"></i> Название / видимость
-                    </button>
-                    <button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#addFieldModal{{ p.id }}">
-                        <i class="bi bi-plus-lg"></i> Добавить вопрос
-                    </button>
-                </div>
-                {% with fields = fields_by_position.get(p.id, []) %}
-                {% include 'vacancy_fields_list.html' %}
-                {% endwith %}
-                <form method="POST" action="{{ url_for('vacancy_position_delete', pos_id=p.id) }}" class="mt-3"
-                      onsubmit="return confirm('Удалить позицию «{{ p.name }}» целиком вместе с её вопросами? Если по ней уже есть заявки — позиция будет только скрыта из формы, заявки и ответы сохранятся.')">
-                    <button class="btn btn-sm btn-link text-danger p-0"><i class="bi bi-trash me-1"></i>Удалить позицию</button>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- Модалка: название / видимость позиции -->
-    <div class="modal fade" id="editPositionModal{{ p.id }}" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <form method="POST" action="{{ url_for('vacancy_position_edit', pos_id=p.id) }}">
-                    <div class="modal-header">
-                        <h5 class="modal-title">Позиция «{{ p.name }}»</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                    </div>
-                    <div class="modal-body">
-                        <div class="mb-3">
-                            <label class="form-label small fw-semibold">Название</label>
-                            <input type="text" name="name" class="form-control" value="{{ p.name }}" required>
-                        </div>
-                        <div class="form-check">
-                            <input type="checkbox" name="is_active" value="1" class="form-check-input" id="posActive{{ p.id }}" {% if p.is_active %}checked{% endif %}>
-                            <label class="form-check-label" for="posActive{{ p.id }}">Показывать в форме на сайте</label>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                        <button type="submit" class="btn btn-primary">Сохранить</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- Модалка: добавить вопрос к этой позиции -->
-    {% with modal_id='addFieldModal'~p.id, position_id=p.id, title='Новый вопрос — ' ~ p.name %}
-    {% include 'vacancy_field_add_modal.html' %}
-    {% endwith %}
-    {% endfor %}
-</div>
-{% endif %}
-
-<!-- Модалка: добавить позицию -->
-<div class="modal fade" id="addPositionModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <form method="POST" action="{{ url_for('vacancy_position_add') }}">
-                <div class="modal-header">
-                    <h5 class="modal-title">Новая позиция</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <label class="form-label small fw-semibold">Название</label>
-                    <input type="text" name="name" class="form-control" placeholder="Например «Оператор»" required autofocus>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                    <button type="submit" class="btn btn-primary">Добавить</button>
-                </div>
+    <div class="vacancy-layout">
+        <aside class="vacancy-sidebar">
+            <form method="GET" class="vacancy-mobile-nav">
+                <input type="hidden" name="tab" value="settings">
+                <label class="form-label small fw-semibold" for="settings-section">Что настраиваем</label>
+                <select id="settings-section" name="section" class="form-select" onchange="this.form.requestSubmit()">
+                    <option value="common" {% if settings_section == 'common' %}selected{% endif %}>Общие вопросы · для всех вакансий</option>
+                    <optgroup label="Вопросы по вакансиям">{% for p in all_positions %}<option value="position-{{ p.id }}" {% if settings_position and settings_position.id == p.id %}selected{% endif %}>{{ p.name }}{{ ' · скрыта' if not p.is_active }}</option>{% endfor %}</optgroup>
+                    <option value="publish" {% if settings_section == 'publish' %}selected{% endif %}>Размещение на сайте</option>
+                </select>
+                <noscript><button class="btn btn-outline-secondary mt-2">Открыть раздел</button></noscript>
             </form>
-        </div>
+            <div class="vacancy-eyebrow px-3 pt-3">Что настраиваем</div>
+            <nav aria-label="Поля формы">
+                <a class="vacancy-menu-item {{ 'active' if settings_section == 'common' }}" href="{{ url_for('vacancies', tab='settings', section='common') }}" {% if settings_section == 'common' %}aria-current="page"{% endif %}><i class="bi bi-ui-checks"></i><span>Общие вопросы<small>Для всех вакансий</small></span><span class="vacancy-count">{{ common_fields|length }}</span></a>
+                <div class="vacancy-eyebrow px-3 mt-4 mb-2">Вопросы по вакансиям</div>
+                {% for p in all_positions %}
+                <a class="vacancy-menu-item {{ 'active' if settings_position and settings_position.id == p.id }}" href="{{ url_for('vacancies', tab='settings', section='position-' ~ p.id) }}" {% if settings_position and settings_position.id == p.id %}aria-current="page"{% endif %}><i class="bi bi-briefcase"></i><span>{{ p.name }}{% if not p.is_active %}<small>Скрыта из формы</small>{% endif %}</span><span class="vacancy-count">{{ fields_by_position.get(p.id, [])|length }}</span></a>
+                {% endfor %}
+            </nav>
+            <button class="btn btn-outline-secondary vacancy-add-position" data-bs-toggle="modal" data-bs-target="#addPositionModal"><i class="bi bi-plus-lg me-1"></i>Добавить вакансию</button>
+            <a class="vacancy-menu-item vacancy-publish-link {{ 'active' if settings_section == 'publish' }}" href="{{ url_for('vacancies', tab='settings', section='publish') }}" {% if settings_section == 'publish' %}aria-current="page"{% endif %}><i class="bi bi-link-45deg"></i><span>Размещение на сайте<small>Ссылка и код формы</small></span></a>
+        </aside>
+        <section class="vacancy-workspace" aria-labelledby="settings-title">
+        {% if settings_section == 'publish' %}
+            <div class="vacancy-panel">
+                <h4 id="settings-title">Размещение на сайте</h4><p class="text-muted">Отправьте кандидату ссылку или встроите форму на сайт. Сохранённые изменения вопросов появятся в ней автоматически.</p>
+                <label class="form-label fw-semibold" for="vacancy_public_link">Ссылка на форму</label>
+                <div class="input-group mb-4"><input class="form-control" id="vacancy_public_link" readonly value="{{ base_url }}{{ url_for('vacancy_apply', token=token) }}"><button type="button" class="btn btn-outline-secondary" data-copy="vacancy_public_link">Копировать</button></div>
+                <label class="form-label fw-semibold" for="iframe_snippet">Код для вставки на сайт</label>
+                <textarea class="form-control font-monospace mb-2" rows="4" readonly id="iframe_snippet">&lt;iframe src="{{ base_url }}{{ url_for('vacancy_apply', token=token) }}" style="width:100%;height:900px;border:0;"&gt;&lt;/iframe&gt;</textarea>
+                <button type="button" class="btn btn-outline-secondary" data-copy="iframe_snippet"><i class="bi bi-copy me-1"></i>Копировать код</button>
+                <p id="vacancy-copy-status" class="small text-muted mt-2" role="status"></p>
+                <details class="vacancy-danger-zone"><summary>Заменить ссылку на форму</summary><p class="small text-muted mt-3">Старая ссылка перестанет работать. После замены обновите ссылку и код на сайте.</p><form method="POST" action="{{ url_for('vacancy_token_regenerate') }}" data-confirm="Заменить ссылку? Старая ссылка и код формы на сайте перестанут работать.">
+<input type="hidden" name="section" value="{{ settings_section }}"><button class="btn btn-sm btn-outline-danger">Заменить ссылку</button></form></details>
+            </div>
+        {% else %}
+            {% set is_common = settings_section == 'common' %}
+            {% set fields = common_fields if is_common else fields_by_position.get(settings_position.id, []) %}
+            <div class="vacancy-panel">
+                <div class="vacancy-panel-heading"><div><div class="vacancy-eyebrow">{{ 'Для всех кандидатов' if is_common else 'Вопросы по вакансии' }}</div><h4 id="settings-title">{{ 'Общие вопросы' if is_common else settings_position.name }}</h4></div><button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addFieldModal"><i class="bi bi-plus-lg me-1"></i>Добавить вопрос</button></div>
+                <p class="text-muted">{{ 'Эти вопросы видит каждый кандидат, какую бы вакансию он ни выбрал.' if is_common else 'Эти вопросы появятся после выбора этой вакансии, в дополнение к общим вопросам.' }}</p>
+                {% if is_common %}
+                <div class="vacancy-base-fields"><i class="bi bi-lock"></i><div><strong>Имя, телефон и выбор вакансии уже есть в форме</strong><span>Это базовые поля. Добавляйте ниже только дополнительные вопросы.</span></div></div>
+                {% else %}
+                <div class="vacancy-position-bar"><span class="vacancy-state {{ 'is-hidden' if not settings_position.is_active }}"><i class="bi {{ 'bi-eye' if settings_position.is_active else 'bi-eye-slash' }} me-1"></i>{{ 'Вакансия видна в форме' if settings_position.is_active else 'Вакансия скрыта из формы' }}</span><button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editPositionModal">Название и видимость</button></div>
+                <a class="vacancy-common-link" href="{{ url_for('vacancies', tab='settings', section='common') }}"><i class="bi bi-ui-checks me-1"></i>Также используются общие вопросы <i class="bi bi-arrow-right ms-1"></i></a>
+                {% endif %}
+                {% include 'vacancy_fields_list.html' %}
+                <div class="vacancy-save-hint"><i class="bi bi-info-circle me-1"></i>Изменения появятся в форме после сохранения вопроса.</div>
+                {% if not is_common %}<details class="vacancy-danger-zone"><summary>Удаление вакансии</summary><form class="mt-3" method="POST" action="{{ url_for('vacancy_position_delete', pos_id=settings_position.id) }}" data-confirm="Удалить вакансию «{{ settings_position.name }}» и её вопросы? Если уже есть отклики, вакансия будет скрыта, а ответы сохранятся.">
+<input type="hidden" name="section" value="{{ settings_section }}"><button class="btn btn-sm btn-outline-danger">Удалить вакансию</button></form></details>{% endif %}
+            </div>
+            {% with modal_id='addFieldModal', position_id='' if is_common else settings_position.id, title='Новый общий вопрос' if is_common else 'Новый вопрос — ' ~ settings_position.name %}{% include 'vacancy_field_add_modal.html' %}{% endwith %}
+            {% if not is_common %}
+            <div class="modal fade" id="editPositionModal" tabindex="-1" aria-labelledby="editPositionTitle" aria-hidden="true"><div class="modal-dialog"><div class="modal-content"><form method="POST" action="{{ url_for('vacancy_position_edit', pos_id=settings_position.id) }}">
+<input type="hidden" name="section" value="{{ settings_section }}">
+                <div class="modal-header"><h5 class="modal-title" id="editPositionTitle">Настройки вакансии</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button></div>
+                <div class="modal-body"><label class="form-label" for="position-name">Название вакансии</label><input id="position-name" class="form-control mb-3" name="name" value="{{ settings_position.name }}" required><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="is_active" id="position-active" value="1" {% if settings_position.is_active %}checked{% endif %}><label class="form-check-label" for="position-active">Показывать в форме для кандидатов</label></div><div class="form-text">У скрытой вакансии сохраняются отклики и вопросы.</div></div>
+                <div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary">Сохранить</button></div>
+            </form></div></div></div>
+            {% endif %}
+        {% endif %}
+        </section>
     </div>
-</div>
-
-<!-- Модалка: добавить общий вопрос -->
-{% with modal_id='addFieldModalCommon', position_id='', title='Новый общий вопрос' %}
-{% include 'vacancy_field_add_modal.html' %}
-{% endwith %}
-
+    <div class="modal fade" id="addPositionModal" tabindex="-1" aria-labelledby="addPositionTitle" aria-hidden="true"><div class="modal-dialog"><div class="modal-content"><form method="POST" action="{{ url_for('vacancy_position_add') }}">
+<input type="hidden" name="section" value="{{ settings_section }}">
+        <div class="modal-header"><h5 class="modal-title" id="addPositionTitle">Новая вакансия</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button></div>
+        <div class="modal-body"><label class="form-label" for="new-position-name">Название вакансии</label><input id="new-position-name" class="form-control" name="name" placeholder="Например, оператор" required><div class="form-text">После добавления вы сможете настроить вопросы для этой вакансии.</div></div>
+        <div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary">Добавить вакансию</button></div>
+    </form></div></div></div>
 {% else %}
-
+    <div class="vacancy-app-toolbar"><form method="GET"><label class="form-label small fw-semibold" for="application-position">Вакансия</label><div class="d-flex gap-2"><select class="form-select" id="application-position" name="tab" onchange="this.form.requestSubmit()">{% for p in positions %}<option value="{{ p.code }}" {% if active_tab == p.code %}selected{% endif %}>{{ p.name }}{{ ' · скрыта из формы' if not p.is_active }}</option>{% endfor %}</select><noscript><button class="btn btn-primary">Показать</button></noscript></div></form><div><h4 class="mb-1">{{ current_position.name if current_position else 'Отклики' }} <span class="vacancy-count">{{ applications|length }}</span></h4><p class="text-muted small mb-0">Откройте отклик, чтобы посмотреть ответы и изменить статус.</p></div>{% if current_position %}<a class="btn btn-outline-secondary ms-lg-auto" href="{{ url_for('vacancies', tab='settings', section='position-' ~ current_position.id) }}">Настроить вопросы</a>{% endif %}</div>
 {% if not current_position %}
-<div class="alert alert-info">Нет активных позиций. Добавьте их во вкладке «Настройки полей».</div>
+<div class="alert alert-info">Вакансий пока нет. Добавьте вакансию в разделе «Настройка формы».</div>
 {% else %}
 <div class="card">
     <div class="table-responsive">
@@ -167,12 +96,12 @@
             </thead>
             <tbody>
             {% for item in applications %}
-            <tr style="cursor:pointer" data-bs-toggle="collapse" data-bs-target="#app-{{ item.row.id }}">
+            <tr>
                 <td>{{ item.row.created_at|datetime_fmt if item.row.created_at else '' }}</td>
                 <td>{{ item.row.full_name or '—' }}</td>
                 <td>{{ item.row.phone|phone_fmt }}</td>
                 <td><span class="badge bg-{{ status_labels[item.row.status][1] }}">{{ status_labels[item.row.status][0] }}</span></td>
-                <td><i class="bi bi-chevron-down"></i></td>
+                <td><button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#app-{{ item.row.id }}" aria-expanded="false" aria-controls="app-{{ item.row.id }}">Отклик <i class="bi bi-chevron-down ms-1"></i></button></td>
             </tr>
             <tr class="collapse" id="app-{{ item.row.id }}">
                 <td colspan="5" class="bg-light">
@@ -191,20 +120,23 @@
                         </div>
                         <div class="col-md-6">
                             <form method="POST" action="{{ url_for('vacancy_application_status', app_id=item.row.id) }}" class="d-flex gap-2 mb-2">
+<input type="hidden" name="section" value="{{ settings_section }}">
                                 <input type="hidden" name="tab" value="{{ active_tab }}">
-                                <select name="status" class="form-select form-select-sm" onchange="this.form.submit()">
+                                <select aria-label="Статус отклика" name="status" class="form-select form-select-sm" onchange="this.form.requestSubmit()">
                                     {% for code, (label, _color) in status_labels.items() %}
                                     <option value="{{ code }}" {% if item.row.status == code %}selected{% endif %}>{{ label }}</option>
                                     {% endfor %}
                                 </select>
                             </form>
                             <form method="POST" action="{{ url_for('vacancy_application_note', app_id=item.row.id) }}" class="mb-2">
+<input type="hidden" name="section" value="{{ settings_section }}">
                                 <input type="hidden" name="tab" value="{{ active_tab }}">
-                                <textarea name="internal_note" class="form-control form-control-sm mb-1" rows="2" placeholder="Заметка для себя">{{ item.row.internal_note }}</textarea>
+                                <textarea aria-label="Заметка об отклике" name="internal_note" class="form-control form-control-sm mb-1" rows="2" placeholder="Заметка для себя">{{ item.row.internal_note }}</textarea>
                                 <button class="btn btn-sm btn-outline-secondary">Сохранить заметку</button>
                             </form>
                             <form method="POST" action="{{ url_for('vacancy_application_delete', app_id=item.row.id) }}"
                                   onsubmit="return confirm('Удалить заявку?')">
+<input type="hidden" name="section" value="{{ settings_section }}">
                                 <input type="hidden" name="tab" value="{{ active_tab }}">
                                 <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i> Удалить заявку</button>
                             </form>
@@ -221,19 +153,8 @@
 </div>
 {% endif %}
 {% endif %}
+</div>
 {% endblock %}
-
 {% block scripts %}
-<script>
-function copySnippet() {
-    var el = document.getElementById('iframe_snippet');
-    el.select();
-    navigator.clipboard.writeText(el.value).then(function () {
-        var btn = el.parentElement.querySelector('button');
-        var icon = btn.querySelector('i');
-        icon.className = 'bi bi-check';
-        setTimeout(function () { icon.className = 'bi bi-copy'; }, 1500);
-    });
-}
-</script>
+<script src="{{ url_for('static', filename='vacancies.js') }}"></script>
 {% endblock %}

@@ -1,0 +1,67 @@
+.vacancy-page { --vacancy-accent:#c73652; --vacancy-line:#e5e7eb; color:#25283a; padding-bottom:32px; }
+.vacancy-heading { display:flex; justify-content:space-between; align-items:center; gap:20px; margin:8px 0 26px; }
+.vacancy-heading h3 { font-size:1.85rem; font-weight:750; margin:5px 0 6px; }
+.vacancy-eyebrow { font-size:.7rem; font-weight:700; color:#747989; letter-spacing:.07em; text-transform:uppercase; }
+.vacancy-tabs { display:flex; gap:28px; border-bottom:1px solid #dfe2e8; margin-bottom:26px; }
+.vacancy-tabs a { display:flex; align-items:center; gap:8px; color:#626878; text-decoration:none; padding:0 3px 15px; border-bottom:3px solid transparent; font-weight:600; }
+.vacancy-tabs a.active { color:var(--vacancy-accent); border-color:var(--vacancy-accent); }
+.vacancy-layout { display:grid; grid-template-columns:260px minmax(0,1fr); gap:24px; align-items:start; }
+.vacancy-sidebar { background:#fff; border:1px solid var(--vacancy-line); border-radius:16px; padding:8px; }
+.vacancy-menu-item { display:flex; align-items:center; gap:11px; margin-top:4px; padding:12px; color:#454b5b; text-decoration:none; border-radius:10px; font-size:.9rem; }
+.vacancy-menu-item>span:not(.vacancy-count) { flex:1; min-width:0; overflow-wrap:anywhere; }
+.vacancy-menu-item small { display:block; font-size:.73rem; font-weight:400; color:#757b88; margin-top:2px; }
+.vacancy-menu-item:hover { color:#25283a; background:#f7f7f9; }
+.vacancy-menu-item.active { color:#b32d48; background:#fff0f3; font-weight:650; }
+.vacancy-count { display:inline-block; min-width:25px; text-align:center; font-size:.75rem; border-radius:6px; background:#f0f1f5; color:#5c6273; padding:3px 7px; vertical-align:middle; }
+.vacancy-menu-item.active .vacancy-count { background:#fbdce3; color:#b32d48; }
+.vacancy-add-position { width:calc(100% - 16px); margin:16px 8px; font-size:.8rem; }
+.vacancy-publish-link { border-top:1px solid var(--vacancy-line); border-radius:0 0 10px 10px; padding-top:17px; padding-bottom:17px; }
+.vacancy-panel { background:#fff; border:1px solid var(--vacancy-line); border-radius:16px; padding:28px; }
+.vacancy-panel h4 { font-weight:700; font-size:1.35rem; margin:5px 0 10px; overflow-wrap:anywhere; }
+.vacancy-panel-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.vacancy-panel-heading .btn { flex-shrink:0; }
+.vacancy-panel>.text-muted { font-size:.87rem; line-height:1.65; max-width:660px; }
+.vacancy-base-fields { display:flex; gap:12px; background:#f6f7fa; border:1px solid #eceef3; border-radius:10px; padding:15px; margin:22px 0; font-size:.82rem; }
+.vacancy-base-fields>i { color:#7b8191; font-size:1rem; }
+.vacancy-base-fields strong { font-weight:600; }
+.vacancy-base-fields span { display:block; color:#747989; margin-top:4px; }
+.vacancy-field-list { margin-top:20px; }
+.vacancy-field { display:flex; align-items:center; gap:14px; padding:19px 0; border-bottom:1px solid #eceef3; }
+.vacancy-field:first-child { border-top:1px solid #eceef3; }
+.vacancy-field-icon { display:grid; place-items:center; width:40px; height:40px; flex-shrink:0; border:1px solid #e9ebf1; background:#f8f9fb; border-radius:10px; color:#6b7183; font-size:1.1rem; }
+.vacancy-field-description { flex:1; min-width:0; }
+.vacancy-field-name { font-size:.93rem; font-weight:600; overflow-wrap:anywhere; }
+.vacancy-field-meta { display:flex; flex-wrap:wrap; gap:4px 12px; color:#717788; font-size:.74rem; margin-top:5px; }
+.vacancy-field-options { font-size:.76rem; color:#717788; margin-top:7px; overflow-wrap:anywhere; }
+.vacancy-hidden-label { color:#995721; }
+.field-hidden .vacancy-field-name { color:#747989; }
+.vacancy-field>.btn { flex-shrink:0; font-size:.75rem; }
+.vacancy-save-hint { font-size:.75rem; color:#7a8090; margin-top:20px; }
+.vacancy-position-bar { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin:22px 0 12px; }
+.vacancy-state { color:#217256; background:#edf7f2; padding:6px 10px; border-radius:6px; font-size:.75rem; }
+.vacancy-state.is-hidden { background:#fff4e6; color:#995721; }
+.vacancy-common-link { font-size:.8rem; color:#656b7d; }
+.vacancy-danger-zone { margin-top:26px; padding-top:18px; border-top:1px solid #eceef3; }
+.vacancy-danger-zone summary, .vacancy-modal-delete summary { color:#777d8c; font-size:.78rem; cursor:pointer; }
+.vacancy-modal-delete { padding:16px; border-top:1px solid #eceef3; }
+.vacancy-modal-context { font-size:.8rem; background:#f7f7fa; border-radius:8px; padding:10px 12px; color:#6b7080; }
+.vacancy-switch { padding:12px 0; }
+.vacancy-switch .form-text { margin-left:40px; font-size:.77rem; }
+.vacancy-empty { padding:35px 16px; text-align:center; background:#fafbfc; border:1px dashed #dfe3eb; border-radius:12px; }
+.vacancy-empty>i { display:block; font-size:1.8rem; color:#8f95a5; margin-bottom:14px; }
+.vacancy-empty h5 { font-size:1rem; }
+.vacancy-empty p { color:#777d8c; font-size:.85rem; max-width:380px; margin:10px auto 18px; }
+.vacancy-app-toolbar { display:flex; align-items:center; gap:24px; margin-bottom:24px; flex-wrap:wrap; }
+.vacancy-app-toolbar form { min-width:220px; }
+.vacancy-page .btn-outline-secondary { border-color:#d9dde5; color:#535a6b; background:#fff; }
+.vacancy-page .btn-outline-secondary:hover { background:#f3f4f7; color:#303649; }
+.vacancy-page :is(a,button,input,select,textarea):focus-visible { outline:3px solid #d37587; outline-offset:3px; }
+@media(max-width:991px) { .vacancy-layout { grid-template-columns:220px minmax(0,1fr); gap:16px; } .vacancy-panel { padding:20px; } .vacancy-panel-heading { align-items:flex-start; flex-direction:column; margin-bottom:16px; } }
+@media(max-width:767px) { .vacancy-heading { align-items:flex-start; flex-direction:column; gap:14px; } .vacancy-layout { grid-template-columns:1fr; } .vacancy-sidebar nav { max-height:240px; overflow:auto; } .vacancy-field { gap:10px; flex-wrap:wrap; } .vacancy-field-description { min-width:160px; } .vacancy-field>.btn { margin-left:50px; } .vacancy-tabs { gap:22px; font-size:.9rem; } .vacancy-panel { padding:18px; } .vacancy-app-toolbar { gap:16px; } .vacancy-app-toolbar form { width:100%; } }
+
+.vacancy-mobile-nav { display:none; }
+@media(max-width:767px) {
+    .vacancy-mobile-nav { display:block; padding:10px; }
+    .vacancy-sidebar>nav, .vacancy-sidebar>.vacancy-eyebrow, .vacancy-sidebar>.vacancy-publish-link { display:none; }
+    .vacancy-add-position { margin:4px 10px 10px; width:calc(100% - 20px); }
+}

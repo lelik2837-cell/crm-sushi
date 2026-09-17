@@ -1,69 +1,33 @@
-{% set type_labels = {'text': 'Короткий текст', 'textarea': 'Текст в несколько строк', 'select': 'Список', 'branches': 'Филиалы'} %}
-{% if fields %}
-<div class="table-responsive">
-    <table class="table table-hover mb-0 align-middle">
-        <thead class="table-light">
-            <tr><th>Вопрос</th><th>Тип</th><th>Обязательный</th><th class="text-end">Действия</th></tr>
-        </thead>
-        <tbody>
-        {% for f in fields %}
-        <tr class="{% if not f.is_active %}text-muted{% endif %}">
-            <td>{{ f.label }}{% if not f.is_active %} <span class="badge bg-secondary">скрыт из формы</span>{% endif %}</td>
-            <td class="text-nowrap">{{ type_labels.get(f.field_type, f.field_type) }}</td>
-            <td>{% if f.is_required %}<i class="bi bi-check-lg text-success"></i>{% else %}<span class="text-muted">—</span>{% endif %}</td>
-            <td class="text-end text-nowrap">
-                <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editFieldModal{{ f.id }}" title="Изменить">
-                    <i class="bi bi-pencil"></i>
-                </button>
-                <form method="POST" action="{{ url_for('vacancy_field_delete', field_id=f.id) }}" class="d-inline"
-                      onsubmit="return confirm('Удалить вопрос «{{ f.label }}»? Если на него уже есть ответы — вопрос будет только скрыт из формы, ответы сохранятся.')">
-                    <button class="btn btn-sm btn-outline-danger" title="Удалить"><i class="bi bi-trash"></i></button>
-                </form>
-            </td>
-        </tr>
-
-        <!-- Модалка редактирования вопроса -->
-        <div class="modal fade" id="editFieldModal{{ f.id }}" tabindex="-1">
-            <div class="modal-dialog">
-                <div class="modal-content">
-                    <form method="POST" action="{{ url_for('vacancy_field_edit', field_id=f.id) }}">
-                        <div class="modal-header">
-                            <h5 class="modal-title">Вопрос</h5>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                        </div>
-                        <div class="modal-body">
-                            <div class="mb-3">
-                                <label class="form-label small fw-semibold">Текст вопроса</label>
-                                <input type="text" name="label" class="form-control" value="{{ f.label }}" required>
-                            </div>
-                            {% if f.field_type == 'select' %}
-                            <div class="mb-3">
-                                <label class="form-label small fw-semibold">Варианты ответа</label>
-                                <textarea name="options" class="form-control" rows="3">{{ f.options|fromjson|join('\n') }}</textarea>
-                                <div class="form-text">Каждый вариант с новой строки</div>
-                            </div>
-                            {% endif %}
-                            <div class="form-check mb-2">
-                                <input type="checkbox" name="is_required" value="1" class="form-check-input" id="fieldReq{{ f.id }}" {% if f.is_required %}checked{% endif %}>
-                                <label class="form-check-label" for="fieldReq{{ f.id }}">Обязательный вопрос</label>
-                            </div>
-                            <div class="form-check">
-                                <input type="checkbox" name="is_active" value="1" class="form-check-input" id="fieldAct{{ f.id }}" {% if f.is_active %}checked{% endif %}>
-                                <label class="form-check-label" for="fieldAct{{ f.id }}">Показывать в форме на сайте</label>
-                            </div>
-                        </div>
-                        <div class="modal-footer">
-                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                            <button type="submit" class="btn btn-primary">Сохранить</button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        </div>
-        {% endfor %}
-        </tbody>
-    </table>
-</div>
+{% set type_labels = {'text': 'Короткий текст', 'textarea': 'Развёрнутый ответ', 'select': 'Один вариант из списка', 'branches': 'Выбор филиалов'} %}
+{% set type_icons = {'text': 'input-cursor-text', 'textarea': 'text-paragraph', 'select': 'list-ul', 'branches': 'geo-alt'} %}
+<div class="vacancy-field-list">
+{% for f in fields %}
+    <div class="vacancy-field {{ 'field-hidden' if not f.is_active }}">
+        <div class="vacancy-field-icon"><i class="bi bi-{{ type_icons.get(f.field_type, 'input-cursor-text') }}"></i></div>
+        <div class="vacancy-field-description"><div class="vacancy-field-name">{{ f.label }}</div><div class="vacancy-field-meta"><span>{{ type_labels.get(f.field_type, f.field_type) }}</span><span>{{ 'Обязательный' if f.is_required else 'Необязательный' }}</span>{% if not f.is_active %}<span class="vacancy-hidden-label">Скрыт из формы</span>{% endif %}</div>{% if f.field_type == 'select' %}<div class="vacancy-field-options">{{ (f.options|fromjson)|join(' · ') }}</div>{% endif %}</div>
+        <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editFieldModal{{ f.id }}" aria-label="Изменить вопрос: {{ f.label }}"><i class="bi bi-pencil me-1"></i>Изменить</button>
+    </div>
 {% else %}
-<div class="text-muted small p-3">Вопросов пока нет</div>
-{% endif %}
+    <div class="vacancy-empty"><i class="bi bi-ui-checks-grid"></i><h5>Добавьте первый вопрос</h5><p>Уточните опыт, график или другие детали, которые помогут выбрать кандидата.</p><button class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#addFieldModal">Добавить вопрос</button></div>
+{% endfor %}
+</div>
+{% for f in fields %}
+<div class="modal fade" id="editFieldModal{{ f.id }}" tabindex="-1" aria-labelledby="editFieldTitle{{ f.id }}" aria-hidden="true">
+    <div class="modal-dialog"><div class="modal-content">
+        <div class="modal-header"><h5 class="modal-title" id="editFieldTitle{{ f.id }}">Изменить вопрос</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button></div>
+        <form method="POST" action="{{ url_for('vacancy_field_edit', field_id=f.id) }}">
+<input type="hidden" name="section" value="{{ settings_section }}">
+            <div class="modal-body">
+                <p class="vacancy-modal-context"><i class="bi bi-{{ 'ui-checks' if is_common else 'briefcase' }} me-1"></i>{{ 'Для всех вакансий' if is_common else settings_position.name }} · {{ type_labels.get(f.field_type, f.field_type) }}</p>
+                <label class="form-label fw-semibold" for="fieldLabel{{ f.id }}">Текст вопроса</label><input type="text" name="label" id="fieldLabel{{ f.id }}" class="form-control mb-3" value="{{ f.label }}" required>
+                {% if f.field_type == 'select' %}<label class="form-label fw-semibold" for="fieldOptions{{ f.id }}">Варианты ответа</label><textarea name="options" id="fieldOptions{{ f.id }}" class="form-control" rows="4" required>{{ (f.options|fromjson)|join('\n') }}</textarea><div class="form-text mb-3">Каждый вариант с новой строки.</div>{% endif %}
+                <div class="vacancy-switch"><div class="form-check form-switch"><input type="checkbox" name="is_required" value="1" class="form-check-input" id="fieldReq{{ f.id }}" {% if f.is_required %}checked{% endif %}><label class="form-check-label" for="fieldReq{{ f.id }}">Обязательный вопрос</label></div><div class="form-text">Без ответа кандидат не сможет отправить заявку.</div></div>
+                <div class="vacancy-switch"><div class="form-check form-switch"><input type="checkbox" name="is_active" value="1" class="form-check-input" id="fieldAct{{ f.id }}" {% if f.is_active %}checked{% endif %}><label class="form-check-label" for="fieldAct{{ f.id }}">Показывать в форме</label></div><div class="form-text">Выключите, чтобы скрыть вопрос и сохранить прежние ответы.</div></div>
+            </div>
+            <div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Отмена</button><button type="submit" class="btn btn-primary">Сохранить вопрос</button></div>
+        </form>
+        <details class="vacancy-modal-delete"><summary>Удаление вопроса</summary><form method="POST" action="{{ url_for('vacancy_field_delete', field_id=f.id) }}" data-confirm="Удалить вопрос «{{ f.label }}»? Если уже есть ответы, вопрос будет скрыт, а ответы сохранятся.">
+<input type="hidden" name="section" value="{{ settings_section }}"><p class="small text-muted mt-2">Если на вопрос уже отвечали, он будет скрыт. Ответы сохранятся в откликах.</p><button class="btn btn-sm btn-outline-danger">Удалить вопрос</button></form></details>
+    </div></div>
+</div>
+{% endfor %}
