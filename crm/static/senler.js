@@ -318,6 +318,8 @@
   }
   function channelForm(id) {
     const channel = state.boot.channels.find(c => c.id === Number(id));
+    // A button that was never set up starts on the menu; one that already has a link stays a link.
+    const defaultAction = channel?.default_button_action === 'menu' || !channel?.default_button_url ? 'menu' : 'url';
     showModal(channel ? 'Настройки канала' : 'Подключить канал', `<form id="sn-channel-form">${!channel ? `<div class="sn-field"><label for="ch-kind">Мессенджер</label><select class="form-select" id="ch-kind"><option value="vk">ВКонтакте — сообщество</option><option value="telegram">Telegram — бот</option><option value="max">MAX — бот</option></select></div>` : kindBadge(channel.kind)}${inputField('Название в CRM','ch-name',channel?.name || '', 'required maxlength="100" placeholder="Например, Папа Суши — ВК"')}<div id="ch-vk">${!channel ? inputField('Сообщество ВК','ch-id',qs().get('vk') || '', 'placeholder="https://vk.ru/papa_sushi"','Вставьте ссылку, короткое имя или числовой ID — CRM определит сообщество при проверке ключа.') : ''}</div>${inputField(channel ? 'Новый ключ (оставьте пустым, чтобы сохранить текущий)' : 'Ключ сообщества / токен бота','ch-token','','type="password" autocomplete="new-password"')}
         <div class="sn-panel mt-3"><h3>Кнопка отписки</h3>${inputField('Текст кнопки','ch-unsubscribe-label',channel?.unsubscribe_label || 'Отписаться','required maxlength="40"','До 40 символов. Нажатие отменяет подписку на рассылку.')}
         <label class="sn-check-row"><input id="ch-unsubscribe-enabled" type="checkbox" ${channel?.unsubscribe_enabled === 0 ? '' : 'checked'}><span>Показывать кнопку отписки</span></label>
@@ -325,8 +327,12 @@
         <div class="sn-panel mt-3"><h3>Кнопка по умолчанию в рассылках</h3>
         <label class="sn-check-row"><input id="ch-default-button-enabled" type="checkbox" ${channel?.default_button_enabled ? 'checked' : ''}><span>Добавлять кнопку в каждую рассылку этого канала</span></label>
         ${inputField('Текст кнопки','ch-default-button-label',channel?.default_button_label || '','maxlength="40" placeholder="Например, Меню"')}
-        ${inputField('Ссылка','ch-default-button-url',channel?.default_button_url || '',`placeholder="${esc(channel?.subscribe_url || 'https://…')}"`)}
-        <div class="sn-help">Появляется внизу каждой рассылки этого канала, над кнопкой отписки — без ручного добавления в каждый раз. Например, «Ссылка для подписки» со страницы «Каналы» открывает чат с ботом и запускает сценарий «После подписки».</div></div>
+        <div class="sn-field"><label for="ch-default-button-action">Что делает кнопка</label><select class="form-select" id="ch-default-button-action">
+          <option value="menu" ${defaultAction === 'menu' ? 'selected' : ''}>Показывает меню бота в чате</option>
+          <option value="url" ${defaultAction === 'url' ? 'selected' : ''}>Открывает ссылку</option>
+        </select></div>
+        <div id="ch-default-button-url-wrap">${inputField('Ссылка','ch-default-button-url',channel?.default_button_url || '',`placeholder="${esc(channel?.subscribe_url || 'https://…')}"`)}</div>
+        <div class="sn-help" id="ch-default-button-help"></div></div>
         <div class="sn-panel mt-3"><h3>Приветствие новым подписчикам</h3>
         <div class="sn-field"><label for="ch-greeting-text">Текст приветствия</label><textarea class="form-control" id="ch-greeting-text" rows="3" maxlength="3500" required>${esc(channel?.greeting_text || DEFAULT_GREETING_TEXT)}</textarea></div>
         <div class="sn-field"><label for="ch-greeting-trigger">Когда отправлять</label><select class="form-select" id="ch-greeting-trigger">
@@ -346,11 +352,23 @@
       if (!channel) document.getElementById('ch-greeting-trigger').value = kind === 'vk' ? 'off' : 'on_message';
     }
     guide(); if (!channel) document.getElementById('ch-kind').onchange = guide;
+    // The menu button only shows something while a "После подписки" bot is published and on, so say so
+    // when it is not (unknown until the channel's bots have loaded; a new channel has none yet).
+    let menuBotReady = null;
+    function defaultButtonHelp() {
+      const menu = document.getElementById('ch-default-button-action').value === 'menu';
+      document.getElementById('ch-default-button-url-wrap').hidden = menu;
+      document.getElementById('ch-default-button-help').innerHTML = menu
+        ? 'Появляется внизу каждой рассылки этого канала, над кнопкой отписки. Нажатие показывает в этом же чате меню бота — сценарий «После подписки» (по умолчанию «Меню доставки»), как после команды /start. Ссылка не нужна.' + (menuBotReady === false ? '<div class="sn-error mt-2">Сейчас в этом канале нет включённого бота «После подписки», поэтому кнопка ничего не покажет. Откройте «Чат-боты» и опубликуйте бота «Меню доставки».</div>' : !channel ? '<div class="sn-note mt-2">Бот «Меню доставки» появится после сохранения канала — его нужно будет опубликовать на вкладке «Чат-боты».</div>' : '')
+        : 'Появляется внизу каждой рассылки этого канала, над кнопкой отписки — без ручного добавления каждый раз. Например, «Ссылка для подписки» со страницы «Каналы» открывает чат с ботом и запускает сценарий «После подписки».';
+    }
+    document.getElementById('ch-default-button-action').onchange = defaultButtonHelp; defaultButtonHelp();
+    if (channel) api('bots?channel=' + channel.id).then(data => { menuBotReady = data.items.some(b => b.status === 'active' && b.published_trigger === 'subscribe'); if (modal.open) defaultButtonHelp(); }).catch(() => {});
     document.getElementById('sn-channel-form').onsubmit = async event => {
       event.preventDefault(); const button = event.submitter; button.disabled = true;
       try {
         const data = {name:document.getElementById('ch-name').value,token:document.getElementById('ch-token').value,unsubscribe_label:document.getElementById('ch-unsubscribe-label').value,unsubscribe_enabled:document.getElementById('ch-unsubscribe-enabled').checked,
-          default_button_enabled:document.getElementById('ch-default-button-enabled').checked,default_button_label:document.getElementById('ch-default-button-label').value,default_button_url:document.getElementById('ch-default-button-url').value,
+          default_button_enabled:document.getElementById('ch-default-button-enabled').checked,default_button_label:document.getElementById('ch-default-button-label').value,default_button_url:document.getElementById('ch-default-button-url').value,default_button_action:document.getElementById('ch-default-button-action').value,
           greeting_text:document.getElementById('ch-greeting-text').value,greeting_trigger:document.getElementById('ch-greeting-trigger').value,stop_text:document.getElementById('ch-stop-text').value};
         if (channel) await api(`channels/${channel.id}/edit`,data);
         else {

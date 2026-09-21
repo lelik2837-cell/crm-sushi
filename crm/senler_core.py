@@ -155,6 +155,10 @@ def init_schema(conn):
         conn.execute('ALTER TABLE senler_channels ADD COLUMN default_button_enabled INTEGER NOT NULL DEFAULT 0')
         conn.execute("ALTER TABLE senler_channels ADD COLUMN default_button_label TEXT NOT NULL DEFAULT ''")
         conn.execute("ALTER TABLE senler_channels ADD COLUMN default_button_url TEXT NOT NULL DEFAULT ''")
+    if 'default_button_action' not in columns:
+        # Existing buttons are links; 'menu' instead makes the press show the bot's menu in the chat.
+        conn.execute("ALTER TABLE senler_channels ADD COLUMN default_button_action TEXT NOT NULL DEFAULT 'url' "
+                     "CHECK(default_button_action IN ('url','menu'))")
     bot_columns = {row[1] for row in conn.execute('PRAGMA table_info(senler_bots)')}
     if 'template_key' not in bot_columns:
         conn.execute("ALTER TABLE senler_bots ADD COLUMN template_key TEXT NOT NULL DEFAULT ''")
@@ -433,7 +437,7 @@ class SenlerService:
         text = body['text'].replace('{имя}', first_name).replace('{name}', first_name)
         rendered = dict(body, text=text)
         channel = conn.execute('''SELECT unsubscribe_label,unsubscribe_enabled,
-                                default_button_enabled,default_button_label,default_button_url
+                                default_button_enabled,default_button_label,default_button_url,default_button_action
                                 FROM senler_channels WHERE id=?''', (sub['channel_id'],)).fetchone()
         rendered['buttons'] = []
         for button in body.get('buttons', []):
@@ -445,7 +449,10 @@ class SenlerService:
                     # 'default': True survives into the rendered/queued body so a campaign's
                     # detail page can later tell this button apart from one the owner added by
                     # hand, even though its action/value no longer look like the placeholder.
-                    rendered['buttons'].append({'label': channel['default_button_label'], 'action': 'url', 'value': channel['default_button_url'], 'default': True})
+                    if channel['default_button_action'] == 'menu':
+                        rendered['buttons'].append({'label': channel['default_button_label'], 'action': 'callback', 'value': 'menu', 'default': True})
+                    else:
+                        rendered['buttons'].append({'label': channel['default_button_label'], 'action': 'url', 'value': channel['default_button_url'], 'default': True})
             else:
                 rendered['buttons'].append(dict(button))
         created = now()
@@ -521,6 +528,15 @@ class SenlerService:
                 self.queue(conn, sub, {'text': channel['greeting_text'],
                            'buttons': [{'label': 'Подписаться', 'action': 'callback', 'value': 'subscribe'}]},
                            'optin:' + str(event_row['id']), kind='consent')
+            return
+        if callback == 'menu':
+            # The channel's default mailing button in "show the bot's menu" mode: restart the
+            # scenario a subscriber gets right after subscribing (the delivery menu, by default).
+            # The press is put in the thread for context but not counted as unread: this button is
+            # under every mailing, and the bot answers it completely without an operator.
+            conn.execute("INSERT INTO senler_messages(subscriber_id,direction,text,created_at) VALUES (?,'in',?,?)",
+                         (sub['id'], 'Кнопка: ' + (channel['default_button_label'] or 'Меню'), now()))
+            self._start_bot(conn, sub, 'subscribe')
             return
         if callback.startswith('sb:'):
             parts = callback.split(':')

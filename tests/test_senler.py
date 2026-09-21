@@ -530,9 +530,12 @@ class SenlerTests(unittest.TestCase):
             conn.execute('ALTER TABLE senler_channels DROP COLUMN default_button_enabled')
             conn.execute('ALTER TABLE senler_channels DROP COLUMN default_button_label')
             conn.execute('ALTER TABLE senler_channels DROP COLUMN default_button_url')
+            conn.execute('ALTER TABLE senler_channels DROP COLUMN default_button_action')
             init_schema(conn)
         saved=self.one('senler_channels')
         self.assertEqual((saved['default_button_enabled'],saved['default_button_label'],saved['default_button_url']),(0,'',''))
+        # Buttons that exist before the "show the menu" option was added stay links.
+        self.assertEqual(saved['default_button_action'],'url')
         self.post('channels/{}/edit'.format(channel),{'name':'ВК','default_button_enabled':True,'default_button_label':'Меню','default_button_url':'https://example.com/menu'})
         self.assertEqual(self.one('senler_channels')['default_button_label'],'Меню')
 
@@ -544,6 +547,62 @@ class SenlerTests(unittest.TestCase):
         self.post('channels/{}/edit'.format(channel),{'name':'ВК','default_button_enabled':True,'default_button_label':'Меню','default_button_url':'not-a-url'},400)
         self.post('channels/{}/edit'.format(channel),{'name':'ВК','default_button_enabled':True,'default_button_label':'','default_button_url':'https://example.com'},400)
         self.assertEqual(self.one('senler_channels')['default_button_enabled'],0)
+
+    def test_default_button_menu_mode_needs_no_link_and_the_action_is_validated(self):
+        channel=self.channel('vk')
+        self.post('channels/{}/edit'.format(channel),{'name':'ВК','default_button_enabled':True,'default_button_label':'Меню','default_button_action':'menu','default_button_url':''})
+        saved=self.one('senler_channels')
+        self.assertEqual((saved['default_button_enabled'],saved['default_button_action'],saved['default_button_url']),(1,'menu',''))
+        # Link mode still needs a link, and only the two known actions are accepted.
+        self.post('channels/{}/edit'.format(channel),{'name':'ВК','default_button_action':'url'},400)
+        self.post('channels/{}/edit'.format(channel),{'name':'ВК','default_button_action':'call-me'},400)
+        self.assertEqual(self.one('senler_channels')['default_button_action'],'menu')
+        # The link typed while menu mode was on is kept, so switching back does not lose it.
+        self.post('channels/{}/edit'.format(channel),{'name':'ВК','default_button_action':'menu','default_button_url':'https://example.com/menu'})
+        self.post('channels/{}/edit'.format(channel),{'name':'ВК','default_button_action':'url'})
+        saved=self.one('senler_channels')
+        self.assertEqual((saved['default_button_action'],saved['default_button_url']),('url','https://example.com/menu'))
+
+    def test_default_button_can_show_the_bot_menu_in_the_chat_instead_of_opening_a_link(self):
+        channel=self.channel();sub_id=self.sub(channel)
+        bot=self.one('senler_bots','channel_id=? AND template_key=?',(channel,'delivery_menu'))
+        self.post('bots/{}/publish'.format(bot['id']))
+        self.post('channels/{}/edit'.format(channel),{'name':'TG','default_button_enabled':True,'default_button_label':'Меню','default_button_action':'menu','default_button_url':''})
+        campaign=self.campaign([channel]);self.post('campaigns/{}/launch'.format(campaign));self.tick()
+        # In the mailing the button is an in-chat action (no link), between the owner's buttons and Unsubscribe.
+        mailing=FakeAPI.sent[-1][2]
+        self.assertEqual([(b['label'],b['action'],b['value']) for b in mailing['buttons']],[('Меню','callback','menu'),('Отписаться','callback','unsubscribe')])
+        detail=self.client.get('/reports/senler/api/campaigns/'+str(campaign)).get_json()
+        self.assertEqual((detail['subscription_buttons'][str(channel)]['default_button_enabled'],detail['subscription_buttons'][str(channel)]['default_button_label']),(1,'Меню'))
+        # Pressing it brings the delivery menu up in the same chat; pressing again restarts it.
+        sent=len(FakeAPI.sent)
+        self.webhook(channel,self.callback(123,'menu',801));self.tick()
+        self.assertEqual(len(FakeAPI.sent),sent+1)
+        self.assertIn('Это Папа Суши',FakeAPI.sent[-1][2]['text'])
+        self.assertEqual([b['label'] for b in FakeAPI.sent[-1][2]['buttons']][:2],['🍣 Сделать заказ','🔥 Актуальные акции'])
+        run=self.one('senler_runs','subscriber_id=?',(sub_id,))
+        self.assertEqual((run['node_id'],run['status']),('menu','waiting_reply'))
+        self.webhook(channel,self.callback(123,'menu',802));self.tick()
+        self.assertEqual(len(FakeAPI.sent),sent+2)
+        # The press shows up in the thread for context, but does not count as an unread message.
+        self.assertEqual(self.one('senler_messages',"subscriber_id=? AND direction='in'",(sub_id,))['text'],'Кнопка: Меню')
+        self.assertEqual(self.one('senler_subscribers','id=?',(sub_id,))['unread'],0)
+
+    def test_menu_button_stays_silent_without_a_running_menu_bot_or_during_operator_handoff(self):
+        channel=self.channel();sub_id=self.sub(channel)
+        bot=self.one('senler_bots','channel_id=? AND template_key=?',(channel,'delivery_menu'))
+        # The delivery menu is only a draft until published: nothing to show yet, and no error either.
+        self.webhook(channel,self.callback(123,'menu',901));self.tick()
+        self.assertEqual(FakeAPI.sent,[])
+        self.post('bots/{}/publish'.format(bot['id']))
+        with self.service.db() as conn:
+            conn.execute('UPDATE senler_subscribers SET bot_paused=1 WHERE id=?',(sub_id,))
+        self.webhook(channel,self.callback(123,'menu',902));self.tick()
+        self.assertEqual(FakeAPI.sent,[])  # a human has the conversation: the bot keeps quiet
+        with self.service.db() as conn:
+            conn.execute('UPDATE senler_subscribers SET bot_paused=0 WHERE id=?',(sub_id,))
+        self.webhook(channel,self.callback(123,'menu',903));self.tick()
+        self.assertEqual(len(FakeAPI.sent),1)
 
     def test_import_2500_preview_preserves_optouts_and_duplicates(self):
         channel=self.channel('vk');self.sub(channel,'1','unsubscribed')

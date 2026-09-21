@@ -182,7 +182,7 @@ def register_senler(app, get_db, database_path, item_visible):
     def save_channel():
         data = body()
         unsubscribe_label, unsubscribe_enabled = subscription_button_settings(data)
-        default_button_enabled, default_button_label, default_button_url = default_button_settings(data)
+        default_button_enabled, default_button_label, default_button_url, default_button_action = default_button_settings(data)
         kind, name, token = data.get('kind'), str(data.get('name', '')).strip(), str(data.get('token', '')).strip()
         if kind not in KINDS or not name or len(name) > 100:
             raise ValueError('Выберите мессенджер и введите название до 100 символов.')
@@ -207,9 +207,9 @@ def register_senler(app, get_db, database_path, item_visible):
                          VALUES (?,?,?,?,?,?,?)''', (session['user_id'], kind, name, external_id, encrypted, secrets.token_urlsafe(32), now())).lastrowid
             conn.execute('''UPDATE senler_channels SET unsubscribe_label=?,unsubscribe_enabled=?,
                          greeting_text=?,greeting_trigger=?,stop_text=?,
-                         default_button_enabled=?,default_button_label=?,default_button_url=? WHERE id=?''',
+                         default_button_enabled=?,default_button_label=?,default_button_url=?,default_button_action=? WHERE id=?''',
                          (unsubscribe_label, unsubscribe_enabled, greeting_text, greeting_trigger, stop_text,
-                          default_button_enabled, default_button_label, default_button_url, item_id))
+                          default_button_enabled, default_button_label, default_button_url, default_button_action, item_id))
             seed_default_menus(conn, item_id)
             service.audit(conn, 'channel_created', 'Канал №{}'.format(item_id), session['user_id'])
         return jsonify(id=item_id)
@@ -225,14 +225,18 @@ def register_senler(app, get_db, database_path, item_visible):
         return label.strip(), enabled
 
     def default_button_settings(data, channel=None):
-        # Shown at the bottom of every campaign from this channel, right above Unsubscribe —
-        # e.g. a permanent "Menu" link back to the channel's own subscribe_url/bot chat.
-        defaults = channel or {'default_button_enabled': False, 'default_button_label': '', 'default_button_url': ''}
+        # Shown at the bottom of every campaign from this channel, right above Unsubscribe. Either
+        # a link (action 'url') or, with action 'menu', a button that makes the bot show its menu
+        # in the chat; the link is kept while it is off so switching back does not lose it.
+        defaults = channel or {'default_button_enabled': False, 'default_button_label': '', 'default_button_url': '', 'default_button_action': 'url'}
         enabled = data.get('default_button_enabled', bool(defaults['default_button_enabled']))
         label = data.get('default_button_label', defaults['default_button_label'])
         url = data.get('default_button_url', defaults['default_button_url'])
+        action = data.get('default_button_action', defaults['default_button_action'])
         if not isinstance(enabled, bool):
             raise ValueError('Укажите, показывать ли кнопку по умолчанию.')
+        if action not in ('url', 'menu'):
+            raise ValueError('Выберите, что делает кнопка по умолчанию.')
         if not isinstance(label, str) or len(label) > 40:
             raise ValueError('Текст кнопки по умолчанию: до 40 символов.')
         if not isinstance(url, str) or len(url) > 2048:
@@ -242,9 +246,9 @@ def register_senler(app, get_db, database_path, item_visible):
             if not label:
                 raise ValueError('Введите текст кнопки по умолчанию.')
             parsed = urlparse(url)
-            if parsed.scheme not in ('https', 'http') or not parsed.hostname or parsed.username or parsed.password:
+            if action == 'url' and (parsed.scheme not in ('https', 'http') or not parsed.hostname or parsed.username or parsed.password):
                 raise ValueError('В кнопке по умолчанию нужна полная ссылка https://…')
-        return enabled, label, url
+        return enabled, label, url, action
 
     def message_settings(data, channel=None, kind=None):
         # A brand-new channel has no row to default from yet: VK mixes bot traffic with regular
@@ -269,7 +273,7 @@ def register_senler(app, get_db, database_path, item_visible):
         if action == 'edit':
             data = body()
             unsubscribe_label, unsubscribe_enabled = subscription_button_settings(data, channel)
-            default_button_enabled, default_button_label, default_button_url = default_button_settings(data, channel)
+            default_button_enabled, default_button_label, default_button_url, default_button_action = default_button_settings(data, channel)
             greeting_text, greeting_trigger, stop_text = message_settings(data, channel)
             name = str(data.get('name', '')).strip()
             if not name or len(name) > 100:
@@ -281,10 +285,10 @@ def register_senler(app, get_db, database_path, item_visible):
             with service.db() as conn:
                 conn.execute('''UPDATE senler_channels SET name=?,token=?,status=?,checked_at=?,unsubscribe_label=?,unsubscribe_enabled=?,
                              greeting_text=?,greeting_trigger=?,stop_text=?,
-                             default_button_enabled=?,default_button_label=?,default_button_url=? WHERE id=?''',
+                             default_button_enabled=?,default_button_label=?,default_button_url=?,default_button_action=? WHERE id=?''',
                     (name, encrypted, 'configured' if token else channel['status'], None if token else channel['checked_at'],
                      unsubscribe_label, unsubscribe_enabled, greeting_text, greeting_trigger, stop_text,
-                     default_button_enabled, default_button_label, default_button_url, item_id))
+                     default_button_enabled, default_button_label, default_button_url, default_button_action, item_id))
             return jsonify(ok=True)
         if action == 'pause':
             with service.db() as conn:
