@@ -135,6 +135,9 @@ def init_schema(conn):
     outbox_columns = {row[1] for row in conn.execute('PRAGMA table_info(senler_outbox)')}
     if 'read_at' not in outbox_columns:
         conn.execute('ALTER TABLE senler_outbox ADD COLUMN read_at INTEGER')
+    subscriber_columns = {row[1] for row in conn.execute('PRAGMA table_info(senler_subscribers)')}
+    if 'reads_checked_at' not in subscriber_columns:
+        conn.execute('ALTER TABLE senler_subscribers ADD COLUMN reads_checked_at INTEGER')
     if 'greeting_text' not in columns:
         conn.execute("ALTER TABLE senler_channels ADD COLUMN greeting_text TEXT NOT NULL DEFAULT '{}'".format(
             DEFAULT_GREETING_TEXT.replace("'", "''")))
@@ -348,6 +351,8 @@ def parse_import(raw):
 
 
 class SenlerService:
+    READ_POLL_PEERS = 1000
+
     def __init__(self, get_db, database_path, api_factory=BotAPI):
         self.get_db, self.database_path, self.api_factory = get_db, database_path, api_factory
         self._telegram_sessions = threading.local()
@@ -647,24 +652,31 @@ class SenlerService:
     def _poll_reads(self):
         """Best-effort VK read receipts: the community token can look up, per dialog, the id of the
         last outgoing message the person has read (`out_read`). Telegram and MAX expose no such API
-        for bots, so this stays VK-only. Never allowed to interrupt actual message delivery."""
+        for bots, so this stays VK-only. Never allowed to interrupt actual message delivery.
+
+        A recipient who has not opened a message stays "unread" for the whole 7-day window, so
+        taking simply the first N unread would ask about the same oldest people every minute and
+        never reach anyone behind them (the read count for a big mailing then stalls far below the
+        truth). Each round instead takes the people asked about longest ago, never-asked first, and
+        stamps them as asked up front — so even a failed VK call moves the queue along."""
         with self.db() as conn:
-            rows = conn.execute('''SELECT DISTINCT o.channel_id,s.external_user_id FROM senler_outbox o
-                JOIN senler_subscribers s ON s.id=o.subscriber_id JOIN senler_channels c ON c.id=o.channel_id
-                WHERE c.kind='vk' AND c.status='connected' AND o.status='sent' AND o.read_at IS NULL
-                AND o.external_id!='' AND o.sent_at>? LIMIT 300''', (now() - 7 * 86400,)).fetchall()
+            rows = conn.execute('''SELECT s.id,s.channel_id,s.external_user_id FROM senler_subscribers s
+                JOIN senler_channels c ON c.id=s.channel_id WHERE c.kind='vk' AND c.status='connected' AND s.id IN (
+                    SELECT o.subscriber_id FROM senler_outbox o WHERE o.status='sent' AND o.read_at IS NULL
+                    AND o.external_id!='' AND o.sent_at>?)
+                ORDER BY COALESCE(s.reads_checked_at,0),s.id LIMIT ?''', (now() - 7 * 86400, self.READ_POLL_PEERS)).fetchall()
             if not rows:
                 return
+            conn.executemany('UPDATE senler_subscribers SET reads_checked_at=? WHERE id=?', [(now(), r['id']) for r in rows])
             peers_by_channel = {}
             for r in rows:
-                peers_by_channel.setdefault(r['channel_id'], set()).add(r['external_user_id'])
+                peers_by_channel.setdefault(r['channel_id'], []).append(r['external_user_id'])
             channels = {cid: dict(conn.execute('SELECT * FROM senler_channels WHERE id=?', (cid,)).fetchone()) for cid in peers_by_channel}
         for channel_id, peers in peers_by_channel.items():
             try:
                 api = self.api(channels[channel_id])
             except ValueError:
                 continue
-            peers = list(peers)
             for i in range(0, len(peers), 100):
                 try:
                     data = api.vk('messages.getConversationsById', peer_ids=','.join(peers[i:i + 100]))

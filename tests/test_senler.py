@@ -21,6 +21,8 @@ class FakeAPI:
     sent = []
     failure = None
     conversations = {}
+    polled = []
+    read_check_failure = None
     vk_photos = {}
     vk_names = {}
     telegram_photos = {}
@@ -45,7 +47,10 @@ class FakeAPI:
 
     def vk(self, method, **params):
         if method == 'messages.getConversationsById':
+            if self.read_check_failure:
+                raise self.read_check_failure
             items = []
+            self.polled.append([p for p in params['peer_ids'].split(',') if p])
             for peer_id in [p for p in params['peer_ids'].split(',') if p]:
                 if peer_id in self.conversations:
                     items.append({'peer': {'id': int(peer_id)}, 'out_read': self.conversations[peer_id]})
@@ -87,6 +92,7 @@ class SenlerTests(unittest.TestCase):
         with self.client.session_transaction() as s:
             s.update(user_id=1, role='owner', senler_csrf='csrf-test')
         FakeAPI.sent, FakeAPI.failure, FakeAPI.conversations = [], None, {}
+        FakeAPI.polled, FakeAPI.read_check_failure = [], None
         FakeAPI.vk_photos, FakeAPI.vk_names, FakeAPI.telegram_photos = {}, {}, {}
 
     def tearDown(self):
@@ -106,6 +112,17 @@ class SenlerTests(unittest.TestCase):
         with self.service.db() as conn:
             return conn.execute('''INSERT INTO senler_subscribers(channel_id,external_user_id,status,name,created_at,consent_at)
                 VALUES (?,?,?,?,?,?)''', (channel_id, external_id, status, name, now(), now())).lastrowid
+
+    def sent_message(self, channel_id, sub_id, external_id, age=0):
+        stamp = now() - age
+        with self.service.db() as conn:
+            conn.execute('''INSERT INTO senler_outbox(channel_id,subscriber_id,kind,body_json,dedupe_key,status,due_at,created_at,sent_at,external_id)
+                VALUES (?,?,'campaign','{}',?,'sent',?,?,?,?)''', (channel_id, sub_id, 'test:{}:{}'.format(sub_id, external_id), stamp, stamp, stamp, str(external_id)))
+
+    def read_peers(self):
+        with self.service.db() as conn:
+            return {r['external_user_id'] for r in conn.execute(
+                'SELECT s.external_user_id FROM senler_outbox o JOIN senler_subscribers s ON s.id=o.subscriber_id WHERE o.read_at IS NOT NULL')}
 
     def one(self, table, where='1=1', params=()):
         with self.service.db() as conn:
@@ -600,6 +617,35 @@ class SenlerTests(unittest.TestCase):
         # A second poll is a no-op for the already-read message and does not error on the unread one.
         self.service._poll_reads()
         self.assertEqual(self.client.get('/reports/senler/api/campaigns/'+str(campaign)).get_json()['vk_read'],1)
+
+    def test_vk_read_polling_covers_every_unread_recipient_not_only_the_oldest_batch(self):
+        channel=self.channel('vk')
+        peers=[str(1000+i) for i in range(350)]
+        for i,peer in enumerate(peers):
+            self.sent_message(channel,self.sub(channel,peer),5000+i)
+        # Only the first and the last recipients opened the mailing; the ~330 in between never did.
+        # They stay unread for the whole 7-day window and must not crowd the two groups out of the poll.
+        readers=list(range(10))+list(range(340,350))
+        FakeAPI.conversations={peers[i]:5000+i for i in readers}
+        with patch.object(SenlerService,'READ_POLL_PEERS',100,create=True):
+            for _ in range(4):
+                self.service._poll_reads()
+        self.assertEqual(self.read_peers(),{peers[i] for i in readers})
+        self.assertTrue(all(len(batch)<=100 for batch in FakeAPI.polled))
+
+    def test_vk_read_polling_moves_on_after_a_failed_check_instead_of_retrying_the_same_batch(self):
+        channel=self.channel('vk')
+        peers=[str(1000+i) for i in range(150)]
+        for i,peer in enumerate(peers):
+            self.sent_message(channel,self.sub(channel,peer),5000+i)
+        FakeAPI.conversations={peers[140]:5140}
+        with patch.object(SenlerService,'READ_POLL_PEERS',100,create=True):
+            FakeAPI.read_check_failure=DeliveryError('VK временно недоступен')
+            self.service._poll_reads()  # VK is down: nothing is learned, and nothing must blow up
+            self.assertEqual(self.read_peers(),set())
+            FakeAPI.read_check_failure=None
+            self.service._poll_reads()  # the peers not yet tried come first, not the batch that just failed
+        self.assertEqual(self.read_peers(),{peers[140]})
 
     def test_subscriber_avatars_fetched_cached_and_served_with_owner_scope(self):
         vk_channel=self.channel('vk');vk_sub=self.sub(vk_channel,'555')
