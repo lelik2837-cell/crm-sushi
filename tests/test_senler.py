@@ -436,6 +436,28 @@ class SenlerTests(unittest.TestCase):
         self.assertEqual([b['value'] for b in tg_sent[2]['buttons']],['https://example.com/menu'])
         self.assertEqual([b['label'] for b in vk_sent[2]['buttons']],['Меню','Меню бота','Отказаться от акций'])
 
+    def test_campaign_list_carries_image_and_the_buttons_as_sent_for_the_full_view(self):
+        vk=self.channel('vk');self.sub(vk)
+        self.post('channels/{}/edit'.format(vk),{'name':'ВК','unsubscribe_label':'Отказаться от акций','unsubscribe_enabled':True,
+                                                  'default_button_enabled':True,'default_button_label':'Меню бота','default_button_url':'https://example.com/menu-vk'})
+        image=self.client.post('/reports/senler/api/assets', data={'file':(io.BytesIO(b'\x89PNG\r\n\x1a\nphoto'),'x.png')},headers={'X-CSRF-Token':'csrf-test'}).get_json()['id']
+        sent=self.post('campaigns',{'name':'С фото','body':{'text':'Сегодня акция','asset_id':image,'buttons':[{'label':'Заказать','action':'url','value':'https://example.com/order'}]},'audience':{'channels':[vk]}})['id']
+        draft=self.post('campaigns',{'name':'Черновик','body':{'text':'Пока не отправлена','buttons':[]},'audience':{'channels':[vk]}})['id']
+        self.post('campaigns/{}/launch'.format(sent))  # queuing already freezes each message's buttons; no delivery needed
+        # The channel is edited after launch: the list must keep showing what was really sent.
+        self.post('channels/{}/edit'.format(vk),{'name':'ВК','unsubscribe_label':'Новый текст','unsubscribe_enabled':False,
+                                                  'default_button_enabled':False,'default_button_label':'','default_button_url':''})
+        items={i['id']:i for i in self.client.get('/reports/senler/api/campaigns').get_json()['items']}
+        self.assertEqual(items[sent]['body']['asset_id'],image)
+        self.assertEqual(items[sent]['body']['buttons'][0]['label'],'Заказать')
+        self.assertEqual(items[sent]['subscription_buttons'],{str(vk):{'unsubscribe_enabled':1,'unsubscribe_label':'Отказаться от акций',
+                                                                         'default_button_enabled':1,'default_button_label':'Меню бота'}})
+        # Same answer as the campaign's own details page, which is what the preview there is drawn from.
+        detail=self.client.get('/reports/senler/api/campaigns/'+str(sent)).get_json()
+        self.assertEqual(items[sent]['subscription_buttons'],detail['subscription_buttons'])
+        # Nothing has been sent for a draft yet, so there is no frozen copy: the page falls back to the channel's current settings.
+        self.assertEqual((items[draft]['subscription_buttons'],items[draft]['body']['asset_id']),({},None))
+
     def test_group_delete_removes_members_but_is_blocked_while_a_bot_uses_it(self):
         channel=self.channel();s1=self.sub(channel,'1');s2=self.sub(channel,'2')
         group=self.post('groups',{'name':'Розыгрыш'})['id']

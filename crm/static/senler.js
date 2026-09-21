@@ -230,11 +230,26 @@
       if (generation === state.generation) window.scrollTo(0, Number(sessionStorage.getItem('senler-scroll:'+location.search)) || 0);
     } catch (error) { if (generation === state.generation) main.innerHTML = `<div class="sn-error">${esc(error.message)}<div class="mt-3">${btn('Повторить', 'refresh')}</div></div>`; }
   }
+  // The picture's slot shows a photo icon until the image itself has loaded (and stays if it never does).
+  const campaignThumb = c => c.body?.asset_id ? `<a class="sn-thumb" href="${esc(link('campaigns', {id:c.id}))}" data-go aria-label="Открыть рассылку «${esc(c.name)}»"><i class="bi bi-image"></i><img src="${apiBase}assets/${Number(c.body.asset_id)}" alt="Картинка рассылки" loading="lazy" onerror="this.remove()"></a>` : '';
   function campaignRows(items) {
-    return items.map(c => `<tr><td>${navLink('campaigns', esc(c.name), {id:c.id}, '')}<br><small>${date(c.created_at)}</small></td><td>${badge(c.status)}</td><td>${num(c.total)}<br><small>${c.audience.channels.map(id => esc(channelName(id))).join(', ')}</small></td><td>${num(c.counts.sent)} <small>из ${num(c.total)}</small><div class="sn-progress"><span style="width:${c.total ? Math.round((c.counts.sent || 0) / c.total * 100) : 0}%"></span></div></td><td>${num((c.counts.error || 0) + (c.counts.unknown || 0))}</td><td>${navLink('campaigns', '<i class="bi bi-arrow-right"></i>', {id:c.id}, 'sn-icon')}</td></tr>`).join('');
+    return items.map(c => `<tr><td>${campaignThumb(c)}</td><td>${navLink('campaigns', esc(c.name), {id:c.id}, '')}<br><small>${date(c.created_at)}</small></td><td>${badge(c.status)}</td><td>${num(c.total)}<br><small>${c.audience.channels.map(id => esc(channelName(id))).join(', ')}</small></td><td>${num(c.counts.sent)} <small>из ${num(c.total)}</small><div class="sn-progress"><span style="width:${c.total ? Math.round((c.counts.sent || 0) / c.total * 100) : 0}%"></span></div></td><td>${num((c.counts.error || 0) + (c.counts.unknown || 0))}</td><td>${navLink('campaigns', '<i class="bi bi-arrow-right"></i>', {id:c.id}, 'sn-icon')}</td></tr>`).join('');
   }
   function campaignTable(items) {
-    return `<div class="sn-panel flush"><div class="sn-table-scroll"><table class="sn-table"><thead><tr><th>Рассылка</th><th>Статус</th><th>Аудитория</th><th>Отправлено</th><th>Ошибки</th><th></th></tr></thead><tbody>${campaignRows(items)}</tbody></table></div></div>`;
+    return `<div class="sn-panel flush"><div class="sn-table-scroll"><table class="sn-table"><thead><tr><th class="sn-thumb-col">Фото</th><th>Рассылка</th><th>Статус</th><th>Аудитория</th><th>Отправлено</th><th>Ошибки</th><th></th></tr></thead><tbody>${campaignRows(items)}</tbody></table></div></div>`;
+  }
+  const campaignView = () => { try { return localStorage.getItem('senler-campaign-view') === 'full' ? 'full' : 'compact'; } catch { return 'compact'; } };
+  const setCampaignView = view => { try { localStorage.setItem('senler-campaign-view', view); } catch { /* the choice just is not remembered */ } };
+  // Full view: each mailing drawn like the message in a chat feed (picture, text, buttons as sent)
+  // with its own progress underneath.
+  function campaignFeed(items) {
+    return `<div class="sn-feed">${items.map(c => {
+      const channelId = c.audience.channels.find(id => c.subscription_buttons?.[id]) ?? c.audience.channels[0];
+      const errors = (c.counts.error || 0) + (c.counts.unknown || 0);
+      const when = c.status === 'scheduled' ? 'Запланирована на ' + date(c.scheduled_at) : c.status === 'running' ? 'Отправляется с ' + date(c.started_at) : c.started_at ? 'Отправлена ' + date(c.started_at) : 'Создана ' + date(c.created_at);
+      const sentAt = c.started_at || c.scheduled_at;
+      return `<article class="sn-feed-card"><div class="sn-feed-head"><div>${navLink('campaigns', esc(c.name), {id:c.id}, 'sn-feed-title')}<small>${when} · ${c.audience.channels.map(id => esc(channelName(id))).join(', ')}</small></div>${badge(c.status)}</div><div class="sn-feed-chat">${messageView(c.body, channelId, c.subscription_buttons?.[channelId])}${sentAt ? `<div class="sn-preview-time">${date(sentAt)}</div>` : ''}</div><div class="sn-feed-foot"><div><span>Отправлено ${num(c.counts.sent)} <small>из ${num(c.total)}</small></span><div class="sn-progress"><span style="width:${c.total ? Math.round((c.counts.sent || 0) / c.total * 100) : 0}%"></span></div></div><span>Ошибки ${num(errors)}</span>${navLink('campaigns', 'Открыть <i class="bi bi-arrow-right"></i>', {id:c.id})}</div></article>`;
+    }).join('')}</div>`;
   }
   function renderOverview() {
     const b = state.boot, stats = b.stats, subscriberStats = b.subscriber_stats || {};
@@ -383,8 +398,10 @@
     const generation = state.generation;
     const data=await api('campaigns'+(state.channel?'?channel='+state.channel:''));
     if (generation !== state.generation) return;
-    main.innerHTML=head('Рассылки','Черновики, запланированные и отправленные сообщения',navLink('campaigns','<i class="bi bi-plus-lg me-1"></i>Новая рассылка',{edit:'new'},'btn btn-primary'))+
-      (data.items.length?campaignTable(data.items):empty('send','Создайте первую рассылку','Сначала выберите аудиторию, затем составьте сообщение и назначьте время.',navLink('campaigns','Создать рассылку',{edit:'new'},'btn btn-primary')));
+    const view=campaignView();
+    const switcher=`<div class="sn-segmented" role="group" aria-label="Вид списка рассылок">${[['compact','list-ul','Обычный'],['full','card-text','Полный']].map(([value,icon,label])=>`<button type="button" class="${view===value?'active':''}" data-action="campaign-view" data-view="${value}" aria-pressed="${view===value}"><i class="bi bi-${icon}"></i>${label}</button>`).join('')}</div>`;
+    main.innerHTML=head('Рассылки','Черновики, запланированные и отправленные сообщения',(data.items.length?switcher:'')+navLink('campaigns','<i class="bi bi-plus-lg me-1"></i>Новая рассылка',{edit:'new'},'btn btn-primary'))+
+      (data.items.length?(view==='full'?campaignFeed(data.items):campaignTable(data.items)):empty('send','Создайте первую рассылку','Сначала выберите аудиторию, затем составьте сообщение и назначьте время.',navLink('campaigns','Создать рассылку',{edit:'new'},'btn btn-primary')));
   }
   async function openCampaign(id) {
     const generation = state.generation;
@@ -396,13 +413,19 @@
     if(id!=='new'){state.campaign.sendMode=state.campaign.scheduled_at?'schedule':'now';state.campaign.scheduled_at=state.campaign.scheduled_at?new Date((state.campaign.scheduled_at+7*3600)*1000).toISOString().slice(0,16):'';}
     state.wizard=Math.min(3,Math.max(0,Number(qs().get('step'))||0));renderCampaignEditor();
   }
-  function preview(body, channelId, savedSettings) {
+  // The message as a subscriber sees it: picture, text, then the owner's buttons followed by the
+  // channel's default and unsubscribe ones (savedSettings = what was frozen when it was sent).
+  function messageView(body, channelId, savedSettings) {
     const channel=state.boot.channels.find(c=>c.id===Number(channelId));
-    const name=channel?.name||'Ваше сообщество';
     const settings=savedSettings||channel;
     const unsubscribe=settings?.unsubscribe_enabled!==0;
     const defaultButton=settings?.default_button_enabled;
-    return `<aside class="sn-preview"><div class="sn-preview-title">Как увидит подписчик</div><div class="sn-chat-top"><i class="bi bi-chat-dots me-2"></i>${esc(name)}</div><div class="sn-bubble">${body.asset_id?`<img alt="Картинка сообщения" src="${apiBase}assets/${Number(body.asset_id)}">`:''}<span>${formatPreview((body.text||'Текст вашего сообщения появится здесь…').replaceAll('{имя}','Алексей').replaceAll('{name}','Алексей'))}</span></div>${(body.buttons||[]).map(b=>`<div class="sn-preview-button${b.color&&b.color!=='secondary'?' '+b.color:''}">${esc(b.label||'Подпись кнопки')}</div>`).join('')}${defaultButton?`<div class="sn-preview-button">${esc(settings?.default_button_label||'Меню')}</div>`:''}${unsubscribe?`<div class="sn-preview-button">${esc(settings?.unsubscribe_label||'Отписаться')}</div>`:''}<div class="sn-preview-time">Пример сообщения</div></aside>`;
+    return `<div class="sn-bubble">${body.asset_id?`<img alt="Картинка сообщения" src="${apiBase}assets/${Number(body.asset_id)}">`:''}<span>${formatPreview((body.text||'Текст вашего сообщения появится здесь…').replaceAll('{имя}','Алексей').replaceAll('{name}','Алексей'))}</span></div>${(body.buttons||[]).map(b=>`<div class="sn-preview-button${b.color&&b.color!=='secondary'?' '+b.color:''}">${esc(b.label||'Подпись кнопки')}</div>`).join('')}${defaultButton?`<div class="sn-preview-button">${esc(settings?.default_button_label||'Меню')}</div>`:''}${unsubscribe?`<div class="sn-preview-button">${esc(settings?.unsubscribe_label||'Отписаться')}</div>`:''}`;
+  }
+  function preview(body, channelId, savedSettings) {
+    const channel=state.boot.channels.find(c=>c.id===Number(channelId));
+    const name=channel?.name||'Ваше сообщество';
+    return `<aside class="sn-preview"><div class="sn-preview-title">Как увидит подписчик</div><div class="sn-chat-top"><i class="bi bi-chat-dots me-2"></i>${esc(name)}</div>${messageView(body,channelId,savedSettings)}<div class="sn-preview-time">Пример сообщения</div></aside>`;
   }
   function messageFields(body, scope='campaign', nodes=[]) {
     const vkBot = scope !== 'campaign' && state.boot.channels.find(c => c.id === state.bot?.channel_id)?.kind === 'vk';
@@ -641,6 +664,7 @@
       else if(action==='bot-pause'||action==='bot-resume'){await api('bots/'+id+'/'+action.slice(4),{});await renderBots();}
       else if(action==='bot-simulate'||action==='sim-restart')simulateBot();
       else if(action==='bot-errors')await showBotErrors(id,button.dataset.name);
+      else if(action==='campaign-view'){setCampaignView(button.dataset.view);await renderCampaigns();main.querySelector('[data-action="campaign-view"].active')?.focus();}
       else if(action==='dialog-goto'){modal.close();await navigate(link('dialogs',{thread:id}));}
       else if(action==='dialog-open')await openDialog(Number(id));
       else if(action==='dialog-takeover'||action==='dialog-resume'){await api('dialogs/'+id+'/'+action.slice(7),{});await openDialog(Number(id));}
