@@ -240,15 +240,26 @@
   }
   const campaignView = () => { try { return localStorage.getItem('senler-campaign-view') === 'full' ? 'full' : 'compact'; } catch { return 'compact'; } };
   const setCampaignView = view => { try { localStorage.setItem('senler-campaign-view', view); } catch { /* the choice just is not remembered */ } };
-  // Full view: each mailing drawn like the message in a chat feed (picture, text, buttons as sent)
-  // with its own progress underneath.
+  // Full view, one mailing per row: on the left the message as subscribers got it (picture, text,
+  // buttons as sent); on the right its name, status and results — split by channel when it went to
+  // several. On a narrow screen the parts simply stack.
   function campaignFeed(items) {
     return `<div class="sn-feed">${items.map(c => {
       const channelId = c.audience.channels.find(id => c.subscription_buttons?.[id]) ?? c.audience.channels[0];
-      const errors = (c.counts.error || 0) + (c.counts.unknown || 0);
+      const sent = c.counts.sent || 0;
+      const numbers = [['Получателей', c.total], ['Отправлено', sent], ['В очереди', (c.counts.pending || 0) + (c.counts.sending || 0)], ['Ошибки', (c.counts.error || 0) + (c.counts.unknown || 0)]];
+      const perChannel = c.total && c.audience.channels.length > 1;
       const when = c.status === 'scheduled' ? 'Запланирована на ' + date(c.scheduled_at) : c.status === 'running' ? 'Отправляется с ' + date(c.started_at) : c.started_at ? 'Отправлена ' + date(c.started_at) : 'Создана ' + date(c.created_at);
       const sentAt = c.started_at || c.scheduled_at;
-      return `<article class="sn-feed-card"><div class="sn-feed-head"><div>${navLink('campaigns', esc(c.name), {id:c.id}, 'sn-feed-title')}<small>${when} · ${c.audience.channels.map(id => esc(channelName(id))).join(', ')}</small></div>${badge(c.status)}</div><div class="sn-feed-chat">${messageView(c.body, channelId, c.subscription_buttons?.[channelId])}${sentAt ? `<div class="sn-preview-time">${date(sentAt)}</div>` : ''}</div><div class="sn-feed-foot"><div><span>Отправлено ${num(c.counts.sent)} <small>из ${num(c.total)}</small></span><div class="sn-progress"><span style="width:${c.total ? Math.round((c.counts.sent || 0) / c.total * 100) : 0}%"></span></div></div><span>Ошибки ${num(errors)}</span>${navLink('campaigns', 'Открыть <i class="bi bi-arrow-right"></i>', {id:c.id})}</div></article>`;
+      const channelRows = perChannel ? c.audience.channels.map(id => {
+        const counts = c.channel_counts?.[id] || {};
+        const total = Object.values(counts).reduce((a, b) => a + b, 0);
+        const done = counts.sent || 0;
+        const failed = (counts.error || 0) + (counts.unknown || 0);
+        const kind = state.boot.channels.find(ch => ch.id === Number(id))?.kind;
+        return `<div class="sn-feed-channel"><div class="sn-feed-channel-name">${kind ? kindBadge(kind) : ''}<span>${esc(channelName(id))}</span></div><div><strong>${num(done)}</strong> <small>из ${num(total)}</small>${failed ? ` <small>·</small> <small class="sn-bad">ошибок: ${num(failed)}</small>` : ''}</div><div class="sn-progress"><span style="width:${total ? Math.round(done / total * 100) : 0}%"></span></div></div>`;
+      }).join('') : '';
+      return `<article class="sn-feed-card"><div class="sn-feed-head"><div>${navLink('campaigns', esc(c.name), {id:c.id}, 'sn-feed-title')}<small>${when}${perChannel ? '' : ' · ' + c.audience.channels.map(id => esc(channelName(id))).join(', ')}</small></div>${badge(c.status)}</div><div class="sn-feed-chat">${messageView(c.body, channelId, c.subscription_buttons?.[channelId])}${sentAt ? `<div class="sn-preview-time">${date(sentAt)}</div>` : ''}</div><div class="sn-feed-stats">${c.total ? `<div class="sn-feed-numbers">${numbers.map(([label, value]) => `<div class="sn-feed-stat${label === 'Ошибки' && value ? ' bad' : ''}"><span>${label}</span><strong>${num(value)}</strong></div>`).join('')}</div><div class="sn-progress"><span style="width:${Math.round(sent / c.total * 100)}%"></span></div>` : '<div class="sn-help">Рассылка ещё не запускалась — результатов пока нет.</div>'}${perChannel ? `<div><div class="sn-feed-label">Отправлено по каналам</div>${channelRows}</div>` : ''}<div class="sn-feed-open">${navLink('campaigns', 'Открыть рассылку <i class="bi bi-arrow-right"></i>', {id:c.id})}</div></div></article>`;
     }).join('')}</div>`;
   }
   function renderOverview() {

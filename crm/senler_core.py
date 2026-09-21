@@ -104,6 +104,7 @@ def init_schema(conn):
         );
         CREATE INDEX IF NOT EXISTS senler_outbox_due ON senler_outbox(status,due_at);
         CREATE INDEX IF NOT EXISTS senler_outbox_campaign ON senler_outbox(campaign_id,status);
+        CREATE INDEX IF NOT EXISTS senler_outbox_campaign_channel ON senler_outbox(campaign_id,channel_id,status);
         CREATE TABLE IF NOT EXISTS senler_messages (
             id INTEGER PRIMARY KEY, subscriber_id INTEGER NOT NULL REFERENCES senler_subscribers(id),
             direction TEXT NOT NULL, text TEXT NOT NULL, asset_id INTEGER REFERENCES senler_assets(id),

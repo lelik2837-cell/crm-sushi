@@ -458,6 +458,22 @@ class SenlerTests(unittest.TestCase):
         # Nothing has been sent for a draft yet, so there is no frozen copy: the page falls back to the channel's current settings.
         self.assertEqual((items[draft]['subscription_buttons'],items[draft]['body']['asset_id']),({},None))
 
+    def test_campaign_list_breaks_results_down_per_channel_only_for_multichannel_campaigns(self):
+        vk=self.channel('vk');tg=self.channel('telegram')
+        self.sub(vk,'1');self.sub(vk,'2');self.sub(tg,'3')
+        both=self.campaign([vk,tg]);only_vk=self.campaign([vk])
+        for campaign in (both,only_vk):
+            self.post('campaigns/{}/launch'.format(campaign))
+        self.tick();self.tick()
+        # One of the VK messages of the two-channel mailing fails after all.
+        with self.service.db() as conn:
+            conn.execute("UPDATE senler_outbox SET status='error' WHERE id=(SELECT MIN(o.id) FROM senler_outbox o WHERE o.campaign_id=? AND o.channel_id=?)",(both,vk))
+        items={i['id']:i for i in self.client.get('/reports/senler/api/campaigns').get_json()['items']}
+        self.assertEqual(items[both]['channel_counts'],{str(vk):{'sent':1,'error':1},str(tg):{'sent':1}})
+        self.assertEqual(items[both]['counts'],{'sent':2,'error':1})
+        # With a single channel the per-channel figures would just repeat `counts`, so they are not computed.
+        self.assertNotIn('channel_counts',items[only_vk])
+
     def test_group_delete_removes_members_but_is_blocked_while_a_bot_uses_it(self):
         channel=self.channel();s1=self.sub(channel,'1');s2=self.sub(channel,'2')
         group=self.post('groups',{'name':'Розыгрыш'})['id']

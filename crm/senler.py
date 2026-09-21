@@ -93,20 +93,25 @@ def register_senler(app, get_db, database_path, item_visible):
                 'default_button_enabled': int(default_button is not None),
                 'default_button_label': default_button['label'] if default_button else ''}
 
-    def campaign_data(conn, record, details=False, first_message=False):
+    def campaign_data(conn, record, details=False, feed=False):
         item = dict(record)
         item['body'] = json.loads(item.pop('body_json'))
         item['audience'] = json.loads(item.pop('audience_json'))
         counts = {r['status']: r['n'] for r in conn.execute('SELECT status,COUNT(*) n FROM senler_outbox WHERE campaign_id=? GROUP BY status', (item['id'],))}
         item['counts'] = counts
         item['total'] = sum(counts.values())
-        if first_message:
+        if feed:
             # The list's full view draws each message as it was actually sent (own buttons plus the
             # channel's default/unsubscribe ones frozen at launch). One recipient's copy is enough
             # for that, and finding it is an index-only lookup, unlike the per-channel grouping the
             # details page does for a single campaign.
             first = conn.execute('SELECT channel_id,body_json FROM senler_outbox WHERE id=(SELECT MIN(id) FROM senler_outbox WHERE campaign_id=?)', (item['id'],)).fetchone()
             item['subscription_buttons'] = {str(first['channel_id']): subscription_settings(first['body_json'])} if first else {}
+            # A mailing to several channels shows how each one did; with a single channel that is just `counts`.
+            if len(item['audience']['channels']) > 1:
+                item['channel_counts'] = {}
+                for r in conn.execute('SELECT channel_id,status,COUNT(*) n FROM senler_outbox WHERE campaign_id=? GROUP BY channel_id,status', (item['id'],)):
+                    item['channel_counts'].setdefault(str(r['channel_id']), {})[r['status']] = r['n']
         if details:
             item['vk_sent'] = conn.execute("""SELECT COUNT(*) n FROM senler_outbox o JOIN senler_channels c ON c.id=o.channel_id
                     WHERE o.campaign_id=? AND c.kind='vk' AND o.status='sent'""", (item['id'],)).fetchone()['n']
@@ -544,7 +549,7 @@ def register_senler(app, get_db, database_path, item_visible):
         if request.method == 'GET':
             channel = request.args.get('channel', type=int)
             with service.db() as conn:
-                items = [campaign_data(conn, r, first_message=True) for r in conn.execute('SELECT * FROM senler_campaigns WHERE owner_id=? ORDER BY id DESC LIMIT 200', (session['user_id'],))]
+                items = [campaign_data(conn, r, feed=True) for r in conn.execute('SELECT * FROM senler_campaigns WHERE owner_id=? ORDER BY id DESC LIMIT 200', (session['user_id'],))]
             if channel:
                 items = [item for item in items if channel in item['audience']['channels']]
             return jsonify(items=items)
