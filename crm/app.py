@@ -2835,6 +2835,9 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_point_accruals_status ON point_accruals(status);
         ''')
+        pa_cols = [r[1] for r in conn.execute("PRAGMA table_info(point_accruals)").fetchall()]
+        if 'comment' not in pa_cols:
+            conn.execute("ALTER TABLE point_accruals ADD COLUMN comment TEXT DEFAULT ''")
 
         # Вакансии/отклики (форма встраивается на сайт владельца через iframe, см.
         # _ensure_job_defaults). owner_id — первый шаг к изоляции данных по владельцу
@@ -17752,6 +17755,7 @@ def create_point_accrual():
     order_date = request.form.get('order_date', '').strip()
     category_id = request.form.get('category_id', type=int)
     points = request.form.get('points', type=int)
+    comment = request.form.get('comment', '').strip()
 
     if not order_number or not order_date or not category_id or not points:
         flash('Заполните номер заказа, дату, причину и количество баллов', 'danger')
@@ -17770,9 +17774,9 @@ def create_point_accrual():
             flash('Причина не найдена', 'danger')
             return redirect(url_for('points_accrual_page'))
         conn.execute('''
-            INSERT INTO point_accruals (order_number, order_date, amount, order_type, points, category_id, created_by)
-            VALUES (?,?,?,?,?,?,?)
-        ''', (order_number, order_date, order['amount'], order['order_type'], points, category_id, session['user_id']))
+            INSERT INTO point_accruals (order_number, order_date, amount, order_type, points, category_id, created_by, comment)
+            VALUES (?,?,?,?,?,?,?,?)
+        ''', (order_number, order_date, order['amount'], order['order_type'], points, category_id, session['user_id'], comment))
         conn.commit()
     flash('Баллы внесены.', 'success')
     return redirect(url_for('points_accrual_page'))

@@ -30,6 +30,7 @@
                     <th>Дата</th>
                     <th>Баллы</th>
                     <th>Причина</th>
+                    <th>Комментарий</th>
                     <th>Статус</th>
                     <th></th>
                 </tr>
@@ -41,6 +42,7 @@
                     <td class="text-nowrap">{{ a.order_date }}</td>
                     <td>{{ a.points }}</td>
                     <td>{{ a.category_name }}</td>
+                    <td class="text-muted">{{ a.comment or '—' }}</td>
                     {% set st = status_info.get(a.status, {'label': a.status, 'class': 'text-secondary'}) %}
                     <td><span class="{{ st.class }}">{{ st.label }}</span></td>
                     <td class="text-end text-nowrap">
@@ -55,7 +57,7 @@
                     </td>
                 </tr>
                 {% else %}
-                <tr><td colspan="6" class="text-center text-muted py-3">Записей пока нет</td></tr>
+                <tr><td colspan="7" class="text-center text-muted py-3">Записей пока нет</td></tr>
                 {% endfor %}
             </tbody>
         </table>
@@ -94,6 +96,10 @@
                     <div class="col-md-6">
                         <label class="form-label small fw-semibold">Количество баллов</label>
                         <input type="number" name="points" class="form-control" min="1" required>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label small fw-semibold">Комментарий</label>
+                        <textarea name="comment" class="form-control" rows="2" maxlength="500" placeholder="Необязательно — например, с кем из клиента договорились и по какому поводу"></textarea>
                     </div>
                 </div>
             </div>
