@@ -2811,9 +2811,10 @@ def init_db():
                 "INSERT OR REPLACE INTO api_settings (key, value) VALUES ('rating_backlog_fix_v1', '1')"
             )
 
-        # Начисление баллов клиентам за косяки (перевёрнутые роллы и т.п.) — причины хранятся
-        # отдельным справочником (создаются/переименовываются прямо на странице), не enum'ом,
-        # чтобы можно было добавлять новые без правки кода.
+        # Начисление баллов клиентам за косяки (перевёрнутые роллы и т.п.) — причина всегда одна
+        # из трёх фиксированных строк в point_categories (auto_key), список больше не редактируется
+        # пользователем (раньше был отдельный справочник с формой создания/переименования — убран
+        # по просьбе пользователя, см. ниже).
         conn.executescript('''
             CREATE TABLE IF NOT EXISTS point_categories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2842,17 +2843,24 @@ def init_db():
         if 'auto_key' not in pc_cols:
             conn.execute("ALTER TABLE point_categories ADD COLUMN auto_key TEXT NOT NULL DEFAULT ''")
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_point_categories_auto_key ON point_categories(auto_key) WHERE auto_key != ''")
-        # «Отзыв клиента» / «Отзыва нет» — две причины, которые подставляются автоматически на
-        # странице «Внести баллы» по результату поиска отзыва на этот заказ+дату (points_order_lookup).
-        # Распознаются по auto_key, а не по названию — пользователь волен переименовать их как обычную
-        # причину, автоподстановка продолжит работать. Заводятся один раз; уже существующую причину
-        # с таким же названием (если завели вручную до этой правки) не дублируют, а помечают той же меткой.
-        for _auto_key, _auto_name in (('has_review', 'Отзыв клиента'), ('no_review', 'Отзыва нет')):
-            if conn.execute('SELECT 1 FROM point_categories WHERE auto_key=?', (_auto_key,)).fetchone():
-                continue
-            _existing = conn.execute('SELECT id FROM point_categories WHERE name=?', (_auto_name,)).fetchone()
+        # Ровно три причины на странице «Внести баллы»: «Отзыв есть»/«Отзыва нет» подставляются
+        # автоматически по результату поиска отзыва (points_order_lookup), «Другая причина» — когда
+        # ни одна из них не подходит (сама причина в этом случае пишется в комментарии, который
+        # тогда обязателен, см. create_point_accrual). Распознаются по auto_key, не по названию —
+        # переименовывать их через интерфейс больше нельзя (форма настроек убрана), поэтому имя
+        # синхронизируется сюда при каждом запуске, а не только при первом создании строки: это же
+        # чинит апгрейд с более ранней версии, где эта причина называлась иначе («Отзыв клиента»).
+        for _auto_key, _auto_name in (('has_review', 'Отзыв есть'), ('no_review', 'Отзыва нет'), ('other', 'Другая причина')):
+            _existing = conn.execute('SELECT id FROM point_categories WHERE auto_key=?', (_auto_key,)).fetchone()
             if _existing:
-                conn.execute('UPDATE point_categories SET auto_key=? WHERE id=?', (_auto_key, _existing['id']))
+                conn.execute('UPDATE point_categories SET name=? WHERE id=?', (_auto_name, _existing['id']))
+                continue
+            # На случай апгрейда с версии без auto_key, где такая причина уже была заведена вручную
+            # с этим же названием, — усыновляем существующую строку вместо второй с тем же именем
+            # (UNIQUE(name) иначе даст IntegrityError).
+            _manual = conn.execute("SELECT id FROM point_categories WHERE name=? AND auto_key=''", (_auto_name,)).fetchone()
+            if _manual:
+                conn.execute('UPDATE point_categories SET auto_key=? WHERE id=?', (_auto_key, _manual['id']))
             else:
                 conn.execute('INSERT INTO point_categories (name, auto_key) VALUES (?,?)', (_auto_name, _auto_key))
 
@@ -17684,53 +17692,14 @@ def _maybe_create_rating_request(conn, r, branch_id, campaigns_by_branch, varian
 @menu_permission_required('points_accrual')
 def points_accrual_page():
     with get_db() as conn:
-        # Причины «Отзыв клиента»/«Отзыва нет» (auto_key непустой) — первыми, остальные по алфавиту.
-        categories = conn.execute("SELECT * FROM point_categories ORDER BY (auto_key=''), name").fetchall()
+        # Три фиксированные причины (id по auto_key) — форма подставляет нужную сама, см. шаблон.
+        category_ids = {r['auto_key']: r['id'] for r in conn.execute("SELECT id, auto_key FROM point_categories WHERE auto_key != ''").fetchall()}
         accruals = conn.execute('''
             SELECT pa.*, pc.name AS category_name
             FROM point_accruals pa JOIN point_categories pc ON pc.id = pa.category_id
             ORDER BY pa.id DESC LIMIT 200
         ''').fetchall()
-    return render_template('points_accrual.html', categories=categories, accruals=accruals)
-
-
-@app.route('/reports/points/categories', methods=['POST'])
-@login_required
-@menu_permission_required('points_accrual')
-def create_point_category():
-    name = request.form.get('name', '').strip()
-    if not name:
-        flash('Укажите название причины', 'danger')
-        return redirect(url_for('points_accrual_page'))
-    with get_db() as conn:
-        try:
-            conn.execute('INSERT INTO point_categories (name) VALUES (?)', (name,))
-            conn.commit()
-        except sqlite3.IntegrityError:
-            flash('Такая причина уже есть.', 'danger')
-            return redirect(url_for('points_accrual_page'))
-    flash('Причина добавлена.', 'success')
-    return redirect(url_for('points_accrual_page'))
-
-
-@app.route('/reports/points/categories/<int:category_id>/rename', methods=['POST'])
-@login_required
-@menu_permission_required('points_accrual')
-def rename_point_category(category_id):
-    name = request.form.get('name', '').strip()
-    if not name:
-        flash('Укажите название причины', 'danger')
-        return redirect(url_for('points_accrual_page'))
-    with get_db() as conn:
-        try:
-            cur = conn.execute('UPDATE point_categories SET name=? WHERE id=?', (name, category_id))
-            conn.commit()
-        except sqlite3.IntegrityError:
-            flash('Такая причина уже есть.', 'danger')
-            return redirect(url_for('points_accrual_page'))
-        if not cur.rowcount:
-            flash('Причина не найдена', 'danger')
-    return redirect(url_for('points_accrual_page'))
+    return render_template('points_accrual.html', category_ids=category_ids, accruals=accruals)
 
 
 def _lookup_order_for_points(conn, order_number, order_date):
@@ -17840,11 +17809,11 @@ def create_point_accrual():
         if not cat:
             flash('Причина не найдена', 'danger')
             return redirect(url_for('points_accrual_page'))
-        # auto_key пуст только у причины, выбранной вручную через «Другая причина» (у «Отзыв
-        # клиента»/«Отзыва нет» он всегда заполнен) — см. points_accrual.html: комментарий
-        # обязателен именно в этом случае, проверяем и на сервере, а не только в форме.
-        if not cat['auto_key'] and not comment:
-            flash('При выборе причины «Другая причина» нужно заполнить комментарий.', 'danger')
+        # При причине «Другая причина» сама причина пишется в комментарии (сама причина как
+        # выбираемое значение больше не существует) — он обязателен, проверяем и на сервере,
+        # а не только в форме (см. points_accrual.html).
+        if cat['auto_key'] == 'other' and not comment:
+            flash('При причине «Другая причина» нужно заполнить комментарий.', 'danger')
             return redirect(url_for('points_accrual_page'))
         conn.execute('''
             INSERT INTO point_accruals (order_number, order_date, amount, order_type, points, category_id, created_by, comment)
