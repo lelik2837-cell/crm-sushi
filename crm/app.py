@@ -2811,6 +2811,32 @@ def init_db():
                 "INSERT OR REPLACE INTO api_settings (key, value) VALUES ('rating_backlog_fix_v1', '1')"
             )
 
+        # У отзыва/оценки теперь может быть несколько конечных категорий одновременно (просьба
+        # пользователя), а не одна — guest_reviews.review_category_id/order_rating_requests.review_category_id
+        # (единственная категория) заменены таблицей связей многие-ко-многим; review_category_manual
+        # остаётся как было — это по-прежнему признак «категории этого отзыва выбраны вручную»,
+        # общий на весь набор его категорий, а не отдельный на каждую.
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS review_category_links (
+                source TEXT NOT NULL CHECK(source IN ('gulyash','revvy')),
+                review_id INTEGER NOT NULL,
+                category_id INTEGER NOT NULL REFERENCES review_categories(id) ON DELETE CASCADE,
+                PRIMARY KEY (source, review_id, category_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_review_category_links_category ON review_category_links(category_id);
+        ''')
+        # Перенос старых одиночных категорий в новую таблицу — строго один раз: этот перенос читает
+        # старую колонку review_category_id, которая после переноса больше никем не обновляется и не
+        # отражает изменений, сделанных уже через новый интерфейс. Если гонять его при каждом
+        # старте, он бы каждый раз возвращал категорию, которую пользователь явно снял через
+        # мультивыбор, — то есть удаление категории было бы невозможно пережить перезапуск сервера.
+        if not conn.execute("SELECT 1 FROM api_settings WHERE key='review_categories_multi_v1'").fetchone():
+            conn.execute('''INSERT OR IGNORE INTO review_category_links (source, review_id, category_id)
+                SELECT 'gulyash', id, review_category_id FROM guest_reviews WHERE review_category_id IS NOT NULL''')
+            conn.execute('''INSERT OR IGNORE INTO review_category_links (source, review_id, category_id)
+                SELECT 'revvy', id, review_category_id FROM order_rating_requests WHERE review_category_id IS NOT NULL''')
+            conn.execute("INSERT OR REPLACE INTO api_settings (key, value) VALUES ('review_categories_multi_v1', '1')")
+
         # Начисление баллов клиентам за косяки (перевёрнутые роллы и т.п.) — причина всегда одна
         # из трёх фиксированных строк в point_categories (auto_key), список больше не редактируется
         # пользователем (раньше был отдельный справочник с формой создания/переименования — убран
@@ -17737,7 +17763,7 @@ def _find_order_review_summary(conn, order_number, order_date):
     if rating:
         parts.append('оценка {}/5 по рассылке'.format(rating['rating']))
     candidates = conn.execute('''
-        SELECT review_at, review_type, content, review_category_id
+        SELECT id, review_at, review_type, content
         FROM guest_reviews WHERE order_number=?
     ''', (order_number,)).fetchall()
     if candidates:
@@ -17745,15 +17771,15 @@ def _find_order_review_summary(conn, order_number, order_date):
         matched = [r for r in candidates if dates.get((order_number, r['review_at'])) == order_date]
         if matched:
             best = max(matched, key=lambda r: r['review_at'])
-            label = None
-            if best['review_category_id']:
-                cat = conn.execute('''
-                    SELECT rc.name, parent.name AS parent_name
-                    FROM review_categories rc LEFT JOIN review_categories parent ON parent.id = rc.parent_id
-                    WHERE rc.id=?
-                ''', (best['review_category_id'],)).fetchone()
-                if cat:
-                    label = '{} → {}'.format(cat['parent_name'], cat['name']) if cat['parent_name'] else cat['name']
+            cats = conn.execute('''
+                SELECT leaf.name, parent.name AS parent_name
+                FROM review_category_links l
+                JOIN review_categories leaf ON leaf.id = l.category_id
+                JOIN review_categories parent ON parent.id = leaf.parent_id
+                WHERE l.source='gulyash' AND l.review_id=?
+                ORDER BY parent.sort_order, parent.id, leaf.sort_order, leaf.id
+            ''', (best['id'],)).fetchall()
+            label = ', '.join('{} → {}'.format(c['parent_name'], c['name']) for c in cats) or None
             label = label or best['review_type'] or None
             content = (best['content'] or '').strip()
             if len(content) > 150:
@@ -18058,16 +18084,19 @@ def _ingest_guest_reviews_rows(conn, frows, branch_map):
             INSERT OR IGNORE INTO guest_reviews
                 (order_number, review_at, branch_raw, branch_id, sentiment, review_type, content,
                  guest_name, guest_phone, order_amount, guilty, compensation_amount,
-                 penalty_amount, review_category_id, review_category_manual, import_hash)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 penalty_amount, review_category_manual, import_hash)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ''', (
             r['order_number'], r['review_at'], r['branch_raw'], branch_id, r['sentiment'], r['review_type'],
             r['content'], r['guest_name'], r['guest_phone'], r['order_amount'], r['guilty'],
-            r['compensation_amount'], r['penalty_amount'],
-            _match_review_category(r['review_type'], category_rules), 0, h
+            r['compensation_amount'], r['penalty_amount'], 0, h
         ))
         if cur.rowcount:
             imported += 1
+            conn.executemany(
+                "INSERT OR IGNORE INTO review_category_links (source, review_id, category_id) VALUES ('gulyash',?,?)",
+                [(cur.lastrowid, category_id) for category_id in _match_review_categories(r['review_type'], category_rules)]
+            )
         elif r['sentiment'] is not None:
             ucur = conn.execute(
                 'UPDATE guest_reviews SET sentiment=? WHERE import_hash=? AND sentiment IS NULL',
@@ -18242,28 +18271,39 @@ def _review_category_rules(conn):
     ]
 
 
-def _match_review_category(review_type, rules):
-    """Возвращает id первого совпадения; rules уже отсортированы от частного к общему."""
+def _match_review_categories(review_type, rules):
+    """Возвращает id ВСЕХ подходящих конечных категорий, без повторов, в порядке совпадения
+    (rules уже отсортированы от частного к общему — длинные фразы приоритетнее) — один отзыв может
+    касаться сразу нескольких тем (например, и «холодная еда», и «курьер опоздал»)."""
     haystack = _normalize_review_match_text(review_type)
     if not haystack:
-        return None
+        return []
+    seen = set()
+    result = []
     for category_id, phrase in rules:
-        if phrase in haystack:
-            return category_id
-    return None
+        if phrase in haystack and category_id not in seen:
+            seen.add(category_id)
+            result.append(category_id)
+    return result
 
 
 def _apply_review_category_rules(conn):
-    """Пересчитывает только автоматические назначения, не затрагивая ручной выбор."""
+    """Пересчитывает только автоматические назначения (review_category_manual=0), не затрагивая
+    отзывы с вручную выбранными категориями."""
     rules = _review_category_rules(conn)
     rows = conn.execute('''
         SELECT id, review_type
         FROM guest_reviews
         WHERE review_category_manual=0
     ''').fetchall()
+    ids = [r['id'] for r in rows]
+    if not ids:
+        return
+    placeholders = ','.join('?' * len(ids))
+    conn.execute(f"DELETE FROM review_category_links WHERE source='gulyash' AND review_id IN ({placeholders})", ids)
     conn.executemany(
-        'UPDATE guest_reviews SET review_category_id=? WHERE id=?',
-        [(_match_review_category(r['review_type'], rules), r['id']) for r in rows]
+        "INSERT OR IGNORE INTO review_category_links (source, review_id, category_id) VALUES ('gulyash',?,?)",
+        [(r['id'], category_id) for r in rows for category_id in _match_review_categories(r['review_type'], rules)]
     )
 
 
@@ -18394,20 +18434,11 @@ def guest_review_categories_update():
                 ).fetchone()
                 if not row:
                     raise ValueError('Корневая категория не найдена')
-                ids = [category_id] + [
-                    r['id'] for r in conn.execute(
-                        'SELECT id FROM review_categories WHERE parent_id=?', (category_id,)
-                    ).fetchall()
-                ]
-                placeholders = ','.join('?' * len(ids))
-                conn.execute(
-                    f'UPDATE guest_reviews SET review_category_id=NULL, review_category_manual=0 '
-                    f'WHERE review_category_id IN ({placeholders})', ids
-                )
-                conn.execute(
-                    f'UPDATE order_rating_requests SET review_category_id=NULL, review_category_manual=0 '
-                    f'WHERE review_category_id IN ({placeholders})', ids
-                )
+                # Вложенные категории и связи с отзывами (review_category_links.category_id и
+                # review_categories.parent_id — оба ON DELETE CASCADE) снимаются каскадом; отзыв,
+                # у которого при этом пропадает часть категорий, остаётся в том же режиме
+                # (авто/вручную), просто с меньшим набором — сам признак «выбрано вручную»
+                # (review_category_manual) тут не трогаем.
                 conn.execute('DELETE FROM review_categories WHERE id=?', (category_id,))
                 flash('Корневая категория и все вложенные категории удалены', 'success')
 
@@ -18473,16 +18504,8 @@ def guest_review_categories_update():
                 ''', (category_id,)).fetchone()
                 if not row:
                     raise ValueError('Категория не найдена')
-                conn.execute('''
-                    UPDATE guest_reviews
-                    SET review_category_id=NULL, review_category_manual=0
-                    WHERE review_category_id=?
-                ''', (category_id,))
-                conn.execute('''
-                    UPDATE order_rating_requests
-                    SET review_category_id=NULL, review_category_manual=0
-                    WHERE review_category_id=?
-                ''', (category_id,))
+                # Связи с отзывами снимаются каскадом (review_category_links.category_id ON DELETE
+                # CASCADE), режим отзыва (авто/вручную) не трогаем — см. delete_parent выше.
                 conn.execute('DELETE FROM review_categories WHERE id=?', (category_id,))
                 _apply_review_category_rules(conn)
                 flash('Вложенная категория удалена', 'success')
@@ -18501,16 +18524,30 @@ def guest_review_categories_update():
 @login_required
 @menu_permission_required('guest_reviews_report')
 def guest_review_category_set():
-    """Сохраняет ручную конечную категорию (или возвращает в авторежим) сразу для ВСЕХ отзывов
-    одного заказа за один запрос — просьба пользователя 2026-09-08 «категория выбирается 1 раз
-    на заказ, а не на каждый отзыв»: фронт (guest_reviews_report.html, один <select> в свёрнутой
-    строке заказа) передаёт список всех {source, review_id} отзывов группы (g.review_refs, см.
-    _group_guest_reviews), а не один отзыв, как было раньше."""
+    """Сохраняет набор конечных категорий (может быть несколько, может быть ни одной) или
+    возвращает в авторежим сразу для ВСЕХ отзывов одного заказа за один запрос — просьба
+    пользователя 2026-09-08 «категория выбирается 1 раз на заказ, а не на каждый отзыв»: фронт
+    (guest_reviews_report.html, один выпадающий список с чекбоксами в свёрнутой строке заказа)
+    передаёт список всех {source, review_id} отзывов группы (g.review_refs, см. _group_guest_reviews).
+
+    mode='auto' — категории пересчитываются по автоправилам (может получиться несколько или ни
+    одной), review_category_manual сбрасывается в 0. mode='manual' — категории берутся ровно из
+    переданного category_ids (пустой список — это прежнее «Без категории (вручную)», отдельного
+    значения для него больше не нужно), review_category_manual выставляется в 1."""
     data = request.get_json(silent=True) or {}
     raw_reviews = data.get('reviews')
-    selection = str(data.get('category') or '')
+    mode = str(data.get('mode') or '')
+    raw_ids = data.get('category_ids')
     if not isinstance(raw_reviews, list) or not raw_reviews:
         return jsonify({'ok': False, 'error': 'Некорректный запрос'}), 400
+    if mode not in ('auto', 'manual'):
+        return jsonify({'ok': False, 'error': 'Некорректный режим'}), 400
+    if mode == 'manual':
+        if not isinstance(raw_ids, list) or not all(isinstance(x, int) and not isinstance(x, bool) for x in raw_ids):
+            return jsonify({'ok': False, 'error': 'Некорректные категории'}), 400
+        manual_ids = list(dict.fromkeys(raw_ids))
+    else:
+        manual_ids = []
 
     items = []
     for item in raw_reviews:
@@ -18520,25 +18557,17 @@ def guest_review_category_set():
             return jsonify({'ok': False, 'error': 'Некорректный отзыв'}), 400
         items.append((source, int(raw_review_id)))
 
-    if selection not in ('auto', 'none') and not selection.isdigit():
-        return jsonify({'ok': False, 'error': 'Некорректная категория'}), 400
-
     with get_db() as conn:
-        manual_label = None
-        if selection.isdigit():
-            manual_category_id = int(selection)
-            category = conn.execute('''
-                SELECT leaf.id, leaf.name, parent.name AS parent_name
-                FROM review_categories leaf
-                JOIN review_categories parent ON parent.id = leaf.parent_id
-                WHERE leaf.id=? AND parent.parent_id IS NULL
-            ''', (manual_category_id,)).fetchone()
-            if not category:
-                return jsonify({'ok': False, 'error': 'Можно выбрать только конечную категорию'}), 400
-            manual_label = f"{category['parent_name']} → {category['name']}"
+        if manual_ids:
+            placeholders = ','.join('?' * len(manual_ids))
+            valid_ids = {r['id'] for r in conn.execute(f'''
+                SELECT leaf.id FROM review_categories leaf JOIN review_categories parent ON parent.id = leaf.parent_id
+                WHERE leaf.id IN ({placeholders})
+            ''', manual_ids)}
+            if valid_ids != set(manual_ids):
+                return jsonify({'ok': False, 'error': 'Можно выбрать только конечные категории'}), 400
 
-        rules = _review_category_rules(conn) if selection == 'auto' else None
-        auto_labels = []
+        rules = _review_category_rules(conn) if mode == 'auto' else None
         for source, review_id in items:
             table = 'guest_reviews' if source == 'gulyash' else 'order_rating_requests'
             row = conn.execute(
@@ -18547,34 +18576,36 @@ def guest_review_category_set():
             ).fetchone()
             if not row:
                 return jsonify({'ok': False, 'error': 'Отзыв не найден'}), 404
-
-            if selection == 'auto':
-                category_id = _match_review_category(row['review_type'] if source == 'gulyash' else '', rules)
-                manual = 0
-                if category_id:
-                    cat = conn.execute('''
-                        SELECT leaf.name, parent.name AS parent_name
-                        FROM review_categories leaf
-                        JOIN review_categories parent ON parent.id = leaf.parent_id
-                        WHERE leaf.id=?
-                    ''', (category_id,)).fetchone()
-                    if cat and cat['parent_name'] + ' → ' + cat['name'] not in auto_labels:
-                        auto_labels.append(f"{cat['parent_name']} → {cat['name']}")
-            elif selection == 'none':
-                category_id = None
-                manual = 1
+            if mode == 'auto':
+                # У revvy (оценка по рассылке) нет review_type, автоправила бьют только по тексту
+                # жалобы Гуляша — как и раньше, у revvy авторежим просто означает «без категорий».
+                ids_for_row = _match_review_categories(row['review_type'], rules) if source == 'gulyash' else []
             else:
-                category_id = manual_category_id
-                manual = 1
-
-            conn.execute(
-                f'UPDATE {table} SET review_category_id=?, review_category_manual=? WHERE id=?',
-                (category_id, manual, review_id)
+                ids_for_row = manual_ids
+            conn.execute('DELETE FROM review_category_links WHERE source=? AND review_id=?', (source, review_id))
+            conn.executemany(
+                'INSERT OR IGNORE INTO review_category_links (source, review_id, category_id) VALUES (?,?,?)',
+                [(source, review_id, category_id) for category_id in ids_for_row]
             )
+            conn.execute(f'UPDATE {table} SET review_category_manual=? WHERE id=?', (0 if mode == 'auto' else 1, review_id))
+
+        where = ' OR '.join(['(source=? AND review_id=?)'] * len(items))
+        params = [v for pair in items for v in pair]
+        linked_ids = [r['category_id'] for r in conn.execute(
+            f'SELECT DISTINCT category_id FROM review_category_links WHERE {where}', params
+        )]
+        labels = []
+        if linked_ids:
+            ph = ','.join('?' * len(linked_ids))
+            by_id = {r['id']: f"{r['parent_name']} → {r['name']}" for r in conn.execute(f'''
+                SELECT leaf.id, leaf.name, parent.name AS parent_name
+                FROM review_categories leaf JOIN review_categories parent ON parent.id = leaf.parent_id
+                WHERE leaf.id IN ({ph})
+            ''', linked_ids)}
+            labels = [by_id[i] for i in linked_ids if i in by_id]
         conn.commit()
 
-    label = manual_label if selection.isdigit() else (', '.join(auto_labels) if selection == 'auto' else None)
-    return jsonify({'ok': True, 'manual': selection != 'auto', 'label': label})
+    return jsonify({'ok': True, 'manual': mode == 'manual', 'label': ', '.join(labels) if labels else None, 'category_ids': linked_ids})
 
 
 def _group_guest_reviews(rows, status_by_order=None):
@@ -18609,7 +18640,8 @@ def _group_guest_reviews(rows, status_by_order=None):
     worst_sentiment (самый «плохой» sentiment среди группы — 'О'/пусто побеждает 'Н', 'Н' побеждает
     'П', используется для цвета строки/шарика, см. guest_reviews_report.html), categories
     (уникальные review_type группы, в порядке появления, без пустых — у оценок из рассылки
-    review_type нет), assigned_categories (уникальные выбранные конечные категории),
+    review_type нет), assigned_categories (уникальные выбранные конечные категории — у отзыва их
+    может быть несколько, см. review_category_links),
     sources (уникальные source группы, в порядке появления — бейджи Гуляш/Ревви),
     compensation_total (сумма compensation_amount по группе, None если ни одной непустой), и
     «представительские» поля (филиал/гость/сумма) — берутся из первого непустого значения среди
@@ -18619,12 +18651,12 @@ def _group_guest_reviews(rows, status_by_order=None):
     считаются «требующими внимания» (worst_sentiment != 'П'), у положительных групп status=None,
     отрабатывать нечего», а также review_refs (список {source, review_id} всех отзывов группы —
     нужен фронту, чтобы отправить категорию сразу на все отзывы заказа, см. ниже) и
-    category_current (значение для <select> категории в свёрнутой строке заказа: id конечной
-    категории или 'none', если ВСЕ отзывы группы вручную и согласованно выставлены на одно и то
-    же значение, иначе 'auto' — просьба пользователя 2026-09-08 «категория выбирается 1 раз на
-    заказ, а не на каждый отзыв»: теперь выбор категории живёт только в свёрнутой строке заказа,
-    а не у каждого отдельного отзыва в раскрытом списке, и один выбор применяется сразу ко всем
-    отзывам этого заказа — см. guest_review_category_set)."""
+    category_current (состояние для выпадающего списка категорий в свёрнутой строке заказа —
+    {'mode': 'manual', 'ids': [...]}, если ВСЕ отзывы группы вручную и согласованно выставлены на
+    один и тот же набор категорий, иначе {'mode': 'auto', 'ids': []} — просьба пользователя
+    2026-09-08 «категория выбирается 1 раз на заказ, а не на каждый отзыв»: выбор категорий живёт
+    только в свёрнутой строке заказа, а не у каждого отдельного отзыва в раскрытом списке, и один
+    выбор применяется сразу ко всем отзывам этого заказа — см. guest_review_category_set)."""
     status_by_order = status_by_order or {}
     groups = {}
     order = []
@@ -18651,8 +18683,9 @@ def _group_guest_reviews(rows, status_by_order=None):
         for r in grp:
             if r['review_type'] and r['review_type'] not in categories:
                 categories.append(r['review_type'])
-            if r.get('review_category_label') and r['review_category_label'] not in assigned_categories:
-                assigned_categories.append(r['review_category_label'])
+            for label in (r.get('review_category_labels') or []):
+                if label not in assigned_categories:
+                    assigned_categories.append(label)
             if r['source'] not in sources:
                 sources.append(r['source'])
         comp_values = [r['compensation_amount'] for r in grp if r['compensation_amount']]
@@ -18660,11 +18693,10 @@ def _group_guest_reviews(rows, status_by_order=None):
 
         manual_flags = {bool(r['review_category_manual']) for r in grp}
         if manual_flags == {True}:
-            manual_ids = {r.get('review_category_id') for r in grp}
-            only_id = next(iter(manual_ids))
-            category_current = ('none' if only_id is None else only_id) if len(manual_ids) == 1 else 'auto'
+            id_sets = {tuple(sorted(r.get('review_category_ids') or [])) for r in grp}
+            category_current = {'mode': 'manual', 'ids': list(next(iter(id_sets)))} if len(id_sets) == 1 else {'mode': 'auto', 'ids': []}
         else:
-            category_current = 'auto'
+            category_current = {'mode': 'auto', 'ids': []}
         review_refs = [{'source': r['source'], 'review_id': r['source_id']} for r in grp]
 
         result.append({
@@ -18804,7 +18836,7 @@ def guest_reviews_report():
 
         rr_rows = conn.execute(f'''
             SELECT rr.id AS rating_request_id, rr.order_number, rr.phone, rr.rating, rr.order_date,
-                   rr.review_category_id, rr.review_category_manual,
+                   rr.review_category_manual,
                    datetime(rr.responded_at, '+7 hours') AS responded_at,
                    rc.branch_id AS branch_id, b.name AS branch_name,
                    o.amount AS order_amount
@@ -18819,13 +18851,12 @@ def guest_reviews_report():
         ''', params2).fetchall()
 
     def _decorate_review_category(row_dict, source, source_id):
+        # Сами категории (может быть несколько на отзыв) проставляются одним пакетным запросом в
+        # конце, см. review_category_ids/review_category_labels ниже (_group_guest_reviews) — тут
+        # только то, что уже известно построчно.
         row_dict['source'] = source
         row_dict['source_id'] = source_id
         row_dict['review_category_manual'] = bool(row_dict.get('review_category_manual'))
-        category = review_category_by_id.get(row_dict.get('review_category_id'))
-        if not category:
-            row_dict['review_category_id'] = None
-        row_dict['review_category_label'] = category['label'] if category else None
         return row_dict
 
     combined = []
@@ -18849,7 +18880,6 @@ def guest_reviews_report():
             'compensation_amount': None,
             'rating_request_id': r['rating_request_id'],
             'sentiment': 'П' if r['rating'] >= 4 else 'О',
-            'review_category_id': r['review_category_id'],
             'review_category_manual': r['review_category_manual'],
         }, 'revvy', r['rating_request_id']))
     combined.sort(key=lambda r: r['review_at'] or '', reverse=True)
@@ -18894,7 +18924,7 @@ def guest_reviews_report():
 
             extra_rr = conn.execute(f'''
                 SELECT rr.id AS rating_request_id, rr.order_number, rr.phone, rr.rating, rr.order_date,
-                       rr.review_category_id, rr.review_category_manual,
+                       rr.review_category_manual,
                        datetime(rr.responded_at, '+7 hours') AS responded_at,
                        rc.branch_id AS branch_id, b.name AS branch_name,
                        o.amount AS order_amount
@@ -18924,7 +18954,6 @@ def guest_reviews_report():
                     'order_amount': r['order_amount'],
                     'compensation_amount': None,
                     'sentiment': 'П' if r['rating'] >= 4 else 'О',
-                    'review_category_id': r['review_category_id'],
                     'review_category_manual': r['review_category_manual'],
                 }, 'revvy', r['rating_request_id']))
         combined.sort(key=lambda r: r['review_at'] or '', reverse=True)
@@ -18941,6 +18970,25 @@ def guest_reviews_report():
                     order_numbers
                 ).fetchall()
             }
+
+        # Категории (может быть несколько на отзыв) — по одному запросу на источник для всего
+        # combined сразу, а не по ходу его сборки: extra_gr/extra_rr выше дописываются в combined
+        # уже после первой сортировки и обрезки до 500, так что собирать категории раньше означало
+        # бы собирать их не для всех строк. IN(...) по каждому source, а не общий OR по парам —
+        # тех же (source, review_id) в худшем случае больше 500, и OR по парам держал бы по два
+        # параметра на строку (тот же приём, что и в _lookup_order_dates, см. выше).
+        links_by_ref = {}
+        for src in ('gulyash', 'revvy'):
+            ids = [r['source_id'] for r in combined if r['source'] == src]
+            if not ids:
+                continue
+            ph = ','.join('?' * len(ids))
+            for l in conn.execute(f"SELECT review_id, category_id FROM review_category_links WHERE source=? AND review_id IN ({ph})", [src] + ids):
+                links_by_ref.setdefault((src, l['review_id']), []).append(l['category_id'])
+        for r in combined:
+            ids = links_by_ref.get((r['source'], r['source_id']), [])
+            r['review_category_ids'] = ids
+            r['review_category_labels'] = [review_category_by_id[i]['label'] for i in ids if i in review_category_by_id]
 
     grouped_rows = _group_guest_reviews(combined, status_by_order)
 

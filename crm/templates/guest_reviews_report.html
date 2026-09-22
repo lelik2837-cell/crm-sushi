@@ -108,7 +108,9 @@
 .gr-detail-row > td:first-child { padding-left:28px; }
 .gr-chevron { display:inline-block; transition:transform .15s; margin-right:4px; }
 .gr-chevron.open { transform:rotate(90deg); }
-.gr-category-select { min-width:190px; max-width:240px; }
+.gr-category-btn { min-width:190px; max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.gr-category-menu { min-width:260px; max-height:320px; overflow-y:auto; }
+.gr-category-menu .dropdown-header { font-size:.7rem; font-weight:600; letter-spacing:.5px; text-transform:uppercase; }
 .rv-category-layout { min-height:470px; }
 .rv-category-tree-pane { padding:20px; background:#f8f9fa; border-right:1px solid #dee2e6; max-height:65vh; overflow-y:auto; }
 .rv-category-editor-pane { padding:28px; min-height:470px; }
@@ -185,48 +187,38 @@
 {% endif %}
 {% endmacro %}
 
-{% macro category_select(r) %}
-<select class="form-select form-select-sm gr-category-select"
-        data-reviews='{{ [{"source": r.source, "review_id": r.source_id}] | tojson }}'
-        data-label="{{ r.review_category_label or '' }}"
-        data-current="{% if not r.review_category_manual %}auto{% elif r.review_category_id %}{{ r.review_category_id }}{% else %}none{% endif %}"
-        onclick="event.stopPropagation()" onchange="saveReviewCategory(this)">
-    <option value="auto" data-label="{{ r.review_category_label or '' }}" {% if not r.review_category_manual %}selected{% endif %}>
-        Авто{% if r.review_category_label %} — {{ r.review_category_label }}{% else %} — без категории{% endif %}
-    </option>
-    <option value="none" data-label="" {% if r.review_category_manual and not r.review_category_id %}selected{% endif %}>Без категории (вручную)</option>
-    {% for parent in review_category_tree %}
-    {% if parent.children %}
-    <optgroup label="{{ parent.name }}">
+{% macro category_picker(review_refs, is_manual, current_ids, assigned_categories) %}
+<div class="dropdown gr-category-picker" onclick="event.stopPropagation()">
+    <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle gr-category-btn text-start"
+            data-bs-toggle="dropdown" data-bs-auto-close="outside" data-reviews='{{ review_refs | tojson }}'>
+        {%- if is_manual -%}
+            {{ assigned_categories | join(', ') if assigned_categories else 'Без категории' }}
+        {%- else -%}
+            Авто{{ ' — ' ~ (assigned_categories | join(', ')) if assigned_categories else ' — без категории' }}
+        {%- endif -%}
+    </button>
+    <ul class="dropdown-menu p-2 gr-category-menu">
+        <li>
+            <button type="button" class="dropdown-item rounded gr-cat-auto-item{{ ' active' if not is_manual else '' }}" onclick="saveReviewCategoryAuto(this)">
+                <i class="bi bi-magic me-1"></i>Авто (по автоправилам)
+            </button>
+        </li>
+        <li><hr class="dropdown-divider my-1"></li>
+        {% for parent in review_category_tree %}
+        {% if parent.children %}
+        <li class="dropdown-header px-2">{{ parent.name }}</li>
         {% for child in parent.children %}
-        <option value="{{ child.id }}" data-label="{{ parent.name }} → {{ child.name }}" {% if r.review_category_manual and r.review_category_id == child.id %}selected{% endif %}>{{ child.name }}</option>
+        <li>
+            <label class="dropdown-item rounded d-flex align-items-center gap-2 py-1 px-2 mb-0" style="cursor:pointer;">
+                <input type="checkbox" class="gr-cat-checkbox" value="{{ child.id }}" {% if child.id in current_ids %}checked{% endif %} onchange="saveReviewCategoryManual(this)">
+                <span class="small">{{ child.name }}</span>
+            </label>
+        </li>
         {% endfor %}
-    </optgroup>
-    {% endif %}
-    {% endfor %}
-</select>
-{% endmacro %}
-
-{% macro group_category_select(g) %}
-<select class="form-select form-select-sm gr-category-select"
-        data-reviews='{{ g.review_refs | tojson }}'
-        data-label="{{ g.assigned_categories | join(', ') }}"
-        data-current="{{ g.category_current }}"
-        onclick="event.stopPropagation()" onchange="saveReviewCategory(this)">
-    <option value="auto" data-label="{{ g.assigned_categories | join(', ') }}" {% if g.category_current == 'auto' %}selected{% endif %}>
-        Авто{% if g.assigned_categories %} — {{ g.assigned_categories | join(', ') }}{% else %} — без категории{% endif %}
-    </option>
-    <option value="none" data-label="" {% if g.category_current == 'none' %}selected{% endif %}>Без категории (вручную)</option>
-    {% for parent in review_category_tree %}
-    {% if parent.children %}
-    <optgroup label="{{ parent.name }}">
-        {% for child in parent.children %}
-        <option value="{{ child.id }}" data-label="{{ parent.name }} → {{ child.name }}" {% if g.category_current == child.id %}selected{% endif %}>{{ child.name }}</option>
+        {% endif %}
         {% endfor %}
-    </optgroup>
-    {% endif %}
-    {% endfor %}
-</select>
+    </ul>
+</div>
 {% endmacro %}
 
 {% macro category_form_filters() %}
@@ -250,7 +242,7 @@
                     <th class="text-center">Тип</th>
                     <th class="text-center">Источник</th>
                     <th class="text-center">Тип жалобы</th>
-                    <th>Категория</th>
+                    <th>Категории</th>
                     <th>Содержание</th>
                     <th>Телефон</th>
                     <th>Сумма</th>
@@ -270,7 +262,7 @@
                     <td class="text-center">{{ sentiment_dot(r.sentiment) }}</td>
                     <td class="text-center">{{ source_badge(r.source) }}</td>
                     <td class="text-center">{{ review_type_cell(r.review_type) }}</td>
-                    <td>{{ category_select(r) }}</td>
+                    <td>{{ category_picker([{"source": r.source, "review_id": r.source_id}], r.review_category_manual, r.review_category_ids or [], r.review_category_labels or []) }}</td>
                     <td style="max-width:420px; white-space:pre-wrap;">{{ review_content_cell(r) }}</td>
                     <td class="text-nowrap">{{ phone_reveal_cell(g.order_number, g.guest_phone, g.status is not none) }}</td>
                     <td class="text-nowrap">{{ '%.0f'|format(r.order_amount) if r.order_amount is not none else '—' }}</td>
@@ -289,7 +281,7 @@
                     <td class="text-center">{{ sentiment_dot(g.worst_sentiment) }}</td>
                     <td class="text-center">{% for s in g.sources %}{{ source_badge(s) }} {% endfor %}</td>
                     <td class="text-center">{{ review_type_cell(g.categories | join(', ')) }}</td>
-                    <td>{{ group_category_select(g) }}</td>
+                    <td>{{ category_picker(g.review_refs, g.category_current.mode == 'manual', g.category_current.ids, g.assigned_categories) }}</td>
                     <td class="text-muted fst-italic">Показать {{ g.reviews|length }} отзыва(ов) по заказу</td>
                     <td class="text-nowrap">{{ phone_reveal_cell(g.order_number, g.guest_phone, g.status is not none) }}</td>
                     <td class="text-nowrap">{{ '%.0f'|format(g.order_amount) if g.order_amount is not none else '—' }}</td>
@@ -583,42 +575,59 @@
         if (chevron) chevron.classList.toggle('open', opening);
     };
 
-    /* ── Категория заказа (один выбор применяется сразу ко всем отзывам заказа — см.
-       data-reviews на <select>, заполняется category_select/group_category_select) ── */
-    window.saveReviewCategory = function (select) {
-        var previous = select.dataset.current || 'auto';
+    /* ── Категории заказа (может быть несколько сразу; один выбор применяется ко всем отзывам
+       заказа — см. data-reviews на кнопке, заполняется макросом category_picker) ── */
+    function grCategoryContext(el) {
+        var wrap = el.closest('.gr-category-picker');
+        var btn = wrap.querySelector('.gr-category-btn');
         var reviews;
-        try { reviews = JSON.parse(select.dataset.reviews || '[]'); } catch (e) { reviews = []; }
-        if (!reviews.length) return;
-        select.disabled = true;
+        try { reviews = JSON.parse(btn.dataset.reviews || '[]'); } catch (e) { reviews = []; }
+        return { wrap: wrap, btn: btn, reviews: reviews };
+    }
+
+    function grSaveCategory(ctx, payload) {
+        if (!ctx.reviews.length) return;
+        var controls = ctx.wrap.querySelectorAll('button, input');
+        controls.forEach(function (el) { el.disabled = true; });
         fetch('{{ url_for("guest_review_category_set") }}', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                reviews: reviews,
-                category: select.value
-            })
+            body: JSON.stringify(Object.assign({ reviews: ctx.reviews }, payload))
         })
         .then(function (response) {
             return response.json().then(function (data) {
-                if (!response.ok || !data.ok) throw new Error(data.error || 'Не удалось сохранить категорию');
+                if (!response.ok || !data.ok) throw new Error(data.error || 'Не удалось сохранить категории');
                 return data;
             });
         })
         .then(function (data) {
-            select.dataset.current = select.value;
-            select.dataset.label = data.label || '';
-            var autoOption = select.querySelector('option[value="auto"]');
-            if (autoOption && select.value === 'auto') {
-                autoOption.dataset.label = data.label || '';
-                autoOption.textContent = 'Авто — ' + (data.label || 'без категории');
-            }
+            var checkedIds = {};
+            (data.category_ids || []).forEach(function (id) { checkedIds[id] = true; });
+            ctx.wrap.querySelectorAll('.gr-cat-checkbox').forEach(function (cb) {
+                cb.checked = !!checkedIds[parseInt(cb.value, 10)];
+            });
+            var autoItem = ctx.wrap.querySelector('.gr-cat-auto-item');
+            if (autoItem) autoItem.classList.toggle('active', !data.manual);
+            ctx.btn.textContent = data.manual
+                ? (data.label || 'Без категории')
+                : ('Авто' + (data.label ? ' — ' + data.label : ' — без категории'));
         })
         .catch(function (error) {
-            select.value = previous;
-            window.alert(error.message || 'Не удалось сохранить категорию');
+            window.alert(error.message || 'Не удалось сохранить категории');
         })
-        .finally(function () { select.disabled = false; });
+        .finally(function () { controls.forEach(function (el) { el.disabled = false; }); });
+    }
+
+    window.saveReviewCategoryAuto = function (el) {
+        grSaveCategory(grCategoryContext(el), { mode: 'auto' });
+    };
+
+    window.saveReviewCategoryManual = function (checkbox) {
+        var ctx = grCategoryContext(checkbox);
+        var ids = Array.from(ctx.wrap.querySelectorAll('.gr-cat-checkbox:checked')).map(function (cb) {
+            return parseInt(cb.value, 10);
+        });
+        grSaveCategory(ctx, { mode: 'manual', category_ids: ids });
     };
 
     /* Формы настроек перезагружают текущий отчёт. Сохраняем модалку, её прокрутку,
