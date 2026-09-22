@@ -171,6 +171,10 @@
 {% endif %}
 {% endmacro %}
 
+{% macro review_type_cell(value) %}
+{% if value %}<i class="bi bi-chat-left-text text-muted" title="{{ value }}"></i>{% endif %}
+{% endmacro %}
+
 {% macro review_content_cell(r) %}
 {% if r.source == 'revvy' and r.rating_request_id %}
 <span style="display:inline-flex; align-items:center; white-space:nowrap;">{{ r.content }}<button type="button" class="btn btn-sm btn-outline-secondary p-0 ms-2" style="width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;" title="Переписка" onclick="event.stopPropagation(); openRvDialog({{ r.rating_request_id }})">
@@ -245,7 +249,7 @@
                     <th>Филиал</th>
                     <th class="text-center">Тип</th>
                     <th class="text-center">Источник</th>
-                    <th>Тип жалобы</th>
+                    <th class="text-center">Тип жалобы</th>
                     <th>Категория</th>
                     <th>Содержание</th>
                     <th>Телефон</th>
@@ -265,7 +269,7 @@
                     <td>{{ r.branch_name or r.branch_raw }}</td>
                     <td class="text-center">{{ sentiment_dot(r.sentiment) }}</td>
                     <td class="text-center">{{ source_badge(r.source) }}</td>
-                    <td>{{ r.review_type }}</td>
+                    <td class="text-center">{{ review_type_cell(r.review_type) }}</td>
                     <td>{{ category_select(r) }}</td>
                     <td style="max-width:420px; white-space:pre-wrap;">{{ review_content_cell(r) }}</td>
                     <td class="text-nowrap">{{ phone_reveal_cell(g.order_number, g.guest_phone, g.status is not none) }}</td>
@@ -284,7 +288,7 @@
                     <td>{{ g.branch_name or g.branch_raw }}</td>
                     <td class="text-center">{{ sentiment_dot(g.worst_sentiment) }}</td>
                     <td class="text-center">{% for s in g.sources %}{{ source_badge(s) }} {% endfor %}</td>
-                    <td>{{ g.categories | join(', ') }}</td>
+                    <td class="text-center">{{ review_type_cell(g.categories | join(', ')) }}</td>
                     <td>{{ group_category_select(g) }}</td>
                     <td class="text-muted fst-italic">Показать {{ g.reviews|length }} отзыва(ов) по заказу</td>
                     <td class="text-nowrap">{{ phone_reveal_cell(g.order_number, g.guest_phone, g.status is not none) }}</td>
@@ -300,7 +304,7 @@
                     <td></td>
                     <td class="text-center">{{ sentiment_dot(r.sentiment) }}</td>
                     <td class="text-center">{{ source_badge(r.source) }}</td>
-                    <td>{{ r.review_type }}</td>
+                    <td class="text-center">{{ review_type_cell(r.review_type) }}</td>
                     <td></td>
                     <td style="max-width:420px; white-space:pre-wrap;">{{ review_content_cell(r) }}</td>
                     <td></td>
