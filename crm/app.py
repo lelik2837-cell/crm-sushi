@@ -17836,9 +17836,15 @@ def create_point_accrual():
         if not order:
             flash('Заказ с таким номером и датой не найден в архиве заказов — начислить баллы можно только на реальный заказ.', 'danger')
             return redirect(url_for('points_accrual_page'))
-        cat = conn.execute('SELECT id FROM point_categories WHERE id=?', (category_id,)).fetchone()
+        cat = conn.execute('SELECT id, auto_key FROM point_categories WHERE id=?', (category_id,)).fetchone()
         if not cat:
             flash('Причина не найдена', 'danger')
+            return redirect(url_for('points_accrual_page'))
+        # auto_key пуст только у причины, выбранной вручную через «Другая причина» (у «Отзыв
+        # клиента»/«Отзыва нет» он всегда заполнен) — см. points_accrual.html: комментарий
+        # обязателен именно в этом случае, проверяем и на сервере, а не только в форме.
+        if not cat['auto_key'] and not comment:
+            flash('При выборе причины «Другая причина» нужно заполнить комментарий.', 'danger')
             return redirect(url_for('points_accrual_page'))
         conn.execute('''
             INSERT INTO point_accruals (order_number, order_date, amount, order_type, points, category_id, created_by, comment)

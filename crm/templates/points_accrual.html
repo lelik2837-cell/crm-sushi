@@ -15,8 +15,7 @@
 </div>
 
 <div class="mb-3">
-    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#paModal"
-            {% if not categories %}disabled title="Сначала добавьте хотя бы одну причину"{% endif %}>
+    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#paModal">
         <i class="bi bi-plus-lg me-1"></i>Внести баллы
     </button>
 </div>
@@ -85,9 +84,15 @@
                     <div class="col-12">
                         <div id="pa-lookup-hint" class="form-text">Введите номер и дату заказа — сумма и филиал подтянутся из архива для сверки.</div>
                     </div>
-                    <div class="col-md-6">
+                    <div class="col-12" id="pa-reason-wrap" hidden>
                         <label class="form-label small fw-semibold">Причина</label>
-                        <select name="category_id" id="pa-category" class="form-select" required>
+                        <div id="pa-reason-auto">
+                            <div class="d-flex align-items-center gap-2">
+                                <span id="pa-reason-auto-text"></span>
+                                <button type="button" id="pa-reason-other-btn" class="btn btn-outline-secondary btn-sm">Другая причина</button>
+                            </div>
+                        </div>
+                        <select name="category_id" id="pa-category" class="form-select" required hidden>
                             {% for cat in categories %}
                             <option value="{{ cat.id }}" data-auto-key="{{ cat.auto_key }}">{{ cat.name }}</option>
                             {% endfor %}
@@ -99,7 +104,8 @@
                     </div>
                     <div class="col-12">
                         <label class="form-label small fw-semibold">Комментарий</label>
-                        <textarea name="comment" id="pa-comment" class="form-control" rows="2" maxlength="500" placeholder="Необязательно — например, с кем из клиента договорились и по какому поводу"></textarea>
+                        <textarea name="comment" id="pa-comment" class="form-control" rows="2" maxlength="500" placeholder="Например, с кем из клиента договорились и по какому поводу"></textarea>
+                        <div id="pa-comment-hint" class="form-text">Необязательно.</div>
                     </div>
                 </div>
             </div>
@@ -125,6 +131,7 @@
                     <div class="col-md-6">
                         <form method="POST" action="{{ url_for('rename_point_category', category_id=cat.id) }}" class="input-group input-group-sm">
                             <input type="text" name="name" class="form-control" value="{{ cat.name }}">
+                            {% if cat.auto_key %}<span class="input-group-text text-muted" title="Подставляется автоматически по результату поиска отзыва">авто</span>{% endif %}
                             <button type="submit" class="btn btn-outline-secondary" title="Сохранить название"><i class="bi bi-check-lg"></i></button>
                         </form>
                     </div>
@@ -149,24 +156,43 @@ function paSetSubmitEnabled(enabled) {
     document.getElementById('pa-submit').disabled = !enabled;
 }
 
-// Причина и комментарий подставляются автоматически по найденному отзыву (см. paLookupOrder), но
-// только пока сотрудник их сам не тронул — иначе повторный поиск (правка даты/номера) молча
-// затирал бы то, что человек уже поменял руками. Реальный ввод всегда идёт через события
-// change/input; программную подстановку ниже (element.value = …) они не считают.
-let paCategoryTouched = false;
+// Причину нельзя выбрать, пока не введены и не найдены номер+дата заказа — до этого момента блок
+// «Причина» скрыт целиком (см. paLookupOrder). Как только заказ найден, CRM сама проверяет, есть
+// ли отзыв на этот заказ, и показывает готовый ответ («Отзыв на этот заказ есть/нет») — это и есть
+// причина, отдельно выбирать её не нужно. Рядом — некрупная кнопка «Другая причина»: сотрудник
+// нажимает её, только если ни один из двух автоответов не подходит, и тогда выбирает причину из
+// уже заведённого списка (создаются в «Настройках» рядом). Для этого режима комментарий обязателен
+// — без выбора из списка непонятно, за что баллы начислены; для автоответа он как и раньше просто
+// полезная деталь (при найденном отзыве подставляется его суть, менять/дополнять можно свободно).
 let paCommentTouched = false;
-document.getElementById('pa-category').addEventListener('change', () => { paCategoryTouched = true; });
+let paOtherReasonMode = false;
 document.getElementById('pa-comment').addEventListener('input', () => { paCommentTouched = true; });
+document.getElementById('pa-reason-other-btn').addEventListener('click', () => {
+    paOtherReasonMode = true;
+    paApplyReasonMode();
+});
 document.getElementById('paModal').addEventListener('show.bs.modal', () => {
-    paCategoryTouched = false;
     paCommentTouched = false;
+    paOtherReasonMode = false;
+    document.getElementById('pa-reason-wrap').hidden = true;
+    paApplyReasonMode();
 });
 
-function paApplyAutoCategory(reviewFound, reviewSummary) {
-    if (!paCategoryTouched) {
-        const option = document.querySelector(`#pa-category option[data-auto-key="${reviewFound ? 'has_review' : 'no_review'}"]`);
-        if (option) document.getElementById('pa-category').value = option.value;
-    }
+function paApplyReasonMode() {
+    document.getElementById('pa-reason-auto').hidden = paOtherReasonMode;
+    document.getElementById('pa-category').hidden = !paOtherReasonMode;
+    document.getElementById('pa-comment').required = paOtherReasonMode;
+    document.getElementById('pa-comment-hint').textContent = paOtherReasonMode
+        ? 'Обязательно при причине «Другая причина» — опишите, за что начисляются баллы.'
+        : 'Необязательно.';
+}
+
+function paApplyAutoReason(reviewFound, reviewSummary) {
+    const option = document.querySelector(`#pa-category option[data-auto-key="${reviewFound ? 'has_review' : 'no_review'}"]`);
+    if (option) document.getElementById('pa-category').value = option.value;
+    const text = document.getElementById('pa-reason-auto-text');
+    text.textContent = reviewFound ? 'Отзыв на этот заказ есть.' : 'Отзыва на этот заказ нет.';
+    text.className = reviewFound ? 'fw-semibold text-success' : 'fw-semibold text-muted';
     if (!paCommentTouched) {
         document.getElementById('pa-comment').value = reviewFound ? `(отзыв: ${reviewSummary})` : '';
     }
@@ -176,10 +202,12 @@ function paLookupOrder() {
     const num = document.getElementById('pa-order-number').value.trim();
     const date = document.getElementById('pa-order-date').value;
     const hint = document.getElementById('pa-lookup-hint');
+    const reasonWrap = document.getElementById('pa-reason-wrap');
     paSetSubmitEnabled(false);
     if (!num || !date) {
         hint.textContent = 'Введите номер и дату заказа — сумма и филиал подтянутся из архива для сверки.';
         hint.className = 'form-text';
+        reasonWrap.hidden = true;
         return;
     }
     fetch(`/reports/points/order-lookup?order_number=${encodeURIComponent(num)}&order_date=${encodeURIComponent(date)}`)
@@ -187,14 +215,17 @@ function paLookupOrder() {
         .then((data) => {
             if (data.found) {
                 const sum = Number(data.amount).toLocaleString('ru-RU', {maximumFractionDigits: 0});
-                const reviewNote = data.review_found ? ` Найден отзыв — причина подставлена автоматически.` : ' Отзывов по этому заказу не найдено.';
-                hint.textContent = `Заказ ${num} ${data.order_type}. Филиал ${data.branch_name}, сумма ${sum} р.${reviewNote}`;
+                hint.textContent = `Заказ ${num} ${data.order_type}. Филиал ${data.branch_name}, сумма ${sum} р.`;
                 hint.className = 'form-text text-success fw-semibold';
                 paSetSubmitEnabled(true);
-                paApplyAutoCategory(data.review_found, data.review_summary);
+                reasonWrap.hidden = false;
+                // Смена номера/даты после того, как сотрудник уже сам выбрал «Другая причина», не
+                // должна молча вернуть его обратно к автоответу — режим меняется только кнопкой.
+                if (!paOtherReasonMode) paApplyAutoReason(data.review_found, data.review_summary);
             } else {
                 hint.textContent = 'Заказ с таким номером и датой не найден в архиве — начислить баллы нельзя.';
                 hint.className = 'form-text text-danger fw-semibold';
+                reasonWrap.hidden = true;
             }
         })
         .catch(() => {});
