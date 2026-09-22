@@ -87,9 +87,9 @@
                     </div>
                     <div class="col-md-6">
                         <label class="form-label small fw-semibold">Причина</label>
-                        <select name="category_id" class="form-select" required>
+                        <select name="category_id" id="pa-category" class="form-select" required>
                             {% for cat in categories %}
-                            <option value="{{ cat.id }}">{{ cat.name }}</option>
+                            <option value="{{ cat.id }}" data-auto-key="{{ cat.auto_key }}">{{ cat.name }}</option>
                             {% endfor %}
                         </select>
                     </div>
@@ -99,7 +99,7 @@
                     </div>
                     <div class="col-12">
                         <label class="form-label small fw-semibold">Комментарий</label>
-                        <textarea name="comment" class="form-control" rows="2" maxlength="500" placeholder="Необязательно — например, с кем из клиента договорились и по какому поводу"></textarea>
+                        <textarea name="comment" id="pa-comment" class="form-control" rows="2" maxlength="500" placeholder="Необязательно — например, с кем из клиента договорились и по какому поводу"></textarea>
                     </div>
                 </div>
             </div>
@@ -149,6 +149,29 @@ function paSetSubmitEnabled(enabled) {
     document.getElementById('pa-submit').disabled = !enabled;
 }
 
+// Причина и комментарий подставляются автоматически по найденному отзыву (см. paLookupOrder), но
+// только пока сотрудник их сам не тронул — иначе повторный поиск (правка даты/номера) молча
+// затирал бы то, что человек уже поменял руками. Реальный ввод всегда идёт через события
+// change/input; программную подстановку ниже (element.value = …) они не считают.
+let paCategoryTouched = false;
+let paCommentTouched = false;
+document.getElementById('pa-category').addEventListener('change', () => { paCategoryTouched = true; });
+document.getElementById('pa-comment').addEventListener('input', () => { paCommentTouched = true; });
+document.getElementById('paModal').addEventListener('show.bs.modal', () => {
+    paCategoryTouched = false;
+    paCommentTouched = false;
+});
+
+function paApplyAutoCategory(reviewFound, reviewSummary) {
+    if (!paCategoryTouched) {
+        const option = document.querySelector(`#pa-category option[data-auto-key="${reviewFound ? 'has_review' : 'no_review'}"]`);
+        if (option) document.getElementById('pa-category').value = option.value;
+    }
+    if (!paCommentTouched) {
+        document.getElementById('pa-comment').value = reviewFound ? `(отзыв: ${reviewSummary})` : '';
+    }
+}
+
 function paLookupOrder() {
     const num = document.getElementById('pa-order-number').value.trim();
     const date = document.getElementById('pa-order-date').value;
@@ -164,9 +187,11 @@ function paLookupOrder() {
         .then((data) => {
             if (data.found) {
                 const sum = Number(data.amount).toLocaleString('ru-RU', {maximumFractionDigits: 0});
-                hint.textContent = `Заказ ${num} ${data.order_type}. Филиал ${data.branch_name}, сумма ${sum} р.`;
+                const reviewNote = data.review_found ? ` Найден отзыв — причина подставлена автоматически.` : ' Отзывов по этому заказу не найдено.';
+                hint.textContent = `Заказ ${num} ${data.order_type}. Филиал ${data.branch_name}, сумма ${sum} р.${reviewNote}`;
                 hint.className = 'form-text text-success fw-semibold';
                 paSetSubmitEnabled(true);
+                paApplyAutoCategory(data.review_found, data.review_summary);
             } else {
                 hint.textContent = 'Заказ с таким номером и датой не найден в архиве — начислить баллы нельзя.';
                 hint.className = 'form-text text-danger fw-semibold';

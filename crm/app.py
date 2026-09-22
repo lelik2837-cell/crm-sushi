@@ -2838,6 +2838,23 @@ def init_db():
         pa_cols = [r[1] for r in conn.execute("PRAGMA table_info(point_accruals)").fetchall()]
         if 'comment' not in pa_cols:
             conn.execute("ALTER TABLE point_accruals ADD COLUMN comment TEXT DEFAULT ''")
+        pc_cols = [r[1] for r in conn.execute("PRAGMA table_info(point_categories)").fetchall()]
+        if 'auto_key' not in pc_cols:
+            conn.execute("ALTER TABLE point_categories ADD COLUMN auto_key TEXT NOT NULL DEFAULT ''")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_point_categories_auto_key ON point_categories(auto_key) WHERE auto_key != ''")
+        # «Отзыв клиента» / «Отзыва нет» — две причины, которые подставляются автоматически на
+        # странице «Внести баллы» по результату поиска отзыва на этот заказ+дату (points_order_lookup).
+        # Распознаются по auto_key, а не по названию — пользователь волен переименовать их как обычную
+        # причину, автоподстановка продолжит работать. Заводятся один раз; уже существующую причину
+        # с таким же названием (если завели вручную до этой правки) не дублируют, а помечают той же меткой.
+        for _auto_key, _auto_name in (('has_review', 'Отзыв клиента'), ('no_review', 'Отзыва нет')):
+            if conn.execute('SELECT 1 FROM point_categories WHERE auto_key=?', (_auto_key,)).fetchone():
+                continue
+            _existing = conn.execute('SELECT id FROM point_categories WHERE name=?', (_auto_name,)).fetchone()
+            if _existing:
+                conn.execute('UPDATE point_categories SET auto_key=? WHERE id=?', (_auto_key, _existing['id']))
+            else:
+                conn.execute('INSERT INTO point_categories (name, auto_key) VALUES (?,?)', (_auto_name, _auto_key))
 
         # Вакансии/отклики (форма встраивается на сайт владельца через iframe, см.
         # _ensure_job_defaults). owner_id — первый шаг к изоляции данных по владельцу
@@ -17667,7 +17684,8 @@ def _maybe_create_rating_request(conn, r, branch_id, campaigns_by_branch, varian
 @menu_permission_required('points_accrual')
 def points_accrual_page():
     with get_db() as conn:
-        categories = conn.execute('SELECT * FROM point_categories ORDER BY name').fetchall()
+        # Причины «Отзыв клиента»/«Отзыва нет» (auto_key непустой) — первыми, остальные по алфавиту.
+        categories = conn.execute("SELECT * FROM point_categories ORDER BY (auto_key=''), name").fetchall()
         accruals = conn.execute('''
             SELECT pa.*, pc.name AS category_name
             FROM point_accruals pa JOIN point_categories pc ON pc.id = pa.category_id
@@ -17729,6 +17747,53 @@ def _lookup_order_for_points(conn, order_number, order_date):
     ''', (order_number, order_date)).fetchone()
 
 
+def _find_order_review_summary(conn, order_number, order_date):
+    """Ищет отзыв/оценку именно на этот order_number+order_date — для автоподстановки причины
+    «Отзыв клиента»/«Отзыва нет» в «Начислении баллов» (points_order_lookup). Возвращает короткую
+    строку с сутью отзыва (для комментария в скобках) или None, если по этой паре ничего не нашлось.
+
+    Два источника, как и в отчёте «Отзывы» (guest_reviews_report/_group_guest_reviews):
+    1) order_rating_requests — оценка 1-5 из авто-рассылки после доставки; order_date хранится
+       в самой строке (см. _maybe_create_rating_request), сравнение точное, без эвристики.
+    2) guest_reviews — отзывы с Гуляша; своей даты заказа не хранят (есть только review_at —
+       когда оставлен отзыв), поэтому дата заказа подбирается той же эвристикой, что и в отчёте
+       (_lookup_order_dates, ближайшая дата в orders_report) — иначе для одного и того же
+       заказа отчёт «Отзывы» и это место могли бы по-разному решить, есть отзыв или нет."""
+    parts = []
+    rating = conn.execute('''
+        SELECT rating FROM order_rating_requests
+        WHERE order_number=? AND order_date=? AND status='responded' AND rating IS NOT NULL
+        ORDER BY responded_at DESC LIMIT 1
+    ''', (order_number, order_date)).fetchone()
+    if rating:
+        parts.append('оценка {}/5 по рассылке'.format(rating['rating']))
+    candidates = conn.execute('''
+        SELECT review_at, review_type, content, review_category_id
+        FROM guest_reviews WHERE order_number=?
+    ''', (order_number,)).fetchall()
+    if candidates:
+        dates = _lookup_order_dates(conn, [(order_number, r['review_at']) for r in candidates])
+        matched = [r for r in candidates if dates.get((order_number, r['review_at'])) == order_date]
+        if matched:
+            best = max(matched, key=lambda r: r['review_at'])
+            label = None
+            if best['review_category_id']:
+                cat = conn.execute('''
+                    SELECT rc.name, parent.name AS parent_name
+                    FROM review_categories rc LEFT JOIN review_categories parent ON parent.id = rc.parent_id
+                    WHERE rc.id=?
+                ''', (best['review_category_id'],)).fetchone()
+                if cat:
+                    label = '{} → {}'.format(cat['parent_name'], cat['name']) if cat['parent_name'] else cat['name']
+            label = label or best['review_type'] or None
+            content = (best['content'] or '').strip()
+            if len(content) > 150:
+                content = content[:150].rstrip() + '…'
+            bit = ' — '.join(x for x in (label, ('"{}"'.format(content) if content else None)) if x)
+            parts.append(bit or 'отзыв на Гуляше')
+    return '; '.join(parts) if parts else None
+
+
 @app.route('/reports/points/order-lookup')
 @login_required
 @menu_permission_required('points_accrual')
@@ -17739,11 +17804,13 @@ def points_order_lookup():
         return jsonify({'found': False})
     with get_db() as conn:
         row = _lookup_order_for_points(conn, order_number, order_date)
-    if not row:
-        return jsonify({'found': False})
+        if not row:
+            return jsonify({'found': False})
+        review_summary = _find_order_review_summary(conn, order_number, order_date)
     return jsonify({
         'found': True, 'amount': row['amount'], 'order_type': row['order_type'] or '',
         'branch_name': row['branch_name'] or '',
+        'review_found': review_summary is not None, 'review_summary': review_summary or '',
     })
 
 
