@@ -18640,9 +18640,7 @@ def _group_guest_reviews(rows, status_by_order=None):
     worst_sentiment (самый «плохой» sentiment среди группы — 'О'/пусто побеждает 'Н', 'Н' побеждает
     'П', используется для цвета строки/шарика, см. guest_reviews_report.html), categories
     (уникальные review_type группы, в порядке появления, без пустых — у оценок из рассылки
-    review_type нет), assigned_categories (уникальные выбранные конечные категории — у отзыва их
-    может быть несколько, см. review_category_links),
-    sources (уникальные source группы, в порядке появления — бейджи Гуляш/Ревви),
+    review_type нет), sources (уникальные source группы, в порядке появления — бейджи Гуляш/Ревви),
     compensation_total (сумма compensation_amount по группе, None если ни одной непустой), и
     «представительские» поля (филиал/гость/сумма) — берутся из первого непустого значения среди
     отзывов группы (не строго из самого свежего: например, сумму заказа Гуляш обычно знает, а
@@ -18678,14 +18676,10 @@ def _group_guest_reviews(rows, status_by_order=None):
         grp = groups[key]
         worst_sentiment = min(grp, key=lambda r: _GR_SENTIMENT_RANK.get(r['sentiment'], 0))['sentiment']
         categories = []
-        assigned_categories = []
         sources = []
         for r in grp:
             if r['review_type'] and r['review_type'] not in categories:
                 categories.append(r['review_type'])
-            for label in (r.get('review_category_labels') or []):
-                if label not in assigned_categories:
-                    assigned_categories.append(label)
             if r['source'] not in sources:
                 sources.append(r['source'])
         comp_values = [r['compensation_amount'] for r in grp if r['compensation_amount']]
@@ -18705,7 +18699,6 @@ def _group_guest_reviews(rows, status_by_order=None):
             'reviews': grp,
             'worst_sentiment': worst_sentiment,
             'categories': categories,
-            'assigned_categories': assigned_categories,
             'category_current': category_current,
             'review_refs': review_refs,
             'sources': sources,
@@ -18852,8 +18845,7 @@ def guest_reviews_report():
 
     def _decorate_review_category(row_dict, source, source_id):
         # Сами категории (может быть несколько на отзыв) проставляются одним пакетным запросом в
-        # конце, см. review_category_ids/review_category_labels ниже (_group_guest_reviews) — тут
-        # только то, что уже известно построчно.
+        # конце, см. review_category_ids ниже — тут только то, что уже известно построчно.
         row_dict['source'] = source
         row_dict['source_id'] = source_id
         row_dict['review_category_manual'] = bool(row_dict.get('review_category_manual'))
@@ -18986,9 +18978,7 @@ def guest_reviews_report():
             for l in conn.execute(f"SELECT review_id, category_id FROM review_category_links WHERE source=? AND review_id IN ({ph})", [src] + ids):
                 links_by_ref.setdefault((src, l['review_id']), []).append(l['category_id'])
         for r in combined:
-            ids = links_by_ref.get((r['source'], r['source_id']), [])
-            r['review_category_ids'] = ids
-            r['review_category_labels'] = [review_category_by_id[i]['label'] for i in ids if i in review_category_by_id]
+            r['review_category_ids'] = links_by_ref.get((r['source'], r['source_id']), [])
 
     grouped_rows = _group_guest_reviews(combined, status_by_order)
 
@@ -18996,7 +18986,8 @@ def guest_reviews_report():
         rows=combined, grouped_rows=grouped_rows, branches=branches, branch_groups=branch_groups,
         branch_flt=branch_flt, date_from=date_from, date_to=date_to, show_positive=show_positive,
         date_mode=date_mode, review_status_labels=REVIEW_STATUS_LABELS,
-        review_category_tree=review_category_tree, review_category_options=review_category_options)
+        review_category_tree=review_category_tree, review_category_options=review_category_options,
+        review_category_by_id=review_category_by_id)
 
 
 @app.route('/reports/guest-reviews/reveal-phone', methods=['POST'])
