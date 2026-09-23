@@ -233,9 +233,9 @@
 {% macro review_comments_cell(review_refs, comment_ids) %}
 <div class="gr-comment-cell" onclick="event.stopPropagation()" data-reviews='{{ review_refs | tojson }}'>
     <div class="dropdown">
-        <button type="button" class="btn btn-sm btn-outline-secondary gr-comment-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" title="Комментарии">
-            <i class="bi bi-chat-square-text"></i>
-            {% if comment_ids %}<span class="badge rounded-pill bg-secondary gr-comment-count">{{ comment_ids|length }}</span>{% endif %}
+        <button type="button" class="btn btn-sm btn-outline-secondary gr-comment-toggle text-nowrap" data-bs-toggle="dropdown" data-bs-auto-close="outside" title="Комментарии">
+            <i class="bi bi-chat-square-text me-1"></i>Добавить
+            {% if comment_ids %}<span class="badge rounded-pill bg-secondary gr-comment-count ms-1">{{ comment_ids|length }}</span>{% endif %}
         </button>
         <div class="dropdown-menu p-2 gr-comment-menu">
             <div class="gr-comment-list mb-2">
@@ -734,7 +734,7 @@
         if (comments.length) {
             if (!badge) {
                 badge = document.createElement('span');
-                badge.className = 'badge rounded-pill bg-secondary gr-comment-count';
+                badge.className = 'badge rounded-pill bg-secondary gr-comment-count ms-1';
                 toggle.appendChild(badge);
             }
             badge.textContent = comments.length;
