@@ -2837,6 +2837,31 @@ def init_db():
                 SELECT 'revvy', id, review_category_id FROM order_rating_requests WHERE review_category_id IS NOT NULL''')
             conn.execute("INSERT OR REPLACE INTO api_settings (key, value) VALUES ('review_categories_multi_v1', '1')")
 
+        # Комментарии к отзыву/заказу — просьба пользователя «комментарий оставляет тот, кто
+        # занимается обработкой отзыва»: это лог (может быть сколько угодно записей по ходу
+        # разбора), а не состояние, поэтому только добавление, без удаления/перезаписи — в
+        # отличие от review_category_links выше. Общий на весь заказ (все отзывы группы), как и
+        # категории, — тем же приёмом (таблица связей на review_comments.id вместо прямого
+        # (source, review_id) на самом комментарии), чтобы один комментарий, оставленный из
+        # свёрнутой строки заказа с несколькими отзывами, был виден у каждого из них, а не
+        # дублировался отдельной строкой на каждый.
+        conn.executescript('''
+            CREATE TABLE IF NOT EXISTS review_comments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT NOT NULL,
+                user_id INTEGER REFERENCES users(id),
+                user_name TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS review_comment_links (
+                comment_id INTEGER NOT NULL REFERENCES review_comments(id) ON DELETE CASCADE,
+                source TEXT NOT NULL CHECK(source IN ('gulyash','revvy')),
+                review_id INTEGER NOT NULL,
+                PRIMARY KEY (comment_id, source, review_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_review_comment_links_ref ON review_comment_links(source, review_id);
+        ''')
+
         # Начисление баллов клиентам за косяки (перевёрнутые роллы и т.п.) — причина всегда одна
         # из трёх фиксированных строк в point_categories (auto_key), список больше не редактируется
         # пользователем (раньше был отдельный справочник с формой создания/переименования — убран
@@ -18608,7 +18633,68 @@ def guest_review_category_set():
     return jsonify({'ok': True, 'manual': mode == 'manual', 'label': ', '.join(labels) if labels else None, 'category_ids': linked_ids})
 
 
-def _group_guest_reviews(rows, status_by_order=None):
+@app.route('/reports/guest-reviews/comment', methods=['POST'])
+@login_required
+@menu_permission_required('guest_reviews_report')
+def guest_review_comment_add():
+    """Добавляет комментарий («что сделали по отзыву») в общую историю комментариев заказа —
+    общий на ВСЕ отзывы заказа за один запрос, тем же приёмом, что и категории (см.
+    guest_review_category_set): фронт передаёт весь review_refs группы. В отличие от категорий
+    это лог, а не состояние — только INSERT, ничего не удаляется и не переписывается. Автор
+    комментария — session['user_id']/session['full_name'] текущего пользователя, снимок имени
+    хранится прямо в review_comments.user_name (по образцу change_log.user_name), чтобы история
+    не «переехала» на другое имя при переименовании/увольнении сотрудника."""
+    data = request.get_json(silent=True) or {}
+    raw_reviews = data.get('reviews')
+    text = str(data.get('text') or '').strip()
+    if not isinstance(raw_reviews, list) or not raw_reviews:
+        return jsonify({'ok': False, 'error': 'Некорректный запрос'}), 400
+    if not text:
+        return jsonify({'ok': False, 'error': 'Пустой комментарий'}), 400
+    if len(text) > 2000:
+        return jsonify({'ok': False, 'error': 'Слишком длинный комментарий'}), 400
+
+    items = []
+    for item in raw_reviews:
+        source = item.get('source') if isinstance(item, dict) else None
+        raw_review_id = str((item.get('review_id') if isinstance(item, dict) else None) or '')
+        if source not in ('gulyash', 'revvy') or not raw_review_id.isdigit():
+            return jsonify({'ok': False, 'error': 'Некорректный отзыв'}), 400
+        items.append((source, int(raw_review_id)))
+
+    with get_db() as conn:
+        for source, review_id in items:
+            table = 'guest_reviews' if source == 'gulyash' else 'order_rating_requests'
+            if not conn.execute(f'SELECT 1 FROM {table} WHERE id=?', (review_id,)).fetchone():
+                return jsonify({'ok': False, 'error': 'Отзыв не найден'}), 404
+
+        cur = conn.execute(
+            'INSERT INTO review_comments (text, user_id, user_name) VALUES (?,?,?)',
+            (text, session['user_id'], session.get('full_name', ''))
+        )
+        comment_id = cur.lastrowid
+        conn.executemany(
+            'INSERT OR IGNORE INTO review_comment_links (comment_id, source, review_id) VALUES (?,?,?)',
+            [(comment_id, source, review_id) for source, review_id in items]
+        )
+
+        where = ' OR '.join(['(l.source=? AND l.review_id=?)'] * len(items))
+        params = [v for pair in items for v in pair]
+        comments = conn.execute(f'''
+            SELECT DISTINCT c.id, c.text, c.user_name, c.created_at
+            FROM review_comments c JOIN review_comment_links l ON l.comment_id = c.id
+            WHERE {where}
+            ORDER BY c.created_at, c.id
+        ''', params).fetchall()
+        conn.commit()
+
+    return jsonify({'ok': True, 'comments': [
+        {'id': c['id'], 'text': c['text'], 'user_name': c['user_name'], 'created_at_fmt': datetime_fmt(c['created_at'])}
+        for c in comments
+    ]})
+
+
+def _group_guest_reviews(rows, status_by_order=None, comment_by_id=None):
     """Заказ может получить несколько разных отзывов/жалоб (разные категории, разное время,
     и теперь ещё и разные источники — см. ниже) — группирует строки одного запроса (уже
     отсортированные по review_at DESC) по order_number, чтобы показать их в отчёте одной строкой
@@ -18654,8 +18740,14 @@ def _group_guest_reviews(rows, status_by_order=None):
     один и тот же набор категорий, иначе {'mode': 'auto', 'ids': []} — просьба пользователя
     2026-09-08 «категория выбирается 1 раз на заказ, а не на каждый отзыв»: выбор категорий живёт
     только в свёрнутой строке заказа, а не у каждого отдельного отзыва в раскрытом списке, и один
-    выбор применяется сразу ко всем отзывам этого заказа — см. guest_review_category_set)."""
+    выбор применяется сразу ко всем отзывам этого заказа — см. guest_review_category_set), а также
+    comment_ids (id всех комментариев, оставленных по ходу разбора заказа — объединены по всем
+    отзывам группы и отсортированы по времени; сам комментарий общий на заказ ровно как категория,
+    см. guest_review_comment_add — comment_by_id даёт текст/автора/время по id, передаётся сюда
+    отдельно от status_by_order, потому что собирается в guest_reviews_report() тем же батч-запросом,
+    что и review_category_ids)."""
     status_by_order = status_by_order or {}
+    comment_by_id = comment_by_id or {}
     groups = {}
     order = []
     for r in rows:
@@ -18693,6 +18785,15 @@ def _group_guest_reviews(rows, status_by_order=None):
             category_current = {'mode': 'auto', 'ids': []}
         review_refs = [{'source': r['source'], 'review_id': r['source_id']} for r in grp]
 
+        comment_ids = []
+        seen_comments = set()
+        for r in grp:
+            for cid in (r.get('review_comment_ids') or []):
+                if cid not in seen_comments:
+                    seen_comments.add(cid)
+                    comment_ids.append(cid)
+        comment_ids.sort(key=lambda cid: comment_by_id.get(cid, {}).get('created_at', ''))
+
         result.append({
             'order_number': key,
             'order_date': _first_present(grp, 'order_date'),
@@ -18701,6 +18802,7 @@ def _group_guest_reviews(rows, status_by_order=None):
             'categories': categories,
             'category_current': category_current,
             'review_refs': review_refs,
+            'comment_ids': comment_ids,
             'sources': sources,
             'status': status,
             'compensation_total': sum(comp_values) if comp_values else None,
@@ -18980,14 +19082,41 @@ def guest_reviews_report():
         for r in combined:
             r['review_category_ids'] = links_by_ref.get((r['source'], r['source_id']), [])
 
-    grouped_rows = _group_guest_reviews(combined, status_by_order)
+        # Комментарии («что сделали по отзыву») — тем же приёмом, что и категории чуть выше: один
+        # батч-запрос на источник по всему combined, но через таблицу связей (см. init_db) —
+        # у самого комментария нет source/review_id, только у связи, поэтому сперва собираем
+        # comment_id по (source, review_id), потом одним IN(...) подтягиваем сами комментарии.
+        comment_ids_by_ref = {}
+        for src in ('gulyash', 'revvy'):
+            ids = [r['source_id'] for r in combined if r['source'] == src]
+            if not ids:
+                continue
+            ph = ','.join('?' * len(ids))
+            for l in conn.execute(f"SELECT review_id, comment_id FROM review_comment_links WHERE source=? AND review_id IN ({ph})", [src] + ids):
+                comment_ids_by_ref.setdefault((src, l['review_id']), []).append(l['comment_id'])
+
+        review_comment_by_id = {}
+        all_comment_ids = sorted({cid for ids in comment_ids_by_ref.values() for cid in ids})
+        if all_comment_ids:
+            ph = ','.join('?' * len(all_comment_ids))
+            for c in conn.execute(f"SELECT id, text, user_name, created_at FROM review_comments WHERE id IN ({ph})", all_comment_ids):
+                review_comment_by_id[c['id']] = {
+                    'text': c['text'], 'user_name': c['user_name'],
+                    'created_at': c['created_at'], 'created_at_fmt': datetime_fmt(c['created_at']),
+                }
+
+        for r in combined:
+            ids = comment_ids_by_ref.get((r['source'], r['source_id']), [])
+            r['review_comment_ids'] = sorted(ids, key=lambda cid: review_comment_by_id.get(cid, {}).get('created_at', ''))
+
+    grouped_rows = _group_guest_reviews(combined, status_by_order, review_comment_by_id)
 
     return render_template('guest_reviews_report.html',
         rows=combined, grouped_rows=grouped_rows, branches=branches, branch_groups=branch_groups,
         branch_flt=branch_flt, date_from=date_from, date_to=date_to, show_positive=show_positive,
         date_mode=date_mode, review_status_labels=REVIEW_STATUS_LABELS,
         review_category_tree=review_category_tree, review_category_options=review_category_options,
-        review_category_by_id=review_category_by_id)
+        review_category_by_id=review_category_by_id, review_comment_by_id=review_comment_by_id)
 
 
 @app.route('/reports/guest-reviews/reveal-phone', methods=['POST'])
