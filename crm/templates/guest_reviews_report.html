@@ -619,6 +619,23 @@
         if (chevron) chevron.classList.toggle('open', opening);
     };
 
+    /* ── Дропдауны категорий/комментариев обрезались нижним краем .table-responsive: у неё
+       overflow-x:auto, а по правилам CSS «visible» на второй оси при этом сам превращается в
+       auto (нельзя оставить только одну ось видимой), поэтому и по вертикали тоже обрезает —
+       просьба пользователя 2026-09-23 «вкладка с комментарием открывается обрезанной». Popper
+       по умолчанию позиционирует меню через position:absolute относительно предка, из-за чего
+       обрезка ближайшим overflow:auto-контейнером применяется; position:fixed считается уже от
+       viewport и обрезке таким контейнером не подчиняется (если только на пути вверх нет
+       transform/filter/will-change, которых тут нет) — задаём strategy:'fixed' сразу при
+       создании инстанса Bootstrap Dropdown, до первого клика, чтобы применилось всегда. ── */
+    document.querySelectorAll('.gr-cat-add-btn, .gr-comment-toggle').forEach(function (btn) {
+        new bootstrap.Dropdown(btn, {
+            popperConfig: function (defaultConfig) {
+                return Object.assign({}, defaultConfig, { strategy: 'fixed' });
+            }
+        });
+    });
+
     /* ── Категории заказа (сколько угодно сразу, показаны блоками; один выбор применяется ко
        всем отзывам заказа — см. data-reviews на кнопке «+», заполняется макросом category_chips) ── */
     var grCategoryById = {{ review_category_by_id | tojson }};
