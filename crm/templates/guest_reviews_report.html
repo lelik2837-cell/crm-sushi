@@ -278,6 +278,7 @@
                     <th>Дата</th>
                     <th>Заказ</th>
                     <th>Дата заказа</th>
+                    <th>Сумма</th>
                     <th>Филиал</th>
                     <th class="text-center">Тип</th>
                     <th class="text-center">Источник</th>
@@ -286,7 +287,6 @@
                     <th>Комментарии</th>
                     <th>Содержание</th>
                     <th>Телефон</th>
-                    <th>Сумма</th>
                     <th>Компенсация</th>
                     <th class="text-center">Статус</th>
                 </tr>
@@ -299,6 +299,7 @@
                     <td class="text-nowrap">{{ r.review_at | datetime_ru_short }}</td>
                     <td>{{ r.order_number }}</td>
                     <td class="text-nowrap">{{ r.order_date | date_ru_short if r.order_date else '—' }}</td>
+                    <td class="text-nowrap">{{ '%.0f'|format(r.order_amount) + ' Р' if r.order_amount is not none else '—' }}</td>
                     <td>{{ r.branch_name or r.branch_raw }}</td>
                     <td class="text-center">{{ sentiment_dot(r.sentiment) }}</td>
                     <td class="text-center">{{ source_badge(r.source) }}</td>
@@ -307,7 +308,6 @@
                     <td>{{ review_comments_cell([{"source": r.source, "review_id": r.source_id}], r.review_comment_ids or []) }}</td>
                     <td style="max-width:420px; white-space:pre-wrap;">{{ review_content_cell(r) }}</td>
                     <td class="text-nowrap">{{ phone_reveal_cell(g.order_number, g.guest_phone, g.status is not none) }}</td>
-                    <td class="text-nowrap">{{ '%.0f'|format(r.order_amount) if r.order_amount is not none else '—' }}</td>
                     <td class="text-nowrap">{{ '%.0f'|format(r.compensation_amount) if r.compensation_amount else '—' }}</td>
                     <td class="text-center gr-status-cell">{{ status_badge(g.status) }}</td>
                 </tr>
@@ -319,6 +319,7 @@
                     </td>
                     <td>{{ g.order_number }}</td>
                     <td class="text-nowrap">{{ g.order_date | date_ru_short if g.order_date else '—' }}</td>
+                    <td class="text-nowrap">{{ '%.0f'|format(g.order_amount) + ' Р' if g.order_amount is not none else '—' }}</td>
                     <td>{{ g.branch_name or g.branch_raw }}</td>
                     <td class="text-center">{{ sentiment_dot(g.worst_sentiment) }}</td>
                     <td class="text-center">{% for s in g.sources %}{{ source_badge(s) }} {% endfor %}</td>
@@ -327,7 +328,6 @@
                     <td>{{ review_comments_cell(g.review_refs, g.comment_ids) }}</td>
                     <td class="text-muted fst-italic">Показать {{ g.reviews|length }} отзыва(ов) по заказу</td>
                     <td class="text-nowrap">{{ phone_reveal_cell(g.order_number, g.guest_phone, g.status is not none) }}</td>
-                    <td class="text-nowrap">{{ '%.0f'|format(g.order_amount) if g.order_amount is not none else '—' }}</td>
                     <td class="text-nowrap">{{ '%.0f'|format(g.compensation_total) if g.compensation_total else '—' }}</td>
                     <td class="text-center gr-status-cell">{{ status_badge(g.status) }}</td>
                 </tr>
@@ -337,13 +337,13 @@
                     <td></td>
                     <td></td>
                     <td></td>
+                    <td></td>
                     <td class="text-center">{{ sentiment_dot(r.sentiment) }}</td>
                     <td class="text-center">{{ source_badge(r.source) }}</td>
                     <td class="text-center">{{ review_type_cell(r.review_type) }}</td>
                     <td></td>
                     <td></td>
                     <td style="max-width:420px; white-space:pre-wrap;">{{ review_content_cell(r) }}</td>
-                    <td></td>
                     <td></td>
                     <td class="text-nowrap">{{ '%.0f'|format(r.compensation_amount) if r.compensation_amount else '—' }}</td>
                     <td></td>
