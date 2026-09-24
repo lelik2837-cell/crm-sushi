@@ -213,13 +213,31 @@
             });
     }
 
+    // Отправка через мессенджер может занимать до 15 с. Раньше блокировалась только кнопка, а
+    // Enter в поле ввода и сам текст оставались — каждое нажатие Enter отправляло клиенту ещё
+    // одно такое же сообщение (баг 2026-09-24: одно и то же ушло 4 раза).
+    var dlgSending = false;
     window.dlgSendReply = function () {
-        if (!currentThread) return;
+        if (!currentThread || dlgSending) return;
         var ta = document.getElementById('dlgReplyText');
         var text = ta.value.trim();
         if (!text) return;
         var btn = document.getElementById('dlgReplyBtn');
+        var btnHtml = btn.innerHTML;
+        var placeholder = ta.placeholder;
+        dlgSending = true;
         btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span>';
+        ta.disabled = true;
+        ta.placeholder = 'Отправка…';
+        function unlock() {
+            dlgSending = false;
+            btn.disabled = false;
+            btn.innerHTML = btnHtml;
+            ta.disabled = false;
+            ta.placeholder = placeholder;
+            ta.focus();
+        }
         fetch('/api/dialogs/thread/' + currentThread.account_id + '/' + encodeURIComponent(currentThread.contact_ref) + '/send', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -227,12 +245,13 @@
         })
             .then(function (r) { return r.json(); })
             .then(function (d) {
-                btn.disabled = false;
                 if (!d.ok) {
+                    unlock();
                     alert('Не удалось отправить: ' + (d.error || 'ошибка'));
                     return;
                 }
                 ta.value = '';
+                unlock();
                 var body = document.getElementById('dlgChatBody');
                 if (body.querySelector('.dlg-chat-empty')) body.innerHTML = '';
                 body.insertAdjacentHTML('beforeend', bubbleHtml(d.message));
@@ -241,7 +260,7 @@
                 loadThreads();
             })
             .catch(function () {
-                btn.disabled = false;
+                unlock();
                 alert('Не удалось отправить — проверьте соединение');
             });
     };

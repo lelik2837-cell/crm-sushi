@@ -12084,6 +12084,10 @@ def api_dialogs_thread_messages(account_id, contact_ref):
     return jsonify({'ok': True, 'messages': messages, 'order_info': order_info})
 
 
+_dialog_send_lock = threading.Lock()
+_dialog_send_inflight = set()
+
+
 @app.route('/api/dialogs/thread/<int:account_id>/<contact_ref>/send', methods=['POST'])
 @login_required
 @menu_permission_required('dialogs_report')
@@ -12103,11 +12107,22 @@ def api_dialogs_thread_send(account_id, contact_ref):
     if not acc:
         return jsonify({'ok': False, 'error': 'account_not_found'}), 404
 
+    # Защита от дублей на сервере (кроме блокировки на странице): то же сообщение тому же
+    # человеку, которое ещё отправляется (отправка через мессенджер идёт до 15 с и запись в
+    # messenger_messages появляется только после неё), второй раз не отправляем.
+    send_key = (account_id, contact_ref, text)
+    with _dialog_send_lock:
+        if send_key in _dialog_send_inflight:
+            return jsonify({'ok': False, 'error': 'Такое сообщение уже отправляется — подождите'}), 409
+        _dialog_send_inflight.add(send_key)
     try:
         messenger_api.send_message_by_id(acc['channel'], account_id, contact_ref, text)
     except Exception as e:
         logging.exception('dialog reply send failed account_id=%s contact_ref=%s', account_id, contact_ref)
         return jsonify({'ok': False, 'error': str(e)}), 502
+    finally:
+        with _dialog_send_lock:
+            _dialog_send_inflight.discard(send_key)
 
     with get_db() as conn:
         phone_row = conn.execute('''
