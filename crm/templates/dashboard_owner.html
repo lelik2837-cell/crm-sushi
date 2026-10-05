@@ -920,10 +920,12 @@ function makeDayChart(canvasId, days) {
     var barVals   = days.map(function(d) { return isPlanBar(d) ? d.plan : d.revenue; });
     var barBg     = days.map(function(d) { return isPlanBar(d) ? 'rgba(250,204,21,0.55)' : 'rgba(255,255,255,0.5)'; });
     var barHoverBg= days.map(function(d) { return isPlanBar(d) ? 'rgba(250,204,21,0.9)'  : 'rgba(255,255,255,0.9)'; });
+    // Произвольный период может захватывать два месяца — тогда подписи «ДД.ММ»
+    var multiMonth = days.length > 0 && days[0].date.slice(0, 7) !== days[days.length - 1].date.slice(0, 7);
     return new Chart(canvas, {
         type: 'bar',
         data: {
-            labels: days.map(function(d) { return d.date.slice(8); }),
+            labels: days.map(function(d) { return multiMonth ? d.date.slice(8) + '.' + d.date.slice(5, 7) : d.date.slice(8); }),
             datasets: [{
                 data: barVals,
                 backgroundColor: barBg,
@@ -1095,8 +1097,8 @@ function loadRevCard(period) {
             (revMonthDate.getFullYear() !== curYear ? ' ' + revMonthDate.getFullYear() : '');
     }
 
-    // reset day chart when leaving month
-    if (revPeriod !== 'month') {
+    // reset day chart when leaving month / custom (short) period
+    if (revPeriod !== 'month' && revPeriod !== 'custom') {
         dayWrap.style.display = 'none';
         if (revDayChart) { revDayChart.destroy(); revDayChart = null; }
     }
@@ -1268,7 +1270,13 @@ function loadRevCard(period) {
             }
         });
 
-    if (revPeriod === 'month') {
+    // Дневной график — для месяца и для произвольного периода из календаря
+    // (≤35 дней; длиннее — выше рисуется график по месяцам), как в «Месяце».
+    var showDayChart = revPeriod === 'month' || (revPeriod === 'custom' && dateFrom !== dateTo);
+    if (!showDayChart) {
+        dayWrap.style.display = 'none';
+        if (revDayChart) { revDayChart.destroy(); revDayChart = null; }
+    } else {
         dayWrap.style.display = '';
         fetch('/api/revenue-days?date_from=' + dateFrom + '&date_to=' + dateTo + _revBranchSuffix())
             .then(function(r) { return r.json(); })
